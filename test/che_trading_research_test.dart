@@ -221,10 +221,10 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 50));
     expect(api.at('/api/trading/research').last.url.queryParameters['market'], 'NQ');
-    // The live feed is MNQ only: the chart stays on futures and the page says so instead of pairing NQ research with an unlabeled MNQ chart.
+    // NQ has its own chart now (owner, 2026-10-24): the Markets chart on NQ's delayed public data, never MNQ relabelled.
     final chartCalls = api.at('/api/trading/chart').toList();
-    expect(chartCalls.last.url.queryParameters['account'], 'futures_paper');
-    expect(find.byKey(const Key('nq_chart_note')), findsOneWidget);
+    expect(chartCalls.last.url.queryParameters['account'], 'market');
+    expect(chartCalls.last.url.queryParameters['symbol'], 'futures:NQ');
     expect(find.bySemanticsLabel('NQ market, selected'), findsOneWidget);
     // The compact chart offers 1m and 5m; every other timeframe is in the expanded chart.
     await tester.tap(find.text('1m').first);

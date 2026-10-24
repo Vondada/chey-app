@@ -258,39 +258,6 @@ Widget _panel({required Widget child, Key? key}) => Material(
       child: Padding(padding: const EdgeInsets.all(12), child: child),
     );
 
-/// NQ | MNQ, the market the research and the live chart follow.
-class CheMarketToggle extends StatelessWidget {
-  const CheMarketToggle({super.key, required this.market, required this.onChanged});
-  final String market;
-  final ValueChanged<String> onChanged;
-
-  @override
-  Widget build(BuildContext context) => Wrap(spacing: 8, runSpacing: 6, children: [
-        for (final m in const ['NQ', 'MNQ'])
-          Padding(
-            padding: EdgeInsets.zero,
-            child: Semantics(
-        container: true,
-              button: true,
-              selected: m == market,
-              label: '$m market${m == market ? ', selected' : ''}',
-              excludeSemantics: true,
-              child: ChoiceChip(
-                key: Key('market_$m'),
-                label: Text(m, style: TextStyle(fontWeight: FontWeight.w800, color: m == market ? Colors.black : Colors.white)),
-                selected: m == market,
-                selectedColor: _gold,
-                onSelected: (_) {
-                  if (m == market) return;
-                  HapticFeedback.selectionClick();
-                  onChanged(m);
-                },
-              ),
-            ),
-          ),
-      ]);
-}
-
 /// The research part of the CHART section: status row, BEST NOW and the strategy cards. Loads once per market.
 class CheTradingResearchStrip extends StatefulWidget {
   const CheTradingResearchStrip({super.key, required this.client, required this.market, this.onRead});

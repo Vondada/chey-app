@@ -15,6 +15,9 @@
 // - MNQ PAPER with Rithmic connected (owner, 2026-10-23): 1- and 5-minute candles built on this phone from real
 //   Rithmic trades (lib/rithmic/rithmic_candles.dart) replace the Worker's delayed Yahoo bars from the first Rithmic
 //   candle on; earlier Yahoo history stays, drawn dimmer and labelled delayed. Every bar keeps its source.
+// - Markets (owner, 2026-10-24): any crypto pair or CME future from the Worker's market universe on public data
+//   (Coinbase, Kraken fallback, Yahoo delayed futures), research only, with indicators (lib/rooms/che_chart_indicators.dart)
+//   and a long-press crosshair. The ticker, timeframe and indicators stay on this phone (CheTickerPrefs).
 // The chart is silent on open; "Read chart" reads its summary only when asked.
 import 'dart:async';
 import 'dart:convert';
@@ -31,6 +34,8 @@ import '../rithmic/rithmic_candles.dart';
 import '../rithmic/rithmic_live.dart';
 import '../trading/che_trade_replay.dart';
 import '../che_ui/che_theme.dart';
+import 'che_chart_indicators.dart';
+import 'che_ticker_selector.dart';
 import 'che_trading_hud.dart';
 
 const _up = Color(0xFF3DDC97);
@@ -57,7 +62,7 @@ const kMarkerColors = <String, Color>{
   'alpaca_fill': _up,
   'che_signal': Color(0xFFFFA94D),
 };
-const kChartAccounts = <String, String>{'alpaca_paper': 'Alpaca PAPER', 'futures_paper': 'MNQ PAPER'};
+const kChartAccounts = <String, String>{'alpaca_paper': 'Alpaca PAPER', 'futures_paper': 'MNQ PAPER', 'market': 'Markets'};
 /// The Alpaca PAPER chart account is hidden from the owner's Trading Room (owner, 2026-10-23: "I don't want to see the
 /// alpaca at all. I just want to see mine and Che's paper trades"). Set to true to show it again; the data path stays.
 bool kShowAlpacaPaper = false; // not const, so tests can show it again
@@ -77,9 +82,12 @@ DateTime? _time(Object? v) {
 double? _num(Object? v) => v is num ? v.toDouble() : double.tryParse('${v ?? ''}');
 
 class ChartBar {
-  const ChartBar(this.t, this.o, this.h, this.l, this.c, {this.source = kBarHistory});
+  const ChartBar(this.t, this.o, this.h, this.l, this.c, {this.source = kBarHistory, this.v = 0});
   final DateTime t;
   final double o, h, l, c;
+
+  /// Volume when the source reports it (VWAP needs it); 0 otherwise.
+  final double v;
 
   /// Where the bar came from: [kBarRithmic] (built on this phone from Rithmic trades) or [kBarHistory] (the Worker).
   final String source;
@@ -421,6 +429,16 @@ class CheTradingChartState extends State<CheTradingChart> {
   final _symbolField = TextEditingController();
   String _status = '';
 
+  /// The universe item the Markets chart shows (exchange, market, front month), from the Worker.
+  Map<String, dynamic> _ticker = const {};
+  String _builtFrom = '';
+  bool _fallback = false;
+  final _prefs = CheTickerPrefs.instance;
+  Set<String> _indicators = {};
+
+  /// The bar index (in the visible window) under a long press: the crosshair.
+  int? _cross;
+
   @override
   void initState() {
     super.initState();
@@ -428,7 +446,7 @@ class CheTradingChartState extends State<CheTradingChart> {
     widget.controller?.addListener(_onController);
     widget.signalMarkers?.addListener(_onSignals);
     _live.addListener(_onLive);
-    unawaited(load());
+    unawaited(_restore());
     _timer = Timer.periodic(const Duration(seconds: 30), (_) => unawaited(load(quiet: true)));
   }
 
@@ -441,6 +459,42 @@ class CheTradingChartState extends State<CheTradingChart> {
     widget.signalMarkers?.removeListener(_onSignals);
     _symbolField.dispose();
     super.dispose();
+  }
+
+  /// The saved ticker, timeframe and indicators first, so the chart opens where the owner left it.
+  /// Only the Markets chart waits for them; the other charts load at once and pick up the indicators when read.
+  Future<void> _restore() async {
+    final market = _account == 'market';
+    if (!market) unawaited(load());
+    await _prefs.load();
+    if (!mounted) return;
+    if (_prefs.indicators.isNotEmpty) setState(() => _indicators = {..._prefs.indicators});
+    if (market) {
+      if (_symbol.isEmpty) _symbol = _prefs.last;
+      final tf = _prefs.timeframe;
+      if (tf != null) _tf = tf;
+      await load();
+    }
+  }
+
+  bool get _futures => _account == 'futures_paper' || '${_ticker['category'] ?? ''}' == 'futures';
+
+  /// What the header shows for the symbol: "BTC" for coinbase:BTC-USD, the ticker itself otherwise.
+  String get symbolLabel => _account == 'market' && _symbol.isNotEmpty ? tickerLabel(_symbol) : _symbol;
+
+  /// Shows a universe ticker ("futures:ES", "coinbase:BTC-USD") on the Markets chart, and remembers it.
+  void showTicker(String id) {
+    if (id.isEmpty) return;
+    setState(() {
+      _account = 'market';
+      _symbol = id;
+      _bars = const [];
+      _markers = const [];
+      _endOffset = 0;
+      _cross = null;
+    });
+    unawaited(_prefs.choose(id));
+    unawaited(load());
   }
 
   void _onController() {
@@ -462,13 +516,15 @@ class CheTradingChartState extends State<CheTradingChart> {
       c.timeframe = null;
       if (tf != _tf) {
         setState(() => _tf = tf);
+        if (_account == 'market') unawaited(_prefs.setTimeframe(tf));
         unawaited(load());
       }
       return;
     }
     setState(() {
       if (c.account != null && kChartAccounts.containsKey(c.account)) _account = c.account!;
-      if (c.symbol != null && c.symbol!.isNotEmpty) _symbol = c.symbol!.toUpperCase();
+      // A universe id keeps its case ("coinbase:BTC-USD"); stock and futures symbols are upper case.
+      if (c.symbol != null && c.symbol!.isNotEmpty) _symbol = _account == 'market' ? c.symbol! : c.symbol!.toUpperCase();
       _strategy = c.strategy;
       _symbolField.text = _symbol;
     });
@@ -558,7 +614,7 @@ class CheTradingChartState extends State<CheTradingChart> {
   Future<void> load({bool quiet = false}) async {
     final seq = ++_seq;
     if (!quiet) setState(() => _state = 'loading');
-    final q = {'account': _account, 'tf': _tf, if (_account == 'alpaca_paper' && _symbol.isNotEmpty) 'symbol': _symbol};
+    final q = {'account': _account, 'tf': _tf, if ((_account == 'alpaca_paper' || _account == 'market') && _symbol.isNotEmpty) 'symbol': _symbol};
     try {
       final r = await _http
           .get(Uri.parse('${widget.baseUrl()}/api/trading/chart').replace(queryParameters: q), headers: widget.headers())
@@ -591,6 +647,10 @@ class CheTradingChartState extends State<CheTradingChart> {
       _symbolField.text = sym;
     }
     if (_account == 'futures_paper') _symbol = sym ?? 'MNQ';
+    _ticker = _account == 'market' && j['ticker'] is Map<String, dynamic> ? j['ticker'] as Map<String, dynamic> : const {};
+    if (_ticker['id'] is String) _symbol = _ticker['id'] as String;
+    _builtFrom = '${j['built_from'] ?? ''}';
+    _fallback = j['fallback'] == true;
     final served = '${j['timeframe'] ?? _tf}';
     // The Worker has no 1-minute MNQ bars; with Rithmic, 1m stays chosen and is drawn from Rithmic candles alone.
     if (!(_tf == '1m' && _rithmicChart)) _tf = served;
@@ -600,7 +660,7 @@ class CheTradingChartState extends State<CheTradingChart> {
     _history = [
       for (final b in (j['bars'] is List ? j['bars'] as List : const []))
         if (b is Map && _time(b['t']) != null && _num(b['o']) != null && _num(b['h']) != null && _num(b['l']) != null && _num(b['c']) != null)
-          ChartBar(_time(b['t'])!, _num(b['o'])!, _num(b['h'])!, _num(b['l'])!, _num(b['c'])!),
+          ChartBar(_time(b['t'])!, _num(b['o'])!, _num(b['h'])!, _num(b['l'])!, _num(b['c'])!, v: _num(b['v']) ?? 0),
     ];
     _bars = _merged();
     _markers = [
@@ -958,8 +1018,10 @@ class CheTradingChartState extends State<CheTradingChart> {
     final marks = counts.isEmpty ? 'No markers.' : 'Markers: ${counts.entries.map((e) => '${e.value} ${kMarkerSources[e.key] ?? e.key}').join(', ')}.';
     final feed = _account == 'futures_paper'
         ? '$sourceLabel. $rithmicLine.'
-        : '${_feed['provider'] ?? 'Feed'} is ${_feed['status'] ?? 'unknown'}${_feed['age_s'] is num ? ', last bar ${_age(_feed['age_s'] as num)} old' : ''}.';
-    return '$accountLabel, $_symbol, $_tf candles. Last close ${_fmt(last.c)} at ${_clock(last.t)}. $marks $feed '
+        : '${_feed['provider'] ?? 'Feed'} is ${_feed['status'] ?? 'unknown'}${_feed['age_s'] is num ? ', last bar ${_age(_feed['age_s'] as num)} old' : ''}${_fallback ? ', Kraken fallback because Coinbase did not answer' : ''}${_builtFrom.isNotEmpty ? ', built from $_builtFrom bars' : ''}.';
+    final market = _ticker['market'] != null ? ' ${_ticker['market']}.' : '';
+    final ind = indicatorSummary(_indicatorBars, _indicators, futures: _futures, fmt: _fmt);
+    return '$accountLabel, $symbolLabel, $_tf candles.$market Last close ${_fmt(last.c)} at ${_clock(last.t)}. $marks $feed ${ind.isEmpty ? '' : '$ind '}'
         '${_drawings.isEmpty ? '' : '${_drawings.length} drawing${_drawings.length == 1 ? '' : 's'}: ${_drawings.map((d) => d.spoken).join('; ')}. '}'
         '${_levels.spoken.isEmpty ? '' : '${_levels.spoken} '}'
         '${_entriesAllowed ? (_marketAllowed ? 'Paper entries allowed.' : 'Limit orders only: $_blocked') : 'New entries blocked: $_blocked'}';
@@ -999,7 +1061,7 @@ class CheTradingChartState extends State<CheTradingChart> {
     if (a == _account || visibleChartAccount(a) != a) return;
     setState(() {
       _account = a;
-      _symbol = a == 'futures_paper' ? 'MNQ' : (_symbolField.text.trim().toUpperCase());
+      _symbol = a == 'futures_paper' ? 'MNQ' : a == 'market' ? _prefs.last : (_symbolField.text.trim().toUpperCase());
       _bars = const [];
       _markers = const [];
       _endOffset = 0;
@@ -1024,7 +1086,8 @@ class CheTradingChartState extends State<CheTradingChart> {
 
   /// The feed's provider, status, last bar and age on one line.
   String get feedLine => [
-        '${_feed['provider'] ?? 'Feed'}: ${_feed['status'] ?? (_state == 'loading' ? 'checking' : 'UNAVAILABLE')}${_feed['stale'] == true ? ' · STALE' : ''}',
+        '${_feed['provider'] ?? 'Feed'}${_fallback ? ' (fallback)' : ''}: ${_feed['status'] ?? (_state == 'loading' ? 'checking' : 'UNAVAILABLE')}${_feed['stale'] == true ? ' · STALE' : ''}',
+        if (_builtFrom.isNotEmpty) 'built from $_builtFrom',
         if (_feed['last_bar_time'] != null && _time(_feed['last_bar_time']) != null) 'last bar ${_clock(_time(_feed['last_bar_time'])!)}',
         if (_feed['age_s'] is num) '${_age(_feed['age_s'] as num)} old',
       ].join(' · ');
@@ -1080,7 +1143,7 @@ class CheTradingChartState extends State<CheTradingChart> {
   /// The compact preview: every row has a fixed height, so a live tick changes pixels inside the chart and nothing else.
   Widget _buildCompact() {
     final stale = _feed['stale'] == true;
-    final feedColor = _feed['status'] == 'REALTIME' && !stale ? _up : _feed['status'] == 'UNAVAILABLE' ? _down : _gold;
+    final feedColor = (_feed['status'] == 'REALTIME' || _feed['status'] == 'LIVE') && !stale ? _up : (_feed['status'] == 'UNAVAILABLE' || _feed['status'] == 'DISCONNECTED') ? _down : _gold;
     final live = _rithmicHeader ? rithmicLine : feedLine;
     final liveColor = _rithmicHeader
         ? switch (_live.status) {
@@ -1105,7 +1168,7 @@ class CheTradingChartState extends State<CheTradingChart> {
               child: Wrap(spacing: 8, runSpacing: 2, crossAxisAlignment: WrapCrossAlignment.center, children: [
                 Semantics(
                   header: true,
-                  child: CheChromeText(_symbol.isEmpty ? accountLabel : _symbol, maxLines: 1, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w800)),
+                  child: CheChromeText(_symbol.isEmpty ? accountLabel : symbolLabel, maxLines: 1, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w800)),
                 ),
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
@@ -1120,6 +1183,7 @@ class CheTradingChartState extends State<CheTradingChart> {
                 child: _chip(t, _tf == t, () {
                   if (_tf == t) return;
                   setState(() => _tf = t);
+                  if (_account == 'market') unawaited(_prefs.setTimeframe(t));
                   unawaited(load());
                 }, semantics: 'Timeframe $t'),
               ),
@@ -1145,7 +1209,7 @@ class CheTradingChartState extends State<CheTradingChart> {
   Widget build(BuildContext context) {
     if (widget.compact) return _buildCompact();
     final stale = _feed['stale'] == true;
-    final feedColor = _feed['status'] == 'REALTIME' && !stale ? _up : _feed['status'] == 'UNAVAILABLE' ? _down : _gold;
+    final feedColor = (_feed['status'] == 'REALTIME' || _feed['status'] == 'LIVE') && !stale ? _up : (_feed['status'] == 'UNAVAILABLE' || _feed['status'] == 'DISCONNECTED') ? _down : _gold;
     return CheTradingPanel(
       color: _panel,
       borderColor: _stroke,
@@ -1191,11 +1255,18 @@ class CheTradingChartState extends State<CheTradingChart> {
             for (final s in kQuickSymbols) _chip(s, _symbol == s, () => _setSymbol(s), semantics: 'Chart $s'),
           ]),
         ],
+        if (_account == 'market') ...[
+          const SizedBox(height: 8),
+          CheTickerSelector(selected: _symbol, onSelect: showTicker, baseUrl: widget.baseUrl, headers: widget.headers, client: widget.client),
+          if (_ticker['market'] != null)
+            Text('${_ticker['market']}', key: const ValueKey('chart-market'), maxLines: 2, style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w700)),
+        ],
         const SizedBox(height: 8),
         Wrap(spacing: 6, runSpacing: 6, children: [
           for (final t in _timeframes)
             _chip(t, _tf == t, () {
               setState(() => _tf = t);
+              if (_account == 'market') unawaited(_prefs.setTimeframe(t));
               unawaited(load());
             }, semantics: 'Timeframe $t'),
         ]),
@@ -1242,7 +1313,11 @@ class CheTradingChartState extends State<CheTradingChart> {
           ),
           child: _chartArea(),
         ),
+        if (_indicators.contains('rsi') && _bars.isNotEmpty) SizedBox(key: const Key('chart_rsi'), height: 56, child: _rsiStrip()),
+        if (crosshairLine.isNotEmpty)
+          Semantics(liveRegion: false, child: Text(crosshairLine, key: const ValueKey('chart-crosshair'), style: const TextStyle(color: _draw, fontSize: 13, fontWeight: FontWeight.w700, fontFeatures: [FontFeature.tabularFigures()]))),
         _filterChips(),
+        _indicatorChips(),
         const SizedBox(height: 6),
         Wrap(crossAxisAlignment: WrapCrossAlignment.center, children: [
           _iconButton(Icons.zoom_in_rounded, 'Zoom in', _bars.isEmpty ? null : () => zoom(1.5)),
@@ -1292,6 +1367,87 @@ class CheTradingChartState extends State<CheTradingChart> {
     );
   }
 
+  // ─── Indicators and the crosshair ───────────────────────────────────
+
+  List<CheIndicatorBar> get _indicatorBars => [for (final b in _bars) CheIndicatorBar(b.t, b.o, b.h, b.l, b.c, b.v)];
+
+  /// The switched-on line indicators over the visible window, computed on every loaded bar so an EMA is warm.
+  Map<String, List<double?>> get _overlays {
+    if (_indicators.isEmpty || _bars.isEmpty) return const {};
+    return {for (final e in overlaySeries(_indicatorBars, _indicators, futures: _futures).entries) e.key: e.value.sublist(_start, _end)};
+  }
+
+  /// Session high/low and the opening range as dashed levels, beside CHE's overnight levels.
+  List<ChartLevel> get _indicatorLevels {
+    final bars = _indicatorBars;
+    return [
+      if (_indicators.contains('session'))
+        if (sessionHighLow(bars, futures: _futures) case final s?) ...[ChartLevel('session_high', s.high, 'Session high ${_fmt(s.high)}'), ChartLevel('session_low', s.low, 'Session low ${_fmt(s.low)}')],
+      if (_indicators.contains('orb'))
+        if (openingRange(bars, futures: _futures) case final r?) ...[ChartLevel('orb_high', r.high, 'Opening range high ${_fmt(r.high)}'), ChartLevel('orb_low', r.low, 'Opening range low ${_fmt(r.low)}')],
+    ];
+  }
+
+  void toggleIndicator(String id) {
+    if (!kChartIndicators.containsKey(id)) return;
+    setState(() => _indicators.contains(id) ? _indicators.remove(id) : _indicators.add(id));
+    unawaited(_prefs.setIndicators(_indicators));
+  }
+
+  Set<String> get indicators => {..._indicators};
+
+  Widget _indicatorChips() => SizedBox(
+        height: 48,
+        child: ListView(scrollDirection: Axis.horizontal, children: [
+          for (final e in kChartIndicators.entries)
+            Padding(
+              padding: const EdgeInsets.only(right: 6),
+              child: Center(
+                child: Semantics(
+                  button: true,
+                  toggled: _indicators.contains(e.key),
+                  label: '${e.value} indicator, ${_indicators.contains(e.key) ? 'on' : 'off'}',
+                  excludeSemantics: true,
+                  child: InkWell(
+                    key: Key('indicator_${e.key}'),
+                    borderRadius: BorderRadius.circular(18),
+                    onTap: () => toggleIndicator(e.key),
+                    child: Container(
+                      constraints: const BoxConstraints(minHeight: 40),
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                      decoration: BoxDecoration(
+                        color: _indicators.contains(e.key) ? (kIndicatorColors[e.value] ?? _draw).withValues(alpha: 0.18) : Colors.transparent,
+                        borderRadius: BorderRadius.circular(18),
+                        border: Border.all(color: _indicators.contains(e.key) ? (kIndicatorColors[e.value] ?? _draw) : _stroke),
+                      ),
+                      child: Text(e.value, style: TextStyle(color: _indicators.contains(e.key) ? Colors.white : _dim, fontWeight: FontWeight.w700, fontSize: 13)),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+        ]),
+      );
+
+  Widget _rsiStrip() {
+    final values = rsi([for (final b in _bars) b.c]).sublist(_start, _end);
+    final last = values.lastWhere((v) => v != null, orElse: () => null);
+    return Semantics(
+      label: last == null ? 'RSI 14 needs more bars' : 'RSI 14 is ${last.toStringAsFixed(1)}',
+      excludeSemantics: true,
+      child: RepaintBoundary(child: CustomPaint(painter: _RsiPainter(values), size: Size.infinite)),
+    );
+  }
+
+  /// The crosshair's bar: time, open, high, low, close, read out under the chart and to VoiceOver.
+  String get crosshairLine {
+    final i = _cross;
+    final w = _window;
+    if (i == null || i < 0 || i >= w.length) return '';
+    final b = w[i];
+    return '${_clock(b.t)} · O ${_fmt(b.o)} H ${_fmt(b.h)} L ${_fmt(b.l)} C ${_fmt(b.c)}';
+  }
+
   void _pickTool(_Tool t) => setState(() {
         _tool = _tool == t ? _Tool.none : t;
         _first = null;
@@ -1322,6 +1478,16 @@ class CheTradingChartState extends State<CheTradingChart> {
     );
   }
 
+  void _crossAt(Offset at, Size size) {
+    final g = _geometry(size);
+    if (g == null) return;
+    final i = (at.dx / g.barW).floor().clamp(0, _window.length - 1);
+    if (i != _cross) {
+      HapticFeedback.selectionClick();
+      setState(() => _cross = i);
+    }
+  }
+
   Widget _chartArea() {
     if (_bars.isEmpty) {
       return Center(
@@ -1346,7 +1512,16 @@ class CheTradingChartState extends State<CheTradingChart> {
         hint: 'Pinch to zoom, drag to scroll, tap a price for an order ticket, tap a marker for its receipt.',
         child: GestureDetector(
           behavior: HitTestBehavior.opaque,
-          onTapUp: (d) => unawaited(_onTap(d.localPosition, size)),
+          onTapUp: (d) {
+            if (_cross != null) {
+              setState(() => _cross = null);
+              return;
+            }
+            unawaited(_onTap(d.localPosition, size));
+          },
+          // Long press shows the crosshair on the bar under the finger; a tap clears it.
+          onLongPressStart: (d) => _crossAt(d.localPosition, size),
+          onLongPressMoveUpdate: (d) => _crossAt(d.localPosition, size),
           onScaleStart: (_) {
             _scaleStartVisible = _visible;
             _dragCarry = 0;
@@ -1372,8 +1547,10 @@ class CheTradingChartState extends State<CheTradingChart> {
               bars: _window,
               markers: _shownMarkers,
               drawings: _drawings,
-              levels: _levels.levels,
+              levels: [..._levels.levels, ..._indicatorLevels],
               pending: _first,
+              overlays: _overlays,
+              cross: _cross,
             ),
            ),
           ),
@@ -1436,7 +1613,9 @@ class _Geometry {
 bool markerOnChart(Offset p, Size size) => p.dx >= 0 && p.dx <= size.width && p.dy >= 0 && p.dy <= size.height;
 
 class _ChartPainter extends CustomPainter {
-  _ChartPainter({required this.bars, required this.markers, required this.drawings, this.levels = const [], required this.pending});
+  _ChartPainter({required this.bars, required this.markers, required this.drawings, this.levels = const [], required this.pending, this.overlays = const {}, this.cross});
+  final Map<String, List<double?>> overlays;
+  final int? cross;
   final List<ChartBar> bars;
   final List<ChartMarker> markers;
   final List<ChartDrawing> drawings;
@@ -1474,6 +1653,36 @@ class _ChartPainter extends CustomPainter {
     canvas.drawRect(Rect.fromLTWH(g.plotW, ly - 9, _Geometry.axis, 18), Paint()..color = Colors.white);
     _text(canvas, _fmt(last), Offset(g.plotW + 4, ly - 7), const TextStyle(color: Colors.black, fontSize: 11, fontWeight: FontWeight.w700));
 
+    // Indicator lines over the candles, each in its own colour and labelled at the right edge.
+    canvas.save();
+    canvas.clipRect(Rect.fromLTWH(0, 0, g.plotW, size.height));
+    for (final e in overlays.entries) {
+      final color = kIndicatorColors[e.key] ?? Colors.white70;
+      final path = Path();
+      var open = false;
+      for (var i = 0; i < e.value.length && i < bars.length; i++) {
+        final v = e.value[i];
+        if (v == null) {
+          open = false;
+          continue;
+        }
+        final pt = Offset(g.x(i), g.y(v));
+        open ? path.lineTo(pt.dx, pt.dy) : path.moveTo(pt.dx, pt.dy);
+        open = true;
+      }
+      canvas.drawPath(path, Paint()
+        ..color = color
+        ..strokeWidth = e.key.startsWith('BB') ? 1 : 1.6
+        ..style = PaintingStyle.stroke);
+    }
+    canvas.restore();
+    var labelY = 4.0;
+    for (final e in overlays.entries) {
+      if (e.key == 'BB mid' || e.value.isEmpty || e.value.last == null) continue;
+      _text(canvas, e.key, Offset(4, labelY), TextStyle(color: kIndicatorColors[e.key] ?? Colors.white70, fontSize: 10, fontWeight: FontWeight.w700));
+      labelY += 13;
+    }
+
     // The owner's drawings.
     final ink = Paint()
       ..color = _draw
@@ -1503,7 +1712,7 @@ class _ChartPainter extends CustomPainter {
     // CHE's 86-style overnight levels (approximation): dashed, labelled, only when inside the visible prices.
     for (final lv in levels) {
       if (lv.price < g.min || lv.price > g.max) continue;
-      final color = switch (lv.kind) { 'stop' => _down, 'target' => _up, 'entry' => Colors.white, _ => _level };
+      final color = switch (lv.kind) { 'stop' => _down, 'target' => _up, 'entry' => Colors.white, 'session_high' || 'session_low' => const Color(0xFF9AE6B4), 'orb_high' || 'orb_low' => const Color(0xFFF6AD55), _ => _level };
       final y = g.y(lv.price);
       final dash = Paint()
         ..color = color
@@ -1512,6 +1721,17 @@ class _ChartPainter extends CustomPainter {
         canvas.drawLine(Offset(x, y), Offset(math.min(x + 6, g.plotW), y), dash);
       }
       _text(canvas, lv.label, Offset(g.plotW - 150, y - 15), TextStyle(color: color, fontSize: 11, fontWeight: FontWeight.w700));
+    }
+    if (cross != null && cross! >= 0 && cross! < bars.length) {
+      final b = bars[cross!];
+      final cx = g.x(cross!), cy = g.y(b.c);
+      final hair = Paint()
+        ..color = Colors.white70
+        ..strokeWidth = 1;
+      canvas.drawLine(Offset(cx, 0), Offset(cx, size.height), hair);
+      canvas.drawLine(Offset(0, cy), Offset(g.plotW, cy), hair);
+      canvas.drawRect(Rect.fromLTWH(g.plotW, cy - 9, _Geometry.axis, 18), Paint()..color = _draw);
+      _text(canvas, _fmt(b.c), Offset(g.plotW + 4, cy - 7), const TextStyle(color: Colors.black, fontSize: 11, fontWeight: FontWeight.w700));
     }
     if (pending != null) {
       final px = g.xOfTime(pending!.$1);
@@ -1617,7 +1837,68 @@ class _ChartPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _ChartPainter old) =>
-      old.bars != bars || old.markers != markers || old.drawings != drawings || old.levels != levels || old.pending != pending;
+      old.bars != bars || old.markers != markers || old.drawings != drawings || old.levels != levels || old.pending != pending || old.overlays != overlays || old.cross != cross;
+}
+
+/// Indicator line colours; the label beside each line names it too, so colour is never the only signal.
+const kIndicatorColors = <String, Color>{
+  'VWAP': Color(0xFFFFD166),
+  'EMA 9': Color(0xFF7FD3FF),
+  'EMA 20': Color(0xFF63B3ED),
+  'EMA 50': Color(0xFFB794F6),
+  'EMA 200': Color(0xFFF687B3),
+  'Bollinger': Color(0xFFA0AEC0),
+  'BB upper': Color(0xFFA0AEC0),
+  'BB mid': Color(0xFF718096),
+  'BB lower': Color(0xFFA0AEC0),
+  'RSI 14': Color(0xFF68D391),
+  'Session high/low': Color(0xFF9AE6B4),
+  'Opening range': Color(0xFFF6AD55),
+};
+
+/// RSI 14 under the chart, with the 30 and 70 guides.
+class _RsiPainter extends CustomPainter {
+  _RsiPainter(this.values);
+  final List<double?> values;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final w = size.width - _Geometry.axis;
+    double y(double v) => size.height - v / 100 * size.height;
+    final guide = Paint()
+      ..color = _stroke
+      ..strokeWidth = 1;
+    for (final v in const [30.0, 70.0]) {
+      canvas.drawLine(Offset(0, y(v)), Offset(w, y(v)), guide);
+    }
+    if (values.isEmpty) return;
+    final step = w / values.length;
+    final path = Path();
+    var open = false;
+    for (var i = 0; i < values.length; i++) {
+      final v = values[i];
+      if (v == null) {
+        open = false;
+        continue;
+      }
+      final pt = Offset((i + 0.5) * step, y(v));
+      open ? path.lineTo(pt.dx, pt.dy) : path.moveTo(pt.dx, pt.dy);
+      open = true;
+    }
+    canvas.drawPath(path, Paint()
+      ..color = kIndicatorColors['RSI 14']!
+      ..strokeWidth = 1.4
+      ..style = PaintingStyle.stroke);
+    final last = values.lastWhere((v) => v != null, orElse: () => null);
+    final tp = TextPainter(
+      text: TextSpan(text: last == null ? 'RSI —' : 'RSI ${last.toStringAsFixed(1)}', style: TextStyle(color: kIndicatorColors['RSI 14'], fontSize: 11, fontWeight: FontWeight.w700)),
+      textDirection: TextDirection.ltr,
+    )..layout();
+    tp.paint(canvas, Offset(w + 4, size.height / 2 - tp.height / 2));
+  }
+
+  @override
+  bool shouldRepaint(covariant _RsiPainter old) => old.values != values;
 }
 
 /// One glyph per source so they never look alike: CHE forward a triangle, CHE simulation a hollow

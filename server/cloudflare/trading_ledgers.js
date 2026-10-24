@@ -21,7 +21,7 @@ export const LEDGER_SOURCE = 'che_trading_ledgers';
 export const LEDGERS = Object.freeze([
   {
     id: 'strategy_simulation', label: 'strategy simulation',
-    what: 'paper strategies on 1-minute bars (BTCUSDT, ETHUSDT, MNQ), stepped every minute',
+    what: 'paper strategies on 1-minute bars (BTC-USD and ETH-USD on Coinbase Exchange, MNQ delayed), stepped every minute',
     storage_keys: [SIM_STATE_KEY, 'strategy_sim_trades:<chunk number>'], module: 'strategy_sim.js',
     rule: `a strategy is profitable only with ${MIN_SAMPLE} out-of-sample trades, positive expectancy after costs and a 95% Wilson lower bound above break-even; ${TRADE_CHUNK} is the size of one storage chunk and ${TRADE_CAP} the cap on stored trades, neither is a sample rule`,
   },
@@ -169,6 +169,21 @@ function equityCurve(trades, { at, value, unit }) {
   return { unit, points: thinned, trades: points.length };
 }
 
+/** Separate statistics per instrument: trades, wins, net R, gross R and the cost paid in R, each symbol on its own. */
+export function bySymbol(trades) {
+  const map = new Map();
+  for (const t of trades) {
+    if (!Number.isFinite(t.r)) continue;
+    const row = map.get(t.symbol) || { symbol: t.symbol, trades: 0, wins: 0, losses: 0, net_r: 0, gross_r: 0, cost_r: 0, first: t.exit_t, last: t.exit_t };
+    row.trades += 1; row[t.r > 0 ? 'wins' : 'losses'] += 1; row.net_r += t.r;
+    if (Number.isFinite(t.r_gross)) { row.gross_r += t.r_gross; row.cost_r += t.r_gross - t.r; }
+    if (String(t.exit_t) < String(row.first)) row.first = t.exit_t;
+    if (String(t.exit_t) > String(row.last)) row.last = t.exit_t;
+    map.set(t.symbol, row);
+  }
+  return [...map.values()].map((r) => ({ ...r, net_r: r3(r.net_r), gross_r: r3(r.gross_r), cost_r: r3(r.cost_r), expectancy_r: r.trades ? r3(r.net_r / r.trades) : null, win_rate: r.trades ? pctOf(r.wins / r.trades) : null })).sort((a, b) => b.trades - a.trades);
+}
+
 async function safely(id, read) {
   const base = LEDGERS.find((l) => l.id === id);
   try {
@@ -211,6 +226,11 @@ export async function readLedgers(storage, { now = Date.now() } = {}) {
       by_strategy: board.map((row) => ({ strategy: row.id, name: row.name, family: row.family, trades: row.trades, wins: row.wins, losses: row.losses, win_rate: row.trades ? pctOf(row.win_rate) : null, expectancy_r: row.trades ? r3(row.expectancy_r) : null, out_of_sample: row.sample_size, out_of_sample_expectancy_r: row.sample_size ? r3(row.out_of_sample.expectancy_r) : null, label: row.label })),
       feeds: Object.entries(MINUTE_FEEDS).map(([symbol, feed]) => { const sym = state.symbols[symbol] || {}; return { symbol, source: feed.feed, status: sym.feed?.status || 'waiting for the first tick', last_bar: sym.feed?.last_bar_t || null, bars: sym.bars || 0, error: sym.error || null }; }),
       equity: equityCurve(trades, { at: (t) => t.exit_t, value: (t) => t.r, unit: 'R' }),
+      // What the curve is (owner, 2026-10-24: "verify the −226.98 R"): the sum of net R over every closed
+      // simulation trade, all ten strategies and every instrument together, after the assumed costs. It is
+      // research bookkeeping, not an account, and most strategies in it are not proven.
+      equity_basis: 'sum of net R (after assumed fees and slippage) over every closed simulation trade, all strategies and instruments together; not one account and not a recommendation',
+      by_instrument: bySymbol(trades),
     };
   });
   const journal = await safely('forward_paper_journal', async () => {

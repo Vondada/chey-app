@@ -451,3 +451,52 @@ test('CHE paper account by voice: opens the phone account; a balance change is o
     assert.equal(paperAccountIntent(other), null, other);
   }
 });
+
+test('market chart: any universe ticker on public data, honest feed label, research only', async () => {
+  const end = Date.parse('2026-10-20T15:00:00Z');
+  const fetcher = async (url) => {
+    const u = String(url);
+    if (u.endsWith('/products')) return new Response(JSON.stringify([{ id: 'ETH-USD', base_currency: 'ETH', quote_currency: 'USD', status: 'online' }]), { status: 200 });
+    if (u.includes('AssetPairs')) return new Response(JSON.stringify({ error: [], result: {} }), { status: 200 });
+    if (u.includes('/products/ETH-USD/candles?granularity=300')) return new Response(JSON.stringify(Array.from({ length: 20 }, (_, i) => [end / 1000 - (i + 1) * 300, 2990, 3010, 3000, 3005, 4])), { status: 200 });
+    throw new TypeError(`unexpected ${u}`);
+  };
+  const v = await chartView(memStorage(), {}, { account: 'market', symbol: 'COINBASE:ETH-USD', tf: '5m', now: Date.parse('2026-10-20T15:00:20Z'), fetcher });
+  assert.equal(v.ok, true);
+  assert.equal(v.ticker.id, 'coinbase:ETH-USD');
+  assert.equal(v.feed.status, 'LIVE');
+  assert.equal(v.feed.stale, false);
+  assert.equal(v.bars.length, 20);
+  assert.equal(v.spoken, 'Coinbase Exchange ETH-USD, 5m candles, live.');
+  assert.equal(v.entries_allowed, false);
+  assert.match(v.entries_blocked_reason, /places no orders/);
+  assert.ok(v.timeframes.includes('4h') && !v.timeframes.includes('15s'));
+
+  const offline = await chartView(memStorage(), {}, { account: 'market', symbol: 'DOGE', tf: '5m', now: NOW, fetcher: async () => { throw new TypeError('fetch failed'); } });
+  assert.equal(offline.ticker.id, 'futures:MNQ', 'an unknown ticker (nothing discovered) falls back to the MNQ default');
+  assert.equal(offline.feed.status, 'UNAVAILABLE');
+  assert.equal(offline.feed.stale, true);
+  assert.ok(offline.universe_problems.length >= 2);
+});
+
+test('GET /api/markets/universe and the market chart through the real Worker; guests refused; never LIVE offline', sqlite, async () => {
+  const che = await owner();
+  await che.say('Hello CHE.');
+  const u = await che.api('/api/markets/universe');
+  assert.equal(u.ok, true);
+  assert.equal(u.counts.futures, 25);
+  assert.deepEqual(u.results.slice(0, 4).map((i) => i.id), ['futures:MNQ', 'futures:NQ', 'futures:ES', 'futures:MES']);
+  assert.ok(u.problems.some((p) => /Coinbase/.test(p)), 'offline discovery is reported');
+  assert.ok(u.intervals.includes('15s'));
+  const gold = await che.api('/api/markets/universe?q=gold');
+  assert.equal(gold.results[0].id, 'futures:GC');
+  const chart = await che.api('/api/trading/chart?account=market&symbol=futures:ES&tf=15m');
+  assert.equal(chart.ticker.id, 'futures:ES');
+  assert.notEqual(chart.feed.status, 'LIVE');
+  assert.equal(chart.entries_allowed, false);
+  assert.equal((await che.api('/api/markets/universe')).last_ticker, 'futures:ES', 'the last ticker is remembered');
+  const put = await che.raw('/api/trading/chart/drawings', 'PUT', { account: 'market', symbol: 'futures:ES', drawings: [{ kind: 'hline', points: [{ price: 5000 }] }] });
+  assert.equal(put.status, 200);
+  assert.equal((await che.api('/api/trading/chart?account=market&symbol=futures:ES&tf=15m')).drawings.length, 1);
+  assert.notEqual((await che.raw('/api/markets/universe', 'GET', null, '')).status, 200);
+});
