@@ -311,9 +311,17 @@ class CheCreativeStudioState extends State<CheCreativeStudio> {
       if (n < 1 || n > c.length) return 'There is no choice $n. $spokenSummary';
       return _runChoice(n - 1);
     }
+    if (RegExp(r"^(?:what(?:'s| is) (?:the )?)?creation engine status$|^(?:is|how is) (?:the )?creation engine(?: doing| working| running| ready)?$").hasMatch(t)) {
+      if (engine.status == 'unknown') return 'I have not loaded the Creation Engine yet. Say open the creation engine for its settings.';
+      return '${engine.label}. ${engine.detail}';
+    }
     if (RegExp(r'^(?:open |go to )?(?:the )?creation engine(?: settings)?$|^connect(?: the)?(?: creation)? engine$').hasMatch(t)) {
       a.onConnectEngine?.call(engine);
-      return engine.online ? 'The Creation Engine is online on ${engine.gpu ?? 'your GPU'}.' : 'Connecting the Creation Engine. ${engine.detail}';
+      return engine.online
+          ? 'The Creation Engine is online on ${engine.gpu ?? 'your GPU'}.'
+          : engine.automatic
+          ? 'The Creation Engine is ready: ${engine.detail} Opening your Colab notebook too, for the faster GPU.'
+          : 'Connecting the Creation Engine. ${engine.detail}';
     }
     final main = <RegExp, int>{
       RegExp(r'^(?:create|make|new)(?: a)? (?:person|character|human|avatar)$'): 0,
@@ -1379,7 +1387,7 @@ class _EngineRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final on = engine.online;
+    final on = engine.ready;
     return Semantics(
       container: true,
       label: '${engine.label}. ${engine.detail}',

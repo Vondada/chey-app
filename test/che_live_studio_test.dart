@@ -79,7 +79,13 @@ Map<String, dynamic> _project({Map<String, dynamic>? job, int version = 1, int c
               {'at': '2026-10-24T18:02:10Z', 'label': 'Geometry ready', 'state': 'rendering'},
               {'at': '2026-10-24T18:03:00Z', 'label': 'Preview front arrived', 'state': 'rendering'},
             ],
-      'engine': {'status': engine, 'online': engine == 'online', 'paired': engine != 'not_paired', 'gpu': engine == 'online' ? 'Tesla T4' : null},
+      'engine': {
+        'status': engine,
+        'online': engine == 'online',
+        'paired': engine != 'not_paired',
+        'gpu': engine == 'online' ? 'Tesla T4' : null,
+        if (engine == 'cloud') ...{'automatic': true, 'workers_online': 0, 'max_concurrent': 3},
+      },
     };
 
 class _Worker {
@@ -196,6 +202,38 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('live-read')));
     expect(read.single, contains('CHE (new person), version 1 of 1. Creation Engine Offline.'));
     expect(read.single, contains('No model has been generated for this version yet.'));
+  });
+
+  testWidgets('with free cloud workers the engine is Ready and asks nothing; the job shows its owner-facing state', (tester) async {
+    await _phone(tester);
+    final read = <String>[];
+    final job = {
+      ..._job(model: false, state: 'queued'),
+      'display_state': 'Starting a cloud worker',
+      'status_line': 'CHE started a free cloud worker 20 seconds ago; it builds on the CPU.',
+    };
+    await tester.pumpWidget(studio(_Worker(_project(job: job, engine: 'cloud')), read: read));
+    await tester.pumpAndSettle();
+    expect(read, isEmpty, reason: 'nothing spoken on open');
+    expect(find.text('Creation Engine Ready'), findsOneWidget);
+    expect(find.textContaining('CHE starts free cloud workers herself'), findsOneWidget);
+    expect(find.textContaining('Up to 3 jobs at once'), findsOneWidget);
+    expect(find.byKey(const ValueKey('live-connect')), findsNothing, reason: 'nothing for the owner to start');
+    expect(find.text('Starting a cloud worker'), findsOneWidget);
+    expect(find.text('CHE started a free cloud worker 20 seconds ago; it builds on the CPU.'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('live-read')));
+    expect(read.single, contains('Creation Engine Ready.'));
+    expect(read.single, contains('Creation Engine job: Starting a cloud worker. CHE started a free cloud worker'));
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  test('job states read as Creating, Waiting for Resources, Paused, Completed', () {
+    expect(cheJobDisplayState({'state': 'rendering'}), 'Creating');
+    expect(cheJobDisplayState({'state': 'queued'}), 'Waiting for Resources');
+    expect(cheJobDisplayState({'state': 'paused'}), 'Paused');
+    expect(cheJobDisplayState({'state': 'completed'}), 'Completed');
+    expect(cheJobDisplayState({'state': 'queued', 'display_state': 'Starting a cloud worker'}), 'Starting a cloud worker');
+    expect(cheJobDisplayState(null), '');
   });
 
   testWidgets('a delivered GLB replaces the bundled model; stages, timestamps and the preview picture are the job\'s own', (tester) async {

@@ -64,7 +64,13 @@ Map<String, dynamic> _creationsView({String engine = 'offline'}) => {
           'job': {'id': 'gpu_1', 'state': 'queued', 'pct': 0, 'message': 'Waiting for your Colab GPU session.'}},
         {'id': 'cr_2', 'kind': 'person', 'title': 'Vale (new person)', 'version': 1, 'versions': 1, 'job': null},
       ],
-      'engine': {'status': engine, 'online': engine == 'online', 'paired': engine != 'not_paired', 'gpu': engine == 'online' ? 'Tesla T4' : null},
+      'engine': {
+        'status': engine,
+        'online': engine == 'online',
+        'paired': engine != 'not_paired',
+        'gpu': engine == 'online' ? 'Tesla T4' : null,
+        if (engine == 'cloud') ...{'automatic': true, 'workers_online': 1, 'max_concurrent': 3},
+      },
       'capabilities': [
         {'id': 'person', 'status': 'available', 'detail': 'Build a real 3D head.'},
         {'id': 'object', 'status': 'unavailable', 'detail': 'Not built yet: CHE has no object modelling pipeline in Blender yet.'},
@@ -81,11 +87,12 @@ http.Client _gpuClient() => MockClient((r) async {
       return http.Response('{}', 404);
     });
 
-Widget _studio(_Calls calls, {List<CheStudioActivity> activity = const [], List<String>? read, bool creations = true, String engine = 'offline'}) => MaterialApp(
+Widget _studio(_Calls calls, {List<CheStudioActivity> activity = const [], List<String>? read, bool creations = true, String engine = 'offline', Key? key}) => MaterialApp(
       debugShowCheckedModeBanner: false,
       theme: ThemeData(brightness: Brightness.dark, fontFamily: 'Roboto'),
       home: Scaffold(
         body: CheCreativeStudio(
+          key: key,
           actions: calls.actions(),
           projects: _projects,
           vaultCount: 3,
@@ -281,6 +288,19 @@ void main() {
     expect(find.text('Creation Engine Online'), findsOneWidget);
     expect(find.text('Running on Tesla T4.'), findsOneWidget);
     expect(find.byKey(const ValueKey('studio-connect')), findsNothing);
+  });
+
+  testWidgets('free cloud workers: the engine is Ready with no Connect, and "creation engine status" says so', (tester) async {
+    await _phone(tester);
+    final key = GlobalKey<CheCreativeStudioState>();
+    await tester.pumpWidget(_studio(_Calls(), engine: 'cloud', key: key));
+    await tester.pumpAndSettle();
+    expect(find.text('Creation Engine Ready'), findsOneWidget);
+    expect(find.byKey(const ValueKey('studio-connect')), findsNothing);
+    final said = await key.currentState!.voice('creation engine status');
+    expect(said, startsWith('Creation Engine Ready. CHE starts free cloud workers herself.'));
+    expect(said, contains('Up to 3 jobs at once.'));
+    expect(await key.currentState!.voice('is the creation engine running'), said);
   });
 
   testWidgets('projects: newest first, four shown, See all lists every one and opens the editor', (tester) async {

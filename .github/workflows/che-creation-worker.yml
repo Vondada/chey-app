@@ -1,0 +1,72 @@
+name: CHE Creation Worker
+run-name: CHE creation worker (${{ inputs.reason || 'manual' }})
+# A CPU worker for CHE's Creation Engine queue (server/cloudflare/gpu_queue.js). CHE's Worker dispatches this workflow
+# itself when Create Person (or another creation job) is waiting and no worker is free (creation_orchestrator.js), so
+# the owner never opens anything. It claims jobs until the queue is empty, then exits.
+#
+# Cost: standard GitHub-hosted runners are free for this public repository; CHE re-checks that the repository is public
+# before every automatic dispatch and never dispatches otherwise.
+# Auth: no secret. The worker sends a short-lived GitHub OIDC ID token (audience che-creation-engine); CHE verifies it
+# against GitHub's keys and accepts only this workflow file on main.
+# Privacy: this repository's Actions logs are public, so the worker prints job ids and stage lines only. Models and
+# pictures go straight to CHE over the authenticated routes; nothing is uploaded as an Actions artifact.
+on:
+  workflow_dispatch:
+    inputs:
+      reason:
+        description: Non-secret reason (for example "queued job")
+        required: false
+        type: string
+        default: manual
+permissions:
+  contents: read
+  id-token: write
+env:
+  BLENDER_VERSION: '5.0.1'
+  MPFB_COMMIT: b1a2dc98776da9d1eea751b159d42cf61778fe2e
+  CHE_URL: ${{ vars.CHE_URL || 'https://chey-app.henryjavoni.workers.dev' }}
+jobs:
+  work:
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            scripts
+            tools/avatar_face
+            tools/avatar_body
+            tools/avatar_portraits
+      - uses: actions/checkout@v4
+        with:
+          ref: che-gpu-assets
+          path: che-assets
+      - name: Cache Blender and MPFB2
+        id: cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/blender
+            ~/mpfb2
+          key: che-blender-${{ env.BLENDER_VERSION }}-mpfb-${{ env.MPFB_COMMIT }}
+      - name: Blender (checked against blender.org's SHA-256) and MPFB2 (CC0, pinned)
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          name="blender-${BLENDER_VERSION}-linux-x64"; base="https://download.blender.org/release/Blender${BLENDER_VERSION%.*}"
+          curl -fsSL --retry 3 "$base/$name.tar.xz" -o /tmp/blender.tar.xz
+          want=$(curl -fsSL --retry 3 "$base/blender-${BLENDER_VERSION}.sha256" | awk -v f="$name.tar.xz" '$2==f{print $1}')
+          echo "$want  /tmp/blender.tar.xz" | sha256sum -c -
+          mkdir -p ~/blender && tar -xf /tmp/blender.tar.xz -C ~/blender --strip-components=1
+          git clone -q --filter=blob:none https://github.com/makehumancommunity/mpfb2 ~/mpfb2
+          git -C ~/mpfb2 checkout -q "$MPFB_COMMIT"
+      - name: System libraries for headless Blender
+        run: sudo apt-get -qq install -y libxi6 libxkbcommon0 libsm6 libxrender1 libgl1 libegl1 libxxf86vm1 libxfixes3 > /dev/null
+      - name: Work CHE's creation queue on the CPU
+        run: |
+          set -euo pipefail
+          export MPFB="$HOME/mpfb2/src/mpfb/data"
+          mkdir -p "$RUNNER_TEMP/che/jobs"
+          python3 scripts/che_gpu_worker.py --auth oidc --worker-class github_cpu --che-url "$CHE_URL" \
+            --blender "$HOME/blender/blender" --project che-assets/project --out "$RUNNER_TEMP/che/jobs" \
+            --poll 15 --idle-minutes 3
