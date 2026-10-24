@@ -326,4 +326,50 @@ void main() {
     ));
     await shoot('09_working_now_with_a_job');
   });
+
+  test('spoken numbers are read as choices', () {
+    expect(cheSpokenChoice('four'), 4);
+    expect(cheSpokenChoice('Option four.'), 4);
+    expect(cheSpokenChoice('number 6'), 6);
+    expect(cheSpokenChoice('choose the second'), 2);
+    expect(cheSpokenChoice('what is four plus four'), isNull);
+  });
+
+  testWidgets('the numbered choices Read aloud announces work by voice, on the studio and in Create New', (tester) async {
+    tester.view.physicalSize = const Size(1170, 2532);
+    tester.view.devicePixelRatio = 3;
+    addTearDown(tester.view.reset);
+    final calls = _Calls();
+    await tester.pumpWidget(_studio(calls));
+    await tester.pumpAndSettle();
+    final voice = CheCreativeStudio.voiceHandler!;
+    expect(await voice('tell me a joke'), isNull, reason: 'anything else goes to Chat');
+    expect(await voice('read'), contains('1 Create New, 2 Film Studio'));
+    expect(await voice('five'), contains('GPU jobs and Pair Colab are in this studio'));
+    expect(await voice('character generator'), 'Opening the Character Generator.');
+    expect(calls.list.last, 'character generator');
+    final menu = await voice('option one');
+    await tester.pumpAndSettle();
+    expect(menu, startsWith('Create new. Say or choose: 1 Video, 2 Film'));
+    expect(find.text('Choose what to make.'), findsOneWidget);
+    expect(await voice('read'), startsWith('Create new.'), reason: 'numbers now refer to the open sheet');
+    expect(await voice('three'), 'Opening Song or beat.');
+    await tester.pumpAndSettle();
+    expect(calls.list.last, 'new song');
+    expect(find.text('Choose what to make.'), findsNothing, reason: 'the sheet closed');
+    expect(await voice('nine'), startsWith('There is no choice 9.'));
+  });
+
+  testWidgets('the studio leaves spoken numbers alone when it is not the open tab, and stops listening when gone', (tester) async {
+    final calls = _Calls();
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: CheCreativeStudio(actions: calls.actions(), projects: const [], vaultCount: 0, active: false),
+      ),
+    ));
+    await tester.pumpAndSettle();
+    expect(await CheCreativeStudio.voiceHandler!('four'), isNull);
+    await tester.pumpWidget(const MaterialApp(home: SizedBox()));
+    expect(CheCreativeStudio.voiceHandler, isNull);
+  });
 }

@@ -712,6 +712,17 @@ extension _CheHomeSend on _CHEHomeState {
       }
     }
 
+    // The Creative Studio, while it is on screen, takes its numbered choices and named actions by voice or typing.
+    final studioVoice = CheCreativeStudio.voiceHandler;
+    if (studioVoice != null && _pendingAttachment == null && CheCharacterGenerator.voiceHandler == null) {
+      final reply = await studioVoice(message);
+      if (reply != null) {
+        if (mounted) _set(() => controller.clear());
+        if (reply.isNotEmpty) await speakText(reply, record: false);
+        return;
+      }
+    }
+
     // The Character Generator, while it is open, takes every one of its actions and settings by voice or typing.
     final generatorVoice = CheCharacterGenerator.voiceHandler;
     if (generatorVoice != null && _pendingAttachment == null) {

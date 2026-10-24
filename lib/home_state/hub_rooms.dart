@@ -501,6 +501,7 @@ extension _CheHomeHubRooms on _CHEHomeState {
         return CheCreativeStudio(
           key: _creativeStudioKey,
           initialSection: section,
+          active: active,
           projects: projects,
           vaultCount: vaultItems.length,
           imageConnected: integrations['image_generation'] == true,
