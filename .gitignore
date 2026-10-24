@@ -40,3 +40,4 @@ server/cloudflare/node_modules/
 .*.test.generated.mjs
 test/failures/
 .chat_retrieval.generated.mjs
+__pycache__/
