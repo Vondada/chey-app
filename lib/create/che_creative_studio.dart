@@ -85,6 +85,7 @@ class CheStudioActions {
     this.onCreateAnimation,
     this.onOpenCreation,
     this.onConnectEngine,
+    this.onContinueCreating,
   });
 
   final VoidCallback onOpenFilmStudio;
@@ -113,8 +114,12 @@ class CheStudioActions {
   final VoidCallback? onCreateAnimation;
   final void Function(String id)? onOpenCreation;
 
-  /// Connect: opens the Colab notebook when the engine is paired, else Settings, Creation Engine.
+  /// Connect: never a website. The Cloud Computer starts its own workers; when none can run, this opens Settings,
+  /// Connections, Cloud Computer (the only place with Colab setup).
   final void Function(CheCreationEngine engine)? onConnectEngine;
+
+  /// "Continue creating": reopens the newest creation in its live 3D view and returns what CHE says.
+  final Future<String> Function()? onContinueCreating;
 }
 
 /// Section keys, so voice routes and tests can scroll straight to a studio.
@@ -344,7 +349,7 @@ class CheCreativeStudioState extends State<CheCreativeStudio> {
     final setting = cheEngineSettingFromWords(t);
     if (setting != null) {
       final save = widget.saveEngineSettings;
-      if (save == null) return 'I cannot change the Creation Engine settings from here. Say open the creation engine.';
+      if (save == null) return 'I cannot change the Cloud Computer settings from here. Say open the cloud computer.';
       final said = await save(setting);
       unawaited(loadCreations());
       return said;
@@ -353,18 +358,28 @@ class CheCreativeStudioState extends State<CheCreativeStudio> {
       r"^(?:what(?:'s| is) (?:the )?)?creation engine status$|^(?:is|how is) (?:the )?creation engine(?: doing| working| running| ready)?$",
     ).hasMatch(t)) {
       if (engine.status == 'unknown') {
-        return 'I have not loaded the Creation Engine yet. Say open the creation engine for its settings.';
+        return 'I have not loaded the Cloud Computer yet. Say open the cloud computer for its settings.';
       }
       return '${engine.label}. ${engine.detail}';
     }
-    if (RegExp(r'^(?:open |go to )?(?:the )?creation engine(?: settings)?$|^connect(?: the)?(?: creation)? engine$')
-        .hasMatch(t)) {
+    // "Connect": the Cloud Computer starts its workers itself, so this never opens a website (owner, 2026-10-24).
+    if (RegExp(
+      r'^(?:open |go to )?(?:the )?(?:creation engine|cloud computer)(?: settings)?$|^connect(?: (?:the|my))?(?: (?:creation engine|cloud computer|gpu|engine))?$',
+    ).hasMatch(t)) {
       a.onConnectEngine?.call(engine);
       return engine.online
-          ? 'The Creation Engine is online on ${engine.gpu ?? 'your GPU'}.'
+          ? 'Connected. Your Creation Engine is online on ${engine.gpu ?? 'your GPU'}.'
           : engine.automatic
-          ? 'The Creation Engine is ready: ${engine.detail} Opening your Colab notebook too, for the faster GPU.'
-          : 'Connecting the Creation Engine. ${engine.detail}';
+          ? 'Connected. Your Cloud Computer is ready: ${engine.detail}'
+          : '${engine.label}. ${engine.detail} Opening Settings, Connections, Cloud Computer.';
+    }
+    // "Continue creating": back into the newest creation, in its live 3D view; the job kept running on the Worker.
+    if (RegExp(r'^(?:continue|resume|keep) (?:creating|building|my creation|the creation|my person|making it)$|^continue where (?:i|we) left off$|^back to (?:my )?creation$')
+        .hasMatch(t)) {
+      final go = a.onContinueCreating;
+      if (go == null) return 'Continue creating is not connected in this build.';
+      if (sheet != null && _sheetContext != null) Navigator.of(_sheetContext!).pop();
+      return go();
     }
     final main = <RegExp, int>{
       RegExp(r'^(?:create|make|new)(?: a)? (?:person|character|human|avatar)$'): 0,
@@ -451,7 +466,7 @@ class CheCreativeStudioState extends State<CheCreativeStudio> {
         return 'Code Studio. Say: new app, coding jobs, or commands.';
       default:
         scrollTo(CheStudioSection.art);
-        return 'Art and Character Studio. Say: character generator, art studio, or new image. GPU jobs and Pair Colab are in Settings, Creation Engine.';
+        return 'Art and Character Studio. Say: character generator, art studio, or new image. GPU jobs and Pair Colab are in Settings, Connections, Cloud Computer.';
     }
   }
 
@@ -1559,13 +1574,13 @@ class _EngineRow extends StatelessWidget {
               Semantics(
                 container: true,
                 button: true,
-                label: engine.paired ? 'Connect: open the Colab notebook' : 'Connect: open Settings, Creation Engine',
+                label: 'Cloud Computer: open Settings, Connections, Cloud Computer',
                 excludeSemantics: true,
                 child: TextButton(
                   key: const ValueKey('studio-connect'),
                   style: TextButton.styleFrom(foregroundColor: CheStudioColors.teal, minimumSize: const Size(64, 44)),
                   onPressed: onConnect,
-                  child: const Text('Connect', style: TextStyle(fontWeight: FontWeight.w800)),
+                  child: const Text('Cloud Computer', style: TextStyle(fontWeight: FontWeight.w800)),
                 ),
               ),
           ],

@@ -15,7 +15,6 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
-import 'package:url_launcher/url_launcher.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
 import '../rooms/che_crew_states.dart' show cheCrewModelIds;
@@ -81,9 +80,9 @@ class CheCreationEngine {
       : automatic
       ? 'Creation Engine Ready'
       : switch (status) {
-          'not_paired' => 'Creation Engine not connected',
-          'unknown' => 'Checking the Creation Engine',
-          _ => 'Creation Engine Offline',
+          'not_paired' => 'Cloud Computer not set up',
+          'unknown' => 'Checking the Cloud Computer',
+          _ => 'Waiting for a worker',
         };
 
   String get detail {
@@ -92,8 +91,8 @@ class CheCreationEngine {
     if (automatic) return 'CHE starts free cloud workers herself. They use the CPU, which is slower than your Colab GPU.$jobs';
     if (status == 'unknown') return '';
     final why = waitingReason.isEmpty ? '' : '$waitingReason ';
-    if (status == 'not_paired') return '${why}Connect it once in Settings, Creation Engine.';
-    return '${why}Your Colab GPU runs only while its notebook is open. Connect opens the notebook; Google does not let CHE start it.';
+    if (status == 'not_paired') return '${why}No worker can run yet. Setup is in Settings, Connections, Cloud Computer.';
+    return '${why}No worker is online; saved stages are kept and jobs resume when one is free.';
   }
 }
 
@@ -760,23 +759,18 @@ class CheLiveStudioState extends State<CheLiveStudio> with WidgetsBindingObserve
     return msg;
   }
 
+  /// "Connect": CHE's Cloud Computer picks and starts workers by itself, so this never opens a website. It re-reads the
+  /// engine and reports the truth; only when no worker can run does it open Settings, Connections, Cloud Computer.
   Future<void> connectEngine() async {
     HapticFeedback.selectionClick();
-    if (!engine.paired) {
-      widget.onOpenEngineSettings?.call();
-      _say(true, 'Opened Settings, Creation Engine. Pair Colab there once.');
+    await refresh();
+    if (!mounted) return;
+    if (engine.ready) {
+      _say(true, engine.online ? 'Connected. ${engine.label}. ${engine.detail}' : 'Connected. Your Cloud Computer is ready. ${engine.detail}');
       return;
     }
-    final ok = await launchUrl(
-      Uri.parse(engine.notebookUrl),
-      mode: LaunchMode.externalApplication,
-    ).catchError((_) => false);
-    _say(
-      ok,
-      ok
-          ? 'Opened your Colab notebook. Choose Runtime, Run all. CHE shows Online when the GPU checks in.'
-          : 'Could not open the Colab notebook.',
-    );
+    widget.onOpenEngineSettings?.call();
+    _say(false, '${engine.label}. ${engine.detail} Opened Settings, Connections, Cloud Computer.');
   }
 
   List<Map<String, dynamic>> get stages => [
@@ -1324,17 +1318,17 @@ class _EngineBar extends StatelessWidget {
                 ),
               ),
             ),
-            if (!on && engine.status != 'unknown')
+            if (!engine.ready && engine.status != 'unknown')
               Semantics(
                 container: true,
                 button: true,
-                label: engine.paired ? 'Connect: open the Colab notebook' : 'Connect: open Settings, Creation Engine',
+                label: 'Cloud Computer: open Settings, Connections, Cloud Computer',
                 excludeSemantics: true,
                 child: TextButton(
                   key: const ValueKey('live-connect'),
                   style: TextButton.styleFrom(foregroundColor: CheStudioColors.teal, minimumSize: const Size(64, 44)),
                   onPressed: onConnect,
-                  child: const Text('Connect', style: TextStyle(fontWeight: FontWeight.w800)),
+                  child: const Text('Cloud Computer', style: TextStyle(fontWeight: FontWeight.w800)),
                 ),
               ),
           ],

@@ -1,4 +1,4 @@
-// Settings → Creation Engine (owner, 2026-10-24): the technical side of the Creation Room, moved out of it. The
+// Settings → Connections → Cloud Computer (owner, 2026-10-24; was Settings → Creation Engine): the technical side of the Creation Room, moved out of it. The
 // Creation Engine is CHE's job queue plus the workers that take its jobs: free GitHub cloud CPU workers CHE starts by
 // herself (che-creation-worker.yml), and the owner's own Google Colab T4 GPU while its notebook is open (faster; Google
 // does not let CHE start it). This page holds the status (connected workers, capacity, providers, the $0 limit and the
@@ -36,8 +36,10 @@ class CheCreationEnginePage extends StatelessWidget {
 
   static const _steps =
       'To add your Colab GPU: 1, open the notebook. 2, in Colab choose Runtime, Change runtime type, T4 GPU. '
-      '3, the first time only, use Pair Colab below and save the token in Colab Secrets as CHE_GPU_TOKEN. '
-      '4, choose Runtime, Run all. Google does not let CHE start Colab, so this step is yours each session. '
+      '3, the first time only, use Pair Colab below and save the token in Colab Secrets as CHE_GPU_TOKEN. CHE keeps '
+      'the pairing; you never pair again unless you choose Pair Colab again. '
+      '4, choose Runtime, Run all. Google allows free Colab GPUs only from an open notebook, so CHE cannot start it '
+      'for you; when it stops, jobs show Waiting for GPU or move to the free cloud CPU, and resume from saved stages. '
       'It stops by itself after 45 idle minutes, and it costs nothing.';
 
   @override
@@ -47,11 +49,11 @@ class CheCreationEnginePage extends StatelessWidget {
       appBar: AppBar(
         backgroundColor: CheStudioColors.bg,
         foregroundColor: CheStudioColors.text,
-        title: Semantics(header: true, child: const Text('Creation Engine')),
+        title: Semantics(header: true, child: const Text('Cloud Computer')),
         actions: [
           IconButton(
-            tooltip: 'Read the Creation Engine steps aloud',
-            onPressed: onRead == null ? null : () => onRead!('Creation Engine. $_intro $_steps'),
+            tooltip: 'Read the Cloud Computer steps aloud',
+            onPressed: onRead == null ? null : () => onRead!('Cloud Computer. $_intro $_steps'),
             icon: const Icon(Icons.volume_up_rounded),
           ),
         ],

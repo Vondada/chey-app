@@ -2292,6 +2292,7 @@ OWNER AGENCY
         headers: () => _authHeaders,
         autoConnect: autoConnect,
         onSpeak: (line) => unawaited(speakText(line, record: false, readOnDemand: true)),
+        onCloudComputer: _openCreationEngine,
         onVoiceSettings: _openVoiceSelector,
         onKeys: () {
           Navigator.of(context).pop();
@@ -2355,8 +2356,8 @@ OWNER AGENCY
         ),
         CheMoreItem(
           icon: Icons.view_in_ar_rounded,
-          title: 'Creation Engine',
-          subtitle: 'Your Colab GPU for 3D models · Pair Colab · GPU jobs',
+          title: 'Cloud Computer',
+          subtitle: 'Workers for 3D creation · free cloud CPU · your Colab GPU · Pair Colab · GPU jobs',
           onTap: _openCreationEngine,
           hue: kit.CheColors.accent,
         ),

@@ -175,7 +175,7 @@ void main() {
     await _font('MaterialIcons', '$fonts/MaterialIcons-Regular.otf');
   });
 
-  Widget studio(_Worker w, {List<String>? read, List<String>? spoken, List<_FakeViewport>? vp, List<String> clips = const [], CheLiveStudioMode mode = CheLiveStudioMode.person, Set<String> unsupported = const {}, List<String> morphs = const []}) =>
+  Widget studio(_Worker w, {List<String>? read, List<String>? spoken, List<_FakeViewport>? vp, List<String> clips = const [], CheLiveStudioMode mode = CheLiveStudioMode.person, Set<String> unsupported = const {}, List<String> morphs = const [], VoidCallback? onSettings}) =>
       MaterialApp(
         debugShowCheckedModeBanner: false,
         theme: ThemeData(brightness: Brightness.dark, fontFamily: 'Roboto'),
@@ -187,6 +187,7 @@ void main() {
           client: w.client(),
           onRead: read?.add,
           onSpeak: spoken?.add,
+          onOpenEngineSettings: onSettings,
           viewport: (onMessage) {
             final v = _FakeViewport(onMessage, clips: clips, unsupported: unsupported, morphs: morphs);
             vp?.add(v);
@@ -218,13 +219,40 @@ void main() {
     await tester.pumpAndSettle();
     expect(read, isEmpty, reason: 'nothing spoken on open');
     expect(vp.single.loads.single, startsWith('Bundled stylised model of CHE: not your edits.'));
-    expect(find.text('Creation Engine Offline'), findsOneWidget);
+    expect(find.text('Waiting for a worker'), findsOneWidget);
     expect(find.byKey(const ValueKey('live-connect')), findsOneWidget);
     expect(find.text('Version 1 of 1'), findsOneWidget);
     expect(find.text('Nothing generated for this version yet.'), findsOneWidget);
     await tester.tap(find.byKey(const ValueKey('live-read')));
-    expect(read.single, contains('CHE (new person), version 1 of 1. Creation Engine Offline.'));
+    expect(read.single, contains('CHE (new person), version 1 of 1. Waiting for a worker.'));
     expect(read.single, contains('No model has been generated for this version yet.'));
+  });
+
+  testWidgets('"connect" never opens a website: Ready says Connected; no worker opens Settings, Connections, Cloud Computer inside CHE', (tester) async {
+    await _phone(tester);
+    for (final engine in ['cloud', 'offline']) {
+      final spoken = <String>[];
+      var settings = 0;
+      final w = _Worker(_project(engine: engine));
+      await tester.pumpWidget(studio(w, spoken: spoken, onSettings: () => settings += 1));
+      await tester.pumpAndSettle();
+      final said = await CheLiveStudio.voiceHandler!('connect');
+      await tester.pumpAndSettle();
+      if (engine == 'cloud') {
+        expect(said, startsWith('Connected. Your Cloud Computer is ready.'));
+        expect(settings, 0);
+      } else {
+        expect(said, startsWith('Waiting for a worker.'));
+        expect(said, endsWith('Opened Settings, Connections, Cloud Computer.'));
+        expect(settings, 1, reason: 'CHE\'s own settings page, not Colab');
+      }
+      // Leaving the studio never cancels or changes the job: nothing is posted on the way out.
+      final before = List<String>.of(w.posts);
+      await tester.pumpWidget(const SizedBox());
+      await tester.pumpAndSettle();
+      expect(w.posts, before);
+      expect(w.posts.where((p) => p.contains('cancel')), isEmpty);
+    }
   });
 
   testWidgets('with free cloud workers the engine is Ready and asks nothing; the job shows its owner-facing state', (tester) async {
@@ -523,8 +551,8 @@ void main() {
     for (final l in ['Turn left', 'Turn right', 'Zoom in', 'Zoom out', 'Reset view', 'Lip sync test', 'Apply the change', 'Generate the 3D model']) {
       expect(find.bySemanticsLabel(l), findsOneWidget, reason: l);
     }
-    expect(find.bySemanticsLabel(RegExp(r'^Creation Engine Offline\.')), findsOneWidget);
-    expect(find.bySemanticsLabel('Connect: open the Colab notebook'), findsOneWidget);
+    expect(find.bySemanticsLabel(RegExp(r'^Waiting for a worker\.')), findsOneWidget);
+    expect(find.bySemanticsLabel('Cloud Computer: open Settings, Connections, Cloud Computer'), findsOneWidget);
     handle.dispose();
   });
 
