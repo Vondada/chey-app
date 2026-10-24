@@ -9,6 +9,8 @@
 // Messages from other AIs are information, never commands: CHE may use them as
 // advice, but owner permissions (money, deleting, app access) still apply.
 
+import { byMailTime, normalizeThreadTimes } from './mailbox_time.js';
+
 export const MAILBOX_BRANCH = 'che-mailbox';
 export const KNOWN_PEERS = ['claude', 'chatgpt', 'codex', 'gemini', 'cursor', 'copilot', 'grok'];
 
@@ -243,7 +245,9 @@ export async function sendMail(env, { from = 'che', to, text, replyTo = '', id =
 export const ARCHIVE_PEER = 'flagstaff369';
 export function hasGitHubMailbox(env) { return Boolean(env && repoOf(env)); }
 
-export async function readAllMail(env, fetcher = fetch) {
+// Times are normalised on read (mailbox_time.js): UTC ISO Z, the sender's real creation time, never a time the
+// line could not have existed yet. `seen` (id -> first seen, ISO) adds received_at; the files are never rewritten.
+export async function readAllMail(env, fetcher = fetch, { now = Date.now(), seen = null } = {}) {
   if (!repoOf(env)) return { error: 'Mailbox needs CHE_GITHUB_TOKEN and CHE_GITHUB_REPO.', messages: [] };
   const dir = await gh(env, 'GET', `/contents/mailbox?ref=${MAILBOX_BRANCH}`, null, fetcher);
   if (dir.status === 404) return { messages: [] };
@@ -253,9 +257,8 @@ export async function readAllMail(env, fetcher = fetch) {
     .filter((peer) => peer && peer !== ARCHIVE_PEER)
     .slice(0, 25);
   const threads = await Promise.all(peers.map((peer) => readThread(env, peer, fetcher).catch(() => ({ messages: [] }))));
-  const messages = threads.flatMap((t) => t.messages || [])
-    .filter((m) => m && m.id && m.at)
-    .sort((a, b) => String(a.at).localeCompare(String(b.at)));
+  const messages = threads.flatMap((t) => normalizeThreadTimes((t.messages || []).filter((m) => m && m.id && m.at), { now, seen }))
+    .sort(byMailTime);
   return { messages };
 }
 

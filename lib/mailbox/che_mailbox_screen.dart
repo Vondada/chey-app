@@ -12,6 +12,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../che_ui/che_hud.dart';
 import '../che_ui/che_theme.dart';
 import '../platform/che_platform_screens.dart';
+import 'che_mail_time.dart';
 import 'che_message_split.dart';
 
 class CheMailboxScreen extends StatefulWidget {
@@ -251,7 +252,7 @@ class _CheMailboxScreenState extends State<CheMailboxScreen> {
         children: [
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-            child: Text('$who · ${_when(m['at'])}', style: CheType.caption),
+            child: Text('$who · ${cheMailWhen(m)}', style: CheType.caption),
           ),
           for (var i = 0; i < parts.length; i++) _bubble(m, fromChe, parts[i], i, parts.length),
         ],
@@ -296,27 +297,17 @@ class _CheMailboxScreenState extends State<CheMailboxScreen> {
   /// Messages grouped into one conversation per AI, newest conversation first.
   Map<String, List<Map>> _threads(List<Map> messages) {
     final out = <String, List<Map>>{};
-    for (final m in messages) {
+    for (final m in cheSortMail(messages)) {
       final from = '${m['from']}';
       final peer = from == 'che' ? '${m['to']}' : from;
       out.putIfAbsent(peer, () => []).add(m);
     }
     final ordered = out.entries.toList()
-      ..sort((a, b) => '${b.value.last['at']}'.compareTo('${a.value.last['at']}'));
+      ..sort((a, b) => cheMailCompare(b.value.last, a.value.last));
     return {for (final e in ordered) e.key: e.value};
   }
 
   String _nice(String peer) => peer.isEmpty ? 'Unknown' : '${peer[0].toUpperCase()}${peer.substring(1)}';
-
-  String _when(Object? at) {
-    final t = DateTime.tryParse('$at')?.toLocal();
-    if (t == null) return '';
-    final now = DateTime.now();
-    final h = t.hour % 12 == 0 ? 12 : t.hour % 12;
-    final clock = '$h:${t.minute.toString().padLeft(2, '0')} ${t.hour < 12 ? 'AM' : 'PM'}';
-    if (t.year == now.year && t.month == now.month && t.day == now.day) return clock;
-    return '${t.month}/${t.day}';
-  }
 
   Widget _flagstaffTab() {
     final open = _flag['open'] == true;
@@ -394,7 +385,7 @@ class _CheMailboxScreenState extends State<CheMailboxScreen> {
                 overflow: TextOverflow.ellipsis,
                 style: CheType.caption,
               ),
-              trailing: Text(_when(entry.value.last['at']), style: CheType.caption),
+              trailing: Text(cheMailWhen(entry.value.last), style: CheType.caption),
               onTap: () => setState(() => _openThread = entry.key),
             )),
           ),
@@ -479,9 +470,9 @@ class _CheMailboxScreenState extends State<CheMailboxScreen> {
         const SizedBox(height: 8),
         for (final session in _archive)
           Builder(builder: (_) {
-            final messages = (session['messages'] as List?)?.whereType<Map>().toList() ?? const <Map>[];
-            final when = '${session['locked_at'] ?? ''}'.replaceFirst('T', ' ');
-            final shown = when.length > 16 ? when.substring(0, 16) : when;
+            final messages = cheSortMail((session['messages'] as List?)?.whereType<Map>() ?? const <Map>[]);
+            // locked_at is UTC; the title shows it in the device's zone.
+            final shown = cheMailStamp(session['locked_at']);
             return Card(
               color: cheHudActive ? null : CheColors.surface,
               child: ExpansionTile(
