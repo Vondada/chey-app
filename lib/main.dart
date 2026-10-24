@@ -40,6 +40,8 @@ import 'brain/che_brain_sections.dart' show CheBrainEvidence, CheEvidenceKind, c
 import 'che_ui/che_owner_improvements.dart';
 import 'workflows/che_workflows_screen.dart';
 import 'film/che_film_studio_screen.dart';
+import 'rooms/che_characters_room.dart';
+import 'rooms/che_headquarters.dart';
 import 'world/che_meeting_room.dart';
 import 'world/che_meetings.dart';
 import 'world/che_plan_room.dart';
@@ -1152,7 +1154,7 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
   /// Phone shell tab: Home | Chat | Office | Apps | More (mockups).
   int _shellTab = 0;
 
-  /// Office sub-pane: 0 Crew, 1 Projects.
+  /// Office sub-pane: 0 Headquarters (the default), 1 Crew, 2 Projects.
   int _officePane = 0;
 
   /// Owner reply / TTS language (BCP-47 base code).
@@ -1585,11 +1587,11 @@ OWNER AGENCY
         ),
       2 => CheScreenReport(
           page: 'the Office',
-          tab: _officePane == 0 ? 'Crew' : 'Projects',
-          tabs: const ['Crew', 'Projects'],
+          tab: const ['Headquarters', 'Crew', 'Projects'][_officePane],
+          tabs: const ['Headquarters', 'Crew', 'Projects'],
           detail: '${_officeRuntime.agents.length} agents, ${_officeRuntime.working} working'
               '${_officeRuntime.error == null ? '' : '. Office note: ${_officeRuntime.error}'}',
-          controls: const ['Crew office pane', 'Projects office pane', 'the bottom tabs: Home, Chat, Office, Apps, More'],
+          controls: const ['Headquarters office pane', 'Crew office pane', 'Projects office pane', 'the bottom tabs: Home, Chat, Office, Apps, More'],
         ),
       3 => CheScreenReport(page: 'CHE World', tab: 'CHE World', tabs: tabs, controls: const ['the CHE World rooms', 'the bottom tabs']),
       4 => CheScreenReport(page: 'More', tab: 'More', tabs: tabs,
@@ -1968,7 +1970,7 @@ OWNER AGENCY
       await sendMessage();
       setState(() {
         _shellTab = 2;
-        _officePane = 1;
+        _officePane = 2;
       });
     } catch (e) {
       await speakText('ML job failed: $e', record: false);
@@ -2096,7 +2098,8 @@ OWNER AGENCY
             children: [
               Expanded(
                 child: _OfficePanePill(
-                  label: 'Crew',
+                  label: 'HQ',
+                  spokenLabel: 'Headquarters',
                   selected: _officePane == 0,
                   onTap: () => setState(() => _officePane = 0),
                 ),
@@ -2104,10 +2107,18 @@ OWNER AGENCY
               const SizedBox(width: 8),
               Expanded(
                 child: _OfficePanePill(
-                  label: 'Projects',
+                  label: 'Crew',
                   selected: _officePane == 1,
+                  onTap: () => setState(() => _officePane = 1),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: _OfficePanePill(
+                  label: 'Projects',
+                  selected: _officePane == 2,
                   onTap: () {
-                    setState(() => _officePane = 1);
+                    setState(() => _officePane = 2);
                     unawaited(_loadAgentState(silent: true));
                   },
                 ),
@@ -2122,6 +2133,14 @@ OWNER AGENCY
             children: [
               TickerMode(
                 enabled: _officePane == 0,
+                child: CheHeadquartersScreen(
+                  client: _agentRuntime,
+                  embedded: true,
+                  onOpen3D: () => CheCharactersRoom.open(context, runtime: _officeRuntime),
+                ),
+              ),
+              TickerMode(
+                enabled: _officePane == 1,
                 child: CheOfficeFloorScreen(
                 client: _agentRuntime,
                 runtime: _officeRuntime,
@@ -2136,7 +2155,7 @@ OWNER AGENCY
                 onRefresh: () => _loadAgentState(silent: true),
                 onCreateProject: _createProjectDialog,
                 onAskChe: _runPluginPrompt,
-                onOpenWarRoom: () => setState(() => _officePane = 0),
+                onOpenWarRoom: () => setState(() => _officePane = 1),
               ),
             ],
           ),
@@ -2435,7 +2454,7 @@ OWNER AGENCY
           onTap: () {
             setState(() {
               _shellTab = 2;
-              _officePane = 1;
+              _officePane = 2;
             });
             unawaited(_loadAgentState(silent: true));
           },
@@ -2717,8 +2736,11 @@ OWNER AGENCY
 }
 
 class _OfficePanePill extends StatelessWidget {
-  const _OfficePanePill({required this.label, required this.selected, required this.onTap});
+  const _OfficePanePill({required this.label, this.spokenLabel, required this.selected, required this.onTap});
   final String label;
+
+  /// What VoiceOver says when the visible label is short (for example "HQ" is spoken as "Headquarters").
+  final String? spokenLabel;
   final bool selected;
   final VoidCallback onTap;
 
@@ -2728,7 +2750,7 @@ class _OfficePanePill extends StatelessWidget {
     return Semantics(
       button: true,
       selected: selected,
-      label: '$label office pane',
+      label: '${spokenLabel ?? label} office pane',
       excludeSemantics: true,
       child: Material(
         color: Colors.transparent,

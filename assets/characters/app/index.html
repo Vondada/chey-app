@@ -206,7 +206,7 @@ for (const a of CREW) {
   b.type = 'button';
   b.textContent = a.name;
   b.setAttribute('aria-label', `${a.name}, ${a.role}`);
-  b.addEventListener('click', () => greet(a.id));
+  b.addEventListener('click', () => { greet(a.id); focusAgent(a.id); });
   $crew.appendChild(b);
   loadGlb(a.id, (gltf) => {
     const root = gltf.scene;
@@ -232,6 +232,41 @@ function greet(id) {
   c.cur.fadeOut(0.25);
   w.reset().fadeIn(0.25).play();
   setTimeout(() => { w.fadeOut(0.3); c.cur.reset().fadeIn(0.3).play(); }, 2600);
+}
+
+// ---------- camera focus (agent follow, overview, free, reset, unlock)
+function focusAgent(id) {
+  const c = crew.find((x) => x.id === id);
+  if (!c) { say('Still loading', 'That teammate is not in the room yet.'); return false; }
+  focusId = id;
+  camMode = 'follow';
+  zoom = 1;
+  say(`Following ${c.name}`, 'Drag to orbit. Use Reset to return to CHE.');
+  tellApp({ type: 'focus', id, mode: camMode });
+  return true;
+}
+function setCameraMode(mode) {
+  if (mode === 'che') return resetCamera();
+  if (!['overview', 'free', 'follow'].includes(mode)) return false;
+  if (mode === 'follow') return Boolean(focusId) && focusAgent(focusId);
+  camMode = mode;
+  focusId = null;
+  say(mode === 'overview' ? 'Overview of the office' : 'Free camera', 'Drag to orbit. Use Reset to return to CHE.');
+  tellApp({ type: 'camera', mode });
+  return true;
+}
+function resetCamera() {
+  camMode = 'che';
+  focusId = null;
+  zoom = 1;
+  camYaw = 0;
+  say('Camera on CHE', 'Drag the pad to walk her around the room.');
+  tellApp({ type: 'camera', mode: 'che' });
+  return true;
+}
+function zoomBy(factor) {
+  zoom = Math.max(0.5, Math.min(2.5, zoom * factor));
+  return zoom;
 }
 
 // ---------- joystick (pointer + keyboard)
@@ -270,7 +305,7 @@ renderer.domElement.addEventListener('pointerdown', (e) => {
   ndc.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
   ray.setFromCamera(ndc, camera);
   const hitAgent = crew.find((c) => ray.intersectObject(c.root, true).length);
-  if (hitAgent) { greet(hitAgent.id); return; }
+  if (hitAgent) { greet(hitAgent.id); focusAgent(hitAgent.id); return; }
   if (ray.intersectObject(hero, true).length) {
     selected = !selected;
     ring.visible = selected;
@@ -281,6 +316,12 @@ renderer.domElement.addEventListener('pointerdown', (e) => {
 // ---------- movement, collision, camera
 const MOVE = { walk: 0.75, run: 1.8 };
 let camYaw = 0;
+// Camera modes (owner mission, 2026-10-24): che follows CHE; follow locks onto one agent; overview and free
+// frame the whole room. Dragging orbits in every mode except che, where it orbits CHE's camera too.
+let camMode = 'che';
+let focusId = null;
+let zoom = 1;
+const ROOM_CENTER = new THREE.Vector3(0, 0.6, -0.5);
 function blocked(x, z) {
   if (crew.some((c) => Math.hypot(x - c.at[0], z - c.at[1]) < 0.45)) return true;
   return Math.abs(x - DESK.x) < DESK.hx + 0.25 && Math.abs(z - DESK.z) < DESK.hz + 0.25;
@@ -317,12 +358,30 @@ function update(dt) {
   ring.position.set(pos.x, 0.01, pos.z);
   if (mixer) mixer.update(dt);
   for (const c of crew) if (!c.still) c.mixer.update(dt);
-  // Camera: follows CHE from behind, orbit by dragging empty space.
-  const target = new THREE.Vector3(pos.x, 0.62, pos.z);
-  const want = new THREE.Vector3(target.x + Math.sin(camYaw) * 2.7, 1.45, target.z + Math.cos(camYaw) * 2.7);
+  // Camera: CHE from behind (default), one agent (follow), or the whole room (overview, free).
+  let target = null;
+  let want = null;
+  if (camMode === 'follow' && focusId) {
+    const c = crew.find((x) => x.id === focusId);
+    if (c) {
+      target = new THREE.Vector3(c.root.position.x, 0.7, c.root.position.z);
+      want = new THREE.Vector3(target.x + Math.sin(camYaw) * 2.2 * zoom, 1.6 * zoom, target.z + Math.cos(camYaw) * 2.2 * zoom);
+    }
+  }
+  if (!target && (camMode === 'overview' || camMode === 'free')) {
+    const far = camMode === 'overview' ? 1 : 0.55;
+    target = ROOM_CENTER.clone();
+    want = new THREE.Vector3(ROOM_CENTER.x + Math.sin(camYaw) * 8.5 * far * zoom, (camMode === 'overview' ? 9.5 : 4.5) * zoom, ROOM_CENTER.z + Math.cos(camYaw) * 8.5 * far * zoom);
+  }
+  if (!target) {
+    target = new THREE.Vector3(pos.x, 0.62, pos.z);
+    want = new THREE.Vector3(target.x + Math.sin(camYaw) * 2.7 * zoom, 1.45 * zoom, target.z + Math.cos(camYaw) * 2.7 * zoom);
+  }
   camera.position.lerp(want, 1 - Math.pow(0.02, dt));
   camera.lookAt(target);
 }
+
+renderer.domElement.addEventListener('wheel', (e) => { e.preventDefault(); zoomBy(e.deltaY > 0 ? 1.1 : 0.9); }, { passive: false });
 
 // Orbit the camera by dragging anywhere that is not the pad or a button.
 let orbit = null;
@@ -385,10 +444,15 @@ window.CHE = {
   play: (name) => choose(name),
   stick: (x, y) => setStick(x, y),
   greet: (id) => greet(id),
+  focus: (id) => focusAgent(id),
+  mode: (name) => setCameraMode(name),
+  zoom: (factor) => zoomBy(factor),
+  reset: () => resetCamera(),
   setStates: (states) => setStates(states),
   pause: (p) => { paused = Boolean(p); resume(); },
   get paused() { return paused || !running; },
   get crewLoaded() { return crew.length; },
+  get camera() { return { mode: camMode, focus: focusId, zoom }; },
   get state() { return { clip: current && Object.keys(actions).find((k) => actions[k] === current), pos: pos.toArray(), sitting, selected }; },
 };
 </script>

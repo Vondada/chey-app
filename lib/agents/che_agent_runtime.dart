@@ -583,6 +583,16 @@ class CheAgentRuntimeClient {
 
   Future<Map<String, dynamic>> roster() => _send('GET', '/api/agents');
 
+  /// The headquarters: every room, its lead's real status, and the counts (null when no records exist).
+  Future<Map<String, dynamic>> hqView() => _send('GET', '/api/office/hq');
+
+  /// One room in full: its lead, facts from records, and the conversation with that lead.
+  Future<Map<String, dynamic>> hqRoom(String roomId) => _send('GET', '/api/office/hq/$roomId');
+
+  /// The owner says something to a room's lead, or assigns it as a real Office task (mode: 'assign').
+  Future<Map<String, dynamic>> hqTalk({required String room, required String text, String mode = 'talk'}) =>
+      _send('POST', '/api/office/hq/talk', {'room': room, 'text': text, 'mode': mode});
+
   Future<CheOfficeToday> officeToday() async {
     final j = await _send('GET', '/api/office/today');
     return CheOfficeToday.fromJson(Map<String, dynamic>.from(j['board'] as Map? ?? const {}));
