@@ -36,7 +36,11 @@ export function _resetMarketCache() { cache.clear(); inflight.clear(); }
 function labelled(entry, now = Date.now()) {
   const value = entry.value;
   if (!value || typeof value !== 'object') return value;
-  return { ...value, fetched_at: new Date(entry.at).toISOString(), stale: !!entry.stale, age_s: Math.max(0, Math.round((now - entry.at) / 1000)) };
+  // A value built from older inputs (the snapshot from stale candles) carries their fetch time and stays stale
+  // however recently it was put together, so the app never shows an old index price as fresh.
+  const sourceAt = Number.isFinite(value.source_fetched_ms) ? Math.min(value.source_fetched_ms, entry.at) : entry.at;
+  const { source_fetched_ms: _drop, ...rest } = value;
+  return { ...rest, fetched_at: new Date(sourceAt).toISOString(), stale: !!entry.stale || sourceAt < entry.at, age_s: Math.max(0, Math.round((now - sourceAt) / 1000)) };
 }
 
 async function cached(key, ttlMs, load, { isOk = () => true, store = null, background = null, waitMs = COLD_WAIT_MS, loading = null, swr = true } = {}) {
@@ -160,10 +164,13 @@ export async function snapshot(env, fetcher = fetch, { store = null, background 
         return await connectorSnapshot(env, fetcher);
       } catch (_) { /* fall back to public sources, labeled */ }
     }
+    let oldestSource = Infinity;
     const indexQuotes = await Promise.all(INDICES.map(async (item) => {
       const data = await candles(item.symbol, fetcher, { store, background });
       const rows = data.candles || [];
       if (rows.length < 2) return { symbol: item.symbol, name: item.name, status: 'unavailable', note: data.error || 'No data' };
+      // Keep how fresh the candles really were: stale candles make a stale quote and a stale snapshot.
+      if (data.stale && data.fetched_at) oldestSource = Math.min(oldestSource, Date.parse(data.fetched_at));
       const last = rows[rows.length - 1];
       const prev = rows[rows.length - 2];
       return {
@@ -173,6 +180,7 @@ export async function snapshot(env, fetcher = fetch, { store = null, background 
         change_pct: prev.close ? ((last.close - prev.close) / prev.close) * 100 : 0,
         as_of: last.date,
         status: 'delayed',
+        ...(data.stale ? { stale: true, fetched_at: data.fetched_at } : {}),
       };
     }));
     let cryptoQuotes;
@@ -198,6 +206,7 @@ export async function snapshot(env, fetcher = fetch, { store = null, background 
       quotes: [...indexQuotes, ...cryptoQuotes],
       source: 'Public sources: Stooq (delayed indices), CoinGecko (crypto)',
       live: false,
+      ...(Number.isFinite(oldestSource) ? { source_fetched_ms: oldestSource } : {}),
     };
   }, opts);
 }

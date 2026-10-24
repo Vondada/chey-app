@@ -177,17 +177,19 @@ class _CheMarketsRoomState extends State<CheMarketsRoom> {
     if (mounted) setState(() {});
   }
 
-  int _loadingRetries = 0;
+  final Map<Object, int> _followUps = {};
 
-  /// The Worker answers at once while a slow source is still loading; ask again shortly (a few times at most).
+  /// The Worker answers at once with stale data (refreshing in the background) or "still loading"; ask the same
+  /// thing again shortly so the refreshed answer reaches the screen, a few times at most per screen part.
   void _retryIfLoading(Map<String, dynamic> j, Future<void> Function() again) {
-    if (j['loading'] != true) {
-      _loadingRetries = 0;
+    if (j['loading'] != true && j['stale'] != true) {
+      _followUps.remove(again);
       return;
     }
-    if (_loadingRetries >= 3) return;
-    _loadingRetries += 1;
-    Future<void>.delayed(const Duration(seconds: 4), () {
+    final n = _followUps[again] ?? 0;
+    if (n >= 3) return;
+    _followUps[again] = n + 1;
+    Future<void>.delayed(const Duration(seconds: 5), () {
       if (mounted) unawaited(again());
     });
   }

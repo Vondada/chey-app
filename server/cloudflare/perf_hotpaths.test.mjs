@@ -107,6 +107,30 @@ test('the last good snapshot survives an isolate restart through the Durable Obj
   } finally { mock.timers.reset(); }
 });
 
+test('a snapshot built from stale candles stays stale and keeps the candles\' fetch time (Codex P2 on #518)', async () => {
+  mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 6_000_000 });
+  try {
+    const markets = await fresh('markets.js');
+    const ok = async (url) => new Response(String(url).includes('stooq') ? csv : JSON.stringify({ bitcoin: { usd: 1 }, ethereum: { usd: 2 }, solana: { usd: 3 } }), { status: 200 });
+    const first = await run(markets.snapshot({}, ok));
+    assert.equal(first.stale, false);
+    mock.timers.tick(11 * 60_000);   // candles and snapshot both expired
+    const down = async () => new Response('', { status: 503 });
+    const later = await run(markets.snapshot({}, down, { background: () => {} }));
+    await run(settle());
+    const again = await run(markets.snapshot({}, down));
+    for (const snap of [later, again]) {
+      assert.equal(snap.stale, true, 'never reported fresh while the index prices are old');
+      assert.equal(snap.fetched_at, new Date(6_000_000).toISOString());
+      assert.ok(snap.age_s >= 660);
+      assert.ok(!('source_fetched_ms' in snap));
+    }
+    const spx = again.quotes.find((q) => q.symbol === '^spx');
+    assert.equal(spx.stale, true);
+    assert.equal(spx.as_of, '2026-10-23');
+  } finally { mock.timers.reset(); }
+});
+
 test('the badge answers from the last GitHub read while a slow refresh runs in the background', async () => {
   mock.timers.enable({ apis: ['setTimeout', 'Date'], now: Date.UTC(2026, 9, 24, 12) });
   try {
