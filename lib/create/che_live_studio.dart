@@ -613,7 +613,13 @@ class CheLiveStudioState extends State<CheLiveStudio> with WidgetsBindingObserve
       }
       return;
     }
-    if (shown.source == 'none') await _showBundled('${project['base_id'] ?? widget.base}');
+    final base = '${project['base_id'] ?? widget.base}';
+    if (kind != 'person' && shown.source == 'bundled') {
+      await _viewport.command({'action': 'clear'});
+      if (mounted) setState(() => shown = const CheShownModel(source: 'none', label: 'Generate this creation to show its model.'));
+      return;
+    }
+    if (shown.source == 'none' || (shown.source == 'bundled' && shown.key != base)) await _showBundled(base);
   }
 
   Future<void> _showBundled(String id) async {
