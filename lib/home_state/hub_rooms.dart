@@ -397,11 +397,6 @@ extension _CheHomeHubRooms on _CHEHomeState {
           if (!cheIsCodingJob(j)) j,
       ],
       onOpenJob: (job) => unawaited(_openJob(job)),
-      seriesPanel: CheSeriesStudioPanel(
-        baseUrl: () => cheAgentBaseUrl,
-        headers: () => _authHeaders,
-        onAsk: _runHubPrompt,
-      ),
       musicScene: MusicStudioScene(
         active: active,
         musicConnected: musicReady,
@@ -413,6 +408,14 @@ extension _CheHomeHubRooms on _CHEHomeState {
             _runHubPrompt('Help me connect my car audio to CHE. Use only supported authorized audio controls.'),
       ),
       actions: [
+        CheStudioAction(
+          icon: Icons.mic_rounded,
+          title: 'Recording Studio',
+          body: 'Record vocals, layer tracks, build beats, add effects, mix, master and export WAV, on this iPhone.',
+          connected: true,
+          connectorName: '',
+          onRun: () => unawaited(_openRecordingStudio()),
+        ),
         CheStudioAction(
           icon: Icons.music_note_rounded,
           title: 'Make music',
@@ -447,6 +450,34 @@ extension _CheHomeHubRooms on _CHEHomeState {
             ),
           ),
         ),
+      ],
+    );
+  }
+
+  /// The Music room's own recording workspace (lib/music/che_recording_studio.dart). [tab] opens a section (0 Record,
+  /// 1 My Songs, 2 Beat Maker, 3 Mixer, 4 Effects, 5 Master); [say] runs the owner's words there ("record my vocals").
+  Future<void> _openRecordingStudio({int tab = 0, String? say}) async {
+    HapticFeedback.selectionClick();
+    await Navigator.of(context).push(CheRecordingStudio.route(
+      initialTab: tab,
+      say: say,
+      onAsk: (prompt) async {
+        if (mounted) Navigator.of(context).pop();
+        _runHubPrompt(prompt);
+      },
+      onSpeak: (text) => speakText(text, record: false, readOnDemand: true),
+    ));
+  }
+
+  /// Film Studio's video series panel (Street Smart Explainers), moved out of the Music room on 2026-10-24.
+  Widget _filmSeriesPanel() => CheSeriesStudioPanel(
+        baseUrl: () => cheAgentBaseUrl,
+        headers: () => _authHeaders,
+        onAsk: _runHubPrompt,
+      );
+
+  /// Film Studio's video tools, moved out of the Music room on 2026-10-24 (same handlers as before).
+  List<CheStudioAction> _filmTools() => [
         CheStudioAction(
           icon: Icons.auto_awesome_rounded,
           title: 'Visual Studio',
@@ -493,9 +524,7 @@ extension _CheHomeHubRooms on _CHEHomeState {
             'Create a video for me. Ask only for any essential missing detail, then use the connected CHE video generator if available.',
           ),
         ),
-      ],
-    );
-  }
+      ];
 
   Widget _hubCreateTab(bool active) => _hubCreateScene(active);
 
