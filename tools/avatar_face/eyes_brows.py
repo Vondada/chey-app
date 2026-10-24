@@ -116,15 +116,15 @@ def lash_strands(fwd, up, seed=11):
                 hit = bvh.find_nearest(rim)
                 root = hit[0] if hit and hit[0] is not None and (hit[0] - rim).length < r * 0.6 else rim
                 outer = 0.5 + 0.5 * (t + 0.9) / 1.8  # longer toward the outer corner
-                length = (0.0085 if upper else 0.0045) * (0.7 + 0.6 * outer)
+                length = (0.0115 if upper else 0.006) * (0.7 + 0.6 * outer)
                 d = (fwd * 0.9 + up * (0.35 if upper else -0.25) + side * 0.25 * t).normalized()
-                for _ in range(3 if upper else 2):
+                for _ in range(5 if upper else 3):
                     j = Vector((random.gauss(0, 0.0003), random.gauss(0, 0.0003), random.gauss(0, 0.0002)))
                     strands.append(_bezier(root + j, d, length * random.uniform(0.8, 1.1), 0.5 if upper else -0.2, up if upper else -up))
-    return _curves('Lashes_strands', strands, 0.00004, 0.00001, _hair_material('LashHair', 1.0, 0.35))
+    return _curves('Lashes_strands', strands, 0.00009, 0.00002, _hair_material('LashHair', 1.0, 0.35))
 
 
-def brow_strands(fwd, up, seed=12, per_brow=260):
+def brow_strands(fwd, up, seed=12, per_brow=650):
     random.seed(seed)
     bvh = _body_bvh()
     strands = []
@@ -146,4 +146,4 @@ def brow_strands(fwd, up, seed=12, per_brow=260):
             d = (up * (0.9 - 0.75 * t) + side * (0.15 + 0.8 * t) + normal * 0.25).normalized()
             length = (0.005 if t < 0.15 else 0.008) * random.uniform(0.8, 1.15)
             strands.append(_bezier(root + normal * 0.0002, d, length, 0.35, normal))
-    return _curves('Brow_strands', strands, 0.00003, 0.000008, _hair_material('BrowHair', 0.85, 0.45))
+    return _curves('Brow_strands', strands, 0.00007, 0.00002, _hair_material('BrowHair', 1.0, 0.5))
