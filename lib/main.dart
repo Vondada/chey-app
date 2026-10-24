@@ -2137,6 +2137,7 @@ OWNER AGENCY
                   client: _agentRuntime,
                   embedded: true,
                   onOpen3D: () => CheCharactersRoom.open(context, runtime: _officeRuntime),
+                  onPreviewRoom: (proposal) => CheCharactersRoom.open(context, runtime: _officeRuntime, previewProposal: proposal),
                 ),
               ),
               TickerMode(

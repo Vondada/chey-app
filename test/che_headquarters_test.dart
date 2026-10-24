@@ -165,6 +165,157 @@ testWidgets('the Development Room shows its Office job; opening it shows each st
   expect(find.textContaining('NOT VERIFIED YET'), findsOneWidget);
   expect(find.textContaining('Changed projects_list.dart'), findsOneWidget);
 });
+
+  testWidgets('asking CHE for a room shows her proposal in her words, with its layout, tools and cost', (tester) async {
+    tester.view.physicalSize = const Size(1170, 4200);
+    tester.view.devicePixelRatio = 3;
+    addTearDown(tester.view.reset);
+    final office = _FakeOffice();
+    await tester.pumpWidget(MaterialApp(home: CheHeadquartersScreen(client: office.client())));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Ask CHE for a room'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), 'a robotics lab');
+    await tester.tap(find.text('Ask CHE'));
+    await tester.pumpAndSettle();
+
+    final sent = office.seen.where((r) => r.method == 'POST' && r.url.path == '/api/office/rooms/proposals').single;
+    expect(jsonDecode(sent.body), {'need': 'a robotics lab'});
+    expect(find.text("Sir, I've developed a proposal for a new Robotics Lab. Would you like to review it?"), findsOneWidget);
+    expect(find.text('Robotics Lab'), findsOneWidget);
+    expect(find.textContaining('Layout: Workbench, Robot arm (simulated).'), findsOneWidget);
+    expect(find.textContaining('Tools: Office task runtime connected; Robot simulator not connected.'), findsOneWidget);
+    expect(find.textContaining('Nothing is bought or ordered'), findsOneWidget);
+    expect(find.text('Approve'), findsOneWidget);
+  });
+
+  testWidgets('approve asks first; a verified room joins the headquarters and says so', (tester) async {
+    tester.view.physicalSize = const Size(1170, 4200);
+    tester.view.devicePixelRatio = 3;
+    addTearDown(tester.view.reset);
+    final office = _FakeOffice()..proposals.add(_proposal());
+    await tester.pumpWidget(MaterialApp(home: CheHeadquartersScreen(client: office.client())));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Approve'));
+    await tester.pumpAndSettle();
+    expect(find.text('Build the Robotics Lab?'), findsOneWidget);
+    expect(office.seen.where((r) => r.method == 'POST'), isEmpty, reason: 'nothing is built before the owner confirms');
+
+    await tester.tap(find.text('Build and verify'));
+    await tester.pumpAndSettle();
+    final decision = office.seen.where((r) => r.url.path == '/api/office/rooms/proposals/rp-1a2b3c4d/decision').single;
+    expect(jsonDecode(decision.body), {'decision': 'approve', 'changes': {}});
+    expect(find.text('Verified: 1 of 1 checks passed. The Robotics Lab is in the headquarters.'), findsOneWidget);
+    expect(find.text('Robotics Lab'), findsOneWidget, reason: 'the built room is a room tile now, not a proposal card');
+    expect(find.text('Approve'), findsNothing);
+  });
+
+  testWidgets('a built room rolls back only after the owner confirms, and the list says what changed', (tester) async {
+    tester.view.physicalSize = const Size(1170, 4200);
+    tester.view.devicePixelRatio = 3;
+    addTearDown(tester.view.reset);
+    final office = _FakeOffice()..built = true;
+    await tester.pumpWidget(MaterialApp(home: CheHeadquartersScreen(client: office.client())));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Robotics Lab'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('Roll back Robotics Lab'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Roll back Robotics Lab'));
+    await tester.pumpAndSettle();
+    expect(find.text('Roll back the Robotics Lab?'), findsOneWidget);
+    expect(office.seen.where((r) => r.method == 'POST'), isEmpty, reason: 'nothing is removed before the owner confirms');
+
+    await tester.tap(find.text('Roll back'));
+    await tester.pumpAndSettle();
+    expect(office.seen.where((r) => r.method == 'POST' && r.url.path == '/api/office/rooms/robotics_lab/rollback'), hasLength(1));
+    expect(find.text('No earlier version: the room is retired and leaves the headquarters.'), findsOneWidget);
+    expect(find.text('Robotics Lab'), findsNothing);
+  });
+}
+
+Map<String, dynamic> _proposal({String status = 'proposed'}) => {
+      'id': 'rp-1a2b3c4d',
+      'template': 'robotics_lab',
+      'need': 'a robotics lab',
+      'status': status,
+      'version': 1,
+      'room': {'id': 'robotics_lab', 'name': 'Robotics Lab', 'short': 'Robotics', 'purpose': 'Design and simulate robot tasks.', 'department': 'robotics'},
+      'lead': {'name': 'Knox', 'reason': 'Knox leads engineering.', 'on_roster': true},
+      'layout': [
+        {'kind': 'bench', 'label': 'Workbench', 'x': -2.2, 'z': -2.6},
+        {'kind': 'equipment', 'label': 'Robot arm (simulated)', 'x': 2.2, 'z': -2.6},
+      ],
+      'equipment': [
+        {'name': 'Robot arm (simulated)', 'connected': false, 'cost': 'not measured', 'needs_approval': true},
+      ],
+      'tools': [
+        {'name': 'Office task runtime', 'connected': true},
+        {'name': 'Robot simulator', 'connected': false},
+      ],
+      'workflows': <String>[],
+      'approvals': ['Buying or ordering any equipment'],
+      'cost': {'measured': null, 'note': 'Not measured. Nothing is bought or ordered; equipment waits for approval.'},
+      'checks': <String>[],
+      'verification': status == 'active' ? {'passed': true, 'checks': [{'check': 'the lead is on the roster', 'passed': true}]} : null,
+      'history': <Object>[],
+    };
+
+/// A small stand-in for the Worker's headquarters and room routes, so a test can see what the screen sent.
+class _FakeOffice {
+  final List<Map<String, dynamic>> proposals = [];
+  final List<http.Request> seen = [];
+  bool built = false;
+
+  CheAgentRuntimeClient client() => CheAgentRuntimeClient(
+        baseUrl: () => 'https://che.example',
+        headers: () => const {},
+        client: MockClient((request) async {
+          seen.add(request);
+          final path = request.url.path;
+          if (path == '/api/office/hq') {
+            return http.Response(jsonEncode({
+              'rooms': [
+                ..._roomList,
+                if (built) {'id': 'robotics_lab', 'name': 'Robotics Lab', 'lead': 'Knox', 'title': 'Office Security Chief', 'status': 'Idle', 'task': null, 'custom': true},
+              ],
+              'counts': null,
+              'summary': 'Two heads, sir.',
+            }), 200);
+          }
+          if (path == '/api/office/rooms/proposals' && request.method == 'GET') {
+            return http.Response(jsonEncode({'proposals': proposals, 'rooms': []}), 200);
+          }
+          if (path == '/api/office/rooms/proposals' && request.method == 'POST') {
+            proposals.insert(0, _proposal());
+            return http.Response(jsonEncode({'proposal': proposals.first, 'reused': false}), 200);
+          }
+          if (path == '/api/office/rooms/proposals/rp-1a2b3c4d/decision') {
+            final body = jsonDecode(request.body) as Map<String, dynamic>;
+            if (body['decision'] == 'approve') {
+              built = true;
+              proposals[0] = _proposal(status: 'active');
+              return http.Response(jsonEncode({'proposal': proposals[0], 'room': {'id': 'robotics_lab', 'status': 'active', 'version': 1}}), 200);
+            }
+            return http.Response(jsonEncode({'proposal': proposals[0]}), 200);
+          }
+          if (path == '/api/office/hq/robotics_lab' && request.method == 'GET') {
+            return http.Response(jsonEncode({
+              'room': {'id': 'robotics_lab', 'name': 'Robotics Lab', 'lead': 'Knox', 'title': 'Office Security Chief', 'status': 'Idle', 'task': null, 'custom': true},
+              'facts': ['Room status: Idle.'],
+              'conversation': [],
+            }), 200);
+          }
+          if (path == '/api/office/rooms/robotics_lab/rollback') {
+            built = false;
+            return http.Response(jsonEncode({'room': {'id': 'robotics_lab', 'status': 'retired'}, 'note': 'No earlier version: the room is retired and leaves the headquarters.'}), 200);
+          }
+          return http.Response('{"detail":"not found"}', 404);
+        }),
+      );
 }
 
 const _jobSummary = {
