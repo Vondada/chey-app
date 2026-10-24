@@ -19,9 +19,10 @@ The queue lives in CHE's Cloudflare Worker, so jobs survive Colab disconnects. T
 - renders through scripts/che_gpu_face_preview.py, which writes pictures, log and receipt to Google Drive and reuses
   every view already verified there, so resuming never renders finished work again;
 - streams results while the runner works: each view's PNG goes into CHE's media library (the Creation Room) the moment
-  it is verified, and for the Live Studio's person_model jobs the 3D model (model.glb) goes up the moment Blender
-  exports it, before any view renders; then it reports the receipt. The Worker marks the job completed only with a GPU
-  receipt and every picture (and, for person_model, the model);
+  it is verified, and for the Live Studio's model jobs (person_model; object_model and room_model, which run
+  scripts/che_creation_job.py) the 3D model (model.glb) goes up the moment Blender exports it, before any view
+  renders; then it reports the receipt. The Worker marks the job completed only with a GPU (or, for a cloud worker,
+  CPU) receipt and every picture (and, for a model job, the model);
 - stops when the owner cancels the job, and exits after --idle-minutes with nothing to do so the GPU is released.
 It never starts, extends or keeps alive a Colab session: it runs only while the owner's session runs.
 Checkpoints: the runner prints CHECKPOINT <stage> <path> <sha256> <bytes> after the model export and after the rig
@@ -49,6 +50,8 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 HEARTBEAT_S = 30
 OIDC_AUDIENCE = 'che-creation-engine'
 OIDC_REFRESH_S = 120          # GitHub ID tokens live a few minutes: fetch a fresh one every 2 minutes
+MODEL_KINDS = ('person_model', 'object_model', 'room_model')   # jobs that deliver a GLB (gpu_queue.js)
+THING_KINDS = ('object_model', 'room_model')                  # Create Object / Create Room: scripts/che_creation_job.py
 
 
 def now():
@@ -191,7 +194,11 @@ def run_job(che, job, a, log):
     verified (or reused from Drive). `streamed` says what already arrived, so nothing is uploaded twice."""
     with tempfile.NamedTemporaryFile('w', suffix='.json', delete=False) as f:
         json.dump(job.get('settings') or {}, f); settings = f.name
-    cmd = [sys.executable, os.path.join(ROOT, 'scripts', 'che_gpu_face_preview.py'), '--blender', a.blender,
+    # Create Object / Create Room jobs run scripts/che_creation_job.py (procedural GLB, measured, previews from it);
+    # face previews and person models run the face runner.
+    thing = job.get('kind') in THING_KINDS
+    runner = ['che_creation_job.py', '--kind', job['kind']] if thing else ['che_gpu_face_preview.py']
+    cmd = [sys.executable, os.path.join(ROOT, 'scripts', runner[0]), *runner[1:], '--blender', a.blender,
            '--project', a.project, '--out', a.out, '--views', ','.join(str(v) for v in job['views']),
            '--samples', str(job.get('samples', 64)), '--res', str(job.get('res', 480)), '--settings', settings]
     if job.get('kind') == 'person_model': cmd.append('--model')   # the Live Studio's jobs also export the 3D model
@@ -250,7 +257,7 @@ def resume_model(che, job, a):
     sha256, so model, rig and animation are not built again. Returns (path, sha256) or None."""
     cp = ((job.get('checkpoints') or {}).get('model') or {}) if isinstance(job.get('checkpoints'), dict) else {}
     sha = cp.get('sha256') or ''
-    if job.get('kind') != 'person_model' or not job.get('model_url') or not re.fullmatch(r'[0-9a-f]{64}', sha): return None
+    if job.get('kind') not in MODEL_KINDS or not job.get('model_url') or not re.fullmatch(r'[0-9a-f]{64}', sha): return None
     data = che.fetch('model', f"?worker={che.worker_id}&job={job['id']}")
     if not data or hashlib.sha256(data).hexdigest() != sha:
         print(f"RESUME {job['id']}: the saved model did not match its checkpoint; building it again.", flush=True); return None
@@ -262,11 +269,11 @@ def resume_model(che, job, a):
 
 def upload_previews(che, job, folder, receipt, streamed=None):
     """What did not stream while the runner worked (a failed upload, an older runner): every verified view, and the
-    model for a person_model job, before the outcome is reported."""
+    model for a model job (person, object, room), before the outcome is reported."""
     streamed = streamed if streamed is not None else {'sent': set(), 'model_sent': False}
     for v, info in (receipt or {}).get('views', {}).items():
         if info.get('status') == 'ok': send_preview(che, job, int(v), os.path.join(folder, info.get('file', '')), streamed['sent'])
-    if job.get('kind') == 'person_model' and (receipt or {}).get('model', {}).get('status') == 'ok':
+    if job.get('kind') in MODEL_KINDS and (receipt or {}).get('model', {}).get('status') == 'ok':
         send_model(che, job, os.path.join(folder, receipt['model'].get('file', 'model.glb')), streamed)
     return len(streamed['sent'])
 

@@ -397,11 +397,6 @@ extension _CheHomeHubRooms on _CHEHomeState {
           if (!cheIsCodingJob(j)) j,
       ],
       onOpenJob: (job) => unawaited(_openJob(job)),
-      seriesPanel: CheSeriesStudioPanel(
-        baseUrl: () => cheAgentBaseUrl,
-        headers: () => _authHeaders,
-        onAsk: _runHubPrompt,
-      ),
       musicScene: MusicStudioScene(
         active: active,
         musicConnected: musicReady,
@@ -413,6 +408,14 @@ extension _CheHomeHubRooms on _CHEHomeState {
             _runHubPrompt('Help me connect my car audio to CHE. Use only supported authorized audio controls.'),
       ),
       actions: [
+        CheStudioAction(
+          icon: Icons.mic_rounded,
+          title: 'Recording Studio',
+          body: 'Record vocals, layer tracks, build beats, add effects, mix, master and export WAV, on this iPhone.',
+          connected: true,
+          connectorName: '',
+          onRun: () => unawaited(_openRecordingStudio()),
+        ),
         CheStudioAction(
           icon: Icons.music_note_rounded,
           title: 'Make music',
@@ -447,6 +450,34 @@ extension _CheHomeHubRooms on _CHEHomeState {
             ),
           ),
         ),
+      ],
+    );
+  }
+
+  /// The Music room's own recording workspace (lib/music/che_recording_studio.dart). [tab] opens a section (0 Record,
+  /// 1 My Songs, 2 Beat Maker, 3 Mixer, 4 Effects, 5 Master); [say] runs the owner's words there ("record my vocals").
+  Future<void> _openRecordingStudio({int tab = 0, String? say}) async {
+    HapticFeedback.selectionClick();
+    await Navigator.of(context).push(CheRecordingStudio.route(
+      initialTab: tab,
+      say: say,
+      onAsk: (prompt) async {
+        if (mounted) Navigator.of(context).pop();
+        _runHubPrompt(prompt);
+      },
+      onSpeak: (text) => speakText(text, record: false, readOnDemand: true),
+    ));
+  }
+
+  /// Film Studio's video series panel (Street Smart Explainers), moved out of the Music room on 2026-10-24.
+  Widget _filmSeriesPanel() => CheSeriesStudioPanel(
+        baseUrl: () => cheAgentBaseUrl,
+        headers: () => _authHeaders,
+        onAsk: _runHubPrompt,
+      );
+
+  /// Film Studio's video tools, moved out of the Music room on 2026-10-24 (same handlers as before).
+  List<CheStudioAction> _filmTools() => [
         CheStudioAction(
           icon: Icons.auto_awesome_rounded,
           title: 'Visual Studio',
@@ -493,9 +524,7 @@ extension _CheHomeHubRooms on _CHEHomeState {
             'Create a video for me. Ask only for any essential missing detail, then use the connected CHE video generator if available.',
           ),
         ),
-      ],
-    );
-  }
+      ];
 
   Widget _hubCreateTab(bool active) => _hubCreateScene(active);
 
@@ -558,6 +587,7 @@ extension _CheHomeHubRooms on _CHEHomeState {
             onShowroom: _openShowroom,
             loadPeople: _loadCreationPeople,
             onCreatePerson: (base) => unawaited(_createPerson(base)),
+            onCreateThing: _createThing,
             onCreateAnimation: () => unawaited(
               Navigator.of(context).push(
                 CheLiveStudio.route(
@@ -646,6 +676,45 @@ extension _CheHomeHubRooms on _CHEHomeState {
         ScaffoldMessenger.maybeOf(context)?.showSnackBar(SnackBar(content: Text('Could not start the creation: $e')));
       }
     }
+  }
+
+  /// Create Object / Create Room: a new project of [kind] from [base] on the Worker, opened in the Live Studio. Returns
+  /// the Worker's own answer (or the real failure), shown as a banner with a haptic and spoken unless a voice route
+  /// speaks it ([viaVoice]).
+  Future<String> _createThing(String kind, String base, bool viaVoice) async {
+    String said;
+    var ok = false;
+    String? id;
+    try {
+      final r = await http
+          .post(
+            Uri.parse('$cheAgentBaseUrl/api/creations'),
+            headers: {..._authHeaders, 'Content-Type': 'application/json'},
+            body: jsonEncode({'kind': kind, 'base': base}),
+          )
+          .timeout(const Duration(seconds: 15));
+      final d = jsonDecode(r.body);
+      id = d is Map && d['project'] is Map ? '${(d['project'] as Map)['id'] ?? ''}' : '';
+      ok = r.statusCode < 300 && id.isNotEmpty;
+      said = ok
+          ? '${d['spoken'] ?? 'Started.'} Opening it in the Live Studio.'
+          : 'That did not work: ${d is Map ? d['detail'] ?? 'CHE answered ${r.statusCode}.' : 'CHE answered ${r.statusCode}.'}';
+    } catch (e) {
+      said = 'That did not work: CHE could not be reached.';
+    }
+    if (ok) {
+      HapticFeedback.mediumImpact();
+    } else {
+      HapticFeedback.heavyImpact();
+    }
+    if (mounted) {
+      ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+        SnackBar(content: Text(said, style: const TextStyle(fontSize: 18)), duration: const Duration(seconds: 6)),
+      );
+    }
+    if (!viaVoice) unawaited(speakText(said, record: false));
+    if (ok && id != null && mounted) unawaited(_openCreation(id));
+    return said;
   }
 
   Future<void> _openCreation(String id) async {

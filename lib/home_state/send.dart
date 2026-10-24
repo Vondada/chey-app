@@ -168,7 +168,7 @@ extension _CheHomeSend on _CHEHomeState {
     final lower = message.toLowerCase();
 
     if (CheVideo.isRecentCommand(message)) {
-      await speakText('Opening recent videos, sir.', record: false);
+      await speakText('Opening recent videos, sir.', record: false, show: true);
       if (!mounted) return true;
       await Navigator.of(context).push(
         MaterialPageRoute<void>(
@@ -182,7 +182,7 @@ extension _CheHomeSend on _CHEHomeState {
       caseSensitive: false,
     );
     if (updateCommand.hasMatch(message.trim())) {
-      await speakText('Checking CHE updates now, sir.', record: false);
+      await speakText('Checking CHE updates now, sir.', record: false, show: true);
       if (!mounted) return true;
       await Navigator.of(context).push(
         MaterialPageRoute<void>(
@@ -203,6 +203,7 @@ extension _CheHomeSend on _CHEHomeState {
       await speakText(
         'Opening CHE previous verified builds. I will ask before SideStore opens an older build, sir.',
         record: false,
+        show: true,
       );
       if (!mounted) return true;
       await Navigator.of(context).push(
@@ -240,6 +241,29 @@ extension _CheHomeSend on _CHEHomeState {
     }
     if (RegExp(r'\b(open|show|go to)\s+(devices?|connections?|screen|identity)\b').hasMatch(lower)) {
       _openAssistantHub(tab: 3);
+      return true;
+    }
+    // Music Studio's recording workspace (owner, 2026-10-24): "record my vocals", "open the beat maker", "my songs".
+    if (CheRecordingStudio.voiceHandler == null) {
+      final rec = RegExp(r'\b(?:open|show|go to)\s+(?:the\s+|my\s+)?(recording studio|music studio|studio recorder|beat maker|my songs|mixer|mastering)\b').firstMatch(lower);
+      final takeNow = RegExp(r'\b(record (my )?(vocals?|voice|a song|a take)|start recording (my )?(vocals?|a song)|new recording|make a beat|play the beat)\b').hasMatch(lower);
+      if (rec != null || takeNow) {
+        final name = rec?.group(1) ?? '';
+        // With words to act on, the studio says the real result itself; otherwise CHE says where she went.
+        if (!takeNow) await speakText('Opening the Recording Studio${name.isEmpty || name.endsWith('studio') ? '' : ', $name'}.', record: false);
+        if (!mounted) return true;
+        unawaited(_openRecordingStudio(
+          tab: name == 'beat maker' ? 2 : name == 'my songs' ? 1 : name == 'mixer' ? 3 : name == 'mastering' ? 5 : 0,
+          say: takeNow ? message : null,
+        ));
+        return true;
+      }
+    }
+    // The video series moved to Film Studio with the rest of video (2026-10-24).
+    if (RegExp(r'\b(open|show|go to)\s+(the\s+|my\s+)?(street smart explainers|video series|series studio|series panel)\b').hasMatch(lower)) {
+      await speakText('Opening Film Studio. The video series, Street Smart Explainers, is at the top.', record: false);
+      if (!mounted) return true;
+      unawaited(_openFilmStudio());
       return true;
     }
     if (RegExp(r'\b(open|show|go to)\s+(music|playlists?)\b').hasMatch(lower)) {
@@ -699,7 +723,7 @@ extension _CheHomeSend on _CHEHomeState {
     // Security Intelligence: a password, key or token typed or spoken into ordinary chat never leaves the phone.
     if (_pendingAttachment == null && cheChatLooksSecret(message)) {
       if (mounted) _set(() => controller.clear());
-      await speakText('That looks like a password, key or token, so I did not send it anywhere. To keep a password, say save my password for, then the site; it stays in your Face ID vault on this iPhone. Keys go in the Keys tab.', record: false);
+      await speakText('That looks like a password, key or token, so I did not send it anywhere. To keep a password, say save my password for, then the site; it stays in your Face ID vault on this iPhone. Keys go in the Keys tab.', record: false, show: true);
       return;
     }
 
@@ -723,7 +747,7 @@ extension _CheHomeSend on _CHEHomeState {
       final reply = await securityVoice(message);
       if (reply != null) {
         if (mounted) _set(() => controller.clear());
-        if (reply.isNotEmpty) await speakText(reply, record: false);
+        if (reply.isNotEmpty) await speakText(reply, record: false, show: true);
         return;
       }
     }
@@ -739,13 +763,24 @@ extension _CheHomeSend on _CHEHomeState {
       }
     }
 
+    // The Recording Studio, while it is open, takes record, play, stop, effects, mixing, mastering and export.
+    final recordingVoice = CheRecordingStudio.voiceHandler;
+    if (recordingVoice != null && _pendingAttachment == null) {
+      final reply = await recordingVoice(message);
+      if (reply != null) {
+        if (mounted) _set(() => controller.clear());
+        if (reply.isNotEmpty) await speakText(reply, record: false);
+        return;
+      }
+    }
+
     // The Live 3D Studio, while it is open, takes viewport moves, edits, undo, redo, save and generate.
     final liveVoice = CheLiveStudio.voiceHandler;
     if (liveVoice != null && _pendingAttachment == null) {
       final reply = await liveVoice(message);
       if (reply != null) {
         if (mounted) _set(() => controller.clear());
-        if (reply.isNotEmpty) await speakText(reply, record: false);
+        if (reply.isNotEmpty) await speakText(reply, record: false, show: true);
         return;
       }
     }
@@ -756,7 +791,7 @@ extension _CheHomeSend on _CHEHomeState {
       final reply = await studioVoice(message);
       if (reply != null) {
         if (mounted) _set(() => controller.clear());
-        if (reply.isNotEmpty) await speakText(reply, record: false);
+        if (reply.isNotEmpty) await speakText(reply, record: false, show: true);
         return;
       }
     }
@@ -767,7 +802,7 @@ extension _CheHomeSend on _CHEHomeState {
       final reply = await generatorVoice(message);
       if (reply != null) {
         if (mounted) _set(() => controller.clear());
-        if (reply.isNotEmpty) await speakText(reply, record: false);
+        if (reply.isNotEmpty) await speakText(reply, record: false, show: true);
         return;
       }
     }
@@ -778,7 +813,7 @@ extension _CheHomeSend on _CHEHomeState {
       final reply = await benchVoice(message);
       if (reply != null) {
         if (mounted) _set(() => controller.clear());
-        if (reply.isNotEmpty) await speakText(reply, record: false);
+        if (reply.isNotEmpty) await speakText(reply, record: false, show: true);
         return;
       }
     }
@@ -789,7 +824,7 @@ extension _CheHomeSend on _CHEHomeState {
       final reply = await pickerVoice(message);
       if (reply != null) {
         if (mounted) _set(() => controller.clear());
-        if (reply.isNotEmpty) await speakText(reply, record: false);
+        if (reply.isNotEmpty) await speakText(reply, record: false, show: true);
         return;
       }
     }
@@ -800,7 +835,7 @@ extension _CheHomeSend on _CHEHomeState {
       final reply = await connectionsVoice(message);
       if (reply != null) {
         if (mounted) _set(() => controller.clear());
-        if (reply.isNotEmpty) await speakText(reply, record: false);
+        if (reply.isNotEmpty) await speakText(reply, record: false, show: true);
         return;
       }
     }
@@ -812,7 +847,7 @@ extension _CheHomeSend on _CHEHomeState {
       final reply = await atlasVoice(message);
       if (reply != null) {
         if (mounted) _set(() => controller.clear());
-        if (reply.isNotEmpty) await speakText(reply, record: false);
+        if (reply.isNotEmpty) await speakText(reply, record: false, show: true);
         return;
       }
     }
@@ -862,7 +897,7 @@ extension _CheHomeSend on _CHEHomeState {
             screenCommand.op == ScreenOp.changeVoice ||
             screenCommand.op == ScreenOp.naturalVoice ||
             screenCommand.op == ScreenOp.openAtlas || screenCommand.op == ScreenOp.openRenderBench)) {
-          await speakText(reply, record: false);
+          await speakText(reply, record: false, show: true);
         }
         return;
       }

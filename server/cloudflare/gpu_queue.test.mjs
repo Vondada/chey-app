@@ -200,3 +200,21 @@ test('spoken GPU questions reach the catalog command; other cloud phrases keep t
   assert.equal(cloudIntent('render my latest YouTube video')?.command, 'cloud-render');
   assert.equal(cloudIntent('What is a GPU?'), null);
 });
+
+test('object_model and room_model are queue kinds any worker may take (requires.gpu none), on the same queue and routes', async () => {
+  const { JOB_KINDS, MODEL_KINDS, compatible, needOf } = await import('./gpu_queue.js');
+  assert.deepEqual(JOB_KINDS, ['face_preview', 'person_model', 'object_model', 'room_model']);
+  assert.deepEqual(MODEL_KINDS, ['person_model', 'object_model', 'room_model']);
+  for (const kind of ['object_model', 'room_model']) {
+    assert.equal(needOf({ kind }), 'none');
+    assert.equal(compatible({ kind }, false, true), true, 'a CPU worker takes it even while a GPU is online');
+  }
+  assert.equal(needOf({ kind: 'face_preview' }), 'required'); assert.equal(needOf({ kind: 'person_model' }), 'preferred');
+  const { storage, clock } = setup();
+  const res = await gpuOwnerRoute({ storage, now: clock.now }, '/api/gpu/jobs', new Request('https://che.example/api/gpu/jobs', { method: 'POST' }),
+    { kind: 'room_model', title: 'Office', views: [0, 45, 90], settings: { SPEC: '{"type":"office"}' } });
+  const out = await res.json();
+  assert.equal(res.status, 202); assert.equal(out.job.kind, 'room_model'); assert.deepEqual(out.job.requires, { gpu: 'none' });
+  assert.equal(out.job.progress.message, 'Waiting for a Creation Engine worker.');
+  assert.match(out.job.history[0].note, /a free GitHub cloud CPU worker/);
+});

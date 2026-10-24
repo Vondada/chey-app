@@ -215,6 +215,7 @@ extension _CheHomeMemory on _CHEHomeState {
             ? 'Deleted on the phone, sir; the cloud follows when we are back online.'
             : 'I removed it from this list, sir, but I could not find its record to delete; it may come back at the next load.',
         record: false,
+        show: true,
       );
       return;
     }
@@ -226,10 +227,35 @@ extension _CheHomeMemory on _CHEHomeState {
 
     await _loadAgentState(silent: true);
     if (response.statusCode == 404) {
-      await speakText('That memory was already gone, sir; I refreshed the list.', record: false);
+      await speakText('That memory was already gone, sir; I refreshed the list.', record: false, show: true);
     } else if (response.statusCode != 200) {
-      await speakText('I could not delete that memory, sir; the cloud answered ${response.statusCode}. Nothing was removed.', record: false);
+      await speakText('I could not delete that memory, sir; the cloud answered ${response.statusCode}. Nothing was removed.', record: false, show: true);
+    } else {
+      await speakText('Deleted that memory, sir.', record: false, show: true);
     }
+  }
+
+  /// Owner rule: ask before deleting or removing anything. Asks aloud and on
+  /// screen (large text, labeled buttons); true only on an explicit yes.
+  Future<bool> _confirmDelete(String what) async {
+    if (!mounted) return false;
+    final question = 'Delete $what? Choose Yes, delete or No, keep it.';
+    unawaited(speakText(question, record: false));
+    final sure = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text('Delete $what?', style: const TextStyle(fontSize: 22)),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('No, keep it')),
+          FilledButton(onPressed: () => Navigator.pop(dialogContext, true), child: const Text('Yes, delete')),
+        ],
+      ),
+    );
+    if (sure != true) {
+      await speakText('Kept $what, sir. Nothing was deleted.', record: false, show: true);
+      return false;
+    }
+    return true;
   }
 
   Future<void> clearAllMemories() async {
@@ -253,10 +279,11 @@ extension _CheHomeMemory on _CHEHomeState {
             ? 'The cloud was slow to answer, sir, but your memory list is now empty, so the clear went through.'
             : 'I cannot confirm the clear, sir: the cloud was slow to answer, and my list still shows $left ${left == 1 ? 'memory' : 'memories'}.',
         record: false,
+        show: true,
       );
       return;
     } catch (_) {
-      await speakText('I could not reach the cloud, sir; nothing was cleared.', record: false);
+      await speakText('I could not reach the cloud, sir; nothing was cleared.', record: false, show: true);
       return;
     }
 
@@ -271,6 +298,7 @@ extension _CheHomeMemory on _CHEHomeState {
           ? 'All memories cleared, sir.'
           : 'I could not clear the memories, sir; the cloud answered ${response.statusCode}. Nothing was removed.',
       record: false,
+      show: true,
     );
   }
 
@@ -332,11 +360,13 @@ extension _CheHomeMemory on _CHEHomeState {
                                       ),
                                     ),
                                     trailing: IconButton(
+                                      tooltip: 'Delete this memory',
                                       icon: const Icon(
                                         Icons.delete_outline,
                                         color: Colors.redAccent,
                                       ),
                                       onPressed: () async {
+                                        if (!await _confirmDelete('this memory')) return;
                                         await deleteMemory(index, text: text);
                                         setModalState(() {});
                                       },
@@ -917,6 +947,7 @@ extension _CheHomeMemory on _CHEHomeState {
             }
 
             Future<void> remove() async {
+              if (!await _confirmDelete('this project')) return;
               setSheetState(() {
                 busy = true;
                 statusText = 'Deleting project...';
@@ -964,6 +995,7 @@ extension _CheHomeMemory on _CHEHomeState {
                             ),
                           ),
                           IconButton(
+                            tooltip: 'Delete this project',
                             onPressed: busy ? null : remove,
                             icon: const Icon(
                               Icons.delete_outline,
@@ -1182,6 +1214,7 @@ extension _CheHomeMemory on _CHEHomeState {
                             ),
                           ),
                           IconButton(
+                            tooltip: 'Add a vault note',
                             onPressed: () async {
                               await _addVaultNote();
                               setSheetState(() {});
@@ -1244,15 +1277,24 @@ extension _CheHomeMemory on _CHEHomeState {
                                       );
                                     },
                                     trailing: IconButton(
+                                      tooltip: 'Delete this vault note',
                                       icon: const Icon(Icons.delete_outline),
                                       onPressed: () async {
+                                        if (!await _confirmDelete('this vault note')) return;
                                         try {
-                                          await _postAgentJson('/api/vault/delete', {
+                                          final result = await _postAgentJson('/api/vault/delete', {
                                             'id': item['id'],
                                           });
                                           await _loadAgentState(silent: true);
                                           setSheetState(() {});
-                                        } catch (_) {}
+                                          await speakText(
+                                            result == null ? 'I could not delete that vault note, sir: this device is not paired.' : 'Deleted that vault note, sir.',
+                                            record: false,
+                                            show: true,
+                                          );
+                                        } catch (error) {
+                                          await speakText('I could not delete that vault note, sir: $error', record: false, show: true);
+                                        }
                                       },
                                     ),
                                   ),

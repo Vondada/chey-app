@@ -3,6 +3,7 @@
 import 'dart:convert';
 
 import 'package:chey/film/che_film_studio_screen.dart';
+import 'package:chey/rooms/che_creator_studio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
@@ -110,5 +111,30 @@ void main() {
     expect(cheFilmDuration(420), '7 minutes');
     expect(cheFilmDuration(3900), '65 minutes');
     expect(cheFilmDuration(7500), '2 hours 5 minutes');
+  });
+
+  testWidgets('the video series and video tools live in Film Studio (moved from Music, 2026-10-24)', (tester) async {
+    tester.view.physicalSize = const Size(1200, 4000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final ran = <String>[];
+    final client = CheFilmClient(baseUrl: 'https://che.example', headers: () => {}, client: MockClient((r) async => http.Response.bytes(utf8.encode(jsonEncode(_view())), 200)));
+    await tester.pumpWidget(MaterialApp(
+      home: CheFilmStudioScreen(
+        client: client,
+        refreshEvery: const Duration(hours: 1),
+        series: const Text('Street Smart Explainers panel'),
+        tools: [
+          CheStudioAction(icon: Icons.movie_creation_outlined, title: 'Script + storyboard', body: 'Scenes.', connected: true, connectorName: '', onRun: () => ran.add('script')),
+          CheStudioAction(icon: Icons.videocam_rounded, title: 'Generate video', body: 'Clips.', connected: false, connectorName: 'Video generator (CHE_VIDEO_GEN_URL)', onRun: () => ran.add('video')),
+        ],
+      ),
+    ));
+    await tester.pumpAndSettle();
+    expect(find.text('Video series'), findsOneWidget);
+    expect(find.text('Street Smart Explainers panel'), findsOneWidget);
+    expect(find.text('CONNECT'), findsOneWidget, reason: 'an unconnected generator says what it needs');
+    await tester.tap(find.text('Script + storyboard'));
+    expect(ran, ['script']);
   });
 }

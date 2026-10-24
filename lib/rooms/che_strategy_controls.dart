@@ -382,10 +382,10 @@ class _CheStrategyControlsPanelState extends State<CheStrategyControlsPanel> {
     return CheHelpTarget(name: label, child: Row(children: [
       Expanded(child: Text(label, style: TextStyle(color: _dim, fontSize: 13))),
       Semantics(button: true, label: 'Decrease $label for $who, now $n', excludeSemantics: true,
-          child: IconButton(onPressed: _busy || n <= lo ? null : () => set(n - step), icon: const Icon(Icons.remove_circle_outline, color: Colors.white))),
+          child: IconButton(tooltip: 'Decrease $label', onPressed: _busy || n <= lo ? null : () => set(n - step), icon: const Icon(Icons.remove_circle_outline, color: Colors.white))),
       Semantics(label: '$label: $n', excludeSemantics: true, child: SizedBox(width: 56, child: Text('$n', textAlign: TextAlign.center, style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w700)))),
       Semantics(button: true, label: 'Increase $label for $who, now $n', excludeSemantics: true,
-          child: IconButton(onPressed: _busy || n >= hi ? null : () => set(n + step), icon: const Icon(Icons.add_circle_outline, color: Colors.white))),
+          child: IconButton(tooltip: 'Increase $label', onPressed: _busy || n >= hi ? null : () => set(n + step), icon: const Icon(Icons.add_circle_outline, color: Colors.white))),
     ]));
   }
 }
