@@ -122,7 +122,7 @@ class CheInventionDetail extends StatelessWidget {
               children: [
                 _action('New concept picture', 'Make a new concept picture and save it to this project', Icons.image_outlined, 'concept'),
                 if (project.models.isEmpty)
-                  _action('Make 3D model', 'Build a 3D model of this invention and save it', Icons.view_in_ar_outlined, 'model')
+                  _action('Make 3D model', 'Build a 3D model of this invention and save it', Icons.view_in_ar_rounded, 'model')
                 else
                   _action('View in 3D', 'Open the 3D model to rotate, zoom and change the colour', Icons.view_in_ar, 'view3d'),
               ],

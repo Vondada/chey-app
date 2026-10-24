@@ -195,7 +195,7 @@ class _CheRecordingStudioState extends State<CheRecordingStudio> with SingleTick
             padding: const EdgeInsets.all(8),
             decoration: BoxDecoration(color: CheColors.warning.withValues(alpha: 0.15), borderRadius: BorderRadius.circular(8)),
             child: Row(children: [
-              Icon(Icons.bluetooth_audio_rounded, color: CheColors.warning, size: 18),
+              Icon(Icons.headphones_rounded, color: CheColors.warning, size: 18),
               const SizedBox(width: 8),
               Expanded(child: Text(text, style: CheType.caption)),
             ]),
@@ -216,17 +216,17 @@ class _CheRecordingStudioState extends State<CheRecordingStudio> with SingleTick
       padding: const EdgeInsets.fromLTRB(8, 4, 8, 0),
       child: Column(children: [
         Wrap(alignment: WrapAlignment.center, crossAxisAlignment: WrapCrossAlignment.center, children: [
-          _btn(Icons.skip_previous_rounded, 'Rewind to the start', () => _do(c.rewind)),
-          _btn(Icons.replay_10_rounded, 'Back 10 seconds', () => _do(() => c.nudge(-10))),
+          _btn(Icons.replay_rounded, 'Rewind to the start', () => _do(c.rewind)),
+          _btn(Icons.arrow_back_rounded, 'Back 10 seconds', () => _do(() => c.nudge(-10))),
           c.playing
               ? _btn(Icons.pause_rounded, 'Pause', () => _do(c.pause))
               : _btn(Icons.play_arrow_rounded, 'Play', rec ? null : () => _do(() => c.play())),
           _btn(Icons.stop_rounded, 'Stop', () => _do(c.stop)),
-          _btn(rec ? Icons.stop_circle_rounded : Icons.fiber_manual_record_rounded, rec ? 'Stop recording' : 'Record', () => _do(rec ? c.stopRecording : c.record),
+          _btn(rec ? Icons.stop_circle : Icons.radio_button_checked, rec ? 'Stop recording' : 'Record', () => _do(rec ? c.stopRecording : c.record),
               color: Colors.redAccent),
-          _btn(Icons.forward_10_rounded, 'Forward 10 seconds', () => _do(() => c.nudge(10))),
-          _btn(Icons.repeat_rounded, c.loop ? 'Loop on' : 'Loop off', () => _do(() => c.toggleLoop()), on: c.loop),
-          _btn(Icons.av_timer_rounded, c.metronome ? 'Metronome on' : 'Metronome off', () => _do(() => c.toggleMetronome()), on: c.metronome),
+          _btn(Icons.arrow_forward_rounded, 'Forward 10 seconds', () => _do(() => c.nudge(10))),
+          _btn(Icons.sync_outlined, c.loop ? 'Loop on' : 'Loop off', () => _do(() => c.toggleLoop()), on: c.loop),
+          _btn(Icons.schedule_rounded, c.metronome ? 'Metronome on' : 'Metronome off', () => _do(() => c.toggleMetronome()), on: c.metronome),
         ]),
         Semantics(
           label: 'Playhead ${cheClock(c.position)} of ${cheClock(c.song.end)}, ${c.song.bpm.round()} BPM'
@@ -271,9 +271,9 @@ class _CheRecordingStudioState extends State<CheRecordingStudio> with SingleTick
     return ListView(padding: const EdgeInsets.fromLTRB(CheSpace.gutter, 8, CheSpace.gutter, 24), children: [
       Wrap(spacing: 8, runSpacing: 8, children: [
         FilledButton.icon(onPressed: () => _do(() => c.newSong()), icon: const Icon(Icons.add_rounded), label: const Text('New Recording')),
-        OutlinedButton.icon(onPressed: () => _do(() => c.addTrack()), icon: const Icon(Icons.playlist_add_rounded), label: const Text('Add track')),
-        OutlinedButton.icon(onPressed: () => _do(() => _import(c)), icon: const Icon(Icons.file_open_rounded), label: const Text('Import beat (WAV)')),
-        OutlinedButton.icon(onPressed: () => _do(c.playBack), icon: const Icon(Icons.hearing_rounded), label: const Text('Play that back')),
+        OutlinedButton.icon(onPressed: () => _do(() => c.addTrack()), icon: const Icon(Icons.queue_music_rounded), label: const Text('Add track')),
+        OutlinedButton.icon(onPressed: () => _do(() => _import(c)), icon: const Icon(Icons.folder_open_outlined), label: const Text('Import beat (WAV)')),
+        OutlinedButton.icon(onPressed: () => _do(c.playBack), icon: const Icon(Icons.headphones_outlined), label: const Text('Play that back')),
       ]),
       const SizedBox(height: 8),
       Wrap(spacing: 8, runSpacing: 4, crossAxisAlignment: WrapCrossAlignment.center, children: [
@@ -443,7 +443,7 @@ class _CheRecordingStudioState extends State<CheRecordingStudio> with SingleTick
       Wrap(spacing: 8, children: [
         FilledButton.icon(onPressed: () => _do(() => c.newSong()), icon: const Icon(Icons.add_rounded), label: const Text('New Recording')),
         OutlinedButton.icon(onPressed: () => _do(c.saveNow), icon: const Icon(Icons.save_rounded), label: const Text('Save')),
-        OutlinedButton.icon(onPressed: () => _do(c.export), icon: const Icon(Icons.ios_share_rounded), label: const Text('Export WAV')),
+        OutlinedButton.icon(onPressed: () => _do(c.export), icon: const Icon(Icons.save_rounded), label: const Text('Export WAV')),
       ]),
       const SizedBox(height: 8),
       Text('My Songs', style: Theme.of(context).textTheme.titleMedium),
@@ -673,7 +673,7 @@ class _CheRecordingStudioState extends State<CheRecordingStudio> with SingleTick
       Wrap(spacing: 8, runSpacing: 8, children: [
         FilledButton(onPressed: () => _do(() => c.master()), child: const Text('Master and measure')),
         OutlinedButton(onPressed: () => _do(() => c.play(from: 0)), child: const Text('Play the master')),
-        OutlinedButton.icon(onPressed: () => _do(c.export), icon: const Icon(Icons.ios_share_rounded), label: const Text('Export WAV')),
+        OutlinedButton.icon(onPressed: () => _do(c.export), icon: const Icon(Icons.save_rounded), label: const Text('Export WAV')),
       ]),
       const SizedBox(height: 8),
       Text('Exports go to Files, On My iPhone, CHE, CHE Songs, Exports. WAV only for now.', style: CheType.bodyDim),
