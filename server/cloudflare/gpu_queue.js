@@ -21,16 +21,26 @@
 // and its output is labelled CPU everywhere, never GPU. Progress carries stage checkpoints (model, rig, animate,
 // verify, render, save); a resuming worker downloads the uploaded GLB and skips finished stages. A lapsed lease
 // pauses the job for ANY compatible worker; a failed attempt re-queues it (3 attempts) with its checkpoints kept.
+import { admit, fairOrder } from './job_quota.js';
 import { BUILT_IN, STYLES, STYLE_LABELS, identityRoute, toSettings } from './avatar_identity.js';
 import { saveRenderedImage } from './media.js';
 import { mediaStore, sha256Hex } from './che_media_store.js';
 import { verifyGithubOidc } from './gpu_oidc.js';
 import { ensureCapacity } from './creation_orchestrator.js';
 
+const RATE_KEY = 'gpu:rate';            // per-tenant token buckets for new jobs (job_quota.js rateLimit)
 export const LEASE_MS = 3 * 60_000;           // a claimed job pauses after 3 minutes without a heartbeat
 export const ONLINE_MS = 90_000;              // a worker counts as online for 90 s after its last heartbeat
 export const MAX_FAILURES = 3;                // attempts: a failed run re-queues the job until the third failure
 export const MAX_JOBS = 200;
+export const MAX_WAITING = 500;         // queued + paused jobs one queue shard holds; beyond it new jobs are refused
+const LIVE_STATES = new Set(['queued', 'paused', 'rendering']);
+/** Never drops a job that is waiting or running: only finished ones beyond MAX_JOBS, oldest first. */
+export function keepJobs(jobs) {
+  const finished = jobs.filter((j) => !LIVE_STATES.has(j.state));
+  const drop = new Set(finished.slice(0, Math.max(0, jobs.length - MAX_JOBS)).map((j) => j.id));
+  return drop.size ? jobs.filter((j) => !drop.has(j.id)) : jobs;
+}
 export const MAX_PREVIEW_BYTES = 4 * 1024 * 1024;
 export const MAX_MODEL_BYTES = 16 * 1024 * 1024;
 // face_preview: pictures only. person_model (Live Studio, creation_studio.js): the same pictures plus the 3D model
@@ -153,7 +163,8 @@ export class GpuQueue {
     return jobs;
   }
 
-  async save(jobs) { await this.storage.put(JOBS_KEY, jobs.slice(-MAX_JOBS)); }
+  /** Keeps every queued, paused and rendering job; only the oldest finished jobs are trimmed past MAX_JOBS. */
+  async save(jobs) { await this.storage.put(JOBS_KEY, keepJobs(jobs)); }
 
   newJob(spec, t) {
     const id = `gpu_${crypto.randomUUID().replaceAll('-', '').slice(0, 12)}`;
@@ -161,6 +172,7 @@ export class GpuQueue {
       id, kind: JOB_KINDS.includes(spec.kind) ? spec.kind : 'face_preview', title: String(spec.title || 'Face preview').slice(0, 120), views: cleanViews(spec.views),
       settings: cleanSettings(spec.settings), samples: Math.min(Math.max(Number(spec.samples) || 64, 1), 1024),
       res: Math.min(Math.max(Number(spec.res) || 480, 64), 2048), queued_by: String(spec.queued_by || 'owner').slice(0, 60),
+      tenant_id: /^[a-z0-9_-]{1,64}$/i.test(String(spec.tenant_id || '')) ? String(spec.tenant_id) : 'owner',
       created_at: iso(t), updated_at: iso(t), state: 'queued', failures: 0, sessions: 0, lease: null,
       priority: PRIORITIES[spec.priority] !== undefined ? spec.priority : 'normal',
       requires: { gpu: GPU_NEEDS.includes(spec.requires?.gpu) ? spec.requires.gpu : (spec.kind === 'person_model' ? 'preferred' : 'required') },
@@ -180,6 +192,12 @@ export class GpuQueue {
     const same = jobs.find((j) => ['queued', 'paused', 'rendering'].includes(j.state)
       && (j.kind || 'face_preview') === probe.kind && (j.requires?.gpu || probe.requires.gpu) === probe.requires.gpu && JSON.stringify(j.settings) === JSON.stringify(probe.settings) && j.views.join() === probe.views.join() && j.samples === probe.samples && j.res === probe.res);
     if (same) return { ok: true, job: same, duplicate: true };
+    const live = jobs.filter((j) => j.state === 'queued' || j.state === 'paused').length;
+    if (live >= MAX_WAITING) return { ok: false, limited: true, detail: `The Creation Engine already has ${live} jobs waiting, the most it holds. Nothing was queued and nothing was removed; try again when some finish.` };
+    // Per-tenant limits before anything is queued (job_quota.js): queued jobs, rate, spending gate.
+    const gate = admit({ minutes: 0 }, { jobs, tenant: probe.tenant_id, bucket: (await this.storage.get(RATE_KEY))?.[probe.tenant_id], now: this.now() });
+    if (!gate.ok) return { ok: false, detail: gate.reason, limited: true };
+    await this.storage.put(RATE_KEY, { ...((await this.storage.get(RATE_KEY)) || {}), [probe.tenant_id]: gate.bucket });
     jobs.push(probe); await this.save(jobs);
     return { ok: true, job: probe };
   }
@@ -265,7 +283,8 @@ export class GpuQueue {
         if (busy >= max) return { ok: true, job: null, detail: `${busy} cloud workers are already busy (the limit is ${max}).` };
       }
       const gpuOnline = Object.entries(workers).some(([id, w]) => id !== workerId && isGpuWorker(w) && t - (w.last_seen_ms || 0) < ONLINE_MS);
-      next = jobs.filter((j) => waiting(j) && compatible(j, cls === 'colab', gpuOnline)).sort(claimOrder)[0];
+      // Fair across tenants (job_quota.js): priority, then least recent use per plan weight, then paused, then oldest.
+      next = jobs.filter((j) => waiting(j) && compatible(j, cls === 'colab', gpuOnline)).sort(fairOrder(jobs, t))[0];
     }
     if (!next) return { ok: true, job: null };
     const resumed = next.state === 'paused' || Boolean(!mine && Object.keys(next.checkpoints || {}).length);
