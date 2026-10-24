@@ -72,7 +72,22 @@ Then, on GitHub:
 
 **ChatGPT 2026-10-20 owner-directed end-to-end continuation:** Current main `295a9cde` (PRs #393 and #392 merged). Claude PR #394 false-completion fix is open: CI green on inspected commit `6984aa1`, but unresolved Codex review threads remain for `office_workforce.js` (`review_pending` must keep temporary agents busy) and `office_board.js` (desk statuses for `review_pending`, `needs_review`, `rejected`); original passive-claims thread is outdated but should be rechecked. DO NOT MERGE #394 before current-head review and checks pass. ChatGPT created PR #395 from main `chatgpt/chart-malformed-response-20261020` commit `2865b6e` to guard malformed scalar API collection fields (`points`, `timeframes`, `bars`, `markers`, `drawings`, `open_orders`) in `lib/rooms/che_trading_chart.dart`, resolving the owner's observed `int` cast crash. PR #395 CI Flutter / UI Analyze in progress (`39540411941`, `39540411947`); not merged, not installed, no live iPhone test. Actual live FundYourEdge/Tradesea Rithmic market-data and broker paper-order integration NOT CONNECTED; existing futures `/api/trading/chart` uses stored delayed research bars and blocks futures orders. Next: add chart malformed-payload regression, obtain valid Rithmic API access/terms and separate simulated account permission; test read-only stream, then simulated orders only; no credentials shared in chat and no paid purchases. Owner requested end-to-end finish, but third-party API authorization is a real external blocker.
 
-## 2. Current position (Claude, 2026-10-24: HQ mission pushed, not merged)
+## 2. Current position
+
+**Claude, 2026-10-24 master recovery (checkpoint, verified on git).**
+- main: `ce63de4` (fetched; no new commits). Open PRs on GitHub: none.
+- Work branch `claude/che-latency-optimization-8ruaus` head is `248b177` (pushed, not merged, no PR). The HQ commits `0d57f41`, `00d8d30`, `6fe39de` are its ancestors. Earlier text in this section said head `6fe39de`; git wins.
+- Verified this session: Worker `node --test` 3768/3768 pass, exit 0, at `248b177`. Flutter not re-run this session.
+- Gmail routing (#34): PARTIAL. "CHE, check my unread emails and tell me the newest one." replays through the real `/api/chat` as `che_google` with 0 model calls. Connected Gmail is not in the replay, so the reply there is "Gmail is not connected". The owner's earlier model answer is not reproduced; the guest guard (`worker.js` ~5919) covers non-owner devices. Open: test on the owner's connected device.
+- Office 3D renders, actual (not mockup): `scratchpad/gallery/2026-10-24-office3d-rooms/` (Office and War Room, wide and phone). Logged in `gallery/index.md`.
+- HQ (#117 to #120): Worker and Flutter pieces on the branch. Not done: room zones and first/third-person 3D, tap-to-room bridge, room voice commands and room microphone. No PR.
+- Brain 2.0 (`claude/che-brain-2`, `ce63de4`): worker stopped, uncommitted files in its worktree. Not running.
+- Blender cinematic: no committed or verified MP4 on any branch. Scratch renders only. BLOCKED on a verified final render.
+- Avatars: 8 crew GLB baseline renders. Orion and Vale have no model. Photoreal avatars not started.
+- Blockers: no GPU; no iPhone verification; Actions dispatch unverified; `server/cloudflare` changes need the owner's go-ahead and `[worker-deploy]` before merge.
+- Next action: owner decides on merging the HQ branch. Then Gmail on the owner's connected device, then room renders for the other office3d pages.
+
+**Earlier checkpoint (2026-10-24, HQ mission):**
 
 - Branch `claude/che-latency-optimization-8ruaus`, head `6fe39de`. Pushed; not merged to main; no PR; Worker not deployed.
   - `0d57f41` Worker: `GET /api/office/hq`, `GET /api/office/hq/:room`, `POST /api/office/hq/talk`. Rooms come from the roster's department heads. Status comes from Office records only. A talk is filed to the head's inbox. An assign goes through `queueAgentTask` after `assertAgentMayRun`. `headquarters.test.mjs` 11/11; full Worker suite 3718/0.
