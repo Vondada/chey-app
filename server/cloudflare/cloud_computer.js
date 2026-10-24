@@ -361,22 +361,22 @@ export async function runCloudTask(job, { env = {}, fetcher = fetch, now = Date.
   const cloud = job.cloud || {};
   if (!cloud.dispatched_at) {
     const at = new Date(now).toISOString();
-    // GitHub answers a dispatch with 204 and no run id. The runs that already exist are not this one (a concurrent
-    // dispatch, or the chat path's own flutter-check run), so they are recorded before the dispatch and skipped after.
-    const known = ((await listDispatchRuns(env, fetcher)) || []).map((r) => r.id).filter((id) => id != null);
-    const sent = await gh(env, 'POST', `/actions/workflows/${TESTS_WORKFLOW}/dispatches`, { ref: 'main' }, fetcher);
+    // GitHub answers a dispatch with 204 and no run id. This dispatch carries its own id, which flutter-check.yml puts
+    // in the run's title (run-name), so the run is found by that title alone; a concurrent dispatch never matches.
+    const dispatchId = testsDispatchId(job.id, now);
+    const sent = await gh(env, 'POST', `/actions/workflows/${TESTS_WORKFLOW}/dispatches`, { ref: 'main', inputs: { che_dispatch_id: dispatchId } }, fetcher);
     if (!(sent.status === 204 || sent.ok)) return fail(explainGithubError(sent.status, sent.data?.message), { cloud: { phase: 'dispatch_failed' } });
-    const run = await findDispatchedRun(env, at, known, fetcher);
+    const run = await findDispatchedRun(env, { dispatchId }, fetcher);
     const note = run ? `Dispatched ${TESTS_WORKFLOW}; GitHub run ${run.id}.` : `Dispatched ${TESTS_WORKFLOW}; GitHub accepted it (204) and the run id is not visible yet.`;
     return {
       id: job.id, status: 'queued', attempts: 0, retry_at: now + POLL_MS, result: '', error: '',
-      cloud: { phase: 'dispatched', started_at: at, dispatched_at: at, known_run_ids: known, run_id: run?.id || null, html_url: run?.html_url || '', log: logLine(job, note) },
+      cloud: { phase: 'dispatched', started_at: at, dispatched_at: at, dispatch_id: dispatchId, run_id: run?.id || null, html_url: run?.html_url || '', log: logLine(job, note) },
     };
   }
   let runId = cloud.run_id;
   let htmlUrl = cloud.html_url || '';
   if (!runId) {
-    const run = await findDispatchedRun(env, cloud.dispatched_at, Array.isArray(cloud.known_run_ids) ? cloud.known_run_ids : [], fetcher);
+    const run = await findDispatchedRun(env, { dispatchId: cloud.dispatch_id, at: cloud.dispatched_at, known: cloud.known_run_ids }, fetcher);
     if (!run) {
       if (now - Date.parse(cloud.dispatched_at) > NEVER_STARTED_MS) return fail('GitHub never started the test run: no run appeared 15 minutes after the dispatch. Nothing was tested.', { cloud: { phase: 'never_started' } });
       return { id: job.id, status: 'queued', attempts: 0, retry_at: now + POLL_MS, result: '', error: '', cloud: { phase: 'waiting_for_runner', log: logLine(job, 'Waiting for GitHub to show the run.') } };
@@ -412,18 +412,31 @@ async function listDispatchRuns(env, fetcher) {
   return runs.ok ? (Array.isArray(runs.data?.workflow_runs) ? runs.data.workflow_runs : []) : null;
 }
 
+/** The title flutter-check.yml gives a run dispatched with `che_dispatch_id` (its run-name). */
+export const TESTS_RUN_TITLE_PREFIX = 'CHE cloud tests ';
+
+/** A dispatch-specific id: the job id plus the dispatch time, so a retried job's new run never matches an old title. */
+export function testsDispatchId(jobId, now = Date.now()) {
+  return `${String(jobId || 'job').replace(/[^A-Za-z0-9_-]/g, '').slice(0, 48) || 'job'}-${Number(now).toString(36)}`;
+}
+
 /**
- * This job's run: the OLDEST dispatch run created no earlier than a minute before `at` whose id was not already
- * listed before the dispatch (`known`). A later concurrent dispatch is newer, so it is never taken for this one.
+ * This job's run, or null while it cannot be told apart. With a dispatch id, only the one run titled with it counts:
+ * none (not listed yet) or more than one (ambiguous) leaves the job unassociated instead of guessing. A job dispatched
+ * before dispatch ids existed has only its pre-dispatch snapshot: it takes a new run only when exactly one appeared.
  */
-async function findDispatchedRun(env, at, known, fetcher) {
+async function findDispatchedRun(env, { dispatchId = '', at = '', known = [] } = {}, fetcher) {
   const runs = await listDispatchRuns(env, fetcher);
   if (!runs) return null;
-  const skip = new Set(known.map(String));
+  if (dispatchId) {
+    const title = `${TESTS_RUN_TITLE_PREFIX}${dispatchId}`;
+    const own = runs.filter((r) => r?.id != null && String(r.display_title || r.name || '') === title);
+    return own.length === 1 ? own[0] : null;
+  }
+  const skip = new Set((Array.isArray(known) ? known : []).map(String));
   const since = Date.parse(at) - 60_000;
-  return runs
-    .filter((r) => r?.id != null && !skip.has(String(r.id)) && Date.parse(r.created_at || 0) >= since)
-    .sort((a, b) => (Date.parse(a.created_at) - Date.parse(b.created_at)) || (Number(a.id) - Number(b.id)))[0] || null;
+  const fresh = runs.filter((r) => r?.id != null && !skip.has(String(r.id)) && Date.parse(r.created_at || 0) >= since);
+  return fresh.length === 1 ? fresh[0] : null;
 }
 
 async function failedSteps(env, runId, fetcher) {

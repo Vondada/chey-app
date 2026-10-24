@@ -69,7 +69,20 @@ Future<(CheSetupDesk, CheTradeAudit, CheTradeAlerts, List<int>, List<String>)> _
 void main() {
   late Directory dir;
   setUp(() => dir = Directory.systemTemp.createTempSync('che_signals'));
-  tearDown(() => dir.deleteSync(recursive: true));
+  // Desk and alert writes to the audit are fire-and-forget (and never finish inside a widget test's fake clock), so an
+  // append can land while the directory is being deleted ("Directory not empty"). Retry the delete briefly; a write
+  // after the directory is gone is caught inside CheTradeAudit.append.
+  tearDown(() {
+    for (var attempt = 0;; attempt++) {
+      try {
+        if (dir.existsSync()) dir.deleteSync(recursive: true);
+        return;
+      } on FileSystemException {
+        if (attempt >= 20) rethrow;
+        sleep(const Duration(milliseconds: 25));
+      }
+    }
+  });
 
   test('the desk turns real candles into a signal, audits every stage, alerts once, never speaks by default', () async {
     final (desk, audit, alerts, pulses, spoken) = await _desk(dir);

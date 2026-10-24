@@ -30,7 +30,9 @@ async function fakeFetch(input, init = {}) {
   const runPath = url.pathname.match(/\/actions\/runs\/(\d+)(\/jobs|\/cancel)?$/);
   const run = runPath && ghRuns.find((r) => String(r.id) === runPath[1]);
   if (method === 'POST' && url.pathname.endsWith('/actions/workflows/flutter-check.yml/dispatches')) {
-    if (github.dispatch === 204) addRun(nextRunId++, { hidden: Boolean(github.hideNewRuns) });
+    // flutter-check.yml's run-name titles a run with the dispatch's che_dispatch_id; without one GitHub uses the workflow name.
+    const tag = JSON.parse(init.body || '{}')?.inputs?.che_dispatch_id;
+    if (github.dispatch === 204) addRun(nextRunId++, { hidden: Boolean(github.hideNewRuns), display_title: tag ? `CHE cloud tests ${tag}` : 'Check CHE Flutter client' });
     return reply(github.dispatch, github.dispatch === 204 ? null : { message: 'Resource not accessible by integration' });
   }
   if (method === 'POST' && /\/actions\/workflows\/che-(?:shorebird|iphone-ipa)\.yml\/dispatches$/.test(url.pathname)) return reply(204, null);
@@ -193,7 +195,8 @@ test('B. "run your coding tests" prepares a flutter-check.yml job that waits for
   await che.state.processJobs();
   const dispatch = calls.find((c) => c.method === 'POST');
   assert.equal(dispatch.path, '/repos/Vondada/chey-app/actions/workflows/flutter-check.yml/dispatches');
-  assert.deepEqual(dispatch.body, { ref: 'main' });
+  assert.equal(dispatch.body.ref, 'main');
+  assert.match(dispatch.body.inputs.che_dispatch_id, /^[A-Za-z0-9_-]+-[0-9a-z]+$/, 'each dispatch carries its own correlation id');
   let stored = che.jobs().find((j) => j.id === job.id);
   assert.equal(stored.status, 'queued', 'waiting on GitHub');
   assert.equal(stored.cloud.run_id, 777);
@@ -332,41 +335,62 @@ test('E. the job state machine: approve, cancel, stop, retry, failure explained 
 
 // ─── Codex follow-ups (#514): run correlation, app-build receipts, media ids ───
 
-test('a test job takes the run its own dispatch created, never an older or concurrent run', async () => {
+test('a test job takes the run titled with its own dispatch id, never an older or concurrent run', async () => {
   const data = newData();
   resetGithub();
   // Someone else's manual run, created seconds ago (inside the old one-minute window).
-  addRun(776);
+  addRun(776, { display_title: 'Check CHE Flutter client' });
   nextRunId = 777;
   const job = requestCloudWork(data, { kind: 'repo_tests' }, { env: GH_ENV, enqueue: enqueueJob }).job;
   approveCloudJob(data, job.id);
   calls.length = 0;
   const first = await runCloudTask(job, { env: GH_ENV, fetcher: fakeFetch });
-  const order = calls.map((c) => `${c.method} ${c.path.split('?')[0].split('/').slice(-1)[0]}`);
-  assert.deepEqual(order.slice(0, 2), ['GET runs', 'POST dispatches'], 'the existing runs are listed before the dispatch');
-  assert.deepEqual(first.cloud.known_run_ids, [776]);
-  assert.equal(first.cloud.run_id, 777, 'run 776 existed before the dispatch, so it is not this job');
+  assert.deepEqual(calls.map((c) => c.method).slice(0, 1), ['POST'], 'no pre-dispatch snapshot is needed');
+  assert.ok(first.cloud.dispatch_id);
+  assert.equal(first.cloud.run_id, 777, 'run 776 does not carry this dispatch id, so it is not this job');
 
-  // GitHub has not listed the new run yet; meanwhile a later concurrent dispatch's run (779) appears first.
+  // The reviewer's case: nothing existed before the dispatch, a concurrent dispatch created run 101, and ours is 102.
+  // Oldest-new-run picking would take 101 and stopCloudJob could cancel someone else's run.
   resetGithub();
-  addRun(776);
-  nextRunId = 778;
   github.hideNewRuns = true;
+  nextRunId = 102;
   const later = requestCloudWork(newData(), { kind: 'repo_tests' }, { env: GH_ENV, enqueue: enqueueJob }).job;
   approveCloudJob({ jobs: [later] }, later.id);
   const d = await runCloudTask(later, { env: GH_ENV, fetcher: fakeFetch });
   assert.equal(d.cloud.run_id, null, 'no visible run yet: nothing is guessed');
   later.cloud = { ...later.cloud, ...d.cloud };
+  addRun(101, { display_title: 'CHE cloud tests some-other-job-1x', created_at: new Date(Date.now() - 5_000).toISOString() });
   const waiting = await runCloudTask(later, { env: GH_ENV, fetcher: fakeFetch });
-  assert.equal(waiting.cloud.phase, 'waiting_for_runner');
+  assert.equal(waiting.cloud.phase, 'waiting_for_runner', 'the concurrent run 101 is visible but is not ours');
   later.cloud = { ...later.cloud, ...waiting.cloud };
-  assert.deepEqual(later.cloud.known_run_ids, [776], 'the known ids survive the waiting polls');
+  assert.equal(later.cloud.dispatch_id, d.cloud.dispatch_id, 'the dispatch id survives the waiting polls');
   for (const r of ghRuns) r.hidden = false;
-  addRun(779);
   github.runStatus = 'completed'; github.conclusion = 'success';
   const done = await runCloudTask(later, { env: GH_ENV, fetcher: fakeFetch });
   assert.equal(done.status, 'complete');
-  assert.match(done.result, /GitHub run 778 of flutter-check\.yml finished with success/, 'the oldest new run is this dispatch, not 776 or 779');
+  assert.match(done.result, /GitHub run 102 of flutter-check\.yml finished with success/, 'run 102 carries this dispatch id; 101 is never taken');
+
+  // Two runs with the same title is ambiguous: the job stays unassociated rather than guessing.
+  resetGithub();
+  const twin = requestCloudWork(newData(), { kind: 'repo_tests' }, { env: GH_ENV, enqueue: enqueueJob }).job;
+  approveCloudJob({ jobs: [twin] }, twin.id);
+  const t1 = await runCloudTask(twin, { env: GH_ENV, fetcher: fakeFetch });
+  addRun(900, { display_title: `CHE cloud tests ${t1.cloud.dispatch_id}` });
+  twin.cloud = { ...twin.cloud, ...t1.cloud, run_id: null };
+  const t2 = await runCloudTask(twin, { env: GH_ENV, fetcher: fakeFetch });
+  assert.equal(t2.cloud.phase, 'waiting_for_runner');
+  assert.equal(t2.cloud.run_id, undefined, 'no run id is recorded while two runs share the title');
+
+  // A job dispatched before dispatch ids existed takes a new run only when exactly one appeared.
+  resetGithub();
+  addRun(500, { display_title: 'Check CHE Flutter client' });
+  addRun(501, { display_title: 'Check CHE Flutter client' });
+  const legacy = { ...later, status: 'queued', cloud: { phase: 'dispatched', dispatched_at: new Date(Date.now() - 10_000).toISOString(), known_run_ids: [], run_id: null } };
+  const l1 = await runCloudTask(legacy, { env: GH_ENV, fetcher: fakeFetch });
+  assert.equal(l1.cloud.phase, 'waiting_for_runner', 'two new runs and no dispatch id: unassociated');
+  legacy.cloud.known_run_ids = [500];
+  const l2 = await runCloudTask(legacy, { env: GH_ENV, fetcher: fakeFetch });
+  assert.equal(l2.cloud.run_id, 501);
   resetGithub();
 });
 

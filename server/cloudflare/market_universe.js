@@ -185,11 +185,13 @@ export function resolveTicker(universe, raw) {
 // ─── Candles ─────────────────────────────────────────────────────────────
 
 /**
- * Buckets of `seconds` from closed finer bars. Only complete buckets are kept: the source step is the smallest gap
- * between consecutive source bars, and a bucket whose source bars cover less than `seconds` (the request window began
- * inside it, or a source bar is missing inside the range) is left out, as is a bucket still forming at `now`.
+ * Buckets of `seconds` from closed finer bars of `sourceSeconds` each. Only complete buckets are kept: every source
+ * slot of the bucket, starting with its opening bar, must be present. A bucket the request window began inside, one
+ * missing a source bar, and one still forming at `now` are left out. Callers pass the source interval they fetched;
+ * without it the step is inferred from the smallest gap, which cannot see a missing opening bar on its own, so the
+ * opening-bar check still applies.
  */
-export function buildBars(bars, seconds, now = Date.now()) {
+export function buildBars(bars, seconds, now = Date.now(), sourceSeconds = 0) {
   const size = seconds * 1000;
   const times = [];
   const out = [];
@@ -200,17 +202,23 @@ export function buildBars(bars, seconds, now = Date.now()) {
     const cur = out.at(-1);
     if (cur && cur.start === start) {
       cur.h = Math.max(cur.h, b.h); cur.l = Math.min(cur.l, b.l); cur.c = b.c; cur.v = (cur.v || 0) + (b.v || 0);
-      if (!cur.seen.has(t)) { cur.seen.add(t); cur.count += 1; }
-    } else out.push({ start, count: 1, seen: new Set([t]), t: iso(start), o: b.o, h: b.h, l: b.l, c: b.c, v: b.v || 0 });
+      cur.seen.add(t);
+    } else out.push({ start, seen: new Set([t]), t: iso(start), o: b.o, h: b.h, l: b.l, c: b.c, v: b.v || 0 });
     times.push(t);
   }
-  let step = 0;
-  for (let i = 1; i < times.length; i++) {
-    const gap = times[i] - times[i - 1];
-    if (gap > 0 && (!step || gap < step)) step = gap;
+  let step = Number(sourceSeconds) > 0 ? Number(sourceSeconds) * 1000 : 0;
+  if (!step) {
+    for (let i = 1; i < times.length; i++) {
+      const gap = times[i] - times[i - 1];
+      if (gap > 0 && (!step || gap < step)) step = gap;
+    }
   }
-  if (!step) return [];
-  return out.filter((b) => b.count * step >= size && b.start + size <= now).map(({ start, count, seen, ...bar }) => bar);
+  if (!step || step >= size || size % step) return [];
+  const complete = (b) => {
+    for (let at = b.start; at < b.start + size; at += step) if (!b.seen.has(at)) return false;
+    return true;
+  };
+  return out.filter((b) => b.start + size <= now && complete(b)).map(({ start, seen, ...bar }) => bar);
 }
 
 const parseCoinbase = (rows, g, now) => (Array.isArray(rows) ? rows : []).filter((x) => Array.isArray(x) && x.length >= 6)
@@ -265,7 +273,7 @@ async function cryptoBars(item, tf, { fetcher, now }) {
   for (const [name, call] of order) {
     try {
       const got = await call();
-      const bars = source === tf ? got.bars : buildBars(got.bars, seconds, now);
+      const bars = source === tf ? got.bars : buildBars(got.bars, seconds, now, INTERVALS[source]);
       return { ...got, bars, built_from: source === tf ? null : source, fallback: name === 'kraken' && item.provider === 'coinbase', attempts };
     } catch (error) {
       attempts.push(`${name}: ${String(error?.message || error).slice(0, 100)}`);
@@ -296,7 +304,7 @@ async function futuresBars(item, tf, { storage, fetcher, now }) {
     if (!res.ok) return { bars: [], provider: 'Yahoo Finance (delayed)', error: `Yahoo answered HTTP ${res.status}` };
     const parsed = parseYahooChart(await res.json(), now, srcSeconds * 1000);
     if (parsed.error) return { bars: [], provider: 'Yahoo Finance (delayed)', error: parsed.error };
-    const bars = YAHOO_NATIVE[tf] ? parsed.candles : buildBars(parsed.candles, seconds, now);
+    const bars = YAHOO_NATIVE[tf] ? parsed.candles : buildBars(parsed.candles, seconds, now, srcSeconds);
     return { bars, provider: `Yahoo Finance ${spec.yahoo} (delayed)`, exchange: spec.exchange, delayed_by_min: parsed.delayed_by_min, built_from: YAHOO_NATIVE[tf] ? null : BUILT_FROM[tf], delayed: true };
   } catch (error) {
     return { bars: [], provider: 'Yahoo Finance (delayed)', error: String(error?.name === 'TimeoutError' ? 'Yahoo did not answer within 10 seconds' : error?.message || error).slice(0, 120) };
@@ -316,7 +324,7 @@ export async function universeCandles(storage, item, tf = '5m', { fetcher = fetc
   if (item.category === 'futures') {
     const recorded = item.contract ? await readRithmicCandles(storage, { symbol: item.contract, now }).catch(() => null) : null;
     if (recorded?.ok && Array.isArray(recorded.candles) && recorded.candles.length && seconds >= 60 && seconds <= 3600) {
-      const bars = seconds === 60 ? recorded.candles : buildBars(recorded.candles, seconds, now);
+      const bars = seconds === 60 ? recorded.candles : buildBars(recorded.candles, seconds, now, 60);
       const live = liveness(bars, seconds, now);
       return { ...base, bars, built_from: seconds === 60 ? null : '1m', feed: { provider: 'Rithmic (recorded on the owner\'s iPhone)', status: live.status === 'LIVE' ? 'RECORDED' : live.status, age_s: live.age_s, reason: live.reason || 'CHE\'s own recorded minutes', contract: item.contract } };
     }
