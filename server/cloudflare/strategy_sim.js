@@ -292,6 +292,9 @@ export async function readSimState(storage) {
   return state;
 }
 
+// True when this state object is no longer the live run: a reset replaced it while a pass still held it.
+const replacedRun = (storage, state) => live.has(storage) && live.get(storage) !== state;
+
 // The one place the state is saved on its own. A pass saves through commitSim, which writes the trades with it.
 async function saveSimState(storage, state, now = Date.now()) {
   state.saved_at = iso(now);
@@ -333,7 +336,10 @@ async function tradeWrites(storage, meta, trades, { cap = TRADE_CAP, chunk = TRA
 // One storage write for a pass: the closed trades' chunks and the state, together and atomically. Chunks that
 // the cap drops are deleted after that write. Without force, a pass with nothing to save writes nothing.
 async function commitSim(storage, state, closed, now, { cap = TRADE_CAP, chunk = TRADE_CHUNK, force = false } = {}) {
+  // A pass of a run the owner reset meanwhile writes nothing: the fresh run (and its archive) stays as it is.
+  if (replacedRun(storage, state)) return false;
   const { puts, deletes } = await tradeWrites(storage, state.trades, closed, { cap, chunk });
+  if (replacedRun(storage, state)) return false;
   if (!force) return false;
   state.saved_at = iso(now);
   await storage.put({ ...puts, [STATE_KEY]: state });
@@ -414,7 +420,8 @@ export async function strategySimTick(storage, { fetcher = fetch, now = Date.now
   assertPaperOnly();
   state.last_tick = iso(now);
   state.ticks += 1;
-  const halted = () => state.paused;
+  // Paused by the owner, or reset (a new run replaced this one): either way nothing more from this pass is used.
+  const halted = () => state.paused || replacedRun(storage, state);
   const report = {};
   const closed = [];
   let opened = 0;
@@ -446,6 +453,7 @@ export async function strategySimTick(storage, { fetcher = fetch, now = Date.now
     opened += filled;
     report[symbol] = { new_bars: sym.bars - before, status: data.status, closed: made.length, opened: filled };
   }
+  if (replacedRun(storage, state)) return { ran: false, replaced: true, closed: 0, opened: 0, at: iso(now) };
   if (halted()) {
     // Paused during this pass: what finished before the pause is saved, and nothing was opened after it.
     state.last_paused_marker = { at: iso(now), note: 'Paused by the owner during a pass: no bars used and no trade opened after the pause.' };

@@ -451,6 +451,42 @@ void main() {
     expect(saved, contains('Take saved'), reason: 'results after the sound has stopped are spoken normally');
   });
 
+  test('My Songs by voice: list them, open one by number or by name (review of #523)', () async {
+    final dir = Directory.systemTemp.createTempSync('che_studio_songs_');
+    addTearDown(() => dir.deleteSync(recursive: true));
+    final c = await studio(dir, FakeAudio());
+    await c.newSong(title: 'Sunset Drive');
+    await c.newSong(title: 'Night Shift');
+    final tabs = <int>[];
+    final list = await cheStudioVoice(c, 'list my songs', showTab: tabs.add);
+    expect(list, startsWith('Your songs: 1 '));
+    expect(list, contains('Sunset Drive'));
+    expect(list, contains('Night Shift'));
+    final firstTitle = c.songs.first.title;
+    expect(await cheStudioVoice(c, 'open song one'), startsWith('Opened "$firstTitle"'));
+    expect(c.song.title, firstTitle);
+    expect(await cheStudioVoice(c, 'open the song called sunset drive'), startsWith('Opened "Sunset Drive"'));
+    expect(c.song.title, 'Sunset Drive');
+    expect(await cheStudioVoice(c, 'open song 9'), startsWith('There is no song 9.'));
+    expect(await cheStudioVoice(c, 'open song called nothing like this'), startsWith('No saved song is called'));
+    expect(await cheStudioVoice(c, 'open my songs', showTab: tabs.add), 'Showing my songs.');
+    expect(tabs.last, 1);
+  });
+
+  test('by voice, a microphone that fails after "Recording on…" was said is still reported aloud (review of #523)', () async {
+    final dir = Directory.systemTemp.createTempSync('che_studio_denied_');
+    addTearDown(() => dir.deleteSync(recursive: true));
+    final audio = FakeAudio(inLat: 0, outLat: 0, unavailable: 'Microphone access is off for CHE. Turn it on in Settings, Privacy, Microphone.');
+    final c = await studio(dir, audio);
+    c.setCountIn(0);
+    final spoken = <String>[];
+    Future<void> speak(String s) async => spoken.add(s);
+    final reply = await cheStudioVoice(c, 'record my vocals', speakFirst: speak);
+    expect(spoken.single, startsWith('Recording on'));
+    expect(reply, 'Microphone access is off for CHE. Turn it on in Settings, Privacy, Microphone.');
+    expect(c.recording, isFalse);
+  });
+
   testWidgets('the studio shows its six sections and labelled transport', (tester) async {
     final dir = Directory.systemTemp.createTempSync('che_studio_ui_');
     addTearDown(() => dir.deleteSync(recursive: true));

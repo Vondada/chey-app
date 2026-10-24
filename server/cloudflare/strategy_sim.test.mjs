@@ -869,6 +869,31 @@ test('reset asks first, then archives every trade before starting over; nothing 
   assert.deepEqual(strategySimIntent('confirm reset the simulation'), { kind: 'reset', confirm: true });
 });
 
+test('a reset while a pass waits on its feed: the old pass never writes over the fresh run (review of #523)', async () => {
+  const bars = flatThen([{ ...BREAK }, FILL, TARGET_BAR, TAIL, TAIL]);
+  const saved = new Map();
+  const storage = memStorage(saved);
+  await strategySimTick(storage, { now: nowAfter(bars), fetcher: noNetwork, loaders: onlyBtc(bars) });
+  const more = flatThen([{ ...BREAK }, FILL, TARGET_BAR, TAIL, TAIL, TAIL, TAIL]);
+  let release;
+  const gate = new Promise((r) => { release = r; });
+  const slow = { ...onlyBtc(more), 'BTC-USD': async () => { await gate; return { candles: more, status: 'LIVE', source: 'fixture' }; } };
+  const pass = strategySimTick(storage, { now: nowAfter(more), fetcher: noNetwork, loaders: slow, force: true });
+  await new Promise((r) => setTimeout(r, 0));
+  const done = await resetStrategySim(storage, { confirm: true, now: nowAfter(more) });
+  assert.equal(done.ok, true);
+  release();
+  const out = await pass;
+  assert.equal(out.ran, false, JSON.stringify(out));
+  const stored = saved.get(STATE_KEY);
+  assert.equal(stored.paused, true, 'the fresh run stays paused');
+  assert.equal(stored.ticks, 0);
+  assert.deepEqual(stored.open, {});
+  assert.equal(stored.trades.stored, 0, 'no metadata pointing at the archived (deleted) chunks');
+  assert.equal(await readSimState(storage), await readSimState(storage));
+  assert.equal((await readSimState(storage)).ticks, 0);
+});
+
 // ─── Owner routes: read and the kill switch are owner-only ───────────────
 
 test('owner routes: a guest is refused, the owner reads, pauses, resumes and sets the ceiling', async () => {
