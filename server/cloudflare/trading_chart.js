@@ -122,7 +122,7 @@ export async function chartView(storage, env, { account = 'alpaca_paper', symbol
   const frame = offered.includes(tf) ? tf : '5m';
   const base = { ok: true, account, account_label: ACCOUNTS[account].label, mode: 'PAPER', timeframe: frame, timeframes: [...offered], live_orders: liveOrdersStatus(), sources: MARKER_SOURCES };
   if (account === 'alpaca_paper') {
-    const d = await alpacaPaperDashboard(env, { symbol, fetcher, now, timeframe: frame });
+    const d = await alpacaPaperDashboard(env, { symbol, fetcher, now, timeframe: frame, storage });
     if (d.state !== 'verified') {
       return { ...base, symbol: String(symbol || '').toUpperCase() || null, state: d.state, error: d.error || null, bars: [], markers: [],
         feed: feedHealth({ provider: 'Alpaca', status: 'UNAVAILABLE', now, tf: frame }), entries_allowed: false,

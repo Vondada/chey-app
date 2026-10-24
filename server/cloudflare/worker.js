@@ -91,7 +91,7 @@ import { readTrades } from './trading_evidence.js';
 import { tradingCapabilities } from './trading_capabilities.js';
 import { TRADE_EVIDENCE_SOURCE, lastTrade, readTradeEvidence, speakTradeReplay, tradeBars, tradeEvidenceOf, tradeReplayIntent, tradingVisualViewOf } from './trade_evidence.js';
 import { VISUAL_SOURCE, readVisualTrades, speakEvidence, speakCard, tradingVisualIntent } from './trading_visual.js';
-import { CALENDAR_SOURCE, calendarIntent, learningWindows, officeCalendar, speakOfficeCalendar, speakTradingCalendar, tradingCalendar } from './che_calendars.js';
+import { CALENDAR_SOURCE, calendarIntent, learningWindows, officeCalendar, officeItems, rollupOfficeDays, speakOfficeCalendar, speakTradingCalendar, tradingCalendar } from './che_calendars.js';
 import { cancelCandidates, cancelConfirmation, cancelOrderIntent, chartIntent, chartOpenReply, chartView, drawIntent, futuresOrderIntent, marketOrderFeedProblem, paperAccountIntent, readDrawings, saveDrawings, speakOrder } from './trading_chart.js';
 import { marketUniverse, searchUniverse } from './market_universe.js';
 import { readRithmicCandles, storeRithmicCandles } from './rithmic_dataset.js';
@@ -8524,7 +8524,7 @@ export class CheState extends DurableObject {
       if (path === '/api/trading/alpaca/dashboard' && request.method === 'GET') {
         if (!ownerDevice) return tradingOwnerOnly();
         const symbol = (new URL(request.url).searchParams.get('symbol') || '').trim().toUpperCase().slice(0, 8);
-        return json(await alpacaPaperDashboard(this.keyEnv || this.env, { symbol }));
+        return json(await alpacaPaperDashboard(this.keyEnv || this.env, { symbol, storage: this.ctx.storage }));
       }
       // The Trading Room chart (owner, 2026-10-20, Build 1): bars, feed health, the entry gate and
       // markers by source for one account, symbol and timeframe; the owner's drawings; paper ticket preview and cancel.
@@ -12774,10 +12774,10 @@ export class CheState extends DurableObject {
         if (tradeVisualAsk) {
           if (!ownerDevice) return ndjsonReply('Only the CHE owner can read the trading records.', { source: VISUAL_SOURCE, ok: false, model_calls: 0 });
           if (tradeVisualAsk.kind === 'card') return ndjsonReply(speakCard(tradeVisualAsk), { source: VISUAL_SOURCE, ok: true, model_calls: 0, open_view: 'trading_visual', visual: { card: tradeVisualAsk.card, size: tradeVisualAsk.size } });
-          const params = new URLSearchParams({ view: tradeVisualAsk.kind });
+          const params = new URLSearchParams({ view: tradeVisualAsk.kind, ...(tradeVisualAsk.day ? { day: tradeVisualAsk.day } : {}) });
           const v = await this.tradingVisualView(params);
           const text = tradeVisualAsk.kind === 'evidence' ? speakEvidence(v.rows, v.today) : v.spoken;
-          return ndjsonReply(text, { source: VISUAL_SOURCE, ok: true, model_calls: 0, open_view: 'trading_visual', visual: { view: tradeVisualAsk.kind } });
+          return ndjsonReply(text, { source: VISUAL_SOURCE, ok: true, model_calls: 0, open_view: 'trading_visual', visual: { view: tradeVisualAsk.kind, ...(tradeVisualAsk.day ? { day: tradeVisualAsk.day } : {}) } });
         }
         const ledger = body.attachment ? null : ledgerIntent(message);
         if (ledger) {
@@ -13138,7 +13138,7 @@ export class CheState extends DurableObject {
           if (desk.kind === 'alpaca_dashboard') {
             // The Alpaca PAPER dashboard (owner, 2026-10-20): a short summary from Alpaca's own records, and the
             // app opens the visual view (chart, order and fill markers, positions, history).
-            const dash = await alpacaPaperDashboard(this.keyEnv || this.env);
+            const dash = await alpacaPaperDashboard(this.keyEnv || this.env, { storage: this.ctx.storage });
             const latest = dash.state === 'verified' && dash.orders.length
               ? ` Latest orders: ${dash.orders.slice(0, 3).map((o, i) => `${i + 1}, ${speakStockReceipt(o, { brief: true }).replace(/^Alpaca's receipt: /, '')}`).join(' ')}` : '';
             return ndjsonReply(`${speakAlpacaDashboard(dash)}${latest}`, {
@@ -14564,6 +14564,8 @@ export class CheState extends DurableObject {
     });
     // Paper trading keeps learning even when autonomy is off (no money moves).
     await this.tradingTick().catch(() => null);
+    // Finished and failed jobs are kept per day before the 120-row job list drops them (Office calendar).
+    await officeItems(this.ctx.storage, {}, this.env).then((items) => rollupOfficeDays(this.ctx.storage, items)).catch(() => null);
     // Room events reach the Brain on the alarm too, so the phone's next sync sees them without a chat turn.
     {
       const alarmBrain = new CheBrainStore(this.ctx.storage);
