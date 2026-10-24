@@ -2369,7 +2369,7 @@ OWNER AGENCY
           hue: kit.CheColors.accent,
         ),
         CheMoreItem(
-          icon: Icons.face_retouching_natural_rounded,
+          icon: Icons.face_retouching_natural,
           title: 'Character Studio',
           subtitle: 'How CHE and the crew look and move: presets, animation style, saved versions, rollback',
           onTap: () => unawaited(_openCharacterStudio()),

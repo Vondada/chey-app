@@ -133,6 +133,12 @@ def build(target, bvh_dir, fps=30, only=None, log=print):
             rep["ground_speed_mps"] = round(mocap.in_place(clip), 3)
         rep["foot_lock"] = mocap.foot_lock(target, clip, fps)
         loop = kind in ("loop", "in_place_loop")
+        import bpy
+        # A procedural clip of the same name (assemble.py's idle, walk, sit…) gives way to the captured one, so the
+        # GLB carries one clip per name instead of "walk" and "walk.001".
+        old = bpy.data.actions.get(name)
+        if old is not None:
+            bpy.data.actions.remove(old)
         mocap.write_action(target, clip, name, loop)
         rep["frames"] = clip.frames
         rep["seconds"] = round((clip.frames - 1) / fps, 2)

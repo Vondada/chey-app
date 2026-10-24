@@ -25,7 +25,8 @@ const TOPICS = [
 // Changes the runtime cannot make from settings: these become upgrade requests, never a claimed change.
 const UPGRADE = /\b(outfit|clothes|clothing|wardrobe|dress|suit colou?r|hairstyle|haircut|hair colou?r|new (?:model|body|face|look)|skin|makeup|glasses|shoes|accessor(?:y|ies))\b/i;
 const STUDIO_ASK = /\b(?:make|be|act|move|walk|gesture|look|talk|speak|seem|become|get|use|switch to|set)\b.*\b(?:natural|smooth|smoother|fluid|expressive|calm|calmer|lively|energetic|professional|cinematic|confident|graceful|plain|stiff|robotic|gestures?|walk(?:ing)?|idle|eye contact|hair|cloth|faster|slower|speed|animation|preset|style)\b|\b(?:walk|gesture|animation|expression|idle|eye contact)\b.*\b(?:more|less|better|natural|smooth)\b/i;
-const OPEN_ASK = /^(?:please\s+)?(?:open|show(?: me)?|go to|take me to|bring up)\s+(?:the\s+)?character studio(?:\s+(?:screen|page))?\s*[.!?]?$/i;
+const NOT_STUDIO = /\bwalk[- ]forward\b|\bwalk (?:me|us|him|her|them) through\b|\b(?:strategy|backtest|trading|trade|futures|report|email|document|code|test(?:ing)?)\b|^(?:is|are|does|do|why|what|how|which|should|can|could|would|will)\b/i;
+const OPEN_ASK =/^(?:please\s+)?(?:open|show(?: me)?|go to|take me to|bring up)\s+(?:the\s+)?character studio(?:\s+(?:screen|page))?\s*[.!?]?$/i;
 const plain = (m) => String(m || '').trim().replace(/^(?:che|chey|hey che|okay|ok|so)[,\s]+/i, '').replace(/[,\s]+(?:please|sir)\s*[.!?]?$/i, '');
 
 /** Parses one owner sentence. Returns null when it is not about how an agent looks or moves. */
@@ -39,6 +40,8 @@ export function studioIntent(message, { activeAgent = 'che' } = {}) {
   if (UPGRADE.test(text) && /\b(change|new|different|give|put|wear|switch|update|upgrade|make)\b/i.test(text)) {
     return { kind: 'upgrade', agent: agent || activeAgent, request: text };
   }
+  // A question, or a walk that is a method ("walk forward testing", "walk me through"), is never about her body.
+  if (NOT_STUDIO.test(text)) return null;
   if (!STUDIO_ASK.test(text) && !PRESETS.some((p) => new RegExp(`\\b${p}\\b`, 'i').test(text) && /\bpreset|style|mode|look|move\b/i.test(text))) return null;
   const patch = {};
   // A preset needs the word preset, style or mode: "be more expressive" is a nudge, "the expressive preset" a switch.
