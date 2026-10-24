@@ -188,7 +188,8 @@ import {
 import { matchOfficePhrase, speakGoalPlan, speakOfficeBoard } from './office_phrases.js';
 import { advanceOfficeJobs, officeJobView, officeJobsView, planOfficeJob, speakOfficeJob } from './office_jobs.js';
 import { headRecord, officeOrg, speakOfficeOrg } from './office_org.js';
-import { hqJobDetail, hqRoomDetail, hqView, talkToHead } from './headquarters.js';
+import { HQ_ROOMS, hqJobDetail, hqRoomDetail, hqView, talkToHead } from './headquarters.js';
+import { decideProposal, designProposal, rollbackRoom, roomProposalsView } from './room_designer.js';
 import { assertOwnerTalksToCheOnly, codexWorkPacket } from './office_router.js';
 import {
   mlProjectFromResult,
@@ -9423,6 +9424,44 @@ export class CheState extends DurableObject {
         await this.staffOffice(data);
         const detail = await hqRoomDetail(data, this.keyEnv || this.env, this.ctx.storage, hqRoomPath[1]);
         return detail ? json(detail) : json({ detail: 'That is not a headquarters room.' }, 404);
+      }
+      // CHE's room proposals (owner mission, 2026-10-24): she designs a room for a need, the owner previews it and
+      // decides. Nothing is built until the owner approves; every write is owner-device only.
+      if (path === '/api/office/rooms/proposals' && request.method === 'GET') {
+        return json(roomProposalsView(data));
+      }
+      if (path === '/api/office/rooms/proposals' && request.method === 'POST') {
+        if (!ownerDevice) return json({ detail: 'Only the CHE owner can ask for a room proposal.' }, 403);
+        const out = designProposal(data, { need: body.need });
+        if (out.error) return json({ detail: out.error }, out.status || 400);
+        await this.ctx.storage.put('che', data);
+        return json(out);
+      }
+      const proposalPath = /^\/api\/office\/rooms\/proposals\/(rp-[0-9a-f]{8})$/.exec(path);
+      if (proposalPath && request.method === 'GET') {
+        const proposal = (data.hq_proposals || []).find((p) => p.id === proposalPath[1]);
+        return proposal ? json({ proposal }) : json({ detail: 'There is no room proposal with that id.' }, 404);
+      }
+      const decisionPath = /^\/api\/office\/rooms\/proposals\/(rp-[0-9a-f]{8})\/decision$/.exec(path);
+      if (decisionPath && request.method === 'POST') {
+        if (!ownerDevice) return json({ detail: 'Only the CHE owner can approve, change or reject a room.' }, 403);
+        const out = decideProposal(data, decisionPath[1], {
+          decision: body.decision,
+          changes: body.changes || {},
+          reservedIds: HQ_ROOMS.map((room) => room.id),
+        });
+        if (out.error) return json({ detail: out.error }, out.status || 400);
+        await this.ctx.storage.put('che', data);
+        this.broadcastAgents(data);
+        return json(out);
+      }
+      const rollbackPath = /^\/api\/office\/rooms\/([a-z_]{2,20})\/rollback$/.exec(path);
+      if (rollbackPath && request.method === 'POST') {
+        if (!ownerDevice) return json({ detail: 'Only the CHE owner can roll a room back.' }, 403);
+        const out = rollbackRoom(data, rollbackPath[1]);
+        if (out.error) return json({ detail: out.error }, out.status || 400);
+        await this.ctx.storage.put('che', data);
+        return json(out);
       }
       const hqJobPath = /^\/api\/office\/hq\/job\/(oj-[0-9a-f]{8})$/.exec(path);
       if (hqJobPath && request.method === 'GET') {

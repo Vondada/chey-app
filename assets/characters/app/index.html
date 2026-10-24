@@ -586,8 +586,41 @@ document.addEventListener('visibilitychange', resume);
 resume();
 
 // Small hook for tests and for later voice or touch wiring.
+// ---------- room preview: a proposed room's layout drawn in this scene, for the owner to walk through before approval
+const previewGroup = new THREE.Group();
+scene.add(previewGroup);
+const previewMats = {
+  bench: new THREE.MeshStandardMaterial({ color: 0x23464a, roughness: 0.6 }),
+  desk: new THREE.MeshStandardMaterial({ color: 0x0f2a2e, roughness: 0.5 }),
+  equipment: new THREE.MeshStandardMaterial({ color: 0x3a2a4a, roughness: 0.4, emissive: 0x6e4fa8, emissiveIntensity: 0.25 }),
+  shelf: new THREE.MeshStandardMaterial({ color: 0x2a3c2a, roughness: 0.7 }),
+};
+function showPreview(proposal) {
+  // Layout items come from the Worker's reviewed template (room_designer.js). Positions stay inside the room.
+  for (const child of [...previewGroup.children]) { previewGroup.remove(child); child.geometry?.dispose(); }
+  const items = Array.isArray(proposal?.layout) ? proposal.layout : [];
+  for (const item of items) {
+    const size = item.kind === 'shelf' ? [0.5, 1.6, 0.4] : item.kind === 'equipment' ? [0.5, 0.7, 0.5] : [1.1, 0.5, 0.6];
+    const mesh = new THREE.Mesh(new THREE.BoxGeometry(...size), previewMats[item.kind] || previewMats.desk);
+    mesh.position.set(clamp(item.x, -ROOM + 0.5, ROOM - 0.5), size[1] / 2, clamp(item.z, -ROOM + 0.5, ROOM - 0.5));
+    mesh.castShadow = mesh.receiveShadow = true;
+    mesh.userData.label = item.label || item.kind;
+    previewGroup.add(mesh);
+  }
+  camMode = 'free';
+  focusId = null;
+  say(`Preview: ${proposal?.room?.name || 'proposed room'}`, `${items.length} parts. Drag to look around. Approve or change it in the app.`);
+  tellApp({ type: 'preview', id: proposal?.id || '', parts: items.length });
+  return items.length;
+}
+function clearPreview() {
+  for (const child of [...previewGroup.children]) { previewGroup.remove(child); child.geometry?.dispose(); }
+  return true;
+}
 window.CHE = {
   supplyGlb: window.CHE.supplyGlb,
+  preview: (proposal) => showPreview(proposal),
+  clearPreview: () => clearPreview(),
   play: (name) => choose(name),
   stick: (x, y) => setStick(x, y),
   greet: (id) => greet(id),

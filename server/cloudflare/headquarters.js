@@ -17,6 +17,7 @@ import { LA_AGENCIA_ROLES } from './office_company.js';
 import { headRecord } from './office_org.js';
 import { isLockedDown } from './resilience.js';
 import { loadSecurity, speakStatus as speakSecurityStatus } from './security_intelligence.js';
+import { activeRoomsOf } from './room_designer.js';
 import { loadReceipts } from './truth_layer.js';
 
 /** A head's room: the department it leads, what the room is for, and the in-app screens that open inside it. */
@@ -58,15 +59,15 @@ export function roomStatusFor({ status = 'idle', blocker = '', queue = [] } = {}
   return 'Idle';
 }
 
-export function roomById(id) {
+export function roomById(id, data = null) {
   const key = String(id || '').toLowerCase();
-  return HQ_ROOMS.find((room) => room.id === key) || null;
+  return [...HQ_ROOMS, ...(data ? activeRoomsOf(data) : [])].find((room) => room.id === key) || null;
 }
 
 /** The room a head leads, by agent name ("knox", "Knox") or room id. */
-export function roomForAgent(nameOrId) {
+export function roomForAgent(nameOrId, data = null) {
   const key = String(nameOrId || '').trim().toLowerCase();
-  return HQ_ROOMS.find((room) => room.lead.toLowerCase() === key || room.id === key) || null;
+  return [...HQ_ROOMS, ...(data ? activeRoomsOf(data) : [])].find((room) => room.lead.toLowerCase() === key || room.id === key) || null;
 }
 
 function headAgent(data, room) {
@@ -114,7 +115,7 @@ function roomView(data, env, room, snapshot) {
 /** The whole headquarters: every room with its lead's real status, plus counts that exist only when records do. */
 export function hqView(data, env) {
   const snapshot = runtimeSnapshot(data);
-  const rooms = HQ_ROOMS.map((room) => roomView(data, env, room, snapshot));
+  const rooms = [...HQ_ROOMS, ...activeRoomsOf(data)].map((room) => roomView(data, env, room, snapshot));
   const heads = rooms.filter((r) => r.lead !== 'CHE' && r.on_roster);
   const count = (status) => heads.filter((r) => r.status === status).length;
   const counts = heads.length
@@ -269,7 +270,7 @@ function personaSystem(room, head, facts) {
  * persona with the facts and audits the reply. `mode: 'assign'` queues the text as a real Office task instead.
  */
 export async function talkToHead(data, env, storage, { room: roomKey, agent: agentKey, text, mode = 'talk', now = Date.now(), requestId = '', assignJob = null } = {}) {
-  const room = roomById(roomKey) || roomForAgent(agentKey || roomKey);
+  const room = roomById(roomKey, data) || roomForAgent(agentKey || roomKey, data);
   if (!room) return { error: 'That is not a headquarters room.', status: 404 };
   if (room.lead === 'CHE') return { error: 'Talk to CHE in Chat; this room is hers.', status: 400, open: 'chat' };
   const said = String(text || '').trim().slice(0, 4000);
@@ -364,7 +365,7 @@ export async function talkToHead(data, env, storage, { room: roomKey, agent: age
 
 /** One room in full: registry entry, the head record, the conversation so far, and the facts the head answers from. */
 export async function hqRoomDetail(data, env, storage, roomKey, { now = Date.now() } = {}) {
-  const room = roomById(roomKey) || roomForAgent(roomKey);
+  const room = roomById(roomKey, data) || roomForAgent(roomKey, data);
   if (!room) return null;
   const view = roomView(data, env, room, runtimeSnapshot(data));
   if (room.lead === 'CHE') return { room: view, head: null, conversation: [], facts: ['CHE answers in Chat.'] };
