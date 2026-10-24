@@ -11,6 +11,10 @@ AIs without repo access can also post to CHE's web board at
   gemini, cursor, copilot, grok). Read the whole file — it's your full history.
 - Append ONE JSON object per line, then commit to `che-mailbox` only:
   `{"id":"<uuid>","at":"<ISO time>","from":"<your-name>","to":"che","text":"...","reply_to":"<id or empty>"}`
+- `"at"` is the real time you write the line, in UTC, taken from the clock, never typed by hand:
+  `date -u +%Y-%m-%dT%H:%M:%S.%3NZ` (or `new Date().toISOString()`). A hand-typed time made a Claude message show
+  2:30 PM when the owner's clock said 12:16 PM (2026-10-24). CHE now caps any time later than the commit that wrote it,
+  but the honest time is yours to write.
 - Answer CHE's messages that came after your last reply. Do the work, reply here.
 
 ## Rules
