@@ -5,7 +5,9 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 export const crewIds = ['che', 'nova', 'atlas', 'mira', 'knox', 'sage', 'lyra', 'iris'];
-export const requiredClips = ['idle', 'walk', 'run', 'wave', 'sit', 'stand', 'talk', 'think', 'celebrate', 'nod', 'shake'];
+export const requiredClips = ['idle', 'walk', 'run', 'wave', 'sit', 'stand', 'talk', 'think', 'celebrate', 'nod', 'shake', 'type'];
+// Shape keys the runtime drives (blink, lip sync, expressions). Checked on the skin mesh, not the eyes.
+export const requiredMorphs = ['blink', 'mouth_open', 'mouth_wide', 'mouth_round'];
 
 export function validateGlb(bytes) {
   assert.ok(bytes.length >= 20, 'GLB header is truncated');
@@ -44,6 +46,9 @@ export function validateGlb(bytes) {
   }
   const clips = (model.animations || []).map((a) => a.name);
   for (const name of requiredClips) assert.ok(clips.includes(name), `Missing viewer animation: ${name}`);
+  // Blender writes the shape-key names into each mesh's extras.targetNames.
+  const morphNames = new Set(model.meshes.flatMap((m) => m.extras?.targetNames || []));
+  for (const name of requiredMorphs) assert.ok(morphNames.has(name), `Missing shape key: ${name}`);
   assert.equal(new Set(clips).size, clips.length, 'Duplicate animation names');
   for (const animation of model.animations) {
     assert.ok(animation.channels?.length > 0, `Empty animation: ${animation.name}`);
@@ -81,6 +86,8 @@ export function validateGlb(bytes) {
     }
   }
   assert.ok(triangles > 0, 'Character has no triangles');
+  // iPhone budget: one visible character stays under about 40k triangles (the v2 build is about 34k).
+  assert.ok(triangles <= 40000, `Character is over the 40k triangle budget: ${triangles}`);
   return { bytes: bytes.length, triangles, clips: clips.length, joints: model.skins.map((s) => s.joints.length) };
 }
 

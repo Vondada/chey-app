@@ -1,19 +1,21 @@
 // Real runtime status -> the clip each 3D crew character plays (owner, 2026-10-22: characters respond to real
-// activity, never to fake work). Every crew GLB carries the same eleven clips (tools/character_pipeline/README.md):
-// idle, walk, run, wave, sit, stand, talk, think, celebrate, nod, shake.
+// activity, never to fake work). Every crew GLB carries the same twelve clips (tools/character_pipeline/README.md):
+// idle, walk, run, wave, sit, stand, talk, think, celebrate, nod, shake, type.
 import '../che_ui/che_agents.dart';
 
 /// The eight bundled crew models (`assets/characters/crew/<id>.glb`).
 const List<String> cheCrewModelIds = ['che', 'nova', 'atlas', 'mira', 'knox', 'sage', 'lyra', 'iris'];
 
 /// The clips every crew model carries.
-const Set<String> cheCrewClips = {'idle', 'walk', 'run', 'wave', 'sit', 'stand', 'talk', 'think', 'celebrate', 'nod', 'shake'};
+const Set<String> cheCrewClips = {
+  'idle', 'walk', 'run', 'wave', 'sit', 'stand', 'talk', 'think', 'celebrate', 'nod', 'shake', 'type',
+};
 
-/// The clip for a real agent status: thinking work thinks, building sits at the desk, meetings and talks talk, a
+/// The clip for a real agent status: thinking work thinks, building types at the desk, meetings and talks talk, a
 /// finished task celebrates once, waiting and idle stand at ease.
 String cheClipForStatus(CheAgentStatus status) => switch (status) {
       CheAgentStatus.researching || CheAgentStatus.analyzing || CheAgentStatus.reviewing => 'think',
-      CheAgentStatus.building => 'sit',
+      CheAgentStatus.building => 'type',
       CheAgentStatus.meeting || CheAgentStatus.talking => 'talk',
       CheAgentStatus.done => 'celebrate',
       CheAgentStatus.waiting || CheAgentStatus.idle => 'idle',
