@@ -112,8 +112,9 @@ ramp = nt.nodes.new('ShaderNodeValToRGB'); nt.links.new(rad.outputs['Value'], ra
 cr = ramp.color_ramp; cr.interpolation = 'LINEAR'
 # A human iris is about 11.7 mm across on a 24 mm eye (radius 0.49 of the eye's); the sclera is an off-white that
 # darkens toward the corners, never paper white.
-stops = [(0.0, (0.004, 0.003, 0.003)), (0.15, (0.004, 0.003, 0.003)), (0.17, (0.018, 0.008, 0.004)), (0.38, (0.035, 0.016, 0.007)),
-         (0.47, (0.018, 0.011, 0.008)), (0.52, (0.42, 0.36, 0.32)), (0.75, (0.40, 0.33, 0.29)), (1.0, (0.24, 0.15, 0.13))]
+iw = float(os.environ.get('IRIS', '1.0'))   # iris brightness: 1.0 is the v6 near-black brown; 2-3 reads brown at a distance
+stops = [(0.0, (0.004, 0.003, 0.003)), (0.15, (0.004, 0.003, 0.003)), (0.17, (0.018 * iw, 0.008 * iw, 0.004 * iw)), (0.38, (0.035 * iw, 0.016 * iw, 0.007 * iw)),
+         (0.47, (0.018 * iw, 0.011 * iw, 0.008 * iw)), (0.52, (0.42, 0.36, 0.32)), (0.75, (0.40, 0.33, 0.29)), (1.0, (0.24, 0.15, 0.13))]
 cr.elements[0].position, cr.elements[0].color = stops[0][0], (*stops[0][1], 1)
 cr.elements[1].position, cr.elements[1].color = stops[1][0], (*stops[1][1], 1)
 for pos, col in stops[2:]:
@@ -263,7 +264,7 @@ if os.environ.get('CORNEA'):
 else:
     eb.inputs['Coat Weight'].default_value = 1.0; eb.inputs['Coat IOR'].default_value = 1.376
     eb.inputs['Coat Roughness'].default_value = 0.03; eb.inputs['Roughness'].default_value = 0.35
-lashes = lash_strands(fwd, up, length_scale=float(os.environ.get('LASH_LEN', '0.7'))); brows = brow_strands(fwd, up, per_brow=int(os.environ.get('BROW_N', '420')))
+lashes = lash_strands(fwd, up, length_scale=float(os.environ.get('LASH_LEN', '0.7'))); brows = brow_strands(fwd, up, per_brow=int(os.environ.get('BROW_N', '420')), width_scale=float(os.environ.get('BROW_W', '1.0')))
 check('lashes built', len(lashes.data.curves) > 100, f'{len(lashes.data.curves)} strands')
 check('brows built', len(brows.data.curves) > 300, f'{len(brows.data.curves)} strands')
 if not os.environ.get('NOHAIR'):
