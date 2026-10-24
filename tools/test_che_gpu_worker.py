@@ -21,6 +21,102 @@ from test_che_gpu_face_preview import FAKE  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WORKER = os.path.join(ROOT, 'scripts', 'che_gpu_worker.py')
+RUNNER = os.path.join(ROOT, 'scripts', 'che_gpu_face_preview.py')
+# The stand-in Blender, slowed down: it records its pid and sleeps FAKE_SLEEP seconds after each finished view, like a
+# real render between views (Codex review of PR #517: checkpointing, timeouts and cancelling while Blender still runs).
+SLOW = FAKE.replace("print('WROTE', p, flush=True)",
+                    "print('WROTE', p, flush=True); import time; time.sleep(float(os.environ.get('FAKE_SLEEP', '0')))")
+SLOW = SLOW.replace("a = sys.argv\n", "a = sys.argv\npf = os.environ.get('FAKE_PIDFILE')\nif pf and any(x.endswith('mpfb_dress.py') for x in a): open(pf, 'w').write(str(os.getpid()))\n", 1)
+assert 'FAKE_SLEEP' in SLOW and 'FAKE_PIDFILE' in SLOW
+
+
+def alive(pid):
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    # a zombie (exited, not yet reaped by its parent) counts as gone
+    try:
+        return open(f'/proc/{pid}/stat').read().split(')')[-1].split()[0] != 'Z'
+    except OSError:
+        return True
+
+
+class RenderProcessTest(unittest.TestCase):
+    """The job runner while Blender is still running: views are kept as they finish, the deadline holds, and stopping
+    a job stops Blender too."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.blender = os.path.join(self.tmp, 'blender')
+        open(self.blender, 'w').write(SLOW); os.chmod(self.blender, os.stat(self.blender).st_mode | stat.S_IEXEC)
+        self.project = os.path.join(self.tmp, 'project'); os.makedirs(self.project)
+        for n in ('che.blend', 'fit.json'): open(os.path.join(self.project, n), 'w').write(n)
+        self.out = os.path.join(self.tmp, 'out'); self.calls = os.path.join(self.tmp, 'calls'); self.pidfile = os.path.join(self.tmp, 'blender.pid')
+        self.env = dict(os.environ, FAKE_GPUS='OPTIX,CUDA', FAKE_CALLS=self.calls, FAKE_PIDFILE=self.pidfile)
+
+    def runner(self, *args, **env):
+        return subprocess.Popen([sys.executable, RUNNER, '--blender', self.blender, '--project', self.project, '--out', self.out, *args],
+                                env=dict(self.env, **env), stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, start_new_session=True)
+
+    def receipt(self):
+        jobs = os.listdir(self.out) if os.path.isdir(self.out) else []
+        path = os.path.join(self.out, jobs[0], 'receipt.json') if jobs else ''
+        try:
+            return json.load(open(path)) if path and os.path.exists(path) else None
+        except ValueError:
+            return None
+
+    def blender_pid(self):
+        deadline = time.time() + 10
+        while not os.path.exists(self.pidfile) and time.time() < deadline: time.sleep(0.05)
+        return int(open(self.pidfile).read())
+
+    def test_a_finished_view_is_saved_with_its_receipt_while_blender_still_renders(self):
+        p = self.runner(FAKE_SLEEP='30')
+        try:
+            deadline, r = time.time() + 15, None
+            while time.time() < deadline:
+                r = self.receipt()
+                if r and '0' in r.get('views', {}): break
+                time.sleep(0.1)
+            self.assertIsNone(p.poll(), 'the runner must still be rendering the next view')
+            self.assertEqual(r['views']['0']['status'], 'ok'); self.assertIn('Tesla T4', r['views']['0']['device'])
+            job = os.path.join(self.out, os.listdir(self.out)[0])
+            self.assertTrue(os.path.isfile(os.path.join(job, 'view_00.png')))
+        finally:
+            os.killpg(p.pid, 9); p.wait()   # Colab disconnects here
+            try: os.kill(self.blender_pid(), 9)
+            except ProcessLookupError: pass
+        # the next session renders only the views that were not finished
+        open(self.calls, 'w').close()
+        q = self.runner(); out = q.communicate(timeout=60)[0]
+        self.assertEqual(q.returncode, 0, out)
+        self.assertIn('SKIP view 0', out); self.assertEqual(open(self.calls).read().split(), ['45,90'])
+
+    def test_the_timeout_stops_a_silent_blender_and_keeps_finished_views(self):
+        t0 = time.time()
+        p = self.runner('--timeout', '3', FAKE_SLEEP='60'); out = p.communicate(timeout=30)[0]
+        self.assertLess(time.time() - t0, 20, 'the deadline must hold while Blender prints nothing')
+        self.assertEqual(p.returncode, 4, out); self.assertIn('TIMEOUT', out)
+        r = self.receipt(); self.assertEqual(r['status'], 'timeout'); self.assertIn('0', r['views'])
+        self.assertFalse(alive(self.blender_pid()), 'Blender must be stopped, not left rendering')
+
+    def test_stopping_a_job_stops_blender_too(self):
+        sys.path.insert(0, os.path.join(ROOT, 'scripts'))
+        import che_gpu_worker
+        p = self.runner(FAKE_SLEEP='60')
+        try:
+            bpid = self.blender_pid(); self.assertTrue(alive(bpid))
+            che_gpu_worker.stop_group(p, grace=3)
+            self.assertIsNotNone(p.poll())
+            deadline = time.time() + 5
+            while alive(bpid) and time.time() < deadline: time.sleep(0.05)
+            self.assertFalse(alive(bpid), 'the cancelled job left Blender rendering')
+        finally:
+            try: os.killpg(p.pid, 9)
+            except ProcessLookupError: pass
+
 GPU = 'Tesla T4, 550.54.15, 15360 MiB'
 
 

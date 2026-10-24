@@ -22,8 +22,10 @@ import json
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
+import threading
 import time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -89,18 +91,41 @@ def finished_view(job, info, v):
     return None
 
 
-def run(cmd, env, log, timeout):
-    """Run a command, stream its output into the log, and return (exit code, [(seconds since start, line)])."""
+def stop(p, grace=5.0):
+    """SIGTERM p, SIGKILL it after `grace` seconds, and reap it."""
+    for sig in (signal.SIGTERM, signal.SIGKILL):
+        try: p.send_signal(sig)
+        except ProcessLookupError: pass
+        try:
+            p.wait(timeout=grace); return
+        except subprocess.TimeoutExpired:
+            continue
+
+
+def run(cmd, env, log, timeout, on_line=None):
+    """Run a command, stream its output into the log (and to on_line(seconds, line) as each line arrives), and return
+    (exit code, [(seconds since start, line)]). The deadline holds even while the command is silent: past `timeout`
+    seconds it is stopped and the code is 124. It stays in this runner's process group, so the worker stopping the
+    runner's group (an owner cancel) stops Blender too."""
     lines, t0 = [], time.monotonic()
     with open(log, 'a') as lf:
         lf.write(f'\n$ {" ".join(cmd)}\n')
         p = subprocess.Popen(cmd, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
-        try:
+
+        def read():
             for line in p.stdout:
-                lf.write(line); lines.append((time.monotonic() - t0, line.rstrip('\n')))
-            p.wait(timeout=timeout)
+                t = time.monotonic() - t0
+                lf.write(line); lf.flush(); lines.append((t, line.rstrip('\n')))
+                if on_line: on_line(t, line.rstrip('\n'))
+        reader = threading.Thread(target=read, daemon=True); reader.start()
+        reader.join(timeout)
+        if reader.is_alive():
+            stop(p); reader.join(5); lf.write('TIMEOUT\n')
+            return 124, lines
+        try:
+            p.wait(timeout=max(1.0, timeout - (time.monotonic() - t0)))
         except subprocess.TimeoutExpired:
-            p.kill(); lf.write('TIMEOUT\n'); return 124, lines
+            stop(p); lf.write('TIMEOUT\n'); return 124, lines
     return p.returncode, lines
 
 
@@ -176,30 +201,43 @@ def main():
     receipt['last_run'] = {'at': now(), 'rendered': todo, 'reused': [v for v in views if v not in todo]}
     if todo:
         tmp = os.path.join(job, 'tmp'); os.makedirs(tmp, exist_ok=True)
+        live = {'dev': '', 'last': None}
+
+        def gpu_line(dev):
+            return bool(re.match(rf'DEVICE {kind} \[.+\]', dev)) and 'CPU' not in dev.split(']')[0]
+
+        def on_line(t, l):
+            # Each view is checkpointed the moment Blender reports it (not when Blender exits), so a Colab disconnect
+            # mid-job keeps every finished view and the next run reuses it. Only views from a verified GPU render count.
+            if l.startswith('DEVICE ') and not live['dev']:
+                live['dev'], live['last'] = l, t
+                return
+            m = re.match(r'WROTE (.*dress_(\d+)\.png)$', l)
+            if not m or not gpu_line(live['dev']) or not os.path.isfile(m.group(1)): return
+            v = int(m.group(2)); dst = os.path.join(job, f'view_{v:02d}.png')
+            shutil.move(m.group(1), dst)
+            secs, live['last'] = round(t - live['last'], 1), t
+            receipt['views'][str(v)] = {'status': 'ok', 'name': VIEW_NAMES.get(v, f'{v} deg'), 'file': os.path.basename(dst),
+                                       'sha256': sha256(dst), 'render_seconds': secs, 'device': live['dev'], 'rendered_at': now()}
+            receipt['render_device_line'] = live['dev']
+            write_json(receipt_path, receipt)   # atomic (tmp + rename), after every view
+            print(f'VIEW {v} ({VIEW_NAMES.get(v, v)}) {secs:.0f}s -> {dst}', flush=True)
+
         code, lines = run([a.blender, '-b', '--factory-startup', '-P', os.path.join(FACE, 'bl_run.py'), '--',
                            os.path.join(FACE, 'mpfb_dress.py')],
-                          dict(env, OUT_DIR=tmp, VIEWS=','.join(map(str, todo)), CYCLES_DEVICE=kind), log, a.timeout)
-        dev = next((l for _, l in lines if l.startswith('DEVICE ')), '')
+                          dict(env, OUT_DIR=tmp, VIEWS=','.join(map(str, todo)), CYCLES_DEVICE=kind), log, a.timeout, on_line)
+        dev = live['dev'] or next((l for _, l in lines if l.startswith('DEVICE ')), '')
         receipt['render_device_line'] = dev
         receipt['checks'] = [l for _, l in lines if l.startswith('CHECK')]
         if any(l.startswith('CHECKS FAILED') for _, l in lines):
             receipt.update(status='checks_failed', finished_at=now()); write_json(receipt_path, receipt)
             print('CHECKS FAILED: nothing rendered; see receipt.json', flush=True); return 2
-        if not re.match(rf'DEVICE {kind} \[.+\]', dev) or 'CPU' in dev.split(']')[0]:
+        if not gpu_line(dev):
             receipt.update(status='not_gpu', finished_at=now()); write_json(receipt_path, receipt)
             print(f'REFUSED: render did not report a {kind} GPU ({dev!r})', flush=True); return 4
-        t_dev = next(t for t, l in lines if l.startswith('DEVICE '))
-        last = t_dev
-        for t, l in lines:
-            m = re.match(r'WROTE (.*dress_(\d+)\.png)$', l)
-            if not m: continue
-            v = int(m.group(2)); dst = os.path.join(job, f'view_{v:02d}.png')
-            shutil.move(m.group(1), dst)
-            secs, last = round(t - last, 1), t
-            receipt['views'][str(v)] = {'status': 'ok', 'name': VIEW_NAMES.get(v, f'{v} deg'), 'file': os.path.basename(dst),
-                                       'sha256': sha256(dst), 'render_seconds': secs, 'device': dev, 'rendered_at': now()}
-            write_json(receipt_path, receipt)   # after every view, so an interruption keeps finished views
-            print(f'VIEW {v} ({VIEW_NAMES.get(v, v)}) {secs:.0f}s -> {dst}', flush=True)
+        if code == 124:
+            receipt.update(status='timeout', exit_code=code, finished_at=now()); write_json(receipt_path, receipt)
+            print(f'TIMEOUT after {a.timeout} s: Blender was stopped; finished views are kept, rerun to resume', flush=True); return 4
         receipt['process_seconds'] = round(lines[-1][0], 1) if lines else None
         if code != 0 or any(str(v) not in receipt['views'] for v in todo):
             receipt.update(status='render_failed', exit_code=code, finished_at=now()); write_json(receipt_path, receipt)
