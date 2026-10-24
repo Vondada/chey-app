@@ -177,12 +177,8 @@ extension _CheHomeVoice on _CHEHomeState {
   }
 
   Future<bool> _playServerVoice(CheVoiceClip clip, [CheVoiceTurnOutcome? outcome]) async {
-    // The clip's words, the owner's Voice Volume and Audio Output go with it. The 3D crew page gets the same
-    // words and the audio length, so CHE's character speaks in time with the real clip (che_voice_activity.dart).
-    cheVoiceActivity.value = CheVoiceActivity(
-      speaking: true, text: clip.text, durationMs: cheVoiceClipDurationMs(clip.bytes.length, clip.text), startedAt: DateTime.now());
+    // The clip's words, the owner's Voice Volume and Audio Output go with it.
     final played = await CheNativeVoice.playAudioBounded(clip.bytes, text: clip.text);
-    cheVoiceActivity.value = CheVoiceActivity(listening: cheVoiceActivity.value.listening);
     final route = CheNativeVoice.lastPlayback['route']?.toString() ?? '';
     if (route.isNotEmpty) _audioRouteNow = route;
     final engine = clip.engine.isEmpty ? 'server-voice' : clip.engine;
@@ -546,6 +542,38 @@ extension _CheHomeVoice on _CHEHomeState {
     }
   }
 
+  /// Words the owner said while a request was in flight. Shown in the composer
+  /// as quiet text (no speech, no forced screen-reader announcement) so he and a
+  /// deaf owner can see they were heard; [_sendHeldSpeechNext] sends them.
+  void _holdSpokenWhileSending(String words) {
+    if (!_pendingSpokenText.hold(words)) return;
+    final held = _pendingSpokenText.text!;
+    debugPrint('CHE voice: held while sending');
+    if (!mounted) return;
+    _set(() {
+      controller.value = TextEditingValue(
+        text: held,
+        selection: TextSelection.collapsed(offset: held.length),
+      );
+    });
+  }
+
+  /// Runs when a send finishes: the words he said over it become the next
+  /// spoken turn through the ordinary path, so the Worker's history carries
+  /// the reply he was answering. Nothing happens when nothing was held.
+  void _sendHeldSpeechNext() {
+    final words = _pendingSpokenText.take();
+    if (words == null || !mounted || _isSending) return;
+    _set(() {
+      controller.value = TextEditingValue(
+        text: words,
+        selection: TextSelection.collapsed(offset: words.length),
+      );
+      isListening = false;
+    });
+    unawaited(sendMessage(fromVoice: true));
+  }
+
   Future<void> _fallbackSpeech(String reason) async {
     if (_usingSpeechFallback) return;
     _usingSpeechFallback = true;
@@ -701,7 +729,13 @@ extension _CheHomeVoice on _CHEHomeState {
         await _interruptSpeechAndListen(resumeListening: false);
       }
 
-      if (_isSending) return;
+      if (_isSending) {
+        // He spoke over CHE's answer ("No, strawberry Sprite."): his words
+        // used to vanish here. They are held and sent as the next turn the
+        // moment this one finishes (send.dart), after her reply in history.
+        if (!_isSleepPhrase(words)) _holdSpokenWhileSending(words);
+        return;
+      }
 
       if (wakePhraseMode && cheSleeping) {
         final afterWake = cheWakeRemainder(words);

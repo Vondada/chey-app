@@ -55,7 +55,53 @@ class CheAgentController extends ChangeNotifier {
       current = CheConversation('c${DateTime.now().microsecondsSinceEpoch}_${_ids++}');
       conversations.insert(0, current);
     }
+    // The conversation CHE saved last before the app closed. Until the owner
+    // finishes a turn in this launch, its last turns are the chat's history.
+    if (_turnsThisSession == 0) {
+      final newest = saved.where((c) => c.messages.isNotEmpty).toList()
+        ..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+      _restoredLatest = newest.isEmpty ? null : newest.first;
+    }
     notifyListeners();
+  }
+
+  /// The conversation restored from disk at launch, until the owner's first
+  /// finished turn, a New chat or a cleared chat.
+  CheConversation? _restoredLatest;
+  int _turnsThisSession = 0;
+
+  /// The home chat is empty after a relaunch, so "No, strawberry Sprite."
+  /// right after reopening the app would reach the Worker with no `history`
+  /// and CHE could not tell it corrects her "Sprite" answer. These are the last
+  /// [limit] turns of the conversation saved before the app closed, in the
+  /// Worker's `{role, content}` shape, while that conversation is still fresh
+  /// ([within]). Empty once a turn finished in this launch, after New chat or
+  /// clear chat, or when the saved conversation is older than [within].
+  List<Map<String, String>> restoredTurnsForHistory({
+    Duration within = const Duration(minutes: 30),
+    int limit = 8,
+    DateTime? now,
+  }) {
+    final restored = _restoredLatest;
+    if (restored == null || _turnsThisSession > 0 || restored.messages.isEmpty) return const [];
+    if ((now ?? DateTime.now()).difference(restored.updatedAt) > within) return const [];
+    final turns = restored.messages.length > limit
+        ? restored.messages.sublist(restored.messages.length - limit)
+        : restored.messages;
+    return [
+      for (final m in turns)
+        if (m.text.trim().isNotEmpty)
+          {
+            'role': m.isUser ? 'user' : 'assistant',
+            // Spoken turns are logged with a microphone mark; the Worker gets the words.
+            'content': m.isUser ? m.text.replaceFirst(RegExp(r'^🎙\s*'), '') : m.text,
+          },
+    ];
+  }
+
+  /// "Clear the chat": the restored conversation is no longer this chat's history.
+  void dropRestoredContext() {
+    _restoredLatest = null;
   }
 
   /// Log a spoken exchange (from the "Chay" voice mode) into the current
@@ -67,6 +113,7 @@ class CheAgentController extends ChangeNotifier {
   /// ```che-remember facts are saved and she reflects every few turns.
   void logTurn(String youSaid, String cheSaid, {String source = 'chat'}) {
     if (youSaid.trim().isEmpty && cheSaid.trim().isEmpty) return;
+    _turnsThisSession++;
     final voice = source == 'voice';
     final u = CheMessage.user(voice ? '🎙 $youSaid' : youSaid);
     final r = CheMessage.assistant()..text = cheSaid;
@@ -144,6 +191,8 @@ class CheAgentController extends ChangeNotifier {
   }
 
   void newConversation() {
+    // New chat: the conversation restored at launch stops being this chat's history.
+    _restoredLatest = null;
     if (conversations.isNotEmpty && current.messages.isEmpty) return; // reuse the empty one
     stop();
     current = CheConversation('c${DateTime.now().microsecondsSinceEpoch}_${_ids++}');

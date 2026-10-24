@@ -491,8 +491,8 @@ extension _CheHomeHubRooms on _CHEHomeState {
 
   Widget _hubCreateScene(bool active) {
     return CheRoomSegments(
-      labels: const ['Projects', 'Art Studio'],
-      icons: const [Icons.collections_bookmark_outlined, Icons.palette_outlined],
+      labels: const ['Projects', 'Art Studio', 'GPU Jobs'],
+      icons: const [Icons.collections_bookmark_outlined, Icons.palette_outlined, Icons.memory],
       children: [
         () => _createProjectsScene(active),
         () => CheArtStudio(
@@ -503,8 +503,43 @@ extension _CheHomeHubRooms on _CHEHomeState {
                 await _loadAgentState(silent: true);
               },
             ),
+        () => SingleChildScrollView(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Semantics(
+                    button: true,
+                    label: 'Open the Character Generator: edit CHE and the agents, then preview them on the GPU',
+                    excludeSemantics: true,
+                    child: FilledButton.icon(
+                      onPressed: _openCharacterGenerator,
+                      icon: const Icon(Icons.face_retouching_natural),
+                      label: const Text('Character Generator'),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  CheGpuJobsCard(
+                    baseUrl: cheAgentBaseUrl,
+                    headers: _authHeaders,
+                    active: active,
+                    onRead: (text) => speakText(text, record: false, readOnDemand: true),
+                  ),
+                ],
+              ),
+            ),
       ],
     );
+  }
+
+  /// The Character Generator (lib/avatar/che_character_generator.dart). Opening it speaks nothing.
+  void _openCharacterGenerator() {
+    HapticFeedback.selectionClick();
+    unawaited(Navigator.of(context).push(CheCharacterGenerator.route(
+      baseUrl: cheAgentBaseUrl,
+      headers: _authHeaders,
+      onRead: (text) => speakText(text, record: false, readOnDemand: true),
+    )));
   }
 
   /// The Capability Showroom's real states, from the Worker (owner device token; nothing is spoken).
@@ -550,7 +585,20 @@ extension _CheHomeHubRooms on _CHEHomeState {
       researchConnected: integrations['web_research'] == true,
       imageConnected: integrations['image_generation'] == true,
       videoConnected: integrations['video_generation'] == true,
-      creations: CheCreationsStrip(baseUrl: cheAgentBaseUrl, headers: _authHeaders, active: active),
+      creations: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          CheCreationsStrip(baseUrl: cheAgentBaseUrl, headers: _authHeaders, active: active),
+          const SizedBox(height: 20),
+          // GPU jobs on the owner's Colab T4 (gpu_queue.js); quiet until he presses Read aloud.
+          CheGpuJobsCard(
+            baseUrl: cheAgentBaseUrl,
+            headers: _authHeaders,
+            active: active,
+            onRead: (text) => speakText(text, record: false, readOnDemand: true),
+          ),
+        ],
+      ),
       onInventions: () => unawaited(Navigator.of(context).push(CheInventionStudioPage.route(baseUrl: cheAgentBaseUrl, headers: _authHeaders))),
       onShowroom: _openShowroom,
       onNewProject: () {

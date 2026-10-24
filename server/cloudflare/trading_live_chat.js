@@ -56,9 +56,35 @@ const ORDER_FIRST = /^(?:place|submit|enter|buy|sell|short|go\s+long|go\s+short|
 const PAST_ORDER_READ = /^(?:please\s+)?(?:(?:did|have)\s+you\s+(?:place[d]?|execute[d]?|ma[dk]e|t(?:ake|aken|ook))\s+any\b|what\s+trades?\s+(?:did|have)\s+you\b|what\s+did\s+you\s+trade\b)/i;
 export const ORDER_ASK =/\b(?:place|submit|enter|buy|sell|go\s+long|go\s+short|take\s+(?:the|a|this|that)\s+trade|open\s+a\s+(?:position|trade)|reverse|flatten|close\s+(?:out\s+)?(?:my|the|that|this|all)\s+(?:\w+\s+)?(?:positions?|trades?|longs?|shorts?)|close\s+(?:out\s+)?everything|close\s+out)\b|\bshort\b(?![\s-]*(?:term|positions?|trades?|side)\b)/i;
 
+// What a short follow-up can add to a journal read: a bar size or a market. The journal is MNQ on 5-minute bars only.
+const FOLLOWUP_TF = /\b(?:(\d+|one|five|fifteen|thirty)[\s-]*(?:minute|min|hour|second|day|week)s?|daily|weekly|hourly|(\d+)\s?[mhd])\b/i;
+const FOLLOWUP_CRYPTO = /\b(?:bitcoin|btc|ethereum|eth|ether|solana|sol|crypto)\b/i;
+const FOLLOWUP_MARKET = /\b(?:what about|how about|the same for|and (?:for|on)|and)\s+(?:the\s+)?([a-z][a-z0-9&.^]{0,9})\b/i;
+const NOT_A_MARKET = /^(?:that|this|it|them|now|then|same|other|one|the|and|also|too|all|again|today|yesterday|now|still|done|yet|minute|minutes|hour|hours|day|daily|week|weekly|second|seconds|m|h|d|[0-9]+)$/i;
+
 /** The command in [message], or null. Narrow on purpose: other trading talk keeps its routes.
- *  A turn that asks several reads gets `kinds`, in the order asked; `kind` is the first. */
-export function liveIntent(message) {
+ *  A turn that asks several reads gets `kinds`, in the order asked; `kind` is the first.
+ *  A follow-up ("and on the 5 minute?", "what about AAPL?") carries the owner's new words alone in `followup` and the
+ *  earlier request in `referent` (speech_intent.js). The same journal read answers a 5-minute or MNQ follow-up; a bar
+ *  size or market the journal does not have asks one short question (kind 'clarify') instead of re-reading MNQ. */
+export function liveIntent(message, { followup = '', referent = '' } = {}) {
+  if (followup) {
+    const own = liveIntent(followup);
+    if (own) return own;
+    const base = liveIntent(referent);
+    if (!base || ['start', 'stop', 'research'].includes(base.kind)) return null;
+    const words = String(followup);
+    const tf = FOLLOWUP_TF.exec(words);
+    if (tf && !/\b(?:5|five)[\s-]*(?:minute|min)s?\b|\b5\s?m\b/i.test(tf[0])) {
+      return { kind: 'clarify', question: `The forward paper journal is MNQ on 5-minute bars only, sir; there is no ${tf[0].trim()} journal to read. For another bar size, ask the research: "how is the EMA pullback doing on the ${tf[0].trim()} chart".` };
+    }
+    if (FOLLOWUP_CRYPTO.test(words)) return { kind: 'clarify', question: 'The forward paper journal is MNQ futures only, sir. Bitcoin and ETH paper trades are on Orion\'s crypto desk: say "how is the crypto paper trading going".' };
+    const market = FOLLOWUP_MARKET.exec(words)?.[1] || '';
+    if (market && !NOT_A_MARKET.test(market) && !/^m?nq$/i.test(market)) {
+      return { kind: 'clarify', question: `The forward paper journal is MNQ only, sir; it has no ${market.toUpperCase()} trades. For a stock, say "show my Alpaca orders"; for a chart read, "analyze the ${market.toUpperCase()} chart".` };
+    }
+    return base;
+  }
   const text = String(message || '').replace(WAKE, '').trim();
   if (!text || text.length > MAX_TURN) return null;
   // Only what the owner asks for counts: "don't start or stop anything" asks nothing. An order is set

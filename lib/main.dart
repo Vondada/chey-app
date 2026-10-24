@@ -36,16 +36,12 @@ import 'security/che_security_visibility.dart';
 import 'security/che_session_store.dart';
 import 'brain/che_brain_ledger_screen.dart';
 import 'brain/che_brain_truth_screen.dart';
+import 'rooms/che_cloud_computer_room.dart';
 import 'brain/che_brain_list.dart' show CheBrainRecordLinks;
 import 'brain/che_brain_sections.dart' show CheBrainEvidence, CheEvidenceKind, cheRecordIdsOf;
 import 'che_ui/che_owner_improvements.dart';
 import 'workflows/che_workflows_screen.dart';
 import 'film/che_film_studio_screen.dart';
-import 'rooms/che_characters_room.dart';
-import 'rooms/che_voice_activity.dart';
-import 'studio/che_character_studio.dart';
-import 'studio/che_character_studio_screen.dart';
-import 'rooms/che_headquarters.dart';
 import 'world/che_meeting_room.dart';
 import 'world/che_meetings.dart';
 import 'world/che_plan_room.dart';
@@ -82,6 +78,8 @@ import 'che_voice_ui.dart';
 import 'che_app_portal.dart';
 import 'che_video.dart';
 import 'che_creations.dart';
+import 'che_gpu_jobs.dart';
+import 'avatar/che_character_generator.dart';
 import 'rooms/che_invention_studio.dart';
 import 'che_ui/che_showroom.dart';
 import 'che_video_page.dart';
@@ -487,6 +485,9 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
   bool _autoSentCurrentTurn = false;
   // Words held open while the owner pauses mid-thought (see microphone.dart).
   String _heldSpeech = '';
+  // Words the owner spoke while CHE was still answering; sent as the next turn
+  // when the current one finishes (voice.dart, send.dart).
+  final CheHeldUtterance _pendingSpokenText = CheHeldUtterance();
   int _heldSpeechRestarts = 0;
   Timer? _quickEndTimer;
   String? _lastVoiceEngine;
@@ -629,6 +630,8 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
     }
     if (!_isSending) return;
     HapticFeedback.lightImpact();
+    // Stop ends this turn; words he said over it are not sent as the next one.
+    _pendingSpokenText.drop();
     setState(() => _stopRequested = true);
     _requestGate.cancelCurrent();
   }
@@ -637,6 +640,7 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
   void _homeNewChat() {
     if (_isSending) return;
     HapticFeedback.selectionClick();
+    _pendingSpokenText.drop();
     setState(() {
       messages.clear();
       _liveSteps.clear();
@@ -669,21 +673,6 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
         initialSection: section,
         // Knox, the Security Chief, opens the same Office desk as the Office floor.
         onOpenAgent: (name) => _openOfficeFloor(agentName: name),
-      ),
-    ));
-  }
-
-  /// More → Character Studio (also "open character studio" or "make your walking more natural" in chat): how CHE
-  /// and her crew look and move, as versioned presentation settings with a live preview and rollback.
-  Future<void> _openCharacterStudio({String agent = 'che'}) async {
-    HapticFeedback.selectionClick();
-    await Navigator.of(context).push(MaterialPageRoute<void>(
-      builder: (_) => CheCharacterStudioScreen(
-        store: cheCharacterStudio,
-        runtime: _officeRuntime,
-        initialAgent: agent,
-        onSpeak: (text) => unawaited(speakText(text, record: false, readOnDemand: true)),
-        onListen: () => unawaited(toggleListening()),
       ),
     ));
   }
@@ -731,6 +720,18 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
     await Navigator.of(context).push(MaterialPageRoute<void>(
       builder: (_) => CheFilmStudioScreen(
         client: CheFilmClient(baseUrl: cheAgentBaseUrl, headers: () => _authHeaders),
+        onSpeak: (text) => unawaited(speakText(text, record: false, readOnDemand: true)),
+        onListen: () => unawaited(toggleListening()),
+      ),
+    ));
+  }
+
+  /// More → Cloud Computer (also "open your cloud computer" in chat): environments, jobs, approvals and costs.
+  Future<void> _openCloudComputer() async {
+    HapticFeedback.selectionClick();
+    await Navigator.of(context).push(MaterialPageRoute<void>(
+      builder: (_) => CheCloudComputerRoom(
+        client: CheCloudComputerClient(baseUrl: cheAgentBaseUrl, headers: () => _authHeaders),
         onSpeak: (text) => unawaited(speakText(text, record: false, readOnDemand: true)),
         onListen: () => unawaited(toggleListening()),
       ),
@@ -1186,7 +1187,7 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
   /// Phone shell tab: Home | Chat | Office | Apps | More (mockups).
   int _shellTab = 0;
 
-  /// Office sub-pane: 0 Headquarters (the default), 1 Crew, 2 Projects.
+  /// Office sub-pane: 0 Crew, 1 Projects.
   int _officePane = 0;
 
   /// Owner reply / TTS language (BCP-47 base code).
@@ -1619,15 +1620,15 @@ OWNER AGENCY
         ),
       2 => CheScreenReport(
           page: 'the Office',
-          tab: const ['Headquarters', 'Crew', 'Projects'][_officePane],
-          tabs: const ['Headquarters', 'Crew', 'Projects'],
+          tab: _officePane == 0 ? 'Crew' : 'Projects',
+          tabs: const ['Crew', 'Projects'],
           detail: '${_officeRuntime.agents.length} agents, ${_officeRuntime.working} working'
               '${_officeRuntime.error == null ? '' : '. Office note: ${_officeRuntime.error}'}',
-          controls: const ['Headquarters office pane', 'Crew office pane', 'Projects office pane', 'the bottom tabs: Home, Chat, Office, Apps, More'],
+          controls: const ['Crew office pane', 'Projects office pane', 'the bottom tabs: Home, Chat, Office, Apps, More'],
         ),
       3 => CheScreenReport(page: 'CHE World', tab: 'CHE World', tabs: tabs, controls: const ['the CHE World rooms', 'the bottom tabs']),
       4 => CheScreenReport(page: 'More', tab: 'More', tabs: tabs,
-          controls: const ['Talk to CHE', 'Security', 'Film Studio', 'Workflows', 'Trading Room', 'Conversations', 'Flagstaff', 'Voice IDs', 'Keys', 'UI Controls', 'Connections', 'Change CHE’s voice', 'Voice replies', 'Projects and Businesses', 'Language and translate', 'the bottom tabs']),
+          controls: const ['Talk to CHE', 'Security', 'Film Studio', 'Cloud Computer', 'Workflows', 'Trading Room', 'Conversations', 'Flagstaff', 'Voice IDs', 'Keys', 'UI Controls', 'Connections', 'Change CHE’s voice', 'Voice replies', 'Projects and Businesses', 'Language and translate', 'the bottom tabs']),
       _ => CheScreenReport(page: 'Home', tab: 'Home', tabs: tabs,
           detail: '${_officeRuntime.agents.length} agents, ${_officeRuntime.working} working',
           controls: const ['Talk to CHE', 'Type to CHE', 'Voice on or off', 'The Office', 'Brain', 'Trading', 'Create',
@@ -2002,7 +2003,7 @@ OWNER AGENCY
       await sendMessage();
       setState(() {
         _shellTab = 2;
-        _officePane = 2;
+        _officePane = 1;
       });
     } catch (e) {
       await speakText('ML job failed: $e', record: false);
@@ -2130,8 +2131,7 @@ OWNER AGENCY
             children: [
               Expanded(
                 child: _OfficePanePill(
-                  label: 'HQ',
-                  spokenLabel: 'Headquarters',
+                  label: 'Crew',
                   selected: _officePane == 0,
                   onTap: () => setState(() => _officePane = 0),
                 ),
@@ -2139,18 +2139,10 @@ OWNER AGENCY
               const SizedBox(width: 8),
               Expanded(
                 child: _OfficePanePill(
-                  label: 'Crew',
-                  selected: _officePane == 1,
-                  onTap: () => setState(() => _officePane = 1),
-                ),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: _OfficePanePill(
                   label: 'Projects',
-                  selected: _officePane == 2,
+                  selected: _officePane == 1,
                   onTap: () {
-                    setState(() => _officePane = 2);
+                    setState(() => _officePane = 1);
                     unawaited(_loadAgentState(silent: true));
                   },
                 ),
@@ -2165,15 +2157,6 @@ OWNER AGENCY
             children: [
               TickerMode(
                 enabled: _officePane == 0,
-                child: CheHeadquartersScreen(
-                  client: _agentRuntime,
-                  embedded: true,
-                  onOpen3D: () => CheCharactersRoom.open(context, runtime: _officeRuntime),
-                  onPreviewRoom: (proposal) => CheCharactersRoom.open(context, runtime: _officeRuntime, previewProposal: proposal),
-                ),
-              ),
-              TickerMode(
-                enabled: _officePane == 1,
                 child: CheOfficeFloorScreen(
                 client: _agentRuntime,
                 runtime: _officeRuntime,
@@ -2188,7 +2171,7 @@ OWNER AGENCY
                 onRefresh: () => _loadAgentState(silent: true),
                 onCreateProject: _createProjectDialog,
                 onAskChe: _runPluginPrompt,
-                onOpenWarRoom: () => setState(() => _officePane = 1),
+                onOpenWarRoom: () => setState(() => _officePane = 0),
               ),
             ],
           ),
@@ -2383,13 +2366,6 @@ OWNER AGENCY
           hue: kit.CheColors.accent,
         ),
         CheMoreItem(
-          icon: Icons.face_retouching_natural,
-          title: 'Character Studio',
-          subtitle: 'How CHE and the crew look and move: presets, animation style, saved versions, rollback',
-          onTap: () => unawaited(_openCharacterStudio()),
-          hue: kit.CheColors.accent,
-        ),
-        CheMoreItem(
           icon: Icons.fact_check_rounded,
           title: 'Truth & Verification',
           subtitle: 'What CHE verified, labelled inference or removed, from real audit records',
@@ -2408,6 +2384,13 @@ OWNER AGENCY
           title: 'Film Studio',
           subtitle: 'Films from one sentence on free compute, with real progress',
           onTap: () => unawaited(_openFilmStudio()),
+          hue: kit.CheColors.apps,
+        ),
+        CheMoreItem(
+          icon: Icons.cloud_rounded,
+          title: 'Cloud Computer',
+          subtitle: 'Where CHE\'s jobs run, what each environment has, approvals and costs',
+          onTap: () => unawaited(_openCloudComputer()),
           hue: kit.CheColors.apps,
         ),
         CheMoreItem(
@@ -2501,7 +2484,7 @@ OWNER AGENCY
           onTap: () {
             setState(() {
               _shellTab = 2;
-              _officePane = 2;
+              _officePane = 1;
             });
             unawaited(_loadAgentState(silent: true));
           },
@@ -2783,11 +2766,8 @@ OWNER AGENCY
 }
 
 class _OfficePanePill extends StatelessWidget {
-  const _OfficePanePill({required this.label, this.spokenLabel, required this.selected, required this.onTap});
+  const _OfficePanePill({required this.label, required this.selected, required this.onTap});
   final String label;
-
-  /// What VoiceOver says when the visible label is short (for example "HQ" is spoken as "Headquarters").
-  final String? spokenLabel;
   final bool selected;
   final VoidCallback onTap;
 
@@ -2797,7 +2777,7 @@ class _OfficePanePill extends StatelessWidget {
     return Semantics(
       button: true,
       selected: selected,
-      label: '${spokenLabel ?? label} office pane',
+      label: '$label office pane',
       excludeSemantics: true,
       child: Material(
         color: Colors.transparent,

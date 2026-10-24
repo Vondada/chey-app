@@ -534,6 +534,13 @@ extension _CheHomeMicrophone on _CHEHomeState {
             return;
           }
 
+          // A finished sentence that lands while CHE is still answering is
+          // held for the next turn instead of being ignored (see voice.dart).
+          if (result.finalResult && !_autoSentCurrentTurn && _isSending) {
+            if (!_isSleepPhrase(spokenWords)) _holdSpokenWhileSending(spokenWords);
+            return;
+          }
+
           if (result.finalResult && !_autoSentCurrentTurn && !_isSending) {
             _autoSentCurrentTurn = true;
             _heldSpeech = '';
@@ -603,9 +610,6 @@ extension _CheHomeMicrophone on _CHEHomeState {
     if (isListening == next) return;
     debugPrint('CHE mic state: listening=$next ($reason)');
     _set(() => isListening = next);
-    // The 3D crew page turns CHE attentive while the microphone really listens (che_voice_activity.dart).
-    final a = cheVoiceActivity.value;
-    cheVoiceActivity.value = CheVoiceActivity(speaking: a.speaking, listening: next, text: a.text, durationMs: a.durationMs, startedAt: a.startedAt);
   }
 
   void _restartListeningSoon({

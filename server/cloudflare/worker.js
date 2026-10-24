@@ -43,9 +43,9 @@ import { mediaHoldAnswer, mediaHoldIntent, mediaKeepFor, mediaLatestReply, media
 import { capabilityGap, capabilityReply } from './capability_gap.js';
 import { INTERNAL_SOURCE, LAST_RENDER_KEY, internalSceneIntent, internalSceneTurn } from './internal_studio.js';
 import { CHAT_IMAGE_SOURCE, chatImageInline, chatImageMedia, chatImageReply, makeChatImages, pretendToolCall, requestedImageCount } from './chat_images.js';
-import { memorySearchIntent, memorySearchReply, memorySearchTerms } from './memory_search.js';
+import { memorySearchFollowup, memorySearchIntent, memorySearchReply, memorySearchTerms } from './memory_search.js';
 import { probeVideoEngine, videoEngineStatus, videoStatusSpeech } from './video_engine.js';
-import { githubVideoDiagnosis, mp4Facts } from './github_video_renderer.js';
+import { githubVideoDiagnosis, mp4Facts, startGithubVideo } from './github_video_renderer.js';
 import { handleEdgeVoice } from './edge_route.js';
 import { marySecretsFrom, preferredElevenLabsDiagnostics, preferredElevenLabsKeyStatus, preferredElevenLabsLastOutcome, preferredElevenLabsSpeech, withMarySecrets } from './preferred_elevenlabs_voice.js';
 import { availableVoiceChoices, reconcileVoiceChoice, saveVoiceChoice, validateVoiceChoice, voiceEnvForSelection } from './voice_choices.js';
@@ -71,7 +71,7 @@ import { claimMatcher, disprovenContext, downgradeDisproven, externalCorrection,
 import { recordReliability, reliabilityIntent, reliabilitySummary, speakReliability } from './reliability_ledger.js';
 import { answerOwnerMemoryQuestion, auditMemoryProvenance, evidenceQuestion, evidenceReferent, evidenceRequestSplit, explainEvidenceFor, findAnswerEvidence, brainRecordForProvenance, guardOwnerAttributions, guardRememberBlock, guardSpeakerAttributions, latestAnswerEvidence, loadRetractions, memoryPromptContext, ownerFactCorrection, ownerMemoryQuestion, ownerWords, recordAnswerEvidence, recordRetractions, storedSpeaker, storyRequested } from './memory_provenance.js';
 import { condenseHistory, ownerNotificationPolicy } from './workflow_governor.js';
-import { analyze as tradeAnalyze, backtestAll, loadCandles, paperTick, readBook, speakAnalysis, speakBacktest, speakBook, speakLearning, nextTradingTickAt, tradingIntent, watchSymbol, STRATEGIES } from './trading_lab.js';
+import { analyze as tradeAnalyze, backtestAll, candleSpan, loadCandles, paperTick, readBook, speakAnalysis, speakBacktest, speakBook, speakLearning, nextTradingTickAt, tradingIntent, watchSymbol, STRATEGIES } from './trading_lab.js';
 import { intelligenceIntent, intelligenceReport, intelligenceView, speakIntelligence, startStudy, studyAlarm, studyStep } from './historical_intelligence.js';
 import { evaluateSample, applyRightsAction, applySpokenRightsWrite, defensibility, musicRightsIntent, musicRightsWriteIntent, releaseReadiness, songFor, speakReadiness } from './music_rights.js';
 import { ACTIVITIES, JURISDICTIONS, SOURCES, LEGAL_INDEX, activitiesIn, placeIn, checkUpdates, defenseArguments, findAlternatives, jurisdiction as legalPlace, legalAnswer, legalDifferences, legalIntent, loadLegal, recordDecision, recordsFor, releaseLegalCheck, saveLegal, speakDifferences, subscribe as legalSubscribe, verifyRecord } from './legal_intelligence.js';
@@ -87,7 +87,7 @@ import { evidenceIntent, evidenceReport, evidenceTick } from './trading_evidence
 import { readTrades, tradeDayOf } from './trading_evidence.js';
 import { TRADE_EVIDENCE_SOURCE, lastTrade, readTradeEvidence, speakTradeReplay, tradeBars, tradeEvidenceOf, tradeList, tradeReplayIntent } from './trade_evidence.js';
 import { DAILY_TARGET, EXECUTION_TYPES, VISUAL_SOURCE, auditTrades, compareWindows, currentLeader, dailyEvidence, dailyPnl, filterTrades, historyChart, journalView, lastForwardBar, metricsOf, openPositions, rankStrategies, readSkips, readVisualTrades, replayFrame, speakAudit, speakEvidence, speakCard, speakLeader, speakPnl, tradingVisualIntent } from './trading_visual.js';
-import { cancelCandidates, cancelConfirmation, cancelOrderIntent, chartIntent, chartView, drawIntent, futuresOrderIntent, marketOrderFeedProblem, paperAccountIntent, readDrawings, saveDrawings, speakOrder } from './trading_chart.js';
+import { cancelCandidates, cancelConfirmation, cancelOrderIntent, chartIntent, chartOpenReply, chartView, drawIntent, futuresOrderIntent, marketOrderFeedProblem, paperAccountIntent, readDrawings, saveDrawings, speakOrder } from './trading_chart.js';
 import { marketUniverse, searchUniverse } from './market_universe.js';
 import { readRithmicCandles, storeRithmicCandles } from './rithmic_dataset.js';
 // A spoken cancel of one Alpaca PAPER order waiting for the owner's yes, or for his pick from a numbered list.
@@ -131,11 +131,11 @@ import { ownToolPermissionProblems } from './flagstaff_reply_check.js';
 import { cachedCodeIndex } from './code_index.js';
 import { CHE_SELF_BRIEF, starredFocus, studyLesson } from './che_self_knowledge.js';
 import { KEY_PROVIDERS, MEMORY_DB, hasStoredMemoryDatabase, memorySetupIntent, memorySetupSteps, removeMemoryDatabase, saveMemoryDatabase, removeKey, storedKeys, withStoredKeys, cachedAnswer, checkAllKeys, fileLetter, fileTech, forgetAnswer, isLockedDown, listLetters, looksLikeAttack, markLetter, nextLetter, rememberAnswer, resilienceIntent, runScout, saveKey, setLockdown, setupSteps, speakKeyHealth, speakMailboxSummary, speakTech, techItems } from './resilience.js';
-import { applyCorrections, correctionsContext, detectCorrection, learnCorrection, loadCorrections } from './speech_learning.js';
+import { applyCorrections, correctedPrevious, correctionsContext, detectCorrection, learnCorrection, loadCorrections } from './speech_learning.js';
 import { applyModelReading, asksAboutScreen, clipKeepingLimits, interpretOwnerTurn, interpretWithModel } from './speech_intent.js';
 import { intentFrame, understoodAs } from './intent_frame.js';
 import { replyHijacksOwnerRequest, usageIntent, usageReport, speakUsage } from './usage_tracker.js';
-import { newestStarredIntent, speakNewestStarred, autoImproveScan, analyticalRepositoryQuestion, chatOnlyResponseIntent, currentTurnActionPolicy, codeScoutIntent, fetchRepoFile, inspectReferenceRepo, inspirationUpgradeContext, listOwnerStarredRepos, readRepoSource, referenceSourceBlock, codingHistoryIntent, hypotheticalChange, repositoryImplementationIntent, repositoryInspectionIntent, scoutCode, selectStudyRepos, speakScout, speakStarredRepos, starredRepoIntent, starredStudyList, studySelectionIntent } from './code_scout.js';
+import { newestStarredIntent, speakNewestStarred, autoImproveScan, analyticalRepositoryQuestion, chatOnlyResponseIntent, currentTurnActionPolicy, codeScoutIntent, fetchRepoFile, inspectReferenceRepo, inspirationUpgradeContext, listOwnerStarredRepos, readRepoSource, referenceSourceBlock, codingFollowupKind, codingHistoryIntent, codingTimingNote, hypotheticalChange, repositoryImplementationIntent, repositoryInspectionIntent, scoutCode, selectStudyRepos, speakScout, speakStarredRepos, starredRepoIntent, starredStudyList, studySelectionIntent } from './code_scout.js';
 import { codingHistoryReceipt, completedWorkProof, otherAgentWorkAsk, otherAgentWorkReply, proofAsked } from './coding_history.js';
 import { inventionFollowUpAllowed, inventionIntent, inventionReply, planInvention, refusalReply } from './invention_studio.js';
 import { matchShowroom, showroomIntent, showroomReply, showroomView } from './capability_showroom.js';
@@ -149,9 +149,9 @@ import { CODING_CANCEL_SOURCE, cancelQueuedJob, codingCancelIntent, resolveCodin
 import { PENDING_OWNER_ACTION_KEY, deskOwnedMoney, forbiddenAction, prohibitionSpans, withoutProhibitions, PENDING_OWNER_ACTION_MS, gateOwnerAction, grantForKinds, isOwnerYes, peerActionReply, APPS_GRANTED_KEY, PENDING_APP_ACTION_KEY, PENDING_APP_ACTION_MS, gateAppAccess, classifyAppNeed, classifyExplicitAppOpen, classifyAppAccesses } from './owner_action_gate.js';
 import { placedOrdersLine, recordDeviceInstall } from './action_receipts.js';
 import { brainTruthSummary, brainTruthView, truthScreenAsk } from './brain_truth.js';
-import { auditLedger, auditText, knowVsGuessQuestion, knowVsGuessReply, MEMORY_CLAIM_MS, memorySavedQuestion, memorySavedReply } from './hallucination_auditor.js';
+import { CLOUD_JOB_KIND, CLOUD_SOURCE, approveCloudJob, cancelCloudJob, cloudIntent, cloudJobs, cloudView, latestCloudJob, openPullRequests, parseControl, providerStatuses, requestCloudWork, retryCloudJob, runCloudTask, runFileJob, selectProvider, speakAgentWork, speakBlocked, speakCloudSummary, speakControl, speakInstall, speakPullRequests, speakRender, speakRequest, speakStartResult, startCloudTask, stopCloudJob } from './cloud_computer.js';
+import { auditLedger, knowVsGuessQuestion, knowVsGuessReply, MEMORY_CLAIM_MS, memorySavedQuestion, memorySavedReply } from './hallucination_auditor.js';
 import { verifyReply } from './truth_pipeline.js';
-import { handleStudio, studioIntent } from './character_studio.js';
 import { asksForCurrentOwnerLocation, executeWithReceipt, guardExecutionClaims, guardRetrievalClaims, changeHistoryIntent, guardClaimedOwnerActions, guardClaimedResearchActions, guardGroundedFacts, guardLocationWeatherReply, guardOwnerReply, loadChangeHistory, loadReceipts, OWNER_LOCATION_NOT_VERIFIED, recordReceipt, requestedCodeNames, speakChangeHistory, vagueResearchRequest, verifiedState, verifiedStatusText } from './truth_layer.js';
 import { ENGINEERING_PLAYBOOK_SPOKEN, playbookIntent } from './engineering_playbook.js';
 import { describeSkillsReport, reusableLicense, selectFilesForAgent, skillFromMarkdown, skillImportIntent, skillsReportIntent } from './skill_import.js';
@@ -164,7 +164,7 @@ import { githubWorkshopPieces, workshopAvatar, workshopAvatarIntent, workshopSna
 import { flushOutbox, handleWebMailbox, isOpen as flagstaffOpen, lockMailbox, openMailbox, transcript as flagstaffTranscript, mailboxCode, mailboxLink, postWebMail, readWebMail, rotateMailboxCode } from './web_mailbox.js';
 import { CheLibrary, fetchReadable, libraryContext, libraryIntent } from './library.js';
 import { KnowledgeLibrary, knowledgeIntent, knowledgeReply, knowledgeTaskContext } from './knowledge_library.js';
-import { answerPersonalFact, answerStoredStatement, groundedReply, isQuestionLike, needsStrongEngine, personalFactQuestion, storedStatementQuestion } from './personal_recall.js';
+import { answerPersonalFact, answerStoredStatement, factCorrectionReply, groundedReply, isQuestionLike, needsStrongEngine, ownerFactTurn, personalFactQuestion, recallPersonalFact, storedStatementQuestion } from './personal_recall.js';
 import { brainRecordIntent, chatgptHistoryIntent, importChatgptBatch, inspectMemory, memoryInspectIntent, ownerMemorySearchIntent, ownerStatementCandidates, phoneBrainNotes, searchOwnerMemory, speakBrainRecord, speakChatgptHistory, speakMemoryInspection, speakMemorySearch } from './owner_recall.js';
 import { adRequest, adStatusLines, assetTruthReply } from './asset_truth.js';
 import { dropAgentTaskTurns, replyRepeatsAgentTask } from './agent_task_guard.js';
@@ -190,11 +190,9 @@ import {
   shouldAutoDelegateOffice,
   laAgenciaPanelNeeds,
 } from './work_agent_mode.js';
-import { matchOfficePhrase, speakGoalPlan, speakOfficeBoard } from './office_phrases.js';
+import { matchOfficePhrase, speakGoalPlan, speakOfficeAgentMore, speakOfficeBoard } from './office_phrases.js';
 import { advanceOfficeJobs, officeJobView, officeJobsView, planOfficeJob, speakOfficeJob } from './office_jobs.js';
 import { headRecord, officeOrg, speakOfficeOrg } from './office_org.js';
-import { HQ_ROOMS, hqJobDetail, hqRoomDetail, hqView, talkToHead } from './headquarters.js';
-import { decideProposal, designProposal, rollbackRoom, roomProposalsView } from './room_designer.js';
 import { assertOwnerTalksToCheOnly, codexWorkPacket } from './office_router.js';
 import {
   mlProjectFromResult,
@@ -255,6 +253,7 @@ import { EGRESS_KEY, SNAPSHOT_KEY, holdEgress, installEgressGuard, setEgressOwne
 import { loadRegistry as loadCapabilityRegistry } from './capability_registry.js';
 import { BrainLedger, answerLedger, decidePending as decideBrainPending, installBrainLedger, ledgerApi, ledgerIntent as brainLedgerIntent, DEFAULT_ZONE as LEDGER_DEFAULT_ZONE } from './brain_ledger.js';
 import { FilmStore, filmIntent, filmProgress, farmProviders, loadRates, loadUsage, speakFarm, speakPlan, speakStatus as speakFilmStatus } from './film_studio.js';
+import { GpuQueue, gpuOwnerRoute, gpuWorkerRoute, speakGpuSummary } from './gpu_queue.js';
 import { FILM_ACTIVE_STATES, filmPlan, filmTick, filmTokenRoute, refreshValidation as refreshFilmValidation, remakeShot, setFilmState, startFilm } from './film_pipeline.js';
 import { performanceBanner, performanceIntent, performanceReport, recordTiming, routeKey as perfRouteKey, speakPerformance } from './perf_watch.js';
 import { engineView, exportWorkflows, feedbackOnLast, importWorkflows, library as workflowLibrary, loadEngine, matchLearned, noteVersion, promoteCandidate, dismissCandidate, rankWorkflows, recordRun as recordWorkflowRun, isDisabled as workflowDisabled, restoreVersion, saveEngine, setDisabled as setWorkflowDisabled, setPreferred as setWorkflowPreferred, speakEfficiency, speakLibrary, testCandidate, workflowForRun, workflowIntent } from './workflow_engine.js';
@@ -1725,7 +1724,8 @@ export function enqueueJob(data, fields) {
 // Two imports both update office_skills/team and must never race snapshots.
 // Jobs the owner authorized directly ("Update CHE", "merge it"); they run even
 // while Office autonomy is paused.
-const OWNER_APPROVED_JOB_KINDS = new Set(['merge_pr', 'verify_deploy', 'verify_app_build', 'command']);
+// A cloud_task is queued only after the owner approved it (or needed no approval), so it is owner-authorized work.
+const OWNER_APPROVED_JOB_KINDS = new Set(['merge_pr', 'verify_deploy', 'verify_app_build', 'command', 'cloud_task']);
 
 export function selectReadyJobs(jobs, now = Date.now(), limit = 4) {
   const all = Array.isArray(jobs) ? jobs : [];
@@ -4718,13 +4718,6 @@ export class CheState extends DurableObject {
     return { job: officeJobView(planned.job), reply: speakOfficeJob(planned.job) };
   }
 
-  // The Development Room's assignment is an Office job: the room's head builds, then Vale verifies (office_jobs.js).
-  async hqAssignJob(data, room, said) {
-    const result = await this.officeCoordinate(data, { request: said, accountable: room.lead, disciplines: ['engineering', 'qa'] });
-    if (result.error) return { error: result.error };
-    return { job: result.job };
-  }
-
   // Hands finished stages of coordinated jobs to the next department. Bookkeeping only; no model call.
   async advanceOfficeWork() {
     const data = await this.loadData();
@@ -5500,8 +5493,6 @@ export class CheState extends DurableObject {
       }
       // flagOnly keeps every sentence, so the note explains the marks instead of claiming a cut.
       const honesty = (grounded.removed.length ? ' Anything marked [NOT VERIFIED] is a file, link, code quote or job I could not confirm in the repository.' : '') + (codeProblems.length ? ` The code above still has a syntax problem I could not fix in one pass: ${codeProblems[0]}.` : '');
-      // The completion-claim auditor runs on the text that leaves for the outside AI, as it does for owner replies.
-      grounded = { ...grounded, text: (await auditText(this.ctx.storage, grounded.text || '', { fiction: storyRequested(incoming) })).text };
       // Never a bare refusal: when nothing can be pinned, say where to look.
       const searchTerms = [...new Set(incoming.match(/[A-Za-z_$][\w$]{3,}/g) || [])].slice(0, 4).join(', ') || 'the key words of the question';
       // The reply leaves for an outside AI: a Google ID never leaves in it (eighth review of #354).
@@ -5815,6 +5806,12 @@ export class CheState extends DurableObject {
     return response;
   }
 
+  // Market data cache options (markets.js): last good values survive isolate restarts in this Durable Object's
+  // storage, and background refreshes outlive the request that started them.
+  marketCacheOptions() {
+    return { store: this.ctx.storage, background: (p) => this.ctx.waitUntil?.(p) };
+  }
+
   // One Office video pass. It reloads the store so it sees the uploads of the
   // pass before it. The YouTube token is checked before any render, and fetched
   // again right before the upload, so a long render cannot outlive it.
@@ -5906,6 +5903,7 @@ export class CheState extends DurableObject {
     if (codingCancelIntent(message)) {
       return ndjsonReply('Only the CHE owner can cancel coding jobs. Nothing was changed.', { source: CODING_CANCEL_SOURCE, ok: false, model_calls: 0 });
     }
+    if (cloudIntent(message)) return ndjsonReply('Only the CHE owner can use the cloud computer. Nothing was started.', { source: CLOUD_SOURCE, ok: false, model_calls: 0 });
     if (cancelOrderIntent(message)) return ndjsonReply('Only the CHE owner can cancel Alpaca PAPER orders. Nothing was cancelled.', { source: 'che_trading_chart', ok: false, model_calls: 0, order_cancelled: false });
     if (GUEST_OWNER_ACTION.test(message)) {
       return ndjsonReply('Only the CHE owner can do that. Nothing was changed. I can still talk it through with you.', { source: 'che_guest', ok: false, model_calls: 0 });
@@ -5933,9 +5931,7 @@ export class CheState extends DurableObject {
         max_tokens: 700,
         che_audit: { task: message.slice(0, 160), agent: 'CHE', route: 'guest_chat' },
       });
-      // A guest's model has no receipts, so every completion claim in its reply fails closed and is removed.
-      const raw = String(answer?.response || answer?.choices?.[0]?.message?.content || '').trim();
-      const reply = raw ? (await auditText(this.ctx.storage, raw, { evidence: null })).text : '';
+      const reply = String(answer?.response || answer?.choices?.[0]?.message?.content || '').trim();
       return ndjsonReply(reply || 'I could not answer that just now. Please try again.', { source: 'che_guest', ok: Boolean(reply), model_calls: 1 });
     } catch (_) {
       return ndjsonReply('I could not reach my engines just now. Please try again in a moment.', { source: 'che_guest', ok: false, model_calls: 1 });
@@ -6067,6 +6063,10 @@ export class CheState extends DurableObject {
       if (!ask) return ndjsonReply('Tell me what feels wrong, for example "/che-improve the chart is too big". Nothing was changed.', { source: 'che_owner_improvement', ok: false, command: command.id, model_calls: 0 });
       return withDoneFields(await this.improvementChat(body || {}, ask), { command: command.id });
     }
+    if (String(command.local).startsWith('cloud_')) {
+      if (!OWNER_CHAT_REQUESTS.has(request)) return ndjsonReply('Only the CHE owner can use the cloud computer. Nothing was started.', { source: CLOUD_SOURCE, ok: false, command: command.id, model_calls: 0 });
+      return this.cloudCommand(command, input);
+    }
     if (command.local === 'coding_cancel') {
       // Owner only, like POST /api/job/cancel: checked here too, not only by the guest gate in front.
       if (!OWNER_CHAT_REQUESTS.has(request)) return ndjsonReply('Only the CHE owner can cancel coding jobs. Nothing was changed.', { source: CODING_CANCEL_SOURCE, ok: false, model_calls: 0 });
@@ -6117,6 +6117,104 @@ export class CheState extends DurableObject {
       return ndjsonReply(text, { source: 'che_creator_studio', command: command.id, model_calls: 0, ...done });
     }
     return ndjsonReply(`/${command.id} has no runner, sir. Nothing was run.`, { source: 'che_command', ok: false, model_calls: 0 });
+  }
+
+  /**
+   * After an app build or patch dispatch (chat "update my phone", or the Cloud Computer's ios_build/ios_patch):
+   * remember it for "app build status" and queue verify_app_build, which reports shipped or failed from GitHub.
+   */
+  async recordAppBuildDispatch(mode, dispatchedAt) {
+    await this.ctx.storage.put(APP_BUILD_KEY, { mode, dispatched_at: dispatchedAt, state: 'dispatched' });
+    const current = await this.loadData();
+    enqueueJob(current, { kind: 'verify_app_build', title: `Verify ${mode === 'patch' ? 'app update' : 'iPhone build'}`, prompt: dispatchedAt, build_mode: mode, dispatched_at: dispatchedAt, idempotency_key: `app_build:${mode}:${dispatchedAt}`, retry_at: Date.now() + 120_000 });
+    await this.ctx.storage.put('che', current);
+    await this.scheduleWork();
+  }
+
+  // ─── Cloud Computer (cloud_computer.js) ─────────────────────────────────
+  // One manager over the existing compute. Handoff kinds go to their existing starters; repo tests become a
+  // cloud_task job in this queue that waits for the owner's approval; file inspection finishes on the Worker.
+  async cloudStart(kind, params = {}, { agent = 'CHE', confirmed = false } = {}) {
+    const env = this.keyEnv || this.env;
+    const plan = selectProvider(kind, { env });
+    if (plan.blocked) return { ok: false, blocked: true, plan, spoken: speakBlocked(plan) };
+    if (plan.run === 'handoff') {
+      const result = await startCloudTask(kind, params, {
+        env, confirmed,
+        queueSelfDevelopment: (args) => this.queueSelfDevelopment(args),
+        rea: (text) => handleReaRequest(this.ctx.storage, env, text, this.reaOptions({ history: [], owner: true })),
+        startVideo: (topic, seconds) => startGithubVideo(env, topic, seconds),
+        onAppBuildDispatched: (mode, dispatchedAt) => this.recordAppBuildDispatch(mode, dispatchedAt),
+      });
+      return { ...result, plan, spoken: speakStartResult(result) };
+    }
+    const data = await this.loadData();
+    if (plan.run === 'inline') {
+      const out = await runFileJob(data, { agent, name: String(params.name || ''), base64: String(params.base64 || ''), text: String(params.text || '') }, { env, enqueue: enqueueJob });
+      if (out.job) await this.ctx.storage.put('che', data);
+      return { ...out, spoken: out.ok ? out.job.result : out.facts?.error || speakRequest(out) };
+    }
+    const out = requestCloudWork(data, { agent, kind, params }, { env, enqueue: enqueueJob });
+    if (out.job && !out.deduplicated) await this.ctx.storage.put('che', data);
+    if (out.job && !out.needs_approval) await this.scheduleWork();
+    return { ...out, spoken: speakRequest(out) };
+  }
+
+  async cloudControl(action, id = '') {
+    const env = this.keyEnv || this.env;
+    const data = await this.loadData();
+    const states = { approve: ['awaiting_approval'], cancel: ['awaiting_approval', 'queued'], stop: ['running', 'queued'], retry: ['failed', 'cancelled'] }[action] || [];
+    const target = String(id || '').trim() || latestCloudJob(data, states)?.id || '';
+    if (!target) return { ok: false, job: null, reason: 'no job', spoken: `I have no cloud job to ${action}, sir. Nothing changed.` };
+    let out;
+    if (action === 'approve') out = approveCloudJob(data, target);
+    else if (action === 'cancel') out = cancelCloudJob(data, target);
+    else if (action === 'stop') out = await stopCloudJob(data, target, { env });
+    else if (action === 'retry') out = retryCloudJob(data, target, enqueueJob);
+    else return { ok: false, job: null, reason: 'unknown action', spoken: 'I can approve, cancel, stop or retry a cloud job. Nothing changed.' };
+    if (out.ok) {
+      await this.ctx.storage.put('che', data);
+      if (action === 'approve' || action === 'retry') await this.scheduleWork();
+    }
+    return { ok: out.ok, job: out.job || null, reason: out.reason || '', spoken: speakControl(action, out) };
+  }
+
+  // The catalog's cloud-* commands (spoken forms arrive through cloudIntent). Deterministic, no model.
+  async cloudCommand(command, input) {
+    const env = this.keyEnv || this.env;
+    const reply = (text, extra = {}) => ndjsonReply(text, { source: CLOUD_SOURCE, ok: true, command: command.id, model_calls: 0, ...extra });
+    if (command.local === 'cloud_open') {
+      const view = await cloudView(this.ctx.storage, env);
+      return reply(`Opening my cloud computer, sir. ${speakCloudSummary(view)}`, { open_screen: 'cloud_computer' });
+    }
+    if (command.local === 'cloud_gpu') return reply(speakGpuSummary(await new GpuQueue(this.ctx.storage).view()));
+    if (command.local === 'cloud_blender') {
+      const plan = selectProvider('blender_render', { env });
+      return reply(speakBlocked(plan), { ok: false, blocked: true, missing_capability: plan.missing_capability || '' });
+    }
+    if (command.local === 'cloud_render') {
+      const plan = selectProvider('video_render', { env });
+      return reply(speakRender(await cloudJobs(this.ctx.storage, env), plan), { ok: !plan.blocked });
+    }
+    if (command.local === 'cloud_tests') {
+      const out = await this.cloudStart('repo_tests', {}, { agent: 'CHE' });
+      return reply(out.spoken, { ok: out.ok, needs_approval: Boolean(out.needs_approval), cloud_job_id: out.job?.id || null });
+    }
+    if (command.local === 'cloud_prs') {
+      const result = await openPullRequests(env);
+      return reply(speakPullRequests(result), { ok: result.ok, pull_requests: result.prs || [] });
+    }
+    if (command.local === 'cloud_install') return reply(speakInstall(providerStatuses(env), input), { installed: false });
+    if (command.local === 'cloud_agents') {
+      return reply(speakAgentWork(await cloudJobs(this.ctx.storage, env)), { open_screen: 'cloud_computer' });
+    }
+    if (command.local === 'cloud_control') {
+      const ctl = parseControl(input);
+      if (!ctl) return reply('Say approve, cancel, stop or retry, then "cloud job" and its id, sir. Nothing changed.', { ok: false });
+      const out = await this.cloudControl(ctl.action, ctl.id);
+      return reply(out.spoken, { ok: out.ok, cloud_job_id: out.job?.id || null });
+    }
+    return reply('That cloud computer command has no handler. Nothing was run.', { ok: false });
   }
 
   // /che-cancel-job and its spoken forms. The job is found in a fresh copy of the store, cancelled
@@ -7009,6 +7107,8 @@ export class CheState extends DurableObject {
         const routed = await filmTokenRoute(await this.filmCtx(request), path, request);
         if (routed) return routed;
       }
+      // Colab GPU worker (gpu_queue.js): opened only by the paired worker token; previews are binary.
+      if (path.startsWith('/api/gpu/worker/')) return (await gpuWorkerRoute({ storage: this.ctx.storage, env: this.keyEnv || this.env }, path, request)) || json({ detail: 'Not found.' }, 404);
       const body = ['POST', 'PATCH', 'PUT'].includes(request.method) ? await bodyOf(request) : {};
       // Visual Studio render Action: the edit document and its source files, opened only by that job's one-time,
       // expiring token. No device token exists on the GitHub runner; nothing else is reachable with this one.
@@ -7724,6 +7824,32 @@ export class CheState extends DurableObject {
         if (!ownerDevice) return json({ detail: 'Only the CHE owner can read his brain.' }, 403);
         return json(await brainTruthView(this.ctx.storage));
       }
+      if (path === '/api/gpu' || path.startsWith('/api/gpu/')) {
+        if (!ownerDevice) return json({ detail: 'Only the CHE owner can use the GPU queue.' }, 403);
+        return (await gpuOwnerRoute({ storage: this.ctx.storage }, path, request, body)) || json({ detail: 'Not found.' }, 404);
+      }
+      // Cloud Computer Manager (cloud_computer.js): one view and one set of controls over CHE's existing compute.
+      // Owner-only, like /api/trading/*. Reads never reach GitHub; jobs live in the existing job queue, and starts go
+      // through the existing starters or the one allowlisted workflow. Every reply carries `spoken` for the app.
+      if (path === '/api/cloud-computer' || path.startsWith('/api/cloud-computer/')) {
+        if (!ownerDevice) return json({ detail: 'Only the CHE owner can use the cloud computer.' }, 403);
+        const cloudEnv = this.keyEnv || this.env;
+        if (path === '/api/cloud-computer' && request.method === 'GET') {
+          const view = await cloudView(this.ctx.storage, cloudEnv);
+          return json({ ...view, spoken: speakCloudSummary(view) });
+        }
+        if (request.method !== 'POST') return json({ detail: 'Use POST for cloud computer actions.' }, 405);
+        const action = path.slice('/api/cloud-computer/'.length);
+        if (action === 'start') {
+          const out = await this.cloudStart(String(body.kind || ''), body.params && typeof body.params === 'object' ? body.params : {}, { agent: String(body.agent || 'CHE'), confirmed: body.confirmed === true });
+          return json(out, out.ok ? 202 : out.needs_confirmation || out.needs_approval ? 409 : 422);
+        }
+        if (['approve', 'cancel', 'stop', 'retry'].includes(action)) {
+          const out = await this.cloudControl(action, String(body.id || ''));
+          return json(out, out.ok ? 200 : 409);
+        }
+        return json({ detail: 'Unknown cloud computer route.' }, 404);
+      }
       if (path.startsWith('/api/brain/') && ['/api/brain/status', '/api/brain/changes', '/api/brain/push', '/api/brain/search', '/api/brain/folders', '/api/brain/record', '/api/brain/conflicts', '/api/brain/conflicts/resolve', '/api/brain/review', '/api/brain/score', '/api/brain/workers', '/api/brain/recovery', '/api/brain/import/chatgpt'].includes(path)) {
         if (!ownerDevice) return json({ detail: 'Only the CHE owner can read his brain.' }, 403);
         const brain = new CheBrainStore(this.ctx.storage);
@@ -8188,7 +8314,7 @@ export class CheState extends DurableObject {
 
       // ─── Markets desk (real quotes only; unavailable says so) ───────────
       if (path === '/api/markets/snapshot' && request.method === 'GET') {
-        return json(await marketSnapshot(this.env));
+        return json(await marketSnapshot(this.env, fetch, this.marketCacheOptions()));
       }
       if (path === '/api/trading/account' && request.method === 'GET') {
         return json(await marketAccountSnapshot(this.env));
@@ -8627,7 +8753,7 @@ export class CheState extends DurableObject {
       }
       if (path === '/api/markets/candles' && request.method === 'GET') {
         const symbol = new URL(request.url).searchParams.get('symbol') || '^spx';
-        const result = await marketCandles(symbol);
+        const result = await marketCandles(symbol, fetch, this.marketCacheOptions());
         return json(result, result.error && !result.candles ? 400 : 200);
       }
 
@@ -8755,7 +8881,8 @@ export class CheState extends DurableObject {
 
       // ─── Unread / importance badge for the app ────────────────────────
       if (path === '/api/mailbox/badge' && request.method === 'GET') {
-        const flag = await unreadIncoming(this.ctx.storage, this.env);
+        // The badge polls: a stale GitHub read is answered from the last read and refreshed in the background.
+        const flag = await unreadIncoming(this.ctx.storage, this.env, fetch, { background: (p) => this.ctx.waitUntil?.(p) });
         const letters = (await listLetters(this.ctx.storage)).filter((l) => !l.read);
         const important = letters.filter((l) => l.severity === 'danger' || l.severity === 'action').length
           + flag.latest.filter((m) => /urgent|error|danger|failed|attack/i.test(m.text)).length;
@@ -9461,61 +9588,6 @@ export class CheState extends DurableObject {
       }
       if (path === '/api/office/jobs' && request.method === 'GET') {
         return json({ jobs: officeJobsView(data) });
-      }
-      // CHE's 3D headquarters (owner mission, 2026-10-24): rooms led by the department heads the roster names, each
-      // room's status from stored Office records, and one room in full with its conversation and facts.
-      if (path === '/api/office/hq' && request.method === 'GET') {
-        await this.staffOffice(data);
-        return json(hqView(data, this.keyEnv || this.env));
-      }
-      const hqRoomPath = /^\/api\/office\/hq\/([a-z_]{2,20})$/.exec(path);
-      if (hqRoomPath && request.method === 'GET') {
-        await this.staffOffice(data);
-        const detail = await hqRoomDetail(data, this.keyEnv || this.env, this.ctx.storage, hqRoomPath[1]);
-        return detail ? json(detail) : json({ detail: 'That is not a headquarters room.' }, 404);
-      }
-      // CHE's room proposals (owner mission, 2026-10-24): she designs a room for a need, the owner previews it and
-      // decides. Nothing is built until the owner approves; every write is owner-device only.
-      if (path === '/api/office/rooms/proposals' && request.method === 'GET') {
-        return json(roomProposalsView(data));
-      }
-      if (path === '/api/office/rooms/proposals' && request.method === 'POST') {
-        if (!ownerDevice) return json({ detail: 'Only the CHE owner can ask for a room proposal.' }, 403);
-        const out = designProposal(data, { need: body.need });
-        if (out.error) return json({ detail: out.error }, out.status || 400);
-        await this.ctx.storage.put('che', data);
-        return json(out);
-      }
-      const proposalPath = /^\/api\/office\/rooms\/proposals\/(rp-[0-9a-f]{8})$/.exec(path);
-      if (proposalPath && request.method === 'GET') {
-        const proposal = (data.hq_proposals || []).find((p) => p.id === proposalPath[1]);
-        return proposal ? json({ proposal }) : json({ detail: 'There is no room proposal with that id.' }, 404);
-      }
-      const decisionPath = /^\/api\/office\/rooms\/proposals\/(rp-[0-9a-f]{8})\/decision$/.exec(path);
-      if (decisionPath && request.method === 'POST') {
-        if (!ownerDevice) return json({ detail: 'Only the CHE owner can approve, change or reject a room.' }, 403);
-        const out = decideProposal(data, decisionPath[1], {
-          decision: body.decision,
-          changes: body.changes || {},
-          reservedIds: HQ_ROOMS.map((room) => room.id),
-        });
-        if (out.error) return json({ detail: out.error }, out.status || 400);
-        await this.ctx.storage.put('che', data);
-        this.broadcastAgents(data);
-        return json(out);
-      }
-      const rollbackPath = /^\/api\/office\/rooms\/([a-z_]{2,20})\/rollback$/.exec(path);
-      if (rollbackPath && request.method === 'POST') {
-        if (!ownerDevice) return json({ detail: 'Only the CHE owner can roll a room back.' }, 403);
-        const out = rollbackRoom(data, rollbackPath[1]);
-        if (out.error) return json({ detail: out.error }, out.status || 400);
-        await this.ctx.storage.put('che', data);
-        return json(out);
-      }
-      const hqJobPath = /^\/api\/office\/hq\/job\/(oj-[0-9a-f]{8})$/.exec(path);
-      if (hqJobPath && request.method === 'GET') {
-        const detail = hqJobDetail(data, hqJobPath[1]);
-        return detail ? json(detail) : json({ detail: 'There is no Office job with that id.' }, 404);
       }
       const jobPath = /^\/api\/office\/jobs\/(oj-[0-9a-f]{8})$/.exec(path);
       if (jobPath && request.method === 'GET') {
@@ -10260,7 +10332,7 @@ export class CheState extends DurableObject {
         // foreground chat-only turn to project creation before /api/chat can
         // apply the authoritative current-turn policy.
         if (brief && currentTurnActionPolicy(brief).terminalChatOnly) {
-          const reply = (await auditText(this.ctx.storage, await this.answerTerminalChatOnly(brief), { fiction: storyRequested(brief) })).text;
+          const reply = await this.answerTerminalChatOnly(brief);
           // Non-2xx on purpose: installed clients throw on it and speak
           // `detail` (the answer) instead of announcing a project that was
           // never created. Nothing is persisted.
@@ -10522,24 +10594,6 @@ export class CheState extends DurableObject {
           auto_publish: false,
         });
       }
-      // The owner talks to a department head inside their headquarters room (owner mission, 2026-10-24). CHE
-      // still sees every line (it is filed in her Office inbox) and reviews every task queued here; the head
-      // answers from its own records, and any model words pass the hallucination auditor.
-      if (path === '/api/office/hq/talk' && request.method === 'POST') {
-        if (!ownerDevice) return json({ detail: 'Only the CHE owner talks to the department heads.' }, 403);
-        await this.staffOffice(data);
-        const out = await talkToHead(data, this.keyEnv || this.env, this.ctx.storage, {
-          room: body.room,
-          agent: body.agent,
-          text: body.text || body.message,
-          mode: body.mode,
-          assignJob: ({ room, said }) => this.hqAssignJob(data, room, said),
-        });
-        if (out.error) return json({ detail: out.error, open: out.open || null }, out.status || 400);
-        await this.ctx.storage.put('che', data);
-        if (out.queued) { await this.scheduleWork(); this.broadcastAgents(data); }
-        return json(out, out.status || 200);
-      }
       // The owner talks only to CHE; agents report only to CHE. Anything
       // addressed around CHE is refused here, in code.
       if (path === '/api/office/messages' && request.method === 'POST') {
@@ -10757,6 +10811,15 @@ export class CheState extends DurableObject {
             const started = await this.startCommandWorkflow(data, { name: learned.workflow.name, steps: learned.steps }, { ownerDevice });
             return ndjsonReply(started.spoken, { source: 'che_command_workflow', ok: started.ok, objective_id: started.objective?.id || null, model_calls: 0, ...tag });
           }
+          // Cloud Computer: "open your cloud computer", "run your coding tests", "create a Blender animation",
+          // "approve the cloud job"… Each runs its catalog command (command_catalog.js cloud-*), so the spoken and
+          // slash forms share one handler. Before the coding-job cancel: "cancel cloud job …" is a cloud job.
+          const cloudAsk = body.attachment || body.workflow_step ? null : cloudIntent(rawMessage);
+          if (cloudAsk) {
+            await this.dropHeldActions();
+            const command = commandById(cloudAsk.command);
+            return this.runSlashCommand(request, body, data, { name: command.id, command, input: cloudAsk.input }, { confirmed: false });
+          }
           // "Cancel that fake commit by Che", "cancel coding job c2987a73", "cancel the last coding
           // job", or a number from the list CHE just read: the /che-cancel-job command. It runs before
           // the interpreter, which reads "cancel that …" as dropping a held request, and before the
@@ -10900,15 +10963,20 @@ export class CheState extends DurableObject {
         const previousText = String(lastOwner?.content || lastOwner?.text || '').slice(0, 16000);
         // An answer to an open Knowledge Atlas quiz ("number 2 is the bid, not the ask") is never a speech
         // correction: learning it would rewrite the owner's later sentences (#346).
-        const correction = atlasQuizAnswerTurn(rawMessage, ownerHistory) ? null : detectCorrection(rawMessage, previousText);
+        // "No, strawberry Sprite." right after "Your favorite drink is Sprite." corrects the fact under discussion
+        // (owner recording, 2026-10-24). It is read before the speech-mishearing check, which would otherwise take
+        // "strawberry Sprite, not Sprite" as a misheard word and re-run the question with the old answer.
+        const factTurn = ownerDevice && !body.attachment ? ownerFactTurn(rawMessage, { records: data.memory_records, history: ownerHistory }) : null;
+        const correction = atlasQuizAnswerTurn(rawMessage, ownerHistory) || factTurn ? null : detectCorrection(rawMessage, previousText);
         let corrections = await loadCorrections(this.ctx.storage).catch(() => []);
         let message = applyCorrections(rawMessage, corrections);
-        if (correction && previousText) {
+        // Only a word the previous turn really contains is corrected and re-run (speech_learning.js).
+        const rerun = correctedPrevious(correction, previousText);
+        if (rerun) {
           await learnCorrection(this.ctx.storage, correction, previousText).catch(() => null);
           corrections = await loadCorrections(this.ctx.storage).catch(() => corrections);
           // Redo what he asked before, with the right word.
-          const esc = correction.heard.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-          message = previousText.replace(new RegExp(`\\b${esc}\\b`, 'gi'), correction.meant);
+          message = rerun;
         }
         // Understanding before any gate: fix likely speech mistakes, resolve "that
         // one" and "do it again" from the recent turns, and ask one question only
@@ -10922,7 +10990,7 @@ export class CheState extends DurableObject {
         // an earlier answer is answered from records further down, in his own
         // words: no interpreter rewrite, clarifying question or model read.
         const memoryRoute = ownerDevice && !body.attachment && (asksForEvidence || Boolean(ownerMemoryQuestion(rawMessage)) ||
-          Boolean(ownerFactCorrection(rawMessage, data.memory_records)) || Boolean(outsideCorrespondenceIntent(rawMessage, { history: ownerHistory })));
+          Boolean(factTurn) || Boolean(outsideCorrespondenceIntent(rawMessage, { history: ownerHistory })));
         // Voice Studio: the owner's spoken requests about his voice library are answered
         // from the provider's account, with no model call. Anything else goes on below.
         if (ownerDevice && !body.attachment) {
@@ -11017,6 +11085,11 @@ export class CheState extends DurableObject {
           return json({ message: question, reply: question, clarification: true, held_for_owner: false, code_review_passed: false, owner_approval_required: false });
         }
         message = interpretation.text;
+        // A follow-up's own words and the earlier request it leans on ("What about ETH?" after "Analyze the NQ chart"):
+        // deterministic routes read the new subject from `followupWords` and the rest from `referentText`, so the earlier
+        // request is never silently re-run with its old subject (subject-loss audit, 2026-10-24).
+        const followupWords = String(interpretation.followup || '');
+        const referentText = String(interpretation.referent || '');
         // "Answer 1: delete my notes", "my answer is buy two calls": a money or delete request in a quiz-answer
         // form (#346) is gated, and on a yes run, exactly as the bare sentence would be.
         const hiddenAction = atlasHiddenAction(message);
@@ -11189,9 +11262,12 @@ export class CheState extends DurableObject {
         // hold for REA builds too, before anything can be queued.
         // A question about a coding record ("inspect that coding job") is not an REA follow-up;
         // the coding history route below answers it. Named REA targets never match it.
+        // A follow-up's own words ("is it done yet?") belong to the coding job or the REA investigation CHE
+        // named last, read from the recent turns (subject-loss audit, 2026-10-24).
         const reaPolicy = currentTurnActionPolicy(message);
-        const rea = codingHistoryIntent(message) ? null : await handleReaRequest(this.ctx.storage, this.keyEnv || this.env, message, {
+        const rea = codingHistoryIntent(followupWords || message, ownerHistory) ? null : await handleReaRequest(this.ctx.storage, this.keyEnv || this.env, message, {
           ...this.reaOptions({ history: ownerHistory, owner: ownerDevice }),
+          followup: followupWords,
           codingBlocked: reaPolicy.terminalChatOnly || reaPolicy.restrictions.noPr || reaPolicy.restrictions.noCommitPush,
         });
         if (rea) {
@@ -11433,7 +11509,7 @@ export class CheState extends DurableObject {
           // A question about the code is answered from the source it was read from; the file index is not the answer.
           if (analyticalRepositoryQuestion(repositoryInspectionRequest) && !historicalCauseRequested) {
             const analysis = await this.answerFromRepositoryEvidence(repositoryInspectionRequest, inspected).catch(() => '');
-            if (analysis) return ndjsonReply((await auditText(this.ctx.storage, analysis, { fiction: storyRequested(repositoryInspectionRequest) })).text, { source: 'che_repository_analysis', repository_research: true, repository_sha: inspected.head_sha, evidence_mode: 'pinned_repository', execution_mode: turnActionPolicy.mode });
+            if (analysis) return ndjsonReply(analysis, { source: 'che_repository_analysis', repository_research: true, repository_sha: inspected.head_sha, evidence_mode: 'pinned_repository', execution_mode: turnActionPolicy.mode });
             // The model did not answer: say so. Source listings are never sent in place of an answer.
             return ndjsonReply(`I read the source at commit ${String(inspected.head_sha).slice(0, 12)}, sir, but the reasoning model did not return an answer, so I cannot give that analysis just now. Nothing was changed and no coding job was started. Ask again in a moment.`, { source: 'che_repository_analysis', ok: false, repository_sha: inspected.head_sha, execution_mode: turnActionPolicy.mode });
           }
@@ -11477,7 +11553,7 @@ export class CheState extends DurableObject {
         if (chatOnlyEvaluation && /\b(?:chat[- ]only|this\s+chat\s+only|answer\b[\s\S]{0,80}\bthis\s+chat|zero\s+repository\s+changes?)\b/i.test(message)) {
           const answer = await this.answerTerminalChatOnly(message).catch(() => '');
           if (answer) {
-            return ndjsonReply((await auditText(this.ctx.storage, answer, { fiction: storyRequested(message) })).text, {
+            return ndjsonReply(answer, {
               source: 'che_chat_only',
               execution_mode: turnActionPolicy.mode,
               ok: true,
@@ -12066,7 +12142,7 @@ export class CheState extends DurableObject {
         }
         if (officePhrase) {
           const board = await this.officeBoard(data);
-          return ndjsonReply(speakOfficeBoard(board, officePhrase), { office: officePhrase.type });
+          return ndjsonReply(speakOfficeBoard(board, officePhrase), { office: officePhrase.type, model_calls: 0 });
         }
 
         // CHE's universal AI layer by voice: models, providers, privacy,
@@ -12099,26 +12175,6 @@ export class CheState extends DurableObject {
           const answer = await memorySavedReply(this.ctx.storage);
           await recordAnswerEvidence(this.ctx.storage, answer.text, { kind: answer.saved ? 'owner_attested' : 'none' }, { records: answer.saved ? [answer.saved.record_id] : [] });
           return ndjsonReply(answer.text, { source: 'che_memory_receipt', model_calls: 0, memory_receipt: answer.saved });
-        }
-        // Character Studio by voice (character_studio.js): "make your walking more natural" is a settings patch the
-        // phone applies to that agent's animator and saves as a version; a new outfit or model is an honest upgrade
-        // job, never a pretended change. Presentation only: no grant, no tool, no app.
-        const studioAsk = ownerDevice && !body.attachment ? studioIntent(rawMessage) : null;
-        if (studioAsk) {
-          const studio = await handleStudio(studioAsk, {
-            queueUpgrade: async (ask) => {
-              const { job } = enqueueJob(data, {
-                kind: 'self_development',
-                title: `Character upgrade for ${ask.agent}: ${ask.request}`.slice(0, 100),
-                prompt: `The owner asked for a character change the runtime cannot make from settings: "${ask.request}" (agent ${ask.agent}). Build the asset in tools/character_pipeline (source + GLB), keep the agent's approved identity, show renders for approval, and open a pull request only. Do not replace the live model, merge, deploy, spend money or delete anything.`,
-                idempotency_key: idempotencyKey('job:character_upgrade', `${ask.agent} ${ask.request}`),
-              });
-              await this.ctx.storage.put('che', data);
-              await this.scheduleWork();
-              return job;
-            },
-          });
-          return ndjsonReply(studio.text, { ...studio.fields, ok: studio.ok, model_calls: 0 });
         }
         // "Open Truth and Verification": the Brain Room section opens on the phone and CHE speaks its summary.
         if (ownerDevice && !body.attachment && truthScreenAsk(rawMessage)) {
@@ -12211,9 +12267,17 @@ export class CheState extends DurableObject {
         // The owner's memory search reads the Brain store and the Flagstaff archive and names what matched, with
         // ids, dates and the sender as stored. The model is never asked, so it cannot say a search ran or invent
         // records (owner, 2026-10-21: "I found two records dated February 10 and March 15, 2023").
-        if (memorySearchIntent(message)) {
+        // "Tell me more about that" / "who wrote it?" right after a memory search re-run its terms and name the
+        // stored senders; right after an Office desk reply they read that agent's board (subject-loss audit,
+        // 2026-10-24). Both answer from the records, with no model.
+        const memoryFollowup = body.attachment ? null : memorySearchFollowup(followupWords || message, ownerHistory);
+        if (memoryFollowup?.referent === 'office_agent') {
           if (!ownerDevice) return ownerOnly();
-          const topic = memorySearchTerms(message).join(' ');
+          return ndjsonReply(speakOfficeAgentMore(await this.officeBoard(data), memoryFollowup.agentId), { office: 'agentStatus', model_calls: 0 });
+        }
+        if (memorySearchIntent(message) || memoryFollowup) {
+          if (!ownerDevice) return ownerOnly();
+          const topic = (memoryFollowup ? memoryFollowup.terms : memorySearchTerms(message)).join(' ');
           const store = new CheBrainStore(this.ctx.storage);
           let brainHits = null;
           try {
@@ -12222,7 +12286,7 @@ export class CheState extends DurableObject {
           // One row per locked Flagstaff session; each message keeps its session id so a reply can name where it was read.
           const sessions = await flagstaffArchive(this.ctx.storage).catch(() => null);
           const archive = sessions === null ? null : sessions.flatMap((session) => (session.messages || []).map((m) => ({ ...m, session: session.id })));
-          const answer = memorySearchReply(message, { brainHits, archive });
+          const answer = memorySearchReply(message, { brainHits, archive, followup: memoryFollowup });
           await recordAnswerEvidence(this.ctx.storage, answer.text, { kind: answer.records.length ? 'memory_search' : 'none', tools: ['brain/search', 'flagstaff/archive'] }, { records: answer.records });
           return ndjsonReply(answer.text, { source: 'che_memory_search', model_calls: 0, records: answer.records.length, record_ids: answer.records });
         }
@@ -12243,7 +12307,13 @@ export class CheState extends DurableObject {
         // "Actually, my favorite food is sushi": the owner correcting his own
         // stated fact. The old record stays as history; nothing else is
         // treated as confirmed by a correction.
-        const correctedFact = ownerDevice && !body.attachment ? ownerFactCorrection(rawMessage, data.memory_records) : null;
+        // "That's not what I meant" / "Fix that" with a fact under discussion but no value: CHE says what she has and
+        // asks for the right value. No model is asked, so nothing is invented and nothing is changed.
+        if (factTurn?.kind === 'clarify') {
+          await recordAnswerEvidence(this.ctx.storage, factTurn.text, { kind: 'none' });
+          return ndjsonReply(factTurn.text, { source: 'che_clarify', model_calls: 0 });
+        }
+        const correctedFact = factTurn?.kind === 'correction' ? factTurn.statement : null;
         if (correctedFact) {
           await rememberOwnerFact(this.ctx.storage, correctedFact).catch(() => null);
           const added = addOwnerMemory(data, correctedFact, { source: 'owner_chat', category: 'Memory', scope: 'owner', confidence: 1 });
@@ -12251,8 +12321,7 @@ export class CheState extends DurableObject {
           // A correction is a memory write too: its receipt is what "Did you save that memory?" reads (Codex, #511).
           const verifiedCorrection = await this.readBackMemory(added.record);
           if (verifiedCorrection) await this.recordMemorySaved(verifiedCorrection);
-          const said = correctedFact.replace(/^my\s+/i, 'your ');
-          const reply = `Updated, sir: ${said}. I've kept your earlier answer as history, so I'll use the new one from now on.`;
+          const reply = factCorrectionReply(factTurn);
           await recordAnswerEvidence(this.ctx.storage, reply, answerEvidenceReceipt({ ownerAttested: true }),
             { records: added.record?.id ? [added.record.id] : [] });
           return ndjsonReply(reply, { source: 'che_memory', model_calls: 0 });
@@ -12283,7 +12352,11 @@ export class CheState extends DurableObject {
             return this.rememberOwnerStatement(data, rememberFact[1].trim().slice(0, 500));
           }
           // "Where did you learn that?" needs the record's date and source, which the personal recall below gives.
-          const known = rememberFact || personalFactQuestion(rawMessage)?.learn ? null : await knownAnswer(this.ctx.storage, message, { memories: data.memories }).catch(() => null);
+          // A personal question with a dated owner record is answered by the personal recall below, which quotes the
+          // record and its date; the undated knowledge-cache answer would leave "when did I tell you that?" without one.
+          const personalAsk = personalFactQuestion(rawMessage);
+          const datedRecord = personalAsk && !personalAsk.learn ? recallPersonalFact(data, personalAsk, [], []) : null;
+          const known = rememberFact || personalAsk?.learn || datedRecord ? null : await knownAnswer(this.ctx.storage, message, { memories: data.memories }).catch(() => null);
           if (known) {
             await Promise.resolve().then(() => this.ctx.storage.put(LAST_ANSWER_EVIDENCE_KEY,
               answerEvidenceReceipt({ ownerAttested: true, at: Date.now() }))).catch(() => null);
@@ -12487,11 +12560,7 @@ export class CheState extends DurableObject {
           const dispatchedAt = new Date().toISOString();
           const sent = await dispatchAppBuild(this.env, appBuild.mode);
           if (!sent.ok) return ndjsonReply(`I could not start the ${appBuild.mode === 'patch' ? 'app update' : 'iPhone build'}, sir. ${sent.detail} Nothing was changed.`, { source: 'che_app_build', ok: false });
-          await this.ctx.storage.put(APP_BUILD_KEY, { mode: appBuild.mode, dispatched_at: dispatchedAt, state: 'dispatched' });
-          const current = await this.loadData();
-          enqueueJob(current, { kind: 'verify_app_build', title: `Verify ${appBuild.mode === 'patch' ? 'app update' : 'iPhone build'}`, prompt: dispatchedAt, build_mode: appBuild.mode, dispatched_at: dispatchedAt, idempotency_key: `app_build:${appBuild.mode}:${dispatchedAt}`, retry_at: Date.now() + 120_000 });
-          await this.ctx.storage.put('che', current);
-          await this.scheduleWork();
+          await this.recordAppBuildDispatch(appBuild.mode, dispatchedAt);
           return ndjsonReply(appBuild.mode === 'patch'
             ? 'I started your app update, sir. It usually takes 15 to 30 minutes. I will tell you when it is ready; then close and reopen me to get it.'
             : 'I started a new iPhone app build, sir. It takes up to an hour. I will tell you when it finishes or if it fails.', { source: 'che_app_build', workflow: sent.workflow });
@@ -12517,7 +12586,9 @@ export class CheState extends DurableObject {
           if (!ownerDevice) return ndjsonReply('Only the CHE owner can read coding job status, sir.', { source: 'che_coding_history', ok: false });
           return ndjsonReply(otherAgentWorkReply(otherAgent, (await this.loadData()).jobs || [], this.env.CHE_GITHUB_REPO || ''), { source: 'che_coding_history', model_calls: 0 });
         }
-        if (!body.attachment && codingHistoryIntent(message) && !handoffIntent(message) && !mailboxIntent(message) && !consultIntent(message)) {
+        // "Is it done yet?" / "how long will that take?" after CHE accepted or reported a coding job: the same
+        // record route, read through the follow-up's own words and the recent turns (subject-loss audit, 2026-10-24).
+        if (!body.attachment && codingHistoryIntent(followupWords || message, ownerHistory) && !handoffIntent(message) && !mailboxIntent(message) && !consultIntent(message)) {
           if (!ownerDevice) return ndjsonReply('Only the CHE owner can read coding job status, sir.', { source: 'che_coding_history', ok: false });
           const jobs = (await this.loadData()).jobs || [];
           // The owner asks for the last completed work and its proof: CHE's own job records answer it, never another agent's work.
@@ -12554,7 +12625,10 @@ export class CheState extends DurableObject {
             else subject = { kind: 'runtime', sessionId, status };
           }
           const stale = subject.job?.status === 'running' && Date.parse(subject.job.updated_at || 0) <= Date.now() - jobStaleMs(subject.job);
-          return ndjsonReply(codingHistoryReceipt({ ...subject, stale, request, repo: this.env.CHE_GITHUB_REPO }), {
+          // "How long will that take?": the record's own timestamps come first; no estimate is invented.
+          const timing = codingFollowupKind(followupWords || message) === 'duration' ? codingTimingNote({ ...subject, acceptedAt: runtimeAt }) : '';
+          const receipt = codingHistoryReceipt({ ...subject, stale, request, repo: this.env.CHE_GITHUB_REPO });
+          return ndjsonReply(timing ? `${timing} ${receipt}` : receipt, {
             source: 'che_coding_history',
             session_id: subject.kind === 'runtime' || subject.unreadRun ? sessionId : null,
             state: subject.status?.state || null,
@@ -12781,7 +12855,7 @@ export class CheState extends DurableObject {
         }
         // Orion's crypto desk by voice (owner master mission, 2026-10-23): "Have Orion research BTC and ETH … during the
         // weekend", "pause Orion crypto research", "how is crypto paper trading going". Stored records only, no model.
-        const cryptoAsk = body.attachment ? null : cryptoIntent(message);
+        const cryptoAsk = body.attachment ? null : cryptoIntent(message, { followup: followupWords, referent: referentText });
         if (cryptoAsk) {
           if (!ownerDevice) return ndjsonReply('Only the CHE owner can run or read Orion\'s crypto desk.', { source: CRYPTO_SOURCE, ok: false, model_calls: 0 });
           let action = null;
@@ -12792,7 +12866,7 @@ export class CheState extends DurableObject {
             await this.scheduleWork().catch(() => null);
           }
           const view = await cryptoView(this.ctx.storage);
-          return ndjsonReply(speakCrypto(view, { action }), { source: CRYPTO_SOURCE, ok: true, model_calls: 0, kind: cryptoAsk.kind, open_view: 'trading_crypto', crypto: { enabled: view.enabled, closed_trades: view.simulated.closed_trades, open_positions: view.simulated.open_positions.length } });
+          return ndjsonReply(speakCrypto(view, { action, tf: cryptoAsk.tf, note: cryptoAsk.note }), { source: CRYPTO_SOURCE, ok: true, model_calls: 0, kind: cryptoAsk.kind, open_view: 'trading_crypto', crypto: { enabled: view.enabled, closed_trades: view.simulated.closed_trades, open_positions: view.simulated.open_positions.length } });
         }
         // "Why are there no new trades?": five facts from the stored journal and scheduler records (owner, 2026-10-21).
         const whyNoTrades = body.attachment ? null : newTradesIntent(message);
@@ -12962,10 +13036,13 @@ export class CheState extends DurableObject {
         }
         // Multi-timeframe research (owner, 2026-10-22): best strategy now, one strategy by timeframe, history coverage,
         // paper learning on/off and research jobs. Answered from recorded evidence; no model call.
-        const researchAsk = !body.attachment && researchIntent(message);
+        const researchAsk = !body.attachment && researchIntent(message, { followup: followupWords, referent: referentText });
         if (researchAsk) {
           if (!ownerDevice) return ndjsonReply('Only the CHE owner can use trading research, sir.', { source: 'che_trading_research', ok: false, model_calls: 0 });
           const say = (text, extra = {}) => ndjsonReply(text, { source: 'che_trading_research', ok: true, model_calls: 0, ...extra });
+          // A follow-up whose new subject this route cannot combine with the earlier question ("and the 15 minute?" after
+          // "which strategy is best now?"): one question, never the earlier answer again and never a model guess.
+          if (researchAsk.kind === 'clarify') return say(researchAsk.question, { ok: false, clarification: true });
           if (researchAsk.kind === 'best_now') return say(speakBestNow(await researchView(this.ctx.storage)), { open_screen: 'trading_room' });
           if (researchAsk.kind === 'history') return say(speakHistory(await researchView(this.ctx.storage), researchAsk.market));
           if (researchAsk.kind === 'strategy') return say(speakStrategy(await researchStrategyView(this.ctx.storage, researchAsk.strategy_id, 'MNQ'), researchAsk.timeframe));
@@ -12994,9 +13071,12 @@ export class CheState extends DurableObject {
         }
         // Forward paper trading by voice (owner, 2026-10-18), answered from the journal only.
         // "Set CHE paper balance to 500" / "show CHE positions" belong to the phone's CHE paper account (chart route below).
-        const live = paperAccountIntent(message) ? null : liveIntent(message);
+        const live = paperAccountIntent(message) ? null : liveIntent(message, { followup: followupWords, referent: referentText });
         if (live && !body.attachment) {
           if (!ownerDevice) return ndjsonReply('Only the CHE owner can use the Trading Room.', { source: 'che_trading_live', ok: false });
+          // "And on the 15 minute?" / "what about AAPL?" after a journal read: the journal is MNQ on 5-minute bars, so the
+          // new subject gets one honest question instead of the MNQ numbers again.
+          if (live.kind === 'clarify') return ndjsonReply(live.question, { source: 'che_trading_live', ok: false, model_calls: 0, clarification: true });
           if (live.kind === 'research') {
             const { result, receipt } = await executeWithReceipt({
               tool: 'trading_live', operation: 'historical_replay', source: 'trading_live.js', request_id: crypto.randomUUID(),
@@ -13079,7 +13159,10 @@ export class CheState extends DurableObject {
           const ev = tradeEvidenceOf(trade, await tradeBars(this.ctx.storage, trade));
           return ndjsonReply(speakTradeReplay(ev), { source: TRADE_EVIDENCE_SOURCE, ok: true, model_calls: 0, open_view: 'trade_replay', trade_id: ev.id, replay_supported: ev.replay.supported });
         }
-        const chartAsk = body.attachment || !ownerDevice ? null : (paperAccountIntent(message) || drawIntent(message) || chartIntent(message) || futuresOrderIntent(message));
+        const followupAsk = { followup: followupWords, referent: referentText };
+        const chartAsk = body.attachment || !ownerDevice ? null : (paperAccountIntent(message) || drawIntent(message, followupAsk) || chartIntent(message, followupAsk) || futuresOrderIntent(message));
+        // "Now the same for bitcoin" after an Alpaca chart: a market that chart cannot show gets one question, not AAPL again.
+        if (chartAsk?.kind === 'clarify') return ndjsonReply(chartAsk.question, { source: 'che_trading_chart', ok: false, model_calls: 0, clarification: true });
         // The CHE PAPER ACCOUNT is on the iPhone: open it there; a balance change waits for the owner's confirmation on the phone.
         if (chartAsk?.kind === 'paper_balance' || chartAsk?.kind === 'paper_open') {
           const amount = chartAsk.amount;
@@ -13100,10 +13183,11 @@ export class CheState extends DurableObject {
             { source: 'che_trading_chart', ok: saved.ok, model_calls: 0, open_view: 'trading_chart', chart: { account, symbol } });
         }
         if (chartAsk?.kind === 'chart_open') {
-          const where = chartAsk.section === 'setups'
-            ? (chartAsk.answer === 'ready' ? 'Here are the setups CHE is following on this iPhone, sir.' : 'Opening the Setup Progress Board, sir. These are CHE PAPER ACCOUNT setups from the live Rithmic candles.')
-            : chartAsk.section === 'strategies' ? 'Opening Strategies, sir.' : chartAsk.section === 'compare' ? 'Opening Side by Side, sir: your account beside CHE\'s paper account. Live orders stay disabled.' : `Opening the ${chartAsk.account === 'alpaca_paper' ? 'Alpaca PAPER' : chartAsk.account === 'futures_paper' ? 'MNQ paper' : ''} chart${chartAsk.symbol ? ` for ${chartAsk.symbol}` : ''}${chartAsk.filter?.strategy ? `, showing only ${chartAsk.filter.strategy.toUpperCase()} trades` : ''}, sir.`;
-          return ndjsonReply(where.replace('the  chart', 'the chart'), { source: 'che_trading_chart', ok: true, model_calls: 0, open_view: 'trading_chart', chart: { section: chartAsk.section, account: chartAsk.account || null, symbol: chartAsk.symbol || null, filter: chartAsk.filter || null, ...(chartAsk.answer ? { answer: chartAsk.answer } : {}) } });
+          // "Switch to the 15 minute chart" and a follow-up name no symbol: the stock chart the owner last opened, by voice or on the phone.
+          const lastSymbol = chartAsk.section === 'chart' && chartAsk.inherit && !chartAsk.symbol ? (await this.ctx.storage.get('trading_chart_last_symbol').catch(() => '')) || '' : '';
+          const open = chartOpenReply(chartAsk, { lastSymbol });
+          if (open.remember) await this.ctx.storage.put('trading_chart_last_symbol', open.remember).catch(() => null);
+          return ndjsonReply(open.text, { source: 'che_trading_chart', ok: true, model_calls: 0, open_view: 'trading_chart', chart: open.chart });
         }
         const desk = body.attachment ? null : deskIntent(message);
         if (desk && ['controls', 'controls_view', 'controls_why'].includes(desk.kind)) {
@@ -13297,8 +13381,10 @@ export class CheState extends DurableObject {
           const view = await strategySimView(this.ctx.storage);
           return ndjsonReply([lead, speakStrategySim(view)].filter(Boolean).join('\n'), { source: 'che_strategy_sim' });
         }
-        const trade = tradingIntent(message);
+        const trade = tradingIntent(message, { followup: followupWords, referent: referentText });
         if (trade) {
+          // A follow-up that names neither a market nor a bar size ("and the other one?"): one question, no model guess.
+          if (trade.kind === 'clarify') return ndjsonReply(trade.question, { source: 'che_trading', ok: false, model_calls: 0, clarification: true });
           if (trade.kind === 'book') {
             const book = await this.tradingTick().catch(() => null) || await readBook(this.ctx.storage);
             return ndjsonReply(speakBook(book), { source: 'che_trading' });
@@ -13311,11 +13397,12 @@ export class CheState extends DurableObject {
             const added = await watchSymbol(this.ctx.storage, trade.symbol);
             return ndjsonReply(added.error ? `${added.error} Try a ticker like AAPL or a coin like bitcoin, sir.` : `Added ${added.symbol} to paper trading, sir. Paper only, no real money. I'll learn which strategy works on it first.`, { source: 'che_trading' });
           }
-          const data = await loadCandles(trade.symbol);
+          // "And the 15 minute?": the bar size asked for; intraday is free for crypto only, and loadCandles says so for stocks.
+          const interval = trade.interval || '1d';
+          const data = await loadCandles(trade.symbol, { interval });
           if (data.error) return ndjsonReply(`${data.error} Try a ticker like AAPL or a coin like bitcoin, sir.`, { source: 'che_trading' });
           if (trade.kind === 'backtest') {
-            const years = Math.max(1, Math.round((Date.parse(data.candles[data.candles.length - 1].t) - Date.parse(data.candles[0].t)) / (365.25 * 86400000)));
-            return ndjsonReply(speakBacktest(data.label, years, backtestAll(data.candles)), { source: 'che_trading' });
+            return ndjsonReply(speakBacktest(data.label, candleSpan(data.candles, interval), backtestAll(data.candles)), { source: 'che_trading' });
           }
           return ndjsonReply(speakAnalysis(tradeAnalyze(data)), { source: 'che_trading' });
         }
@@ -14276,6 +14363,8 @@ export class CheState extends DurableObject {
             const r = answer.record || null;
             const store = r ? (r.phone ? 'phone_brain_notes' : r.legacy ? 'saved_preferences' : r.brain ? 'brain' : 'memory_records') : '';
             await recordAnswerEvidence(this.ctx.storage, answer.answer, { ...receipt, kind: answer.kind }, { records: answer.records, cited: r ? [{ text: r.quote || r.statement || r.text, created_at: r.created_at, store }] : [] });
+            // A stored answer counts in the reliability ledger like the instant memory answer it replaces.
+            if (r) await recordReliability(this.ctx.storage, { kind: 'retrieval', workflow: 'instant_answer', outcome: 'answered_from_memory', tokens_saved: 1500 });
             return ndjsonReply(answer.answer, {
               source: 'che_personal_recall', model_calls: 0, records: answer.records.length, record_ids: answer.records,
               recall_receipt: r ? { record_id: r.id || null, stored_at: r.created_at || null, store, owner_attested: !r.legacy && !r.phone } : null,
@@ -14345,7 +14434,7 @@ export class CheState extends DurableObject {
           return json({
             // A paused autonomy never runs the saved job: say so instead of "shortly".
             detail: fresh.autonomy === false
-              ? 'I queued that request, sir, but autonomy is paused, so I will run it when you say "resume". This is not a memory save.'
+              ? 'I saved that, sir, but autonomy is paused, so I will finish it when you say "resume".'
               : BUSY_REPLY,
             category: 'temporary_cloud_unavailable',
             retryable: true,
@@ -15695,6 +15784,7 @@ export class CheState extends DurableObject {
           if (job.kind === 'verify_deploy') return await this.runVerifyDeployJob(job);
           if (job.kind === 'verify_app_build') return await this.runVerifyAppBuildJob(job);
           if (job.kind === 'command') return await this.runCommandJob(job);
+          if (job.kind === CLOUD_JOB_KIND) return await runCloudTask(job, { env: this.keyEnv || this.env });
           if (!job.steps?.length && /\b(then|multi.step|step.by.step|end.to.end)\b/i.test(job.prompt)) {
             const plan = await this.env.AI.run(this.env.CHE_FAST_MODEL || FAST_MODEL, {
               messages: [
@@ -15798,7 +15888,9 @@ export class CheState extends DurableObject {
       const job = fresh.jobs.find((item) => item.id === outcome.id);
       if (!job || job.status === 'cancelled') continue;
       if (outcome.step_results) { job.step_results = outcome.step_results; job.step_index = outcome.step_index; }
-      noteJobActivity(job, outcome.error
+      noteJobActivity(job, outcome.cloud?.log?.length
+        ? String(outcome.cloud.log.at(-1)).slice(9)
+        : outcome.error
         ? `Problem: ${outcome.error}${outcome.status === 'queued' ? ' Trying again.' : ''}`
         : outcome.status === 'complete'
           ? 'Finished. Result received.'
@@ -15816,6 +15908,8 @@ export class CheState extends DurableObject {
       if (outcome.owner_message !== undefined) job.owner_message = outcome.owner_message;
       if (outcome.failure_class !== undefined) job.failure_class = outcome.failure_class;
       if (outcome.verification) job.verification = outcome.verification;
+      // Cloud Computer jobs keep their GitHub run id, phase, logs and outputs (cloud_computer.js runCloudTask).
+      if (outcome.cloud) job.cloud = { ...(job.cloud || {}), ...outcome.cloud };
       // A checkpoint lives only while the job is retrying; a finished job drops it.
       if (outcome.checkpoint) job.checkpoint = outcome.checkpoint;
       else if (job.status !== 'queued') delete job.checkpoint;

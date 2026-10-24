@@ -19,6 +19,8 @@ import 'package:webview_flutter/webview_flutter.dart';
 
 import '../browser/che_embedded_app_shell.dart';
 import '../che_ui/che_theme.dart';
+import 'che_chart_indicators.dart';
+import 'che_ticker_selector.dart';
 
 class CheLiveSymbol {
   const CheLiveSymbol(this.id, this.name, this.tv, {this.kind = 'stock', this.aliases = const []});
@@ -90,12 +92,122 @@ CheLiveSymbol? cheResolveLiveSymbol(String input, {bool allowTicker = true}) {
   return null;
 }
 
+/// What CHE calls each chart indicator (kChartIndicators ids) when she reports
+/// its state, and whether the name takes "are".
+const Map<String, (String, bool)> cheIndicatorSpokenNames = {
+  'vwap': ('VWAP', false),
+  'ema9': ('EMA 9', false),
+  'ema20': ('EMA 20', false),
+  'ema50': ('EMA 50', false),
+  'ema200': ('EMA 200', false),
+  'bb': ('Bollinger Bands', true),
+  'rsi': ('RSI', false),
+  'session': ('The session high and low', true),
+  'orb': ('The opening range', false),
+};
+
+// Indicator names as people say or type them, after _norm (hyphens are spaces).
+const _emaPeriods = r'(9|nine|20|twenty|50|fifty|200|two hundred)';
+final Map<String, RegExp> _indicatorWords = {
+  'vwap': RegExp(r'\b(?:vwap|v wap|v w a p|volume weighted average(?: price)?)\b'),
+  'ema': RegExp('\\b(?:(?:ema|e m a|exponential moving average) ?$_emaPeriods|$_emaPeriods(?: day| period| bar)? (?:ema|e m a|exponential moving average))\\b'),
+  'bb': RegExp(r'\b(?:bollinger(?: bands?)?|bands|bb)\b'),
+  'rsi': RegExp(r'\b(?:rsi|r s i|relative strength(?: index)?)\b'),
+  'session': RegExp(r'\bsession (?:highs?|lows?|range|levels?)(?: and (?:the )?(?:highs?|lows?))?\b'),
+  'orb': RegExp(r'\b(?:opening range(?: breakout)?|orb|o r b)\b'),
+};
+final _indicatorOnVerb = RegExp(r'\b(?:turn on|switch on|show(?: me)?|add|enable|put|display|draw|overlay)\b');
+final _indicatorOffVerb = RegExp(r'\b(?:turn off|switch off|hide|remove|disable|take off|drop|clear|get rid of)\b');
+final _indicatorFiller = RegExp(r'\b(?:the|a|an|my|and|also|too|please|now|indicators?|lines?|overlays?|study|studies|all|of|me|both|plus|then|as well)\b');
+
 /// What a spoken or typed chart command asks for.
 class CheChartCommand {
-  const CheChartCommand({this.symbol, this.interval, this.readPrice = false});
+  const CheChartCommand({
+    this.symbol,
+    this.interval,
+    this.readPrice = false,
+    this.indicatorsOn = const {},
+    this.indicatorsOff = const {},
+    this.clearIndicators = false,
+  });
   final CheLiveSymbol? symbol;
   final String? interval;
   final bool readPrice;
+
+  /// Chart indicators (kChartIndicators ids) to switch on and off; [clearIndicators] switches every one off first.
+  final Set<String> indicatorsOn;
+  final Set<String> indicatorsOff;
+  final bool clearIndicators;
+
+  bool get changesIndicators => clearIndicators || indicatorsOn.isNotEmpty || indicatorsOff.isNotEmpty;
+
+  /// The indicator set after this command, from [current].
+  Set<String> applyIndicators(Set<String> current) => {...(clearIndicators ? const <String>{} : current), ...indicatorsOn}..removeAll(indicatorsOff);
+
+  /// The spoken state after the change: "VWAP is on." / "Bollinger Bands are off."
+  String describeIndicators() {
+    if (clearIndicators && indicatorsOn.isEmpty) return 'All chart indicators are off.';
+    if (indicatorsOn.length == kChartIndicators.length) return 'All chart indicators are on.';
+    String say(String id, bool on) {
+      final (name, plural) = cheIndicatorSpokenNames[id]!;
+      return '$name ${plural ? 'are' : 'is'} ${on ? 'on' : 'off'}.';
+    }
+
+    return [
+      if (clearIndicators) 'All other chart indicators are off.',
+      for (final id in kChartIndicators.keys)
+        if (indicatorsOn.contains(id)) say(id, true) else if (indicatorsOff.contains(id)) say(id, false),
+    ].join(' ');
+  }
+
+  /// "turn on VWAP", "hide Bollinger", "add the 200 EMA", "turn the RSI off",
+  /// "clear the indicators". Null unless every word is about indicators.
+  static CheChartCommand? _parseIndicators(String cleaned, String? interval) {
+    var t = _norm(cleaned)
+        .replaceAll(RegExp(r'\boff (?:of )?(?:the |my )?chart\b'), 'off')
+        .replaceAll(RegExp(r'\b(?:on|to|from) (?:the |my )?chart\b'), '')
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .trim();
+    // "turn the VWAP off", "RSI on": the direction comes last.
+    final trailing = RegExp(r'^(?:(?:turn|switch|take|put) )?(.+) (on|off)$').firstMatch(t);
+    if (trailing != null) t = '${trailing.group(2) == 'on' ? 'turn on' : 'turn off'} ${trailing.group(1)}';
+    final found = <(int, String)>[];
+    var rest = t;
+    for (final e in _indicatorWords.entries) {
+      for (final m in e.value.allMatches(t)) {
+        var id = e.key;
+        if (id == 'ema') {
+          final p = m.group(1) ?? m.group(2)!;
+          id = 'ema${const {'nine': '9', 'twenty': '20', 'fifty': '50', 'two hundred': '200'}[p] ?? p}';
+        }
+        found.add((m.start, id));
+        rest = rest.replaceRange(m.start, m.end, ' ' * (m.end - m.start));
+      }
+    }
+    found.sort((a, b) => a.$1.compareTo(b.$1));
+    final allWords = RegExp(r'\b(?:all (?:the |of the |my )?indicators|(?:the |my )?indicators|everything)\b').hasMatch(t);
+    final verbs = <(int, bool)>[
+      for (final m in _indicatorOnVerb.allMatches(t)) (m.start, true),
+      for (final m in _indicatorOffVerb.allMatches(t)) (m.start, false),
+    ]..sort((a, b) => a.$1.compareTo(b.$1));
+    if (verbs.isEmpty || (found.isEmpty && !allWords)) return null;
+    rest = rest.replaceAll(_indicatorOnVerb, ' ').replaceAll(_indicatorOffVerb, ' ').replaceAll(RegExp(r'\beverything\b'), ' ').replaceAll(_indicatorFiller, ' ').trim();
+    if (rest.isNotEmpty) return null;
+    if (found.isEmpty) {
+      // "clear the indicators", "turn off all indicators", "turn on all the indicators".
+      final on = verbs.first.$2;
+      if (on && !RegExp(r'\ball\b|\beverything\b').hasMatch(t)) return null;
+      return on ? CheChartCommand(interval: interval, indicatorsOn: kChartIndicators.keys.toSet()) : CheChartCommand(interval: interval, clearIndicators: true);
+    }
+    final on = <String>{}, off = <String>{};
+    for (final (at, id) in found) {
+      // Each name takes the verb before it ("turn on VWAP and turn off RSI"), or the first verb.
+      final verb = verbs.lastWhere((v) => v.$1 < at, orElse: () => verbs.first);
+      (verb.$2 ? on : off).add(id);
+      (verb.$2 ? off : on).remove(id);
+    }
+    return CheChartCommand(interval: interval, indicatorsOn: on, indicatorsOff: off);
+  }
 
   static String? _interval(String t) {
     if (RegExp(r'\b(?:1|one) ?(?:minute|min|m)\b').hasMatch(t)) return '1';
@@ -125,6 +237,8 @@ class CheChartCommand {
         .replaceAll(RegExp(r'\b(?:on|to|with) (?:the |a )?(?:1|one|5|five|15|fifteen|60) ?(?:minute|min|m)(?: chart| candles?)?\b'), '')
         .replaceAll(RegExp(r'\b(?:on|to|with) (?:the |a )?(?:hourly|daily|1 ?hour|one hour|1 ?day)(?: chart| candles?)?\b'), '')
         .trim();
+    final indicators = _parseIndicators(cleaned, interval);
+    if (indicators != null) return indicators;
     final m = RegExp(r'^(?:show(?: me)?|switch(?: the chart)? to|change(?: the chart)? to|chart|pull up|bring up|put (.+?) on the chart)\s*(.*)$').firstMatch(cleaned);
     if (m != null) {
       final target = (m.group(1) ?? m.group(2) ?? '').replaceAll(RegExp(r'\s+(?:chart|candles|live)$'), '').trim();
@@ -148,6 +262,21 @@ class CheLiveChart {
   CheLiveChart._();
   static final ValueNotifier<CheLiveSymbol> symbol = ValueNotifier<CheLiveSymbol>(cheLiveSymbols.first);
   static final ValueNotifier<String> interval = ValueNotifier<String>('5');
+
+  /// The switched-on chart indicators (kChartIndicators ids). The Trading Room charts listen,
+  /// so "turn on VWAP" works by voice or typing as well as by tapping the indicator chip.
+  static final ValueNotifier<Set<String>> indicators = ValueNotifier<Set<String>>(<String>{});
+
+  /// Applies an indicator command to the saved set (the charts save every tap there too), so it
+  /// holds even when no chart is open, and returns what CHE says.
+  static Future<String> applyIndicatorCommand(CheChartCommand command) async {
+    final prefs = CheTickerPrefs.instance;
+    await prefs.load();
+    final next = command.applyIndicators(prefs.indicators);
+    indicators.value = next;
+    await prefs.setIndicators(next);
+    return command.describeIndicators();
+  }
 
   static String pageUrl(String baseUrl, CheLiveSymbol s, String interval) =>
       '$baseUrl/markets/chart?symbol=${Uri.encodeQueryComponent(s.tv)}&interval=${Uri.encodeQueryComponent(interval)}';

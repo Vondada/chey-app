@@ -1284,6 +1284,10 @@ extension _CheHomeMemory on _CHEHomeState {
       CupertinoPageRoute<void>(
         builder: (routeContext) => CheWorldHubScreen(
           state: _currentWorldState,
+          onCharacterGenerator: () {
+            Navigator.of(routeContext).pop();
+            _openCharacterGenerator();
+          },
           onOpenTab: (tab) {
             HapticFeedback.selectionClick();
             Navigator.of(routeContext).pop();

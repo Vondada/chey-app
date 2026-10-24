@@ -583,32 +583,6 @@ class CheAgentRuntimeClient {
 
   Future<Map<String, dynamic>> roster() => _send('GET', '/api/agents');
 
-  /// The headquarters: every room, its lead's real status, and the counts (null when no records exist).
-  Future<Map<String, dynamic>> hqView() => _send('GET', '/api/office/hq');
-
-  /// One room in full: its lead, facts from records, and the conversation with that lead.
-  Future<Map<String, dynamic>> hqRoom(String roomId) => _send('GET', '/api/office/hq/$roomId');
-
-  /// The owner says something to a room's lead, or assigns it as a real Office task (mode: 'assign').
-  Future<Map<String, dynamic>> hqTalk({required String room, required String text, String mode = 'talk'}) =>
-      _send('POST', '/api/office/hq/talk', {'room': room, 'text': text, 'mode': mode});
-
-  /// One Office job of a headquarters room in full: each stage's own result and the verification state, from records.
-  Future<Map<String, dynamic>> hqJob(String jobId) => _send('GET', '/api/office/hq/job/$jobId');
-
-  /// CHE's room proposals and the rooms she has built, from the Office record.
-  Future<Map<String, dynamic>> roomProposals() => _send('GET', '/api/office/rooms/proposals');
-
-  /// The owner asks CHE for a room; she designs it from a reviewed template. Nothing is built yet.
-  Future<Map<String, dynamic>> proposeRoom(String need) => _send('POST', '/api/office/rooms/proposals', {'need': need});
-
-  /// The owner's decision: approve (build and verify), modify (name or purpose, then approval again) or reject.
-  Future<Map<String, dynamic>> decideRoomProposal(String proposalId, String decision, {Map<String, String> changes = const {}}) =>
-      _send('POST', '/api/office/rooms/proposals/$proposalId/decision', {'decision': decision, 'changes': changes});
-
-  /// Restores a built room's previous version (or retires it when it has none).
-  Future<Map<String, dynamic>> rollBackRoom(String roomId) => _send('POST', '/api/office/rooms/$roomId/rollback');
-
   Future<CheOfficeToday> officeToday() async {
     final j = await _send('GET', '/api/office/today');
     return CheOfficeToday.fromJson(Map<String, dynamic>.from(j['board'] as Map? ?? const {}));

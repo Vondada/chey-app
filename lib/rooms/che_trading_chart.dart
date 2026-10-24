@@ -35,6 +35,7 @@ import '../rithmic/rithmic_live.dart';
 import '../trading/che_trade_replay.dart';
 import '../che_ui/che_theme.dart';
 import 'che_chart_indicators.dart';
+import 'che_live_chart.dart';
 import 'che_ticker_selector.dart';
 import 'che_trading_hud.dart';
 
@@ -350,6 +351,7 @@ class CheTradingChart extends StatefulWidget {
     this.initialAccount = 'alpaca_paper',
     this.initialSymbol = '',
     this.initialStrategy,
+    this.initialTimeframe,
     this.height = 340,
     this.signalMarkers,
     this.live,
@@ -387,6 +389,10 @@ class CheTradingChart extends StatefulWidget {
 
   /// "CHE, show EMA trades": only CHE's markers for this strategy (Alpaca markers stay).
   final String? initialStrategy;
+
+  /// "And the 15 minute?": the bar size CHE named when she opened this chart by voice ('15m'). It wins over the saved
+  /// timeframe, so the chart shows what CHE said; null keeps the default.
+  final String? initialTimeframe;
   final double height;
 
   /// The shared Rithmic session (lib/rithmic/rithmic_live.dart); tests pass their own.
@@ -400,7 +406,7 @@ class CheTradingChartState extends State<CheTradingChart> {
   late final http.Client _http = widget.client ?? http.Client();
   late String _account = visibleChartAccount(widget.initialAccount);
   late String _symbol = widget.initialSymbol.toUpperCase();
-  String _tf = '5m';
+  late String _tf = (widget.initialTimeframe ?? '').isNotEmpty ? widget.initialTimeframe! : '5m';
   List<String> _timeframes = const ['1m', '5m', '15m', '1h', '1d'];
   List<ChartBar> _bars = const [];
   List<ChartBar> _history = const [];
@@ -446,6 +452,7 @@ class CheTradingChartState extends State<CheTradingChart> {
     widget.controller?.addListener(_onController);
     widget.signalMarkers?.addListener(_onSignals);
     _live.addListener(_onLive);
+    CheLiveChart.indicators.addListener(_onVoiceIndicators);
     unawaited(_restore());
     _timer = Timer.periodic(const Duration(seconds: 30), (_) => unawaited(load(quiet: true)));
   }
@@ -455,6 +462,7 @@ class CheTradingChartState extends State<CheTradingChart> {
     _timer?.cancel();
     _liveRebuild?.cancel();
     _live.removeListener(_onLive);
+    CheLiveChart.indicators.removeListener(_onVoiceIndicators);
     widget.controller?.removeListener(_onController);
     widget.signalMarkers?.removeListener(_onSignals);
     _symbolField.dispose();
@@ -469,10 +477,11 @@ class CheTradingChartState extends State<CheTradingChart> {
     await _prefs.load();
     if (!mounted) return;
     if (_prefs.indicators.isNotEmpty) setState(() => _indicators = {..._prefs.indicators});
+    if (!setEquals(CheLiveChart.indicators.value, _indicators)) CheLiveChart.indicators.value = {..._indicators};
     if (market) {
       if (_symbol.isEmpty) _symbol = _prefs.last;
       final tf = _prefs.timeframe;
-      if (tf != null) _tf = tf;
+      if (tf != null && (widget.initialTimeframe ?? '').isEmpty) _tf = tf;
       await load();
     }
   }
@@ -536,6 +545,7 @@ class CheTradingChartState extends State<CheTradingChart> {
   /// The account and symbol on screen (the expanded chart opens on the same ones).
   String get account => _account;
   String get symbol => _symbol;
+  String get timeframe => _tf;
 
   // ─── Rithmic live candles (MNQ PAPER only) ────────────────────────────
 
@@ -1391,6 +1401,15 @@ class CheTradingChartState extends State<CheTradingChart> {
   void toggleIndicator(String id) {
     if (!kChartIndicators.containsKey(id)) return;
     setState(() => _indicators.contains(id) ? _indicators.remove(id) : _indicators.add(id));
+    unawaited(_prefs.setIndicators(_indicators));
+    CheLiveChart.indicators.value = {..._indicators};
+  }
+
+  /// A spoken or typed "turn on VWAP" (CheChartCommand → CheLiveChart.indicators) or a tap on another chart.
+  void _onVoiceIndicators() {
+    final next = CheLiveChart.indicators.value.where(kChartIndicators.containsKey).toSet();
+    if (!mounted || setEquals(next, _indicators)) return;
+    setState(() => _indicators = next);
     unawaited(_prefs.setIndicators(_indicators));
   }
 

@@ -20,6 +20,17 @@ import 'che_live_chart.dart';
 import 'che_trading_hud.dart';
 import 'che_trading_room.dart';
 
+/// How fresh a market answer is, from the Worker's own labels (markets.js): quiet text, never spoken by itself.
+String cheMarketFreshness(Map<String, dynamic> j) {
+  if (j['loading'] == true) return 'Still loading from the source';
+  final age = (j['age_s'] as num?)?.toInt();
+  if (j['stale'] == true && age != null) {
+    final when = age < 90 ? '$age seconds' : age < 5400 ? '${(age / 60).round()} minutes' : '${(age / 3600).round()} hours';
+    return 'Last updated $when ago, refreshing';
+  }
+  return '';
+}
+
 class CheQuote {
   const CheQuote({required this.symbol, required this.name, this.price, this.changePct, required this.status, this.note});
   final String symbol;
@@ -157,12 +168,28 @@ class _CheMarketsRoomState extends State<CheMarketsRoom> {
     try {
       final j = await _get('/api/markets/snapshot');
       _quotes = [for (final q in (j['quotes'] as List? ?? const [])) if (q is Map<String, dynamic>) CheQuote.fromJson(q)];
-      _source = '${j['source'] ?? ''}';
+      _source = [ '${j['source'] ?? ''}', cheMarketFreshness(j)].where((s) => s.isNotEmpty).join(' · ');
       _error = null;
+      _retryIfLoading(j, _load);
     } catch (e) {
       _error = '$e'.replaceFirst('Exception: ', '');
     }
     if (mounted) setState(() {});
+  }
+
+  int _loadingRetries = 0;
+
+  /// The Worker answers at once while a slow source is still loading; ask again shortly (a few times at most).
+  void _retryIfLoading(Map<String, dynamic> j, Future<void> Function() again) {
+    if (j['loading'] != true) {
+      _loadingRetries = 0;
+      return;
+    }
+    if (_loadingRetries >= 3) return;
+    _loadingRetries += 1;
+    Future<void>.delayed(const Duration(seconds: 4), () {
+      if (mounted) unawaited(again());
+    });
   }
 
   Future<void> _loadCandles() async {
@@ -177,7 +204,8 @@ class _CheMarketsRoomState extends State<CheMarketsRoom> {
             CheCandle('${c['date']}', (c['open'] as num).toDouble(), (c['high'] as num).toDouble(), (c['low'] as num).toDouble(),
                 (c['close'] as num).toDouble()),
       ];
-      _chartNote = j['error']?.toString() ?? j['source']?.toString();
+      _chartNote = [j['error']?.toString() ?? j['source']?.toString() ?? '', cheMarketFreshness(j)].where((s) => s.isNotEmpty).join(' · ');
+      _retryIfLoading(j, _loadCandles);
     } catch (e) {
       if (symbol != _chartSymbol) return;
       _candles = const [];

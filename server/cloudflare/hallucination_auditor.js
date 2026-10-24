@@ -19,15 +19,13 @@ const PAST = String.raw`(?:have\s+|just\s+|already\s+|successfully\s+)*`;
 const SUBJECT = String.raw`(?:I|CHE|she|we)\s+`;
 // A claim is a completed, real action stated as fact. Questions, denials and hedges are judged separately.
 export const CLAIMS = Object.freeze([
-  { kind: 'memory_saved', re: new RegExp(String.raw`\b${SUBJECT}${PAST}(?:saved|stored|written|wrote|recorded|logged|noted)\b[^.!?\n]{0,60}\b(?:memory|memories|notes?)\b`, 'i') },
+  { kind: 'memory_saved', re: new RegExp(String.raw`\b${SUBJECT}${PAST}(?:saved|stored|written|recorded)\b[^.!?\n]{0,60}\b(?:memory|memories|note)\b`, 'i') },
   { kind: 'pr_merged', re: new RegExp(String.raw`\b(?:${SUBJECT}|Claude\s+|Codex\s+|ChatGPT\s+|it\s+)${PAST}merged\b[^.!?\n]{0,40}\b(?:PR|pull\s+request)\b|\b(?:PR|pull\s+request)\b[^.!?\n]{0,30}\bmerged\b`, 'i') },
-  { kind: 'worker_deployed', re: new RegExp(String.raw`\b${SUBJECT}${PAST}deployed\b[^.!?\n]{0,40}\b(?:Worker|worker|production|backend|server)\b|\b(?:the\s+)?(?:Worker|worker|deployment)\s+(?:was\s+|is\s+)?(?:now\s+)?deployed\b|\b(?:the\s+)?(?:Worker|worker|deploy|deployment)\b[^.!?\n]{0,30}\b(?:is\s+|was\s+)?(?:now\s+)?(?:live|running|finished|succeeded|went\s+live)\b`, 'i') },
+  { kind: 'worker_deployed', re: new RegExp(String.raw`\b${SUBJECT}${PAST}deployed\b[^.!?\n]{0,40}\b(?:Worker|worker|production|backend|server)\b|\b(?:the\s+)?(?:Worker|worker|deployment)\s+(?:was\s+|is\s+)?(?:now\s+)?deployed\b`, 'i') },
   { kind: 'iphone_installed', re: /\b(?:installed|updated)\b[^.!?\n]{0,40}\b(?:on\s+(?:your|the|my)\s+)?(?:iPhone|phone|IPA)\b|\b(?:iPhone|phone)\b[^.!?\n]{0,30}\b(?:now\s+has|has)\b[^.!?\n]{0,20}\b(?:the\s+)?(?:new\s+)?(?:update|build)\b/i },
-  { kind: 'video_made', re: new RegExp(String.raw`\b${SUBJECT}${PAST}(?:created|made|generated|rendered|finished|produced)\b[^.!?\n]{0,50}\b(?:video|MP4|movie|film|clip)\b|\b(?:the|your)\s+(?:\w+\s+)?(?:video|MP4|film|clip)\s+(?:is\s+|was\s+)?(?:now\s+)?(?:ready|finished|done|rendered|in\s+(?:your\s+)?Projects)\b|\b(?:MP4|video|film|clip)\b[^.!?\n]{0,30}\b(?:is\s+|was\s+)?(?:now\s+)?(?:saved|stored|playable|in\s+(?:your\s+)?library)\b`, 'i') },
+  { kind: 'video_made', re: new RegExp(String.raw`\b${SUBJECT}${PAST}(?:created|made|generated|rendered|finished|produced)\b[^.!?\n]{0,50}\b(?:video|MP4|movie|film|clip)\b|\b(?:the|your)\s+(?:\w+\s+)?(?:video|MP4|film|clip)\s+(?:is\s+|was\s+)?(?:now\s+)?(?:ready|finished|done|rendered|in\s+(?:your\s+)?Projects)\b`, 'i') },
   { kind: 'trade_placed', re: new RegExp(String.raw`\b${SUBJECT}${PAST}(?:placed|executed|filled|sent|opened|closed)\b[^.!?\n]{0,30}\b(?:trades?|orders?|positions?)\b`, 'i') },
-  { kind: 'live_price', re: /\b(?:live|real[- ]time|current|latest)\s+(?:price|quote|bid|ask)\b|\bLIVE\b[^.!?\n]{0,20}\bprice\b|\b(?:right\s+now|currently|at\s+the\s+moment)\b[^.!?\n]{0,25}\bprice\b/i },
-  // A green build or passing tests is a claim about CI, backed only by a ci_passed receipt for that run.
-  { kind: 'ci_green', re: /\b(?:CI|build|checks?|tests?|pipeline|workflow)\b[^.!?\n]{0,30}\b(?:is\s+|was\s+|are\s+|were\s+)?(?:now\s+)?(?:green|passed|passing|succeeded|successful)\b/i },
+  { kind: 'live_price', re: /\b(?:live|real[- ]time|current|latest)\s+(?:price|quote|bid|ask)\b|\bLIVE\b[^.!?\n]{0,20}\bprice\b/i },
   { kind: 'task_finished', re: new RegExp(String.raw`\b(?:${SUBJECT}|[A-Z][a-z]+\s+|the\s+agent\s+|it\s+)${PAST}(?:finished|completed)\b[^.!?\n]{0,40}\b(?:task|job|assignment|research|study)\b`, 'i') },
   { kind: 'code_executed', re: new RegExp(String.raw`\b${SUBJECT}${PAST}(?:ran|executed)\b[^.!?\n]{0,40}\b(?:code|script|tests?|command|query|pytest|node|flutter)\b`, 'i') },
   { kind: 'book_read', re: new RegExp(String.raw`\b${SUBJECT}${PAST}(?:read|finished\s+reading)\b[^.!?\n]{0,30}\b(?:book|chapter|pages?)\b`, 'i') },
@@ -48,7 +46,6 @@ const CORRECTION = Object.freeze({
   task_finished: 'No verified result is on record for that task, so I have not marked it finished.',
   code_executed: 'No execution record exists for this answer, so I did not run that code.',
   book_read: 'I have not read that book, so I cannot say what it contains.',
-  ci_green: 'No passing CI result is on record for that run, so I have not marked the checks as passed.',
 });
 
 function splitSentences(text) {
@@ -75,7 +72,6 @@ const PROOF = Object.freeze({
   task_finished: (e) => (e.tasks || []).filter((t) => t.status === 'complete' && t.verified === true),
   code_executed: (e) => (e.executions || []).filter((x) => x.status === 'success'),
   book_read: (e) => (e.book_reads || []).filter((b) => b.chars > 0),
-  ci_green: (e) => (e.ci_checks || []).filter((c) => c.passed === true),
 });
 
 // A contradicting receipt exists only when a real failure receipt of the same kind was written.
@@ -178,7 +174,6 @@ export async function auditEvidenceFrom(storage, { executions = [], prices = [],
     executions: executions.filter(Boolean).map((x) => ({ id: `execution:${x.invocation_id || ''}`, status: x.status })),
     // A memory write backs "I saved it" only inside this conversation's window, not for a week.
     memory_writes: [...memoryWrites, ...byKind('memory_saved').filter((r) => now - Date.parse(r.at || 0) <= MEMORY_CLAIM_MS).map((r) => ({ id: `memory:${r.record_id || ''}`, confirmed: true }))],
-    ci_checks: byKind('ci_passed').map((r) => ({ id: `ci:${r.number}`, number: r.number, passed: true })),
     // Office tasks prove "finished" only when complete and checked (agent_runtime.js sets verified on completion).
     tasks: [...tasks, ...teamTasks.filter(Boolean).map((t) => ({ id: String(t.id || ''), status: t.status, verified: t.verified === true }))],
     // The phone's own report (POST /api/device/installed) is the only install evidence.
@@ -197,7 +192,9 @@ const MEMORY_SAVED_ASK = /^(?:did|have) you (?:actually |really )?(?:save|saved|
 const KNOW_VS_GUESS_ASK = /\bwhat do you (?:actually |really )?know\b.{0,30}\b(?:vers(?:us|es)|vs\.?|compared (?:to|with)|and what (?:are you|do you))\b.{0,30}\b(?:guess\w*|assum\w*|infer\w*|think\w*)|\bwhat are you (?:just )?(?:guessing|assuming|inferring)\b|\bwhat do you know for (?:sure|certain)\b/i;
 const plain = (m) => String(m || '').trim().replace(/^(?:che|chey|hey che|okay|ok|so|sir)[,\s]+/i, '').replace(/[,\s]+sir\s*\??$/i, '?');
 
-export function memorySavedQuestion(message) { return MEMORY_SAVED_ASK.test(plain(message)); }
+// "What did you save?" / "what did you just remember?" reads the same receipt (subject-loss audit, 2026-10-24).
+const MEMORY_SAVED_WHAT = /^what did you (?:just |actually )?(?:save|store|remember|keep)(?: (?:just now|for me|there|as a memory))?\s*\??$/i;
+export function memorySavedQuestion(message) { const p = plain(message); return MEMORY_SAVED_ASK.test(p) || MEMORY_SAVED_WHAT.test(p); }
 export function knowVsGuessQuestion(message) { return KNOW_VS_GUESS_ASK.test(plain(message)); }
 
 const when = (iso) => { const d = new Date(iso); return Number.isNaN(d.getTime()) ? 'an unknown time' : d.toISOString().replace('T', ' at ').slice(0, 19) + ' UTC'; };
@@ -240,19 +237,6 @@ export function guardRemovalEntries(guard, removed = [], { requestId = '', now =
     const rule = typeof item === 'object' && item ? String(item.rule || item.kind || item.reason || item.type || '') : '';
     return { at: new Date(now).toISOString(), request_id: String(requestId || ''), claim_type: rule ? `${guard}:${rule}` : guard, evidence_refs: [], verdict: 'UNVERIFIED', contradiction: '', correction: guard, outcome: 'removed' };
   });
-}
-
-/**
- * The same auditor for any owner-facing model text that does not pass through the chat guard chain (guest chat,
- * repository analysis, chat-only answers, project-create replies). `evidence: null` fails closed: every claim is
- * removed. Otherwise receipts are read from storage, exactly as the chat route reads them. Returns the audited text.
- */
-export async function auditText(storage, text, { requestId = '', fiction = false, evidence = undefined, executions = [], now = Date.now() } = {}) {
-  const rid = requestId || globalThis.crypto.randomUUID();
-  const proof = evidence === undefined ? await auditEvidenceFrom(storage, { executions, now }) : evidence;
-  const out = auditReply(text, { evidence: proof, requestId: rid, now, fiction });
-  await recordAudit(storage, out.entries, { now });
-  return out;
 }
 
 // Ledger: one row per checked claim. It stores ids, labels and outcomes only, so no reply or owner text is kept.

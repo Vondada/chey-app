@@ -7,9 +7,7 @@ import 'package:webview_flutter/webview_flutter.dart';
 
 import '../agents/che_agent_runtime.dart';
 import '../che_ui/che_agents.dart';
-import '../studio/che_character_studio.dart';
 import 'che_crew_states.dart';
-import 'che_voice_activity.dart';
 
 export 'che_crew_states.dart' show cheCrewModelIds;
 
@@ -19,29 +17,15 @@ export 'che_crew_states.dart' show cheCrewModelIds;
 // as base64. Each character plays the clip for its real runtime status
 // (che_crew_states.dart); the page says when every model has really loaded,
 // and its render loop stops while the room is hidden or the app is in the background.
-/// What the Character Studio needs from a live crew page: apply animation settings as the owner adjusts them.
-abstract class CheCharactersRoomPreviewHost {
-  Future<void> sendAnimationSettings(Map<String, Object?> settings, {String? preset});
-}
-
 class CheCharactersRoom extends StatefulWidget {
-  const CheCharactersRoom({super.key, this.runtime, this.previewProposal, this.embedded = false, this.focusAgent});
+  const CheCharactersRoom({super.key, this.runtime});
 
   /// The Office's live runtime. Without it every character stands idle: nothing is shown as working.
   final CheAgentRuntimeController? runtime;
 
-  /// A room CHE proposed (from the Worker's record). Drawn in the scene once the page is ready, never built.
-  final Map<String, dynamic>? previewProposal;
-
-  /// Inside another screen (the Character Studio preview): no app bar, the status as a small line.
-  final bool embedded;
-
-  /// The agent the camera follows when embedded ('che' or a crew id).
-  final String? focusAgent;
-
-  static Future<void> open(BuildContext context, {CheAgentRuntimeController? runtime, Map<String, dynamic>? previewProposal}) {
+  static Future<void> open(BuildContext context, {CheAgentRuntimeController? runtime}) {
     return Navigator.of(context).push(
-      MaterialPageRoute<void>(builder: (_) => CheCharactersRoom(runtime: runtime, previewProposal: previewProposal)),
+      MaterialPageRoute<void>(builder: (_) => CheCharactersRoom(runtime: runtime)),
     );
   }
 
@@ -49,7 +33,7 @@ class CheCharactersRoom extends StatefulWidget {
   State<CheCharactersRoom> createState() => _CheCharactersRoomState();
 }
 
-class _CheCharactersRoomState extends State<CheCharactersRoom> with WidgetsBindingObserver implements CheCharactersRoomPreviewHost {
+class _CheCharactersRoomState extends State<CheCharactersRoom> with WidgetsBindingObserver {
   WebViewController? _controller;
   String _status = 'Loading the crew.';
   Map<String, CheCrewState> _sent = const {};
@@ -59,8 +43,6 @@ class _CheCharactersRoomState extends State<CheCharactersRoom> with WidgetsBindi
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     widget.runtime?.addListener(_sendStates);
-    cheVoiceActivity.addListener(_sendVoiceActivity);
-    cheCharacterStudio.addListener(_sendStudioSettings);
     try {
       _controller = WebViewController()
         ..setJavaScriptMode(JavaScriptMode.unrestricted)
@@ -81,42 +63,8 @@ class _CheCharactersRoomState extends State<CheCharactersRoom> with WidgetsBindi
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     widget.runtime?.removeListener(_sendStates);
-    cheVoiceActivity.removeListener(_sendVoiceActivity);
-    cheCharacterStudio.removeListener(_sendStudioSettings);
     super.dispose();
   }
-
-  /// The saved Animation & Personality settings for CHE reach the page before her model, and again on every save.
-  Future<void> _sendStudioSettings() async {
-    if (!cheCharacterStudio.loaded) await cheCharacterStudio.load();
-    final s = cheCharacterStudio.current('che');
-    await sendAnimationSettings(s.toJson(), preset: s.preset == 'custom' ? null : s.preset);
-  }
-
-  @override
-  Future<void> sendAnimationSettings(Map<String, Object?> settings, {String? preset}) async {
-    final controller = _controller;
-    if (controller == null) return;
-    try {
-      if (preset != null) await controller.runJavaScript('window.CHE && window.CHE.animPreset && window.CHE.animPreset(${jsonEncode(preset)});');
-      if (settings.isNotEmpty) await controller.runJavaScript('window.CHE && window.CHE.animSettings && window.CHE.animSettings(${jsonEncode(settings)});');
-    } catch (_) {}
-  }
-
-  /// CHE's real voice activity reaches her character: the clip's words and length start the lip sync, the end of
-  /// playback closes her mouth, and the microphone state turns her attentive. JSON-encoded, so the words are data.
-  Future<void> _sendVoiceActivity() async {
-    final controller = _controller;
-    if (controller == null) return;
-    final a = cheVoiceActivity.value;
-    final js = a.speaking
-        ? 'window.CHE && window.CHE.speak && window.CHE.speak(${jsonEncode({'text': a.text, 'durationMs': a.durationMs})});'
-        : 'window.CHE && window.CHE.stopSpeaking && window.CHE.stopSpeaking(); window.CHE && window.CHE.listen && window.CHE.listen(${a.listening});';
-    try {
-      await controller.runJavaScript(js);
-    } catch (_) {}
-  }
-
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
@@ -144,18 +92,9 @@ class _CheCharactersRoomState extends State<CheCharactersRoom> with WidgetsBindi
   Future<void> _sendModels() async {
     final controller = _controller;
     if (controller == null) return;
-    final preview = widget.previewProposal;
-    if (preview != null) {
-      // The proposal is JSON from the Worker; as JavaScript it is an object literal.
-      unawaited(controller.runJavaScript('window.CHE && window.CHE.preview && window.CHE.preview(${jsonEncode(preview)});'));
-    }
-    // Real states first, so no character starts on a clip that is not true; then the saved animation settings.
+    // Real states first, so no character starts on a clip that is not true.
     _sent = const {};
     await _sendStates();
-    await _sendStudioSettings();
-    if (widget.focusAgent != null && widget.focusAgent != 'che') {
-      unawaited(controller.runJavaScript('window.CHE && window.CHE.focus && window.CHE.focus(${jsonEncode(widget.focusAgent)});'));
-    }
     for (final id in cheCrewModelIds) {
       try {
         final data = await rootBundle.load('assets/characters/crew/$id.glb');
@@ -191,18 +130,6 @@ class _CheCharactersRoomState extends State<CheCharactersRoom> with WidgetsBindi
 
   @override
   Widget build(BuildContext context) {
-    if (widget.embedded) {
-      return ColoredBox(
-        color: const Color(0xFF07090C),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Semantics(liveRegion: true, child: Padding(padding: const EdgeInsets.fromLTRB(12, 4, 12, 4), child: Text(_status, style: const TextStyle(fontSize: 13, color: Colors.white70)))),
-            Expanded(child: _controller == null ? const SizedBox.shrink() : WebViewWidget(controller: _controller!)),
-          ],
-        ),
-      );
-    }
     return Scaffold(
       backgroundColor: const Color(0xFF07090C),
       appBar: AppBar(

@@ -500,3 +500,29 @@ test('GET /api/markets/universe and the market chart through the real Worker; gu
   assert.equal((await che.api('/api/trading/chart?account=market&symbol=futures:ES&tf=15m')).drawings.length, 1);
   assert.notEqual((await che.raw('/api/markets/universe', 'GET', null, '')).status, 200);
 });
+
+// PR #515 review (P1): "and the 15 minute?" after "Open the Alpaca chart for AAPL" said 15-minute bars while the phone's
+// chart opened on 5 minutes. The reply carries the timeframe the phone opens on, and says only a bar size that chart has.
+test('a spoken chart timeframe is one the chart offers, and the reply says exactly what the phone opens on', async () => {
+  const che = await owner();
+  const open = await che.say('Open the Alpaca chart for AAPL');
+  assert.equal(open.route, 'che_trading_chart');
+  assert.equal(open.done.chart.symbol, 'AAPL');
+  const fifteen = await che.say('And the 15 minute?');
+  assert.equal(fifteen.route, 'che_trading_chart');
+  assert.equal(fifteen.modelCalls, 0);
+  assert.deepEqual(fifteen.done.chart, { section: 'chart', account: 'alpaca_paper', symbol: 'AAPL', filter: null, timeframe: '15m' });
+  assert.equal(fifteen.reply, 'Opening the Alpaca PAPER chart for AAPL on 15-minute bars, sir.');
+  // A bar size the chart does not have is said plainly, and the phone opens on the default bars the reply names.
+  const fourHour = await che.say('Switch the chart to the 4 hour');
+  assert.equal(fourHour.route, 'che_trading_chart');
+  assert.equal(fourHour.done.chart.timeframe, '5m');
+  assert.match(fourHour.reply, /^Opening the Alpaca PAPER chart for AAPL on 5-minute bars, sir\. That chart has no 4-hour bars; it offers 1-minute, 5-minute, 15-minute, hourly and daily\.$/);
+  const mnq = await che.say('Open the MNQ chart on the 1 minute');
+  assert.equal(mnq.done.chart.account, 'futures_paper');
+  assert.equal(mnq.done.chart.timeframe, '5m');
+  assert.match(mnq.reply, /on 5-minute bars, sir\. That chart has no 1-minute bars; it offers 5-minute, 15-minute, hourly and daily\.$/);
+  // No bar size asked: no timeframe is sent, so the chart keeps the one the owner left it on.
+  const plain = await che.say('Open Alpaca chart.');
+  assert.equal('timeframe' in plain.done.chart, false);
+});

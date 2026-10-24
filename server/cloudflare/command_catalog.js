@@ -1044,6 +1044,77 @@ export const COMMANDS = Object.freeze([
     examples: ['Build a Roblox obby game'],
     prompt: 'Build a Roblox game: {input}', produces: 'office jobs', keywords: ['3d', 'roblox', 'game', 'model'],
   }),
+  // Cloud Computer (owner, 2026-10-24): one Cloud Computer Manager over CHE's existing compute
+  // (cloud_computer.js). Each command is a fixed job template or a read; chat text never becomes a shell command.
+  C('cloud-open', 'office', 'EXPLORE', 'Open the Cloud Computer Room.', {
+    title: 'Cloud Computer',
+    does: 'Opens the Cloud Computer Room and says what each environment has: the Worker, the GitHub runners, the isolated browser and the film farm, with their real status, jobs, approvals and costs.',
+    needs: [], route: 'che_cloud_computer', local: 'cloud_open', handler: 'cloud_computer.cloudView + speakCloudSummary',
+    input: null, examples: ['Open your cloud computer'],
+    prompt: 'Open your cloud computer.', produces: 'cloud status', evidence: 'Provider checks from the Worker configuration and the stored job records.',
+    cost: 'Free: no AI engine is used.', keywords: ['cloud computer', 'environments', 'runners', 'compute'],
+  }),
+  // GPU on demand (owner, 2026-10-24; $0): CHE's render queue worked by the owner's Colab T4 while his notebook is open.
+  C('cloud-gpu', 'office', 'EXPLORE', 'Read my GPU render jobs.', {
+    title: 'GPU jobs',
+    does: 'Says how many GPU jobs are queued, rendering, paused, completed or failed, and whether your Colab T4 worker is online. The pictures are in the Creation Room. It costs nothing; Colab works only while your notebook is open.',
+    needs: [], route: 'che_cloud_computer', local: 'cloud_gpu', handler: 'gpu_queue.GpuQueue.view + speakGpuSummary',
+    input: null, examples: ['What are my GPU jobs?'],
+    prompt: 'What are my GPU jobs?', produces: 'GPU queue status', evidence: 'The queue and worker heartbeats stored in the Worker.',
+    cost: 'Free: no AI engine is used.', keywords: ['gpu', 'colab', 'render queue', 'face preview'],
+  }),
+  C('cloud-blender', 'office', 'BUILD', 'Create a Blender animation on the cloud computer.', {
+    does: 'Checks every environment for Blender. None has it today, so CHE says so, names what she already has (the bpy character pipeline) and the smallest addition that would make it work. Nothing is started.',
+    needs: [], route: 'che_cloud_computer', local: 'cloud_blender', handler: 'cloud_computer.selectProvider (blender_render template)',
+    input: { name: 'animation', required: false, hint: 'What the animation shows' },
+    examples: ['Create a Blender animation', 'Make a Blender animation of a spinning logo'],
+    prompt: 'Create a Blender animation {input}', produces: 'plan', evidence: 'The provider capability list read from the workflow files.',
+    cost: 'Free: nothing runs.', keywords: ['blender', 'animation', '3d render', 'bpy'],
+  }),
+  C('cloud-render', 'office', 'EXPLORE', 'Plan a YouTube video render on the cloud computer.', {
+    does: 'Says where a video renders (the free che-video-render.yml path), and the real state of the latest render on record. A new render starts with "make a faceless video about…".',
+    needs: [], route: 'che_cloud_computer', local: 'cloud_render', handler: 'cloud_computer.selectProvider (video_render) + cloudJobs',
+    input: null, examples: ['Render my YouTube video'],
+    prompt: 'Render my YouTube video.', produces: 'render plan', evidence: 'The media index and dispatch records.',
+    cost: 'Free: nothing runs.', keywords: ['render video', 'youtube render', 'video render'],
+  }),
+  C('cloud-tests', 'office', 'BUILD', 'Run CHE\'s repository tests on the cloud computer.', {
+    does: 'Prepares a flutter-check.yml run (flutter analyze and flutter test) on a GitHub runner. GitHub minutes are not verified as free, so it waits for your approval; then CHE dispatches it, follows the run and reports pass or fail from GitHub.',
+    needs: ['github'], route: 'che_cloud_computer', local: 'cloud_tests', handler: 'cloud_computer.requestCloudWork → processJobs runCloudTask (gh dispatch)',
+    input: null, examples: ['Run your coding tests'],
+    prompt: 'Run your coding tests.', produces: 'test result', evidence: 'The GitHub run id and its conclusion.',
+    cost: 'GitHub Actions minutes; free usage for this repository is not verified, so it asks first.', keywords: ['run tests', 'coding tests', 'flutter tests', 'ci'],
+  }),
+  C('cloud-prs', 'office', 'EXPLORE', 'Check CHE\'s open pull requests.', {
+    does: 'Reads the open pull requests on CHE\'s repository from GitHub and lists them by number and title. Changes nothing.',
+    needs: ['github'], route: 'che_cloud_computer', local: 'cloud_prs', handler: 'cloud_computer.openPullRequests (coding_runtime.gh)',
+    input: null, examples: ['Check your open pull requests'],
+    prompt: 'Check your open pull requests.', produces: 'pull requests', evidence: 'GitHub\'s own pull request list.',
+    cost: 'Free: one GitHub read.', keywords: ['pull requests', 'open prs', 'prs'],
+  }),
+  C('cloud-install', 'office', 'EXPLORE', 'Ask for a free tool on the cloud computer.', {
+    does: 'Lists the software each environment already has. CHE never installs anything quietly: a new tool is a workflow change she opens as a pull request for your review.',
+    needs: [], route: 'che_cloud_computer', local: 'cloud_install', handler: 'cloud_computer.speakInstall + providerStatuses',
+    input: { name: 'tool', required: false, hint: 'The tool you want' },
+    examples: ['Install a compatible free tool', 'Install ImageMagick on your cloud computer'],
+    prompt: 'Which software does the cloud computer have for {input}', produces: 'software list', evidence: 'The software read from the workflow files.',
+    cost: 'Free: nothing is installed.', keywords: ['install', 'free tool', 'software', 'package'],
+  }),
+  C('cloud-agents', 'office', 'EXPLORE', 'Show what the agents are running.', {
+    does: 'Reads every cloud job that is waiting, queued or running, grouped by the agent that asked for it, and opens the Cloud Computer Room.',
+    needs: [], route: 'che_cloud_computer', local: 'cloud_agents', handler: 'cloud_computer.cloudJobs + speakAgentWork',
+    input: null, examples: ['Show me what your agents are working on'],
+    prompt: 'Show me what your agents are working on.', produces: 'job list', evidence: 'The stored job records only.',
+    cost: 'Free: no AI engine is used.', keywords: ['agents working', 'cloud jobs', 'what are agents doing'],
+  }),
+  C('cloud-control', 'office', 'BUILD', 'Approve, cancel, stop or retry a cloud job.', {
+    does: 'Approves a cloud job that waits for you, cancels one that has not been dispatched, stops a GitHub run, or retries a failed job, then reads back the real result.',
+    needs: ['jobs'], route: 'che_cloud_computer', local: 'cloud_control', handler: 'cloud_computer.approveCloudJob / cancelCloudJob / stopCloudJob / retryCloudJob',
+    input: { name: 'action', required: true, hint: 'approve, cancel, stop or retry, then the job id' },
+    examples: ['Approve the cloud job', 'Stop cloud job 1a2b3c4d', 'Retry cloud job 1a2b3c4d'],
+    prompt: 'Cloud job control: {input}', produces: 'status', evidence: 'The job record read back after the change.',
+    cost: 'Free; an approved test run uses GitHub Actions minutes.', keywords: ['approve cloud job', 'stop cloud job', 'retry cloud job'],
+  }),
 ]);
 
 // Aliases are other names for one command (/rea-map is /rea-features), never a second command.

@@ -483,14 +483,8 @@ extension _CheHomeStreaming on _CHEHomeState {
         if (data['open_screen'] == 'workflows' && data['source'] == 'che_workflow_engine' && mounted) unawaited(_openWorkflows());
         if (data['open_screen'] == 'security' && data['source'] == 'che_security' && mounted) unawaited(_openSecurity(section: data['security_section']?.toString()));
         if (data['open_screen'] == 'film_studio' && data['source'] == 'che_film_studio' && mounted) unawaited(_openFilmStudio());
-        // Character Studio by voice: a settings patch is saved as a version for that agent (the 3D room applies it
-        // live); an upgrade job is only reported; "open character studio" opens the screen. Presentation only.
-        if (data['source'] == 'che_character_studio' && mounted) {
-          final patch = data['studio_patch'];
-          final agent = data['studio_agent']?.toString() ?? 'che';
-          if (patch is Map) unawaited(cheCharacterStudio.applyVoicePatch(agent, Map<String, dynamic>.from(patch), said: _streamUnderstoodAs ?? ''));
-          if (data['open_screen'] == 'character_studio') unawaited(_openCharacterStudio(agent: agent));
-        }
+        // "Open your cloud computer": only the Cloud Computer Manager's own reply opens the room.
+        if (data['open_screen'] == 'cloud_computer' && data['source'] == 'che_cloud_computer' && mounted) unawaited(_openCloudComputer());
         // "Open Truth and Verification": only the Worker's own truth handler opens the Brain Room section.
         if (data['open_screen'] == 'brain_truth' && data['source'] == 'che_brain_truth' && mounted) unawaited(_openBrainTruth());
         // Owner Improvements: a setting CHE changed applies here at once, and the app reports what it now uses.

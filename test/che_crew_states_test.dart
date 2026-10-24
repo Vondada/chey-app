@@ -14,7 +14,7 @@ void main() {
     expect(cheClipForStatus(CheAgentStatus.researching), 'think');
     expect(cheClipForStatus(CheAgentStatus.analyzing), 'think');
     expect(cheClipForStatus(CheAgentStatus.reviewing), 'think');
-    expect(cheClipForStatus(CheAgentStatus.building), 'type');
+    expect(cheClipForStatus(CheAgentStatus.building), 'sit');
     expect(cheClipForStatus(CheAgentStatus.meeting), 'talk');
     expect(cheClipForStatus(CheAgentStatus.talking), 'talk');
     expect(cheClipForStatus(CheAgentStatus.done), 'celebrate');
@@ -38,7 +38,7 @@ void main() {
     expect(states.keys.toList(), cheCrewModelIds);
     expect(states['che'], const CheCrewState('talk'));
     expect(states['nova'], const CheCrewState('think'));
-    expect(states['knox'], const CheCrewState('type'));
+    expect(states['knox'], const CheCrewState('sit'));
     expect(states['sage'], const CheCrewState('idle', still: true));
     for (final id in ['atlas', 'mira', 'lyra', 'iris']) {
       expect(states[id], const CheCrewState('idle'), reason: '$id has no live agent');

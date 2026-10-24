@@ -28,12 +28,11 @@ button:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
 <div id="stage" aria-hidden="true"></div>
 <div id="status" role="status" aria-live="polite">CHE loading…<small id="sub">Rigged 3D prototype</small></div>
 <div id="pad" role="application" aria-label="Movement joystick. Drag to walk; push further to run. Keyboard: arrow keys." tabindex="0"><div id="knob"></div></div>
-<div id="crew" role="group" aria-label="Office crew. Choose an agent to follow and hear their role."></div>
+<div id="crew" role="group" aria-label="Office crew. Choose an agent to hear their role."></div>
 <div id="dock">
   <div id="clips" role="group" aria-label="CHE animations"></div>
 </div>
 <script src="characters-vendor.js"></script>
-<script src="che_animator.js"></script>
 <script>
 const THREE = window.THREE;
 const GLTFLoader = window.THREE.GLTFLoader;
@@ -60,14 +59,13 @@ window.CHE.supplyGlb = (id, b64) => {
 const CLIPS = [
   ['idle', 'Idle'], ['walk', 'Walk'], ['run', 'Run'], ['wave', 'Wave'], ['talk', 'Talk'],
   ['think', 'Think'], ['celebrate', 'Celebrate'], ['nod', 'Nod'], ['shake', 'Shake head'],
-  ['sit', 'Sit'], ['type', 'Type at desk'], ['stand', 'Stand'],
+  ['sit', 'Sit'], ['stand', 'Stand'],
 ];
 const ONE_SHOT = new Set(['sit', 'stand']);
-const SEATED = new Set(['sit', 'type']);
 const ROOM = 5.5;
 const DESK = { x: 2.2, z: -2.5, hx: 0.8, hz: 0.35 };
-// CHE's office agents: a standing spot, a facing direction (radians, 0 = toward +Z), and a chair at their desk.
-// The app sets each clip from the agent's real runtime status (CHE.setStates); everyone starts idle.
+// CHE's office agents (roles from lib/che_ui/che_brain.dart), each at a spot with a looping clip.
+// Everyone starts idle; the app sets each clip from the agent's real runtime status (CHE.setStates).
 const CREW = [
   { id: 'nova', name: 'Nova', role: 'Product and listings', at: [-2.2, -2.2], clip: 'idle', face: 0.6 },
   { id: 'atlas', name: 'Atlas', role: 'Research and sourcing', at: [-0.9, -3.0], clip: 'idle', face: 0.2 },
@@ -84,43 +82,26 @@ const $clips = document.getElementById('clips');
 const say = (main, sub = '') => { $status.firstChild.textContent = main; $sub.textContent = sub; };
 
 // ---------- renderer, camera, room
-const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 1.05;
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 document.getElementById('stage').appendChild(renderer.domElement);
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x04090b);
 scene.fog = new THREE.Fog(0x04090b, 12, 26);
-const camera = new THREE.PerspectiveCamera(42, 1, 0.05, 60);
+const camera = new THREE.PerspectiveCamera(42, 1, 0.1, 60);
 
-// Image-based light from a small generated studio, so skin, hair and cloth read as physical materials.
-const pmrem = new THREE.PMREMGenerator(renderer);
-const studio = new THREE.Scene();
-studio.background = new THREE.Color(0x0b1517);
-function softbox(w, h, color, x, y, z) {
-  const m = new THREE.Mesh(new THREE.PlaneGeometry(w, h), new THREE.MeshBasicMaterial({ color: new THREE.Color(color).multiplyScalar(3), side: THREE.DoubleSide }));
-  m.position.set(x, y, z);
-  m.lookAt(0, 1, 0);
-  studio.add(m);
-}
-softbox(5, 3, 0xcff8f2, 0, 4, -3);
-softbox(3, 4, 0xffe2c2, -5, 2, 2);
-softbox(3, 4, 0x9ff5ee, 5, 2, 2);
-scene.environment = pmrem.fromScene(studio, 0.03).texture;
-
-scene.add(new THREE.HemisphereLight(0x9ff5ee, 0x05080a, 0.55));
-const key = new THREE.DirectionalLight(0xffffff, 2.0);
+scene.add(new THREE.HemisphereLight(0x9ff5ee, 0x05080a, 0.9));
+const key = new THREE.DirectionalLight(0xffffff, 2.2);
 key.position.set(3, 6, 4);
 key.castShadow = true;
 key.shadow.mapSize.set(1024, 1024);
 Object.assign(key.shadow.camera, { left: -4, right: 4, top: 4, bottom: -4, near: 1, far: 16 });
-key.shadow.bias = -0.0008;
 scene.add(key);
-const rim = new THREE.PointLight(0x2ee6d6, 9, 9, 1.6);
+const rim = new THREE.PointLight(0x2ee6d6, 14, 9, 1.6);
 rim.position.set(-2.5, 2.2, -2.5);
 scene.add(rim);
 
@@ -139,48 +120,15 @@ wall.position.set(0, 2, -ROOM);
 wall.receiveShadow = true;
 scene.add(wall);
 
-// Furniture: a desk with a screen and a chair for CHE and for each agent. Screens are the only emissive surfaces.
 const deskMat = new THREE.MeshStandardMaterial({ color: 0x0f2a2e, roughness: 0.5, metalness: 0.2 });
-const chairMat = new THREE.MeshStandardMaterial({ color: 0x143c40, roughness: 0.7, metalness: 0.05 });
-const screenMat = new THREE.MeshStandardMaterial({ color: 0x06302f, emissive: 0x2ee6d6, emissiveIntensity: 0.35 });
-function makeDesk(x, z, face) {
-  const g = new THREE.Group();
-  const top = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.04, 0.46), deskMat);
-  top.position.y = 0.46;
-  top.castShadow = top.receiveShadow = true;
-  g.add(top);
-  for (const [lx, lz] of [[-0.4, -0.2], [0.4, -0.2], [-0.4, 0.2], [0.4, 0.2]]) {
-    const leg = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.44, 0.04), deskMat);
-    leg.position.set(lx, 0.22, lz);
-    leg.castShadow = true;
-    g.add(leg);
-  }
-  const screen = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.3, 0.02), screenMat);
-  screen.position.set(0, 0.64, -0.14);
-  g.add(screen);
-  g.position.set(x, 0, z);
-  g.rotation.y = face + Math.PI;               // the screen faces the agent sitting at the chair
-  scene.add(g);
-  return g;
-}
-function makeChair(x, z, face) {
-  const g = new THREE.Group();
-  const seat = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.06, 0.42), chairMat);
-  seat.position.y = 0.3;
-  seat.castShadow = seat.receiveShadow = true;
-  g.add(seat);
-  const back = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.5, 0.05), chairMat);
-  back.position.set(0, 0.56, -0.2);
-  back.castShadow = true;
-  g.add(back);
-  g.position.set(x, 0, z);
-  g.rotation.y = face;
-  scene.add(g);
-  return g;
-}
-// CHE's own desk (the existing position) and one desk per crew member, in front of their standing spot.
-const desk = makeDesk(DESK.x, DESK.z, 0);
-desk.scale.set(1, 1, 1);
+const desk = new THREE.Mesh(new THREE.BoxGeometry(DESK.hx * 2, 0.46, DESK.hz * 2), deskMat);
+desk.position.set(DESK.x, 0.23, DESK.z);
+desk.castShadow = desk.receiveShadow = true;
+scene.add(desk);
+const screen = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.36, 0.03), new THREE.MeshStandardMaterial({ color: 0x06302f, emissive: 0x2ee6d6, emissiveIntensity: 0.8 }));
+screen.position.set(DESK.x, 0.66, DESK.z - 0.15);
+scene.add(screen);
+
 const ring = new THREE.Mesh(new THREE.RingGeometry(0.26, 0.31, 48), new THREE.MeshBasicMaterial({ color: 0x2ee6d6, transparent: true, opacity: 0.85, side: THREE.DoubleSide }));
 ring.rotation.x = -Math.PI / 2;
 ring.visible = false;
@@ -190,69 +138,13 @@ scene.add(ring);
 const hero = new THREE.Group();
 scene.add(hero);
 let mixer = null;
-let actions = {};
+const actions = {};
 let current = null;
-// CHE's animator (che_animator.js) once her model is parsed; settings sent before that are applied at creation.
-let anim = null;
-let stickDrive = false;
-const pendingAnimSettings = {};
 let selected = false;
 let sitting = false;
 let heading = 0;
 const pos = new THREE.Vector3(0, 0, 1.2);
-let heroFace = null;
-
-// Shape keys (blink, mouth) and bones (head, neck, eyes) for one character.
-function faceRigOf(root, seed) {
-  const f = { root, morph: [], bones: {}, blink: 0, blinkT: -1, nextBlink: 1.5 + Math.random() * 3, mouth: 0, yaw: 0, pitch: 0, seed };
-  root.traverse((o) => {
-    if (o.isSkinnedMesh && o.skeleton && !f.bones.head) {
-      for (const n of ['head', 'neck', 'eye.L', 'eye.R']) { const b = o.skeleton.getBoneByName(n); if (b) f.bones[n] = b; }
-    }
-    if (o.isMesh && o.morphTargetDictionary && o.morphTargetDictionary.blink !== undefined) f.morph.push(o);
-  });
-  return f;
-}
-const _v = new THREE.Vector3();
-const _d = new THREE.Vector3();
-const _inv = new THREE.Quaternion();
-const _delta = new THREE.Quaternion();
-const _e = new THREE.Euler();
-const clamp = (x, a, b) => Math.max(a, Math.min(b, x));
-// Blink every few seconds, open the mouth while the character talks, and turn head and eyes toward a target.
-function updateFace(f, dt, now, talking, target) {
-  f.nextBlink -= dt;
-  if (f.nextBlink <= 0) { f.blinkT = 0; f.nextBlink = 2.5 + Math.random() * 3.5; }
-  if (f.blinkT >= 0) {
-    f.blinkT += dt;
-    const k = f.blinkT / 0.16;
-    f.blink = k < 0.5 ? k * 2 : Math.max(0, 2 - k * 2);
-    if (k >= 1) { f.blinkT = -1; f.blink = 0; }
-  }
-  const open = talking ? 0.22 + 0.42 * Math.abs(Math.sin(now * 0.017 + f.seed)) * (0.65 + 0.35 * Math.sin(now * 0.0047 + f.seed * 2)) : 0;
-  f.mouth += (open - f.mouth) * Math.min(1, dt * 14);
-  for (const m of f.morph) {
-    const d = m.morphTargetDictionary;
-    m.morphTargetInfluences[d.blink] = f.blink;
-    m.morphTargetInfluences[d.mouth_open] = f.mouth;
-    if (d.mouth_wide !== undefined) m.morphTargetInfluences[d.mouth_wide] = talking ? 0.12 * f.mouth : 0;
-  }
-  const head = f.bones.head;
-  if (!head || !target) return;
-  // Direction to the target in the character's own frame (the root only turns around Y).
-  f.root.updateMatrixWorld(true);
-  head.getWorldPosition(_v);
-  _d.copy(target).sub(_v).applyQuaternion(_inv.copy(f.root.quaternion).invert());
-  const yaw = clamp(Math.atan2(_d.x, _d.z), -0.9, 0.9);
-  const pitch = clamp(Math.atan2(_d.y, Math.hypot(_d.x, _d.z)), -0.35, 0.35);
-  const k = Math.min(1, dt * 5);
-  f.yaw += (yaw - f.yaw) * k;
-  f.pitch += (pitch - f.pitch) * k;
-  head.quaternion.multiply(_delta.setFromEuler(_e.set(-f.pitch * 0.55, f.yaw * 0.6, 0)));
-  if (f.bones['neck']) f.bones['neck'].quaternion.multiply(_delta.setFromEuler(_e.set(-f.pitch * 0.2, f.yaw * 0.25, 0)));
-  for (const n of ['eye.L', 'eye.R']) if (f.bones[n]) f.bones[n].quaternion.multiply(_delta.setFromEuler(_e.set(-f.pitch * 0.8, f.yaw * 0.8, 0)));
-}
-let heroFaceState = null;
+const yawRef = { yaw: 0 };
 
 loadGlb('che', (gltf) => {
   const root = gltf.scene;
@@ -263,36 +155,25 @@ loadGlb('che', (gltf) => {
     }
   });
   hero.add(root);
-  // CHE's own animator (che_animator.js): state machine, gesture layer, lip sync, idle variety, settings.
-  anim = new CheAnimator(root, gltf.animations, { meta: window.CHE_MOTION_META || {}, seed: 1.7, settings: pendingAnimSettings });
-  mixer = anim.mixer;
-  actions = anim.actions;
+  mixer = new THREE.AnimationMixer(root);
+  for (const clip of gltf.animations) actions[clip.name] = mixer.clipAction(clip);
   buildButtons();
   play(pendingStates.che ? pendingStates.che.clip : 'idle');
   markLoaded('che');
   say('CHE is ready', 'Drag the pad to walk. Tap CHE to select her. Use the buttons to play an animation.');
-  tellApp({ type: 'clips', id: 'che', clips: anim.clips });
 }, undefined, (err) => say('Could not load CHE', String(err && err.message || err)));
 
-// One named state for CHE, through the animator. Names are the app's status clips (che_crew_states.dart) and
-// the buttons below; a clip the model lacks falls back to the nearest one the animator knows.
-function play(name) {
-  if (!anim) return;
-  switch (name) {
-    case 'idle': anim.idle(); break;
-    case 'sit': anim.sitDown(); break;
-    case 'stand': anim.standUp(); break;
-    case 'type': anim.type(); break;
-    case 'think': anim.think(); break;
-    case 'talk': anim.speak({ text: 'Hello. I am CHE. This is a check of my lip sync, my gestures and my eye contact.', durationMs: 5200 }); break;
-    case 'celebrate': anim.celebrate(); break;
-    case 'wave': anim.wave(); break;
-    case 'nod': if (!anim.playOnce('nod')) anim.listen(true); break;
-    case 'shake': if (!anim.playOnce('shake')) anim.setMood('skeptical'); break;
-    case 'walk': case 'run': anim.move(name === 'run' ? 1.8 : 0.75, anim.heading); break;
-    default: if (!anim.playOnce(name)) anim.idle();
-  }
-  current = anim.base;
+function play(name, { fade = 0.25 } = {}) {
+  const next = actions[name];
+  if (!next) return;
+  if (current === next) return;
+  next.reset();
+  next.setLoop(ONE_SHOT.has(name) ? THREE.LoopOnce : THREE.LoopRepeat, Infinity);
+  next.clampWhenFinished = ONE_SHOT.has(name);
+  next.enabled = true;
+  if (current) current.fadeOut(fade);
+  next.fadeIn(fade).play();
+  current = next;
   for (const b of $clips.querySelectorAll('button')) b.setAttribute('aria-pressed', String(b.dataset.clip === name));
 }
 
@@ -311,15 +192,13 @@ function buildButtons() {
 
 function choose(name) {
   if (name === 'sit') { sitting = true; play('sit'); say('CHE is sitting down', 'Say or tap Stand to get up.'); return; }
-  if (name === 'type') { sitting = true; play('type'); say('CHE is typing at her desk', 'Tap Stand to get up.'); return; }
-  if (name === 'stand') { sitting = false; play('stand'); say('CHE is standing up'); return; }
-  if (name === 'walk' || name === 'run') { say(name === 'run' ? 'CHE is running' : 'CHE is walking', 'Drag the pad to steer her.'); }
+  if (name === 'stand') { sitting = false; play('stand'); setTimeout(() => { if (!sitting) play('idle'); }, 1200); say('CHE is standing up'); return; }
   sitting = false;
   play(name);
   say(`CHE: ${name}`, '');
 }
 
-// ---------- the office crew: each agent has a standing spot and a desk; status moves them between the two
+// ---------- the office crew: each agent loops a clip; choosing one makes them wave
 const $crew = document.getElementById('crew');
 const crew = [];
 for (const a of CREW) {
@@ -327,12 +206,8 @@ for (const a of CREW) {
   b.type = 'button';
   b.textContent = a.name;
   b.setAttribute('aria-label', `${a.name}, ${a.role}`);
-  b.addEventListener('click', () => { greet(a.id); focusAgent(a.id); });
+  b.addEventListener('click', () => greet(a.id));
   $crew.appendChild(b);
-  const fx = Math.sin(a.face), fz = Math.cos(a.face);
-  const seat = { x: a.at[0] + fx * 0.55, z: a.at[1] + fz * 0.55 };
-  makeDesk(a.at[0] + fx * 0.98, a.at[1] + fz * 0.98, a.face);
-  makeChair(seat.x, seat.z, a.face);
   loadGlb(a.id, (gltf) => {
     const root = gltf.scene;
     root.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.frustumCulled = false; } });
@@ -342,7 +217,7 @@ for (const a of CREW) {
     const m = new THREE.AnimationMixer(root);
     const acts = Object.fromEntries(gltf.animations.map((c) => [c.name, m.clipAction(c)]));
     acts[a.clip].play();
-    const member = { ...a, root, mixer: m, acts, cur: acts[a.clip], still: false, seated: false, stand: { x: a.at[0], z: a.at[1] }, seat, rig: faceRigOf(root, a.at[0] * 3 + a.at[1]) };
+    const member = { ...a, root, mixer: m, acts, cur: acts[a.clip], still: false };
     crew.push(member);
     if (pendingStates[a.id]) setCrewState(member, pendingStates[a.id]);
     markLoaded(a.id);
@@ -357,48 +232,6 @@ function greet(id) {
   c.cur.fadeOut(0.25);
   w.reset().fadeIn(0.25).play();
   setTimeout(() => { w.fadeOut(0.3); c.cur.reset().fadeIn(0.3).play(); }, 2600);
-}
-
-// ---------- camera: CHE (behind her), one agent (follow), overview, free, and first person
-function focusAgent(id) {
-  const c = crew.find((x) => x.id === id);
-  if (!c) { say('Still loading', 'That teammate is not in the room yet.'); return false; }
-  focusId = id;
-  camMode = 'follow';
-  zoom = 1;
-  say(`Following ${c.name}`, 'Drag to orbit. Use Reset to return to CHE.');
-  tellApp({ type: 'focus', id, mode: camMode });
-  return true;
-}
-function setCameraMode(mode) {
-  if (mode === 'che') return resetCamera();
-  if (!['overview', 'free', 'follow'].includes(mode)) return false;
-  if (mode === 'follow') return Boolean(focusId) && focusAgent(focusId);
-  camMode = mode;
-  focusId = null;
-  say(mode === 'overview' ? 'Overview of the office' : 'Free camera', 'Drag to orbit. Use Reset to return to CHE.');
-  tellApp({ type: 'camera', mode });
-  return true;
-}
-function setViewStyle(style) {
-  if (!['third', 'first'].includes(style)) return false;
-  viewStyle = style;
-  say(style === 'first' ? 'First-person view' : 'Third-person view', style === 'first' ? 'Looking where the character looks.' : 'Behind the character.');
-  tellApp({ type: 'view', style });
-  return true;
-}
-function resetCamera() {
-  camMode = 'che';
-  focusId = null;
-  zoom = 1;
-  camYaw = 0;
-  say('Camera on CHE', 'Drag the pad to walk her around the room.');
-  tellApp({ type: 'camera', mode: 'che' });
-  return true;
-}
-function zoomBy(factor) {
-  zoom = Math.max(0.5, Math.min(2.5, zoom * factor));
-  return zoom;
 }
 
 // ---------- joystick (pointer + keyboard)
@@ -428,7 +261,7 @@ const keys = new Set();
 window.addEventListener('keydown', (e) => { if (e.key.startsWith('Arrow')) { keys.add(e.key); e.preventDefault(); } });
 window.addEventListener('keyup', (e) => keys.delete(e.key));
 
-// ---------- tap an agent to follow them, or CHE to select her (keeps the ring and status in sync)
+// ---------- tap CHE to select her (keeps the ring and status in sync)
 const ray = new THREE.Raycaster();
 const ndc = new THREE.Vector2();
 renderer.domElement.addEventListener('pointerdown', (e) => {
@@ -437,7 +270,7 @@ renderer.domElement.addEventListener('pointerdown', (e) => {
   ndc.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
   ray.setFromCamera(ndc, camera);
   const hitAgent = crew.find((c) => ray.intersectObject(c.root, true).length);
-  if (hitAgent) { greet(hitAgent.id); focusAgent(hitAgent.id); return; }
+  if (hitAgent) { greet(hitAgent.id); return; }
   if (ray.intersectObject(hero, true).length) {
     selected = !selected;
     ring.visible = selected;
@@ -448,20 +281,11 @@ renderer.domElement.addEventListener('pointerdown', (e) => {
 // ---------- movement, collision, camera
 const MOVE = { walk: 0.75, run: 1.8 };
 let camYaw = 0;
-let camMode = 'che';
-let focusId = null;
-let zoom = 1;
-let viewStyle = 'third';
-const ROOM_CENTER = new THREE.Vector3(0, 0.6, -0.5);
-const _fwd = new THREE.Vector3();
-const _eye = new THREE.Vector3();
-const _lookAt = new THREE.Vector3();
 function blocked(x, z) {
-  if (crew.some((c) => Math.hypot(x - c.stand.x, z - c.stand.z) < 0.45)) return true;
-  if (crew.some((c) => Math.hypot(x - c.seat.x, z - c.seat.z) < 0.3)) return true;
+  if (crew.some((c) => Math.hypot(x - c.at[0], z - c.at[1]) < 0.45)) return true;
   return Math.abs(x - DESK.x) < DESK.hx + 0.25 && Math.abs(z - DESK.z) < DESK.hz + 0.25;
 }
-function update(dt, now) {
+function update(dt) {
   let sx = stick.x, sy = stick.y;
   if (keys.has('ArrowLeft')) sx -= 1;
   if (keys.has('ArrowRight')) sx += 1;
@@ -473,81 +297,32 @@ function update(dt, now) {
     const rx = Math.cos(camYaw), rz = -Math.sin(camYaw);
     const dx = rx * sx + fx * -sy;
     const dz = rz * sx + fz * -sy;
+    const len = Math.hypot(dx, dz) || 1;
     const running = mag > 0.8;
     const speed = running ? MOVE.run : MOVE.walk * Math.min(1, (mag - 0.12) / 0.5 + 0.4);
-    if (anim) anim.move(speed, Math.atan2(dx, dz));
-    stickDrive = true;
-    if (anim && anim.state !== 'walking' && anim.state !== 'running') say(running ? 'CHE is running' : 'CHE is walking', 'Push the pad further to run.');
-  } else if (anim && stickDrive) {
-    // Only the pad stops a walk the pad started; a walk the app or a script asked for keeps going.
-    stickDrive = false;
-    anim.move(0, anim.heading);
-    if (!sitting) say('CHE is standing still', '');
-  }
-  if (anim) {
-    // The body moves at the animator's smoothed speed and heading, so starts, stops and turns are not instant.
-    heading = anim.heading;
-    const step = anim.speed * dt;
-    const nx = pos.x + Math.sin(heading) * step, nz = pos.z + Math.cos(heading) * step;
-    if (step > 0 && !blocked(nx, nz)) { pos.x = nx; pos.z = nz; }
+    const nx = pos.x + (dx / len) * speed * dt;
+    const nz = pos.z + (dz / len) * speed * dt;
+    if (!blocked(nx, nz)) { pos.x = nx; pos.z = nz; }
     pos.x = Math.max(-ROOM + 0.5, Math.min(ROOM - 0.5, pos.x));
     pos.z = Math.max(-ROOM + 0.5, Math.min(ROOM - 0.5, pos.z));
+    heading = Math.atan2(dx, dz);
+    const want = running ? 'run' : 'walk';
+    if (mixer && current !== actions[want]) { play(want, { fade: 0.2 }); say(running ? 'CHE is running' : 'CHE is walking', 'Push the pad further to run.'); }
+  } else if (mixer && !sitting && current && (current === actions.walk || current === actions.run)) {
+    play('idle', { fade: 0.2 });
+    say('CHE is standing still', '');
   }
   hero.position.copy(pos);
   hero.rotation.y = heading;
   ring.position.set(pos.x, 0.01, pos.z);
-  if (anim) { anim.update(dt, camera.position); current = anim.base; }
-  // Crew: move to the chair when seated, back to the standing spot otherwise; then update their mixers.
-  for (const c of crew) {
-    if (!c.still) c.mixer.update(dt);
-    const goal = c.seated ? c.seat : c.stand;
-    const k = 1 - Math.pow(0.001, dt);
-    c.root.position.x += (goal.x - c.root.position.x) * k;
-    c.root.position.z += (goal.z - c.root.position.z) * k;
-  }
-  // Crew faces: blink, mouth while talking, and head and eyes toward the camera. (CHE's face is the animator's.)
-  for (const c of crew) updateFace(c.rig, dt, now, c.cur === c.acts.talk, camera.position);
-
-  let subject = null;
-  if (camMode === 'follow' && focusId) subject = crew.find((x) => x.id === focusId) || null;
-  if (camMode === 'che' || (camMode === 'follow' && !subject)) subject = null;
-
-  if (viewStyle === 'first' && (camMode === 'che' || subject)) {
-    // First person: the camera sits at eye level and looks where the character faces.
-    const headBone = subject ? subject.rig.bones.head : (anim && anim.bones.head);
-    if (headBone) {
-      headBone.getWorldPosition(_eye);
-      _fwd.set(0, 0, 1).applyQuaternion((subject ? subject.root : hero).quaternion);
-      _eye.addScaledVector(_fwd, 0.12);
-      _lookAt.copy(_eye).addScaledVector(_fwd, 3);
-      camera.position.lerp(_eye, 1 - Math.pow(0.0005, dt));
-      camera.lookAt(_lookAt);
-      return;
-    }
-  }
-
-  // Third person: CHE (default), one agent (follow), or the whole room (overview, free).
-  let target = null;
-  let want = null;
-  if (subject) {
-    const d = 1.6 * zoom;
-    target = new THREE.Vector3(subject.root.position.x, 0.8, subject.root.position.z);
-    want = new THREE.Vector3(target.x + Math.sin(camYaw) * d, 1.25 * zoom, target.z + Math.cos(camYaw) * d);
-  }
-  if (!target && (camMode === 'overview' || camMode === 'free')) {
-    const far = camMode === 'overview' ? 1 : 0.55;
-    target = ROOM_CENTER.clone();
-    want = new THREE.Vector3(ROOM_CENTER.x + Math.sin(camYaw) * 8.5 * far * zoom, (camMode === 'overview' ? 9.5 : 4.5) * zoom, ROOM_CENTER.z + Math.cos(camYaw) * 8.5 * far * zoom);
-  }
-  if (!target) {
-    target = new THREE.Vector3(pos.x, 0.8, pos.z);
-    want = new THREE.Vector3(target.x + Math.sin(camYaw) * 1.9 * zoom, 1.3 * zoom, target.z + Math.cos(camYaw) * 1.9 * zoom);
-  }
+  if (mixer) mixer.update(dt);
+  for (const c of crew) if (!c.still) c.mixer.update(dt);
+  // Camera: follows CHE from behind, orbit by dragging empty space.
+  const target = new THREE.Vector3(pos.x, 0.62, pos.z);
+  const want = new THREE.Vector3(target.x + Math.sin(camYaw) * 2.7, 1.45, target.z + Math.cos(camYaw) * 2.7);
   camera.position.lerp(want, 1 - Math.pow(0.02, dt));
   camera.lookAt(target);
 }
-
-renderer.domElement.addEventListener('wheel', (e) => { e.preventDefault(); zoomBy(e.deltaY > 0 ? 1.1 : 0.9); }, { passive: false });
 
 // Orbit the camera by dragging anywhere that is not the pad or a button.
 let orbit = null;
@@ -568,7 +343,6 @@ resize();
 function setCrewState(member, st) {
   const next = member.acts[st.clip] || member.acts.idle;
   member.still = Boolean(st.still);
-  member.seated = SEATED.has(st.clip) && Boolean(member.acts[st.clip]);
   if (next !== member.cur) {
     member.cur.fadeOut(0.35);
     next.reset().fadeIn(0.35).play();
@@ -578,7 +352,7 @@ function setCrewState(member, st) {
 function setStates(states) {
   for (const [id, st] of Object.entries(states || {})) {
     pendingStates[id] = st;
-    if (id === 'che') { if (anim) { sitting = SEATED.has(st.clip); play(st.clip); } continue; }
+    if (id === 'che') { if (mixer) { sitting = st.clip === 'sit'; play(st.clip in actions ? st.clip : 'idle'); } continue; }
     const member = crew.find((c) => c.id === id);
     if (member) setCrewState(member, st);
   }
@@ -592,7 +366,7 @@ function frame(now) {
   if (paused || document.hidden) { running = false; return; }
   const dt = Math.min(0.05, (now - last) / 1000);
   last = now;
-  update(dt, now);
+  update(dt);
   renderer.render(scene, camera);
   requestAnimationFrame(frame);
 }
@@ -606,69 +380,16 @@ document.addEventListener('visibilitychange', resume);
 resume();
 
 // Small hook for tests and for later voice or touch wiring.
-// ---------- room preview: a proposed room's layout drawn in this scene, for the owner to walk through before approval
-const previewGroup = new THREE.Group();
-scene.add(previewGroup);
-const previewMats = {
-  bench: new THREE.MeshStandardMaterial({ color: 0x23464a, roughness: 0.6 }),
-  desk: new THREE.MeshStandardMaterial({ color: 0x0f2a2e, roughness: 0.5 }),
-  equipment: new THREE.MeshStandardMaterial({ color: 0x3a2a4a, roughness: 0.4, emissive: 0x6e4fa8, emissiveIntensity: 0.25 }),
-  shelf: new THREE.MeshStandardMaterial({ color: 0x2a3c2a, roughness: 0.7 }),
-};
-function showPreview(proposal) {
-  // Layout items come from the Worker's reviewed template (room_designer.js). Positions stay inside the room.
-  for (const child of [...previewGroup.children]) { previewGroup.remove(child); child.geometry?.dispose(); }
-  const items = Array.isArray(proposal?.layout) ? proposal.layout : [];
-  for (const item of items) {
-    const size = item.kind === 'shelf' ? [0.5, 1.6, 0.4] : item.kind === 'equipment' ? [0.5, 0.7, 0.5] : [1.1, 0.5, 0.6];
-    const mesh = new THREE.Mesh(new THREE.BoxGeometry(...size), previewMats[item.kind] || previewMats.desk);
-    mesh.position.set(clamp(item.x, -ROOM + 0.5, ROOM - 0.5), size[1] / 2, clamp(item.z, -ROOM + 0.5, ROOM - 0.5));
-    mesh.castShadow = mesh.receiveShadow = true;
-    mesh.userData.label = item.label || item.kind;
-    previewGroup.add(mesh);
-  }
-  camMode = 'free';
-  focusId = null;
-  say(`Preview: ${proposal?.room?.name || 'proposed room'}`, `${items.length} parts. Drag to look around. Approve or change it in the app.`);
-  tellApp({ type: 'preview', id: proposal?.id || '', parts: items.length });
-  return items.length;
-}
-function clearPreview() {
-  for (const child of [...previewGroup.children]) { previewGroup.remove(child); child.geometry?.dispose(); }
-  return true;
-}
 window.CHE = {
   supplyGlb: window.CHE.supplyGlb,
-  preview: (proposal) => showPreview(proposal),
-  clearPreview: () => clearPreview(),
   play: (name) => choose(name),
   stick: (x, y) => setStick(x, y),
   greet: (id) => greet(id),
-  focus: (id) => focusAgent(id),
-  mode: (name) => setCameraMode(name),
-  view: (style) => setViewStyle(style),
-  blink: () => { if (anim) anim.blink.t = 0; return true; },
-  // Real activity from the app: the words and audio length CHE is speaking, the microphone state, a mood CHE
-  // herself reported. Presentation only; none of these change what CHE may do.
-  speak: (payload) => (anim ? anim.speak(payload || {}) : 0),
-  stopSpeaking: () => { if (anim) anim.stopSpeaking(); return true; },
-  listen: (on) => { if (anim) anim.listen(on); return Boolean(anim); },
-  mood: (name) => (anim ? anim.setMood(name) : false),
-  animSettings: (patch) => { Object.assign(pendingAnimSettings, patch || {}); return anim ? anim.configure(patch) : pendingAnimSettings; },
-  animPreset: (name) => { if (CheAnimator.PRESETS[name]) Object.assign(pendingAnimSettings, CheAnimator.PRESETS[name]); return anim ? anim.preset(name) : Boolean(CheAnimator.PRESETS[name]); },
-  motionMeta: (meta) => { window.CHE_MOTION_META = meta || {}; if (anim) anim.meta = window.CHE_MOTION_META; return true; },
-  get anim() { return anim ? anim.snapshot : null; },
-  zoom: (factor) => zoomBy(factor),
-  reset: () => resetCamera(),
   setStates: (states) => setStates(states),
   pause: (p) => { paused = Boolean(p); resume(); },
   get paused() { return paused || !running; },
   get crewLoaded() { return crew.length; },
-  get camera() { return { mode: camMode, focus: focusId, zoom, view: viewStyle }; },
-  get face() {
-    return anim ? { blink: anim.blink.v, mouth: anim.face.mouth_open || 0, morphs: anim.morphs.length, head: Boolean(anim.bones.head) } : null;
-  },
-  get state() { return { clip: anim ? anim.baseName : null, pos: pos.toArray(), sitting, selected, anim: anim ? anim.state : null }; },
+  get state() { return { clip: current && Object.keys(actions).find((k) => actions[k] === current), pos: pos.toArray(), sitting, selected }; },
 };
 </script>
 </body>

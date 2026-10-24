@@ -217,6 +217,11 @@ extension _CheHomeSend on _CHEHomeState {
       return true;
     }
 
+    if (RegExp(r'\b(open|show|go to|start)\s+(the\s+|my\s+)?(character|avatar)\s+(generator|creator|maker|builder)\b').hasMatch(lower) ||
+        RegExp(r'^\W*(?:(?:che|chey|chay)[,:]?\s+)?(character|avatar)\s+generator\W*$').hasMatch(lower)) {
+      _openCharacterGenerator();
+      return true;
+    }
     if (RegExp(r'\b(open|show|go to)\s+(my\s+)?(memories?|brain|brain constellation)\b').hasMatch(lower)) {
       _openAssistantHub(tab: 0);
       return true;
@@ -278,6 +283,11 @@ extension _CheHomeSend on _CHEHomeState {
         (source.last['text'] ?? '').trim() == currentMessage.trim()) {
       source.removeLast();
     }
+    // First request after a relaunch: the home chat is empty, but the owner may
+    // be answering what CHE said just before the app closed ("No, strawberry
+    // Sprite."). The last turns of the conversation her log restored are that
+    // request's history while they are still fresh (che_agent_chat.dart).
+    if (source.isEmpty) return _brainLog.restoredTurnsForHistory();
     // Earlier names, requirements and approvals remain part of this request.
     // The Worker selects an engine that can receive the complete history.
     return source
@@ -519,6 +529,7 @@ extension _CheHomeSend on _CHEHomeState {
         return command.text == 'run' ? 'Opening the rendering benchmark and measuring, sir.' : 'Opening the rendering benchmark, sir.';
       case ScreenOp.clearChat:
         messages.clear();
+        _brainLog.dropRestoredContext();
         return 'Chat cleared, sir.';
       case ScreenOp.removeLast:
         if (messages.isEmpty) return 'There is no message to remove, sir.';
@@ -674,6 +685,17 @@ extension _CheHomeSend on _CHEHomeState {
     final securityVoice = CheSecurityRoomVoice.handler;
     if (securityVoice != null && _pendingAttachment == null && !cheIsAppStatusRequest(message)) {
       final reply = await securityVoice(message);
+      if (reply != null) {
+        if (mounted) _set(() => controller.clear());
+        if (reply.isNotEmpty) await speakText(reply, record: false);
+        return;
+      }
+    }
+
+    // The Character Generator, while it is open, takes every one of its actions and settings by voice or typing.
+    final generatorVoice = CheCharacterGenerator.voiceHandler;
+    if (generatorVoice != null && _pendingAttachment == null) {
+      final reply = await generatorVoice(message);
       if (reply != null) {
         if (mounted) _set(() => controller.clear());
         if (reply.isNotEmpty) await speakText(reply, record: false);
@@ -1180,6 +1202,7 @@ extension _CheHomeSend on _CHEHomeState {
 
       _scrollToBottom();
       await speakText(reply);
+      _sendHeldSpeechNext();
       return;
     }
 
@@ -1366,6 +1389,8 @@ extension _CheHomeSend on _CHEHomeState {
       await speakText(errorReply);
     } finally {
       _isSending = false;
+      // Words he spoke over this answer go next, with this reply in history.
+      _sendHeldSpeechNext();
     }
   }
 
@@ -1506,7 +1531,10 @@ extension _CheHomeSend on _CHEHomeState {
   Future<void> _runChartCommand(String message, CheChartCommand command) async {
     if (command.symbol != null) CheLiveChart.symbol.value = command.symbol!;
     if (command.interval != null) CheLiveChart.interval.value = command.interval!;
-    final reply = command.readPrice
+    // "turn on VWAP", "hide Bollinger": the Trading Room charts listen and save it; CHE says the new state.
+    final reply = command.changesIndicators
+        ? await CheLiveChart.applyIndicatorCommand(command)
+        : command.readPrice
         ? await CheLiveChart.readPrice(cheAgentBaseUrl, _authHeaders, command.symbol ?? CheLiveChart.symbol.value)
         : 'Loading ${CheLiveChart.symbol.value.name}, ${cheChartIntervals[CheLiveChart.interval.value] ?? CheLiveChart.interval.value} candles.';
     HapticFeedback.selectionClick();

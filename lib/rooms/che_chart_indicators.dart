@@ -131,23 +131,42 @@ List<double?> vwap(List<CheIndicatorBar> bars, {bool futures = false}) {
   return (high: hi, low: lo);
 }
 
-/// The opening range: high and low of the first [minutes] of the latest session, once those minutes are complete.
-/// Null when the bars are too coarse (a bar longer than the range) or the range has not finished yet.
+/// When the session holding [t] began, in UTC: midnight for crypto, 22:00 UTC the evening before for futures
+/// (the same day boundary as [sessionOf]).
+DateTime sessionStartOf(DateTime t, {bool futures = false}) {
+  final shift = futures ? const Duration(hours: 2) : Duration.zero;
+  final u = t.toUtc().add(shift);
+  return DateTime.utc(u.year, u.month, u.day).subtract(shift);
+}
+
+/// The opening range: high and low of the first [minutes] after the latest session's start, once those minutes
+/// are complete. Null when the bars are too coarse (a bar longer than the range), the range has not finished yet,
+/// or the loaded history does not cover the whole opening interval (it starts mid-session, or bars are missing):
+/// a range drawn from part of the open would be a wrong level, not a smaller one.
 ({double high, double low})? openingRange(List<CheIndicatorBar> bars, {int minutes = 30, bool futures = false}) {
   if (bars.length < 2) return null;
-  final step = bars[1].t.difference(bars[0].t).inMinutes;
-  if (step <= 0 || step > minutes) return null;
-  final day = sessionOf(bars.last.t, futures: futures);
-  final first = bars.lastIndexWhere((b) => sessionOf(b.t, futures: futures) != day) + 1;
-  final start = bars[first].t;
-  final end = start.add(Duration(minutes: minutes));
-  if (!bars.last.t.add(Duration(minutes: step)).isAfter(end.subtract(const Duration(seconds: 1)))) return null;
-  var hi = -double.infinity, lo = double.infinity;
-  for (var i = first; i < bars.length && bars[i].t.isBefore(end); i++) {
-    hi = math.max(hi, bars[i].h);
-    lo = math.min(lo, bars[i].l);
+  var step = 0;
+  for (var i = 1; i < bars.length; i++) {
+    final gap = bars[i].t.difference(bars[i - 1].t).inSeconds;
+    if (gap > 0 && (step == 0 || gap < step)) step = gap;
   }
-  return hi.isFinite ? (high: hi, low: lo) : null;
+  final range = minutes * 60;
+  if (step <= 0 || step > range) return null;
+  final start = sessionStartOf(bars.last.t, futures: futures);
+  final end = start.add(Duration(seconds: range));
+  if (bars.last.t.add(Duration(seconds: step)).isBefore(end)) return null;
+  var hi = -double.infinity, lo = double.infinity;
+  var count = 0;
+  DateTime? first;
+  for (final b in bars) {
+    if (b.t.isBefore(start) || !b.t.isBefore(end)) continue;
+    first ??= b.t;
+    count++;
+    hi = math.max(hi, b.h);
+    lo = math.min(lo, b.l);
+  }
+  if (first == null || !first.isAtSameMomentAs(start) || count * step < range) return null;
+  return (high: hi, low: lo);
 }
 
 /// The series the chart draws over the candles for the switched-on indicators, keyed by line label.

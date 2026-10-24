@@ -115,7 +115,11 @@ class CheWorldHubScreen extends StatelessWidget {
     super.key,
     required this.onOpenTab,
     this.state = CheWorldState.idle,
+    this.onCharacterGenerator,
   });
+
+  /// Opens the Character Generator (CHE and the agents' 3D looks); without it the chip is not shown.
+  final VoidCallback? onCharacterGenerator;
 
   /// Called with the tab index (matching the existing hub tab order) when
   /// a building is tapped. The caller is expected to open the same modal
@@ -149,6 +153,21 @@ class CheWorldHubScreen extends StatelessWidget {
                       scrollDirection: Axis.horizontal,
                       padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
                       children: [
+                        if (onCharacterGenerator != null)
+                          Padding(
+                            padding: const EdgeInsets.only(right: 8),
+                            child: Semantics(
+                              button: true,
+                              label: 'Open the Character Generator. Edit CHE and the agents and preview them on the GPU',
+                              excludeSemantics: true,
+                              child: ActionChip(
+                                key: const ValueKey('world-character-generator'),
+                                avatar: const Icon(Icons.face_retouching_natural, size: 16, color: Color(0xFFFF9E6F)),
+                                label: const Text('Character Generator'),
+                                onPressed: onCharacterGenerator,
+                              ),
+                            ),
+                          ),
                         for (final b in cheCampusBuildings)
                           Padding(
                             padding: const EdgeInsets.only(right: 8),

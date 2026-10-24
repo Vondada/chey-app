@@ -126,7 +126,7 @@ void main() {
   testWidgets('screen reports: Commands tabs, a page on top that does not report itself, Connections', (tester) async {
     final che = center.FakeChe();
     await center.openCenter(tester, che: che);
-    expect(CheScreenAwareness.describe(), startsWith('You are on Commands, Library tab. Tabs: 1. Library, 2. Workflows, 3. Activity. All 119 commands'));
+    expect(CheScreenAwareness.describe(), startsWith('You are on Commands, Library tab. Tabs: 1. Library, 2. Workflows, 3. Activity. All 128 commands'));
     await CheCommandCenterVoice.handler!('show workflows');
     await tester.pumpAndSettle();
     expect(CheScreenAwareness.describe(), startsWith('You are on Commands, Workflows tab.'));
@@ -196,7 +196,7 @@ void main() {
       expect(CheScreenAwareness.describe(), startsWith('You are on Home, Home tab.'), reason: 'the app opens on Home');
       await tester.tap(find.text('Office'));
       await tester.pump(const Duration(milliseconds: 500));
-      expect(CheScreenAwareness.describe(), startsWith('You are on the Office, Headquarters tab. Tabs: 1. Headquarters, 2. Crew, 3. Projects.'));
+      expect(CheScreenAwareness.describe(), startsWith('You are on the Office, Crew tab. Tabs: 1. Crew, 2. Projects.'));
       await tester.tap(find.text('Chat'));
       await tester.pump(const Duration(milliseconds: 500));
       await tester.tap(find.byTooltip('Show keyboard'));

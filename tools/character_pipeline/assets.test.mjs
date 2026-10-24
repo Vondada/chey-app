@@ -21,7 +21,7 @@ function changedModel(edit) {
 test('all eight real characters and both offline scene dependency sets are packaged', () => {
   const results = validateCrew();
   assert.equal(results.length, 8);
-  for (const model of results) assert.equal(model.clips, 12);
+  for (const model of results) assert.equal(model.clips, 11);
 });
 
 test('a truncated export fails before it can be packaged', () => {
@@ -58,5 +58,5 @@ test('the crew page starts idle, takes real states, reports real readiness and s
   assert.match(script, /tellApp\(\{ type: 'error', id/);
   assert.match(script, /if \(paused \|\| document\.hidden\) \{ running = false; return; \}/);
   assert.match(script, /addEventListener\('visibilitychange', resume\)/);
-  assert.match(script, /for \(const c of crew\) \{\s*if \(!c\.still\) c\.mixer\.update\(dt\);/, 'offline agents stand still');
+  assert.match(script, /for \(const c of crew\) if \(!c\.still\) c\.mixer\.update\(dt\)/, 'offline agents stand still');
 });

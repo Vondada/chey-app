@@ -1,7 +1,7 @@
 # CHE character pipeline
 
-`build_che_character.py` builds CHE and her seven office agents as rigged semi-realistic game characters
-with Blender's Python module and exports each as a GLB with 12 animation clips and facial shape keys.
+`build_che_character.py` builds CHE and her seven office agents as rigged chibi characters
+with Blender's Python module and exports each as a GLB with 11 animation clips.
 
 Run it:
 
@@ -11,14 +11,13 @@ python build_che_character.py -- ../../assets/characters/crew/ all       # all e
 python build_che_character.py -- ../../assets/characters/crew/che.glb che  # one
 ```
 
-Version 2 (owner brief, 2026-10-24) replaces the chibi look (big round head) with semi-realistic
-proportions: about seven and a half heads on a 1.12 unit figure, a lofted torso, real-scale eyes with lids,
-brows, nose, ears and lips built into the skin. Identity comes from hair style and colour, eye colour, outfit,
-glasses, beanie, headphones and beard, and from each face's scale values (`face=` in CHARACTERS).
+The looks follow the owner's reference images in `assets/characters/reference/`
+(ref-02 agents list, ref-04 and ref-05 office concepts): big round head, large glossy
+eyes with lashes, small smile, blush, full hair, short body, jackets and sneakers.
 
 | id | name | role (lib/che_ui/che_brain.dart) | look |
 |---|---|---|---|
-| che | CHE | Office Boss | long wavy dark hair, teal open jacket, gold hoops |
+| che | CHE | Office Boss | long wavy dark hair, teal open jacket, black top, gold hoops |
 | nova | Nova | Product / listings | lavender hair in a high bun, lilac hoodie |
 | atlas | Atlas | Research / sourcing | short curly hair, orange jacket, white sneakers |
 | mira | Mira | Support copy / translation | brown low bun, round glasses, cream sweater |
@@ -27,29 +26,18 @@ glasses, beanie, headphones and beard, and from each face's scale values (`face=
 | lyra | Lyra | Content / social | shoulder-length wavy hair, mustard jacket |
 | iris | Iris | Ad Studio | blond hair, black beanie, blue eyes, denim jacket |
 
-What is in each GLB:
-- 31 bones (same rig and bone names for everyone): pelvis, spine, chest, neck, head, eye.L/R, shoulder,
-  upper_arm, forearm, hand, five finger chains per hand, thigh, shin, foot.
-- Skinned torso, legs, arms, neck, head and ears (automatic weights). Hair, brows, lashes, eyes, glints,
-  nose, shoes, fingers and accessories are rigid to one bone.
-- Shape keys on the skin: `blink`, `mouth_open`, `mouth_wide`, `mouth_round`. The app drives them for
-  blinking and lip sync.
-- 12 clips: idle, walk, run, wave, sit, stand, talk, think, celebrate, nod, shake, type (seated at a desk,
-  typing). Every clip keys every bone each frame, so the app can add head and eye tracking on top.
-- Colours are vertex colours (glTF COLOR_0); the export is GLB with morph targets.
+What is in each GLB: 31 bones (same rig and bone names for everyone), skinned body, top
+and trousers (automatic weights); the head is an exact ellipsoid mesh so face parts sit
+on it; eyes use a painted texture; hair, brows, lashes, mouth, shoes, fingers and
+accessories are rigid. Colours are vertex colours. Clips: idle, walk, run, wave, sit,
+stand, talk, think, celebrate, nod, shake. Blink is built into the looping clips.
 
-The app embeds `assets/characters/app/index.html` through `lib/rooms/che_characters_room.dart`; its
-scripts and eight GLBs are bundled in `pubspec.yaml`. The separate `assets/characters/che_viewer.html` is a
-development viewer (serve over HTTP; file:// blocks module imports). In the app, each character plays the
-clip for its agent's real runtime status (`lib/rooms/che_crew_states.dart`, sent with `CHE.setStates`);
-"building" types at the desk, and everyone starts idle.
-
-Preview a build without the app. These render with Cycles on the CPU (a few seconds per frame):
-
-```
-CHE_PREVIEW=/tmp/che.png CHE_PREVIEW_MODE=portrait CHE_PREVIEW_POSE=rest \
-  python build_che_character.py -- /tmp/che.glb che
-```
+The app embeds `assets/characters/app/index.html` through
+`lib/rooms/che_characters_room.dart`; its scripts and eight GLBs are bundled in
+`pubspec.yaml`. The separate `assets/characters/che_viewer.html` is a development
+viewer (serve over HTTP; file:// blocks module imports). In the app, each character plays
+the clip for its agent's real runtime status (`lib/rooms/che_crew_states.dart`, sent with
+`CHE.setStates`); everyone starts idle, and a model with no live agent stays idle.
 
 Before packaging an export, run these dependency-free checks from the repo root:
 
@@ -58,19 +46,17 @@ node tools/character_pipeline/validate_assets.mjs
 node --test tools/character_pipeline/assets.test.mjs
 ```
 
-CI runs the same contract: binary header/chunk bounds, embedded buffers/textures, skeleton and animation
-references, all twelve required clips, the four required shape keys, a 40,000 triangle budget per character,
-Flutter asset registration and locally available scene scripts. It is not a full glTF validator or an
-iPhone rendering test.
+CI runs the same contract: binary header/chunk bounds, embedded buffers/textures,
+skeleton and animation references, all eleven required clips, Flutter asset
+registration and locally available scene scripts. The command reports actual byte
+and triangle counts. It is not a full glTF validator or an iPhone rendering test.
 
-Known limits (be honest about these in any report):
-- The look is procedural. It is clearly better proportioned than the chibi build, but hair is shells and
-  strands, skin is a single material, and the face is not sculpted by an artist. It does not yet meet a
-  premium GTA-style standard. The next step is an artist-made or licensed base mesh.
-- Lip sync is an approximation: the app opens the mouth while the character is in its talk clip. It is not
-  phoneme-accurate, because the speech engine does not expose visemes.
-- No IK or foot placement; feet are placed by the clip's root motion.
-- Triangle budget: about 30k to 40k per character (8 characters is about 270k). Performance on an iPhone has
-  not been measured on a device.
-- The page reports ready to the app only after all eight GLBs parse (`CheBridge`), and its render loop stops
-  while the page is hidden or the app is in the background.
+Known limits:
+- About 60k to 80k triangles and 2.3 to 3 MB per character; 8 characters is about 20 MB.
+  Needs mesh compression or a lower-poly build before shipping in the app.
+- No facial blend shapes (mouth does not move when talking), no IK or foot placement.
+- Hands are small mitten shapes; hair is shaped shells and curls, not strands.
+- Embedded in Flutter; rendering performance has not been measured on an iPhone.
+- The page reports ready to the app only after all eight GLBs parse (`CheBridge`), and its
+  render loop stops while the page is hidden or the app is in the background.
+  These runtime gaps still require a scene/Flutter bridge fix and device validation.
