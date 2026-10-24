@@ -64,7 +64,7 @@ const _steps = <String, int>{'max_per_day': 1, 'qty': 1, 'max_daily_loss': 50, '
 
 Color _stateColor(String s) => switch (s) {
       'running' => _up,
-      'paused' || 'entries stopped' => _gold,
+      'paused' || 'entries stopped' || 'waiting for data' || 'engine off' => _gold,
       _ => _down,
     };
 
@@ -301,12 +301,16 @@ class _CheStrategyControlsPanelState extends State<CheStrategyControlsPanel> {
         Row(children: [
           Expanded(
             child: Semantics(
-              label: '${r['name']}${r['family'] == 'ICT' ? ', ICT group' : ''}. $state. ${r['entries_today']} of ${r['max_per_day']} entries today.',
+              label: '${r['name']}${r['family'] == 'ICT' ? ', ICT group' : ''}. $state. ${r['entries_today']} of ${r['max_per_day']} entries today. ${'${r['state_reason'] ?? ''}'.isNotEmpty ? r['state_reason'] : r['data_label'] ?? ''}'.trim(),
               excludeSemantics: true,
               child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                 Text('${r['name']}', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 15)),
                 Text('${r['family']} · $state · ${r['entries_today']} of ${r['max_per_day']} entries today · ${r['signals_today'] ?? 0} valid signals today · ${r['skipped_total']} blocked',
                     style: TextStyle(color: _stateColor(state), fontSize: 12)),
+                // Why a strategy that is switched on is not evaluating, or the delayed data it evaluates (never "live").
+                if ('${r['state_reason'] ?? ''}'.isNotEmpty || '${r['data_label'] ?? ''}'.isNotEmpty)
+                  Text('${r['state_reason'] ?? ''}'.isNotEmpty ? '${r['state_reason']}' : '${r['data_label']}',
+                      key: Key('strategy_data_$id'), style: const TextStyle(color: Colors.white70, fontSize: 12)),
               ]),
             ),
           ),

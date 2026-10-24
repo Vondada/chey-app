@@ -112,8 +112,12 @@ class ChartMarker {
   String get status => '${raw['status'] ?? ''}';
   bool get isBuy => side == 'buy' || side == 'long';
 
-  /// The record this marker belongs to (a CHE journal trade, a simulation trade or an Alpaca order).
-  String get tradeId => '${raw['id'] ?? raw['order_id'] ?? ''}';
+  /// The record this marker belongs to: for a closed CHE trade its ledger ID (`trade_id`, what Trade Replay opens),
+  /// otherwise the record's own id (an open position, a simulation still running, an Alpaca order).
+  String get tradeId => '${raw['trade_id'] ?? raw['id'] ?? raw['order_id'] ?? ''}';
+
+  /// True when the Worker named this marker's ledger trade, so Trade Replay can open it.
+  bool get hasLedgerId => '${raw['trade_id'] ?? ''}'.isNotEmpty;
 
   /// CHE's simulation (never a paper or broker execution).
   bool get isSim => source == 'che_sim';
@@ -875,7 +879,9 @@ class CheTradingChartState extends State<CheTradingChart> {
 
   /// Opens a marker's trade record: Trade Replay when installed, otherwise the recorded receipt.
   Future<void> openRecord(ChartMarker m) async {
-    if (m.source.startsWith('che_') && m.tradeId.isNotEmpty) {
+    // An open CHE position is not in the trade ledger yet: its receipt, never a replay that cannot be found.
+    final openNoLedger = !m.hasLedgerId && (m.kind == 'open' || m.status == 'open');
+    if (m.source.startsWith('che_') && m.tradeId.isNotEmpty && !openNoLedger) {
       final open = CheTradingChart.openTradeRecord;
       if (open != null) {
         open(context, m);

@@ -279,8 +279,27 @@ export function stockOrderProblem(controls, order = {}, { journal = [], buyingPo
   return '';
 }
 
+// A delayed 5-minute bar older than this means the forward engine has no current data to evaluate.
+const FEED_STALE_MS = 45 * 60_000;
+
+/**
+ * Whether the forward paper engine is really evaluating (owner audit, 2026-10-24: a strategy waiting for data must
+ * never read as running). `engine` is { enabled, feed } from live_paper_state / live_paper_feed; omitted, nothing is
+ * claimed about data. Delayed data is allowed for research and forward testing, and is always called delayed.
+ */
+export function engineDataState({ enabled = false, feed = null } = {}, now = Date.now()) {
+  if (!enabled) return { evaluating: false, state: 'engine off', reason: 'The forward paper engine is off, so no strategy is evaluating signals.' };
+  const last = feed?.last_bar_time || (Array.isArray(feed?.bars) ? feed.bars.at(-1)?.t : null);
+  const age = last ? now - Date.parse(last) : null;
+  const source = `${feed?.provider || 'Yahoo MNQ=F'}${feed?.delayed_by_min != null ? `, about ${feed.delayed_by_min} minutes behind` : ''}`;
+  if (!feed || feed.status === 'UNAVAILABLE' || age == null) return { evaluating: false, state: 'waiting for data', reason: `The forward feed has no bars${feed?.error ? `: ${String(feed.error).slice(0, 120)}` : ''}. No signal is being evaluated.` };
+  if (age > FEED_STALE_MS) return { evaluating: false, state: 'waiting for data', reason: `The newest bar from ${source} closed ${Math.round(age / 60_000)} minutes ago (market closed or the feed stopped). No signal is being evaluated until new bars arrive.` };
+  return { evaluating: true, state: 'running', reason: '', data_label: `DELAYED: ${source}. Research and forward paper testing only, not live data.` };
+}
+
 /** One line per strategy for the control screen and for speech: limit, today's entries, state. */
-export function controlsView(controls, portfolios = [], now = Date.now()) {
+export function controlsView(controls, portfolios = [], now = Date.now(), engine = null) {
+  const data = engine ? engineDataState(engine, now) : null;
   const day = tradeDayOf(now);
   return Object.keys(controls.strategies).map((id) => {
     const s = controls.strategies[id];
@@ -288,9 +307,12 @@ export function controlsView(controls, portfolios = [], now = Date.now()) {
     const entries = mine.reduce((n, pf) => n + (pf.day_entries?.day === day ? pf.day_entries.n : 0), 0);
     const skips = mine.flatMap((pf) => (pf.skips || []).map((k) => ({ ...k, variant: `${pf.filter}${pf.params?.target_r ? ` ${pf.params.target_r}R` : ''}` })))
       .sort((a, b) => String(b.time).localeCompare(String(a.time)));
-    const state = controls.emergency ? 'emergency stop' : controls.stop_new_entries ? 'entries stopped' : s.disabled ? 'disabled' : (controls.paused_all || s.paused) ? 'paused' : 'running';
+    const set = controls.emergency ? 'emergency stop' : controls.stop_new_entries ? 'entries stopped' : s.disabled ? 'disabled' : (controls.paused_all || s.paused) ? 'paused' : 'running';
+    // "running" is only said while the engine is really evaluating fresh bars.
+    const state = set === 'running' && data && !data.evaluating ? data.state : set;
     return {
       id, name: strategyName(id), family: INTRADAY_CANDIDATES[id].family || '', state, ...s,
+      ...(data ? { evaluating: set === 'running' && data.evaluating, state_reason: set === 'running' ? data.reason : '', data_label: data.data_label || '' } : {}),
       variants: mine.length, entries_today: entries,
       signals_today: mine.reduce((n, pf) => n + (pf.signals || []).filter((x) => tradeDayOf(x.time) === day).length, 0), open_positions: mine.filter((pf) => pf.open).length,
       signals_total: mine.reduce((n, pf) => n + (pf.counts?.signals || 0), 0),

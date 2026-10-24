@@ -774,6 +774,17 @@ extension _CheHomeSend on _CHEHomeState {
       }
     }
 
+    // Trade Replay, while it is open, takes play, pause, back or forward 10 seconds, restart and read.
+    final replayVoice = CheTradeReplayPage.voiceHandler;
+    if (replayVoice != null && _pendingAttachment == null) {
+      final reply = await replayVoice(message);
+      if (reply != null) {
+        if (mounted) _set(() => controller.clear());
+        if (reply.isNotEmpty) await speakText(reply, record: false);
+        return;
+      }
+    }
+
     // The Live 3D Studio, while it is open, takes viewport moves, edits, undo, redo, save and generate.
     final liveVoice = CheLiveStudio.voiceHandler;
     if (liveVoice != null && _pendingAttachment == null) {

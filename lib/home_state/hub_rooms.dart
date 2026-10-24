@@ -77,6 +77,19 @@ extension _CheHomeHubRooms on _CHEHomeState {
     );
   }
 
+  /// Opens one Trading Room section for a desk card and says so aloud (the owner pressed it).
+  void _openTradingTool(String section, String spoken) {
+    if (!mounted) return;
+    unawaited(Navigator.of(context).push(CheTradingRoomPage.route(
+      baseUrl: () => cheAgentBaseUrl,
+      headers: () => _authHeaders,
+      onAsk: _runHubPrompt,
+      onRead: (words) { speakText(words, record: false, readOnDemand: true); },
+      chart: {'section': section},
+    )));
+    unawaited(speakText(spoken, record: false));
+  }
+
   Widget _hubMarketsTab() {
     return CheMarketsRoom(
       baseUrl: () => cheAgentBaseUrl,
@@ -111,35 +124,34 @@ extension _CheHomeHubRooms on _CHEHomeState {
           connectorName: '',
           onRun: () => _runHubPrompt('How are the trades doing?'),
         ),
+        // CHE's own engines (owner, 2026-10-24): the state comes from /api/trading/capabilities, and each card opens
+        // its tool in the Trading Room rather than asking for an external URL.
         CheDeskAction(
           icon: Icons.candlestick_chart,
           title: 'Analyze Markets',
           body: 'Stocks, futures and crypto structure, catalysts, volatility and risk.',
-          connected: integrations['market_data'] == true,
-          connectorName: 'Live market data (CHE_MARKET_DATA_URL)',
-          onRun: () => _runHubPrompt(
-            'Analyze the market I am focused on right now. Use any connected live market and research tools, separate live facts from assumptions, and give me structure, catalysts, invalidation and risk.',
-          ),
+          connected: true,
+          connectorName: '',
+          capability: 'analyze_markets',
+          onRun: () => _openTradingTool('chart', 'Opened the Trading Room chart. CHE\'s market analysis runs on the bars it shows; ask "analyze this market" for the structure read.'),
         ),
         CheDeskAction(
           icon: Icons.science_outlined,
           title: 'Backtesting Lab',
           body: 'Strategy tests with sample size, drawdown and out-of-sample checks.',
-          connected: integrations['backtesting'] == true,
-          connectorName: 'Backtest engine (CHE_BACKTEST_URL)',
-          onRun: () => _runHubPrompt(
-            'Open a backtesting task with me. Help me define the setup, rules, timeframe, data needed, sample size, drawdown and out-of-sample validation. Use the connected backtest system if available.',
-          ),
+          connected: true,
+          connectorName: '',
+          capability: 'backtesting_lab',
+          onRun: () => _openTradingTool('strategies', 'Opened the Strategy Lab: the research results by strategy and timeframe, with sample size, drawdown and out-of-sample checks.'),
         ),
         CheDeskAction(
           icon: Icons.functions,
           title: 'Custom Indicators',
           body: 'Indicator and scanner logic (VWAP, order blocks, custom rules).',
-          connected: integrations['backtesting'] == true,
-          connectorName: 'Historical data / backtest engine',
-          onRun: () => _runHubPrompt(
-            'Help me build a custom trading indicator or scanner. Ask only for the missing rules, then produce the logic and a validation plan.',
-          ),
+          connected: true,
+          connectorName: '',
+          capability: 'custom_indicators',
+          onRun: () => _openTradingTool('chart', 'Opened the Trading Room chart. Its Indicators menu has VWAP, EMA 9, 20, 50 and 200, RSI, Bollinger Bands, the session range and the opening range.'),
         ),
         CheDeskAction(
           icon: Icons.menu_book_rounded,
