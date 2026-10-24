@@ -36,6 +36,7 @@ import 'security/che_security_visibility.dart';
 import 'security/che_session_store.dart';
 import 'brain/che_brain_ledger_screen.dart';
 import 'brain/che_brain_truth_screen.dart';
+import 'rooms/che_cloud_computer_room.dart';
 import 'brain/che_brain_list.dart' show CheBrainRecordLinks;
 import 'brain/che_brain_sections.dart' show CheBrainEvidence, CheEvidenceKind, cheRecordIdsOf;
 import 'che_ui/che_owner_improvements.dart';
@@ -711,6 +712,18 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
     await Navigator.of(context).push(MaterialPageRoute<void>(
       builder: (_) => CheFilmStudioScreen(
         client: CheFilmClient(baseUrl: cheAgentBaseUrl, headers: () => _authHeaders),
+        onSpeak: (text) => unawaited(speakText(text, record: false, readOnDemand: true)),
+        onListen: () => unawaited(toggleListening()),
+      ),
+    ));
+  }
+
+  /// More → Cloud Computer (also "open your cloud computer" in chat): environments, jobs, approvals and costs.
+  Future<void> _openCloudComputer() async {
+    HapticFeedback.selectionClick();
+    await Navigator.of(context).push(MaterialPageRoute<void>(
+      builder: (_) => CheCloudComputerRoom(
+        client: CheCloudComputerClient(baseUrl: cheAgentBaseUrl, headers: () => _authHeaders),
         onSpeak: (text) => unawaited(speakText(text, record: false, readOnDemand: true)),
         onListen: () => unawaited(toggleListening()),
       ),
@@ -1607,7 +1620,7 @@ OWNER AGENCY
         ),
       3 => CheScreenReport(page: 'CHE World', tab: 'CHE World', tabs: tabs, controls: const ['the CHE World rooms', 'the bottom tabs']),
       4 => CheScreenReport(page: 'More', tab: 'More', tabs: tabs,
-          controls: const ['Talk to CHE', 'Security', 'Film Studio', 'Workflows', 'Trading Room', 'Conversations', 'Flagstaff', 'Voice IDs', 'Keys', 'UI Controls', 'Connections', 'Change CHE’s voice', 'Voice replies', 'Projects and Businesses', 'Language and translate', 'the bottom tabs']),
+          controls: const ['Talk to CHE', 'Security', 'Film Studio', 'Cloud Computer', 'Workflows', 'Trading Room', 'Conversations', 'Flagstaff', 'Voice IDs', 'Keys', 'UI Controls', 'Connections', 'Change CHE’s voice', 'Voice replies', 'Projects and Businesses', 'Language and translate', 'the bottom tabs']),
       _ => CheScreenReport(page: 'Home', tab: 'Home', tabs: tabs,
           detail: '${_officeRuntime.agents.length} agents, ${_officeRuntime.working} working',
           controls: const ['Talk to CHE', 'Type to CHE', 'Voice on or off', 'The Office', 'Brain', 'Trading', 'Create',
@@ -2363,6 +2376,13 @@ OWNER AGENCY
           title: 'Film Studio',
           subtitle: 'Films from one sentence on free compute, with real progress',
           onTap: () => unawaited(_openFilmStudio()),
+          hue: kit.CheColors.apps,
+        ),
+        CheMoreItem(
+          icon: Icons.cloud_rounded,
+          title: 'Cloud Computer',
+          subtitle: 'Where CHE\'s jobs run, what each environment has, approvals and costs',
+          onTap: () => unawaited(_openCloudComputer()),
           hue: kit.CheColors.apps,
         ),
         CheMoreItem(
