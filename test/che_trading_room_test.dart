@@ -197,7 +197,9 @@ void main() {
     await _tap(tester, find.byTooltip('Read chart aloud'));
     expect(spoken.single, contains('AAPL, 15m candles'));
 
-    // No timeframe in the reply: the chart opens on its default, as before.
+    // No timeframe in the reply: the chart opens on its default, as before. A fresh tree, so the room above
+    // (still expanded) is not reused.
+    await tester.pumpWidget(const SizedBox());
     final plain = _Server();
     await _pumpRoom(tester, plain, expand: false);
     expect(plain.requests.firstWhere((r) => r.url.path == '/api/trading/chart').url.queryParameters['tf'], '5m');
