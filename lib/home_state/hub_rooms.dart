@@ -489,47 +489,111 @@ extension _CheHomeHubRooms on _CHEHomeState {
 
   Widget _hubCreateTab(bool active) => _hubCreateScene(active);
 
-  Widget _hubCreateScene(bool active) {
-    return CheRoomSegments(
-      labels: const ['Projects', 'Art Studio', 'GPU Jobs'],
-      icons: const [Icons.collections_bookmark_outlined, Icons.palette_outlined, Icons.memory],
-      children: [
-        () => _createProjectsScene(active),
-        () => CheArtStudio(
-              baseUrl: () => cheAgentBaseUrl,
-              headers: () => _authHeaders,
-              onSaveToVault: (name, content) async {
-                await _postAgentJson('/api/vault/add', {'name': name, 'content': content, 'kind': 'art'});
-                await _loadAgentState(silent: true);
-              },
+  /// Create → Creative Studio, managed by Vale (lib/create/che_creative_studio.dart): one vertically scrolling page
+  /// with Create New, the Film, Music, Code and Art & Character studios, and Projects. Every button is an existing
+  /// handler; activity rows come only from real backend states.
+  Widget _hubCreateScene(bool active, {CheStudioSection? section}) {
+    _ensureOfficeRuntime();
+    return AnimatedBuilder(
+      animation: _officeRuntime,
+      builder: (context, _) {
+        final job = _officeRuntime.codingJob;
+        return CheCreativeStudio(
+          key: _creativeStudioKey,
+          initialSection: section,
+          active: active,
+          projects: projects,
+          vaultCount: vaultItems.length,
+          imageConnected: integrations['image_generation'] == true,
+          videoConnected: integrations['video_generation'] == true,
+          activity: [
+            if (job != null && job.active && job.label.isNotEmpty)
+              CheStudioActivity(title: 'Coding job', status: job.label, detail: job.speech, onTap: _openOfficeFloor),
+          ],
+          // GPU jobs on the owner's Colab T4 (gpu_queue.js), with Pair Colab; quiet until he presses Read aloud.
+          gpuJobs: CheGpuJobsCard(
+            baseUrl: cheAgentBaseUrl,
+            headers: _authHeaders,
+            active: active,
+            onRead: (text) => speakText(text, record: false, readOnDemand: true),
+          ),
+          creations: CheCreationsStrip(baseUrl: cheAgentBaseUrl, headers: _authHeaders, active: active),
+          onRead: (text) => speakText(text, record: false, readOnDemand: true),
+          actions: CheStudioActions(
+            onOpenFilmStudio: () => unawaited(_openFilmStudio()),
+            onNewVideo: () => _runHubPrompt('Create a video for me. Ask only for any essential missing detail, then use the connected CHE video generator if available.'),
+            onOpenTheater: () => _switchHubRoom(8),
+            onOpenMusic: () => _switchHubRoom(4),
+            onNewSong: () => _runHubPrompt('Make a song or beat with me in the Music Studio. Ask only for any essential missing detail first.'),
+            onNewApp: () => _runHubPrompt('Start a coding job: build an app, website or game for me. Ask only for any essential missing detail first.'),
+            onOpenCommandCenter: () => unawaited(_openCommandCenter()),
+            onOpenOffice: _openOfficeFloor,
+            onCharacterGenerator: _openCharacterGenerator,
+            onOpenArtStudio: _openArtStudio,
+            onNewImage: () => _runHubPrompt('Create an image for me. Ask only for any essential missing detail, then use the connected CHE image generator if available.'),
+            onNewProject: () => unawaited(_createProjectDialog()),
+            onOpenProject: _openProjectEditor,
+            onVault: () => unawaited(_openVault()),
+            onResearch: () => _runHubPrompt(
+              'Help me research the novelty and feasibility of the project I am working on. Use connected live research if available and clearly separate confirmed facts from assumptions.',
             ),
-        () => SingleChildScrollView(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Semantics(
-                    button: true,
-                    label: 'Open the Character Generator: edit CHE and the agents, then preview them on the GPU',
-                    excludeSemantics: true,
-                    child: FilledButton.icon(
-                      onPressed: _openCharacterGenerator,
-                      icon: const Icon(Icons.face_retouching_natural),
-                      label: const Text('Character Generator'),
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  CheGpuJobsCard(
-                    baseUrl: cheAgentBaseUrl,
-                    headers: _authHeaders,
-                    active: active,
-                    onRead: (text) => speakText(text, record: false, readOnDemand: true),
-                  ),
-                ],
-              ),
-            ),
-      ],
+            onInventions: () => unawaited(Navigator.of(context).push(CheInventionStudioPage.route(baseUrl: cheAgentBaseUrl, headers: _authHeaders))),
+            onShowroom: _openShowroom,
+          ),
+        );
+      },
     );
+  }
+
+  /// Opens Create (the Creative Studio) and, once it is built, scrolls to [section] or opens Create New.
+  void _openCreativeStudio({CheStudioSection? section, bool createNew = false}) {
+    void act() {
+      final studio = _creativeStudioKey.currentState;
+      if (studio == null) return;
+      if (createNew) {
+        unawaited(studio.showCreateNew());
+      } else if (section != null) {
+        studio.scrollTo(section);
+      }
+    }
+
+    if (_assistantHubOpen && _selectedTab == 5 && _creativeStudioKey.currentState != null) {
+      act();
+      return;
+    }
+    if (_assistantHubOpen) Navigator.of(context).pop();
+    Future<void>.delayed(Duration(milliseconds: _assistantHubOpen ? 180 : 0), () {
+      if (!mounted) return;
+      _openAssistantHub(tab: 5);
+      Future<void>.delayed(const Duration(milliseconds: 450), act);
+    });
+  }
+
+  /// Another room of the rooms sheet (Music 4, Theater 8): the sheet closes and reopens on that room, as the Workshop does.
+  void _switchHubRoom(int tab) {
+    HapticFeedback.selectionClick();
+    Navigator.of(context).pop();
+    Future<void>.delayed(const Duration(milliseconds: 180), () {
+      if (mounted) _openAssistantHub(tab: tab);
+    });
+  }
+
+  /// The Art Studio (pieces, engine, upscaler, save to vault) as its own page, opened from Art & Character Studio.
+  void _openArtStudio() {
+    HapticFeedback.selectionClick();
+    unawaited(Navigator.of(context).push(MaterialPageRoute<void>(
+      builder: (_) => Scaffold(
+        appBar: AppBar(title: const Text('Art Studio')),
+        body: CheArtStudio(
+          baseUrl: () => cheAgentBaseUrl,
+          headers: () => _authHeaders,
+          onSaveToVault: (name, content) async {
+            await _postAgentJson('/api/vault/add', {'name': name, 'content': content, 'kind': 'art'});
+            await _loadAgentState(silent: true);
+          },
+        ),
+      ),
+    )));
   }
 
   /// The Character Generator (lib/avatar/che_character_generator.dart). Opening it speaks nothing.
@@ -575,49 +639,6 @@ extension _CheHomeHubRooms on _CHEHomeState {
       _ => null,
     };
     if (route != null) unawaited(Navigator.of(context).push(route));
-  }
-
-  Widget _createProjectsScene(bool active) {
-    return CreateGalleryScene(
-      active: active,
-      projects: projects,
-      vaultCount: vaultItems.length,
-      researchConnected: integrations['web_research'] == true,
-      imageConnected: integrations['image_generation'] == true,
-      videoConnected: integrations['video_generation'] == true,
-      creations: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          CheCreationsStrip(baseUrl: cheAgentBaseUrl, headers: _authHeaders, active: active),
-          const SizedBox(height: 20),
-          // GPU jobs on the owner's Colab T4 (gpu_queue.js); quiet until he presses Read aloud.
-          CheGpuJobsCard(
-            baseUrl: cheAgentBaseUrl,
-            headers: _authHeaders,
-            active: active,
-            onRead: (text) => speakText(text, record: false, readOnDemand: true),
-          ),
-        ],
-      ),
-      onInventions: () => unawaited(Navigator.of(context).push(CheInventionStudioPage.route(baseUrl: cheAgentBaseUrl, headers: _authHeaders))),
-      onShowroom: _openShowroom,
-      onNewProject: () {
-        unawaited(_createProjectDialog());
-      },
-      onOpenProject: _openProjectEditor,
-      onVault: () {
-        unawaited(_openVault());
-      },
-      onResearch: () => _runHubPrompt(
-        'Help me research the novelty and feasibility of the project I am working on. Use connected live research if available and clearly separate confirmed facts from assumptions.',
-      ),
-      onImage: () => _runHubPrompt(
-        'Create an image for me. Ask only for any essential missing detail, then use the connected CHE image generator if available.',
-      ),
-      onVideo: () => _runHubPrompt(
-        'Create a video for me. Ask only for any essential missing detail, then use the connected CHE video generator if available.',
-      ),
-    );
   }
 
   void _openOfficeFloor({String? agentName}) {
