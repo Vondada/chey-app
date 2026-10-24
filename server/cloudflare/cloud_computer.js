@@ -361,20 +361,22 @@ export async function runCloudTask(job, { env = {}, fetcher = fetch, now = Date.
   const cloud = job.cloud || {};
   if (!cloud.dispatched_at) {
     const at = new Date(now).toISOString();
-    const sent = await gh(env, 'POST', `/actions/workflows/${TESTS_WORKFLOW}/dispatches`, { ref: 'main' }, fetcher);
+    // GitHub answers a dispatch with 204 and no run id. This dispatch carries its own id, which flutter-check.yml puts
+    // in the run's title (run-name), so the run is found by that title alone; a concurrent dispatch never matches.
+    const dispatchId = testsDispatchId(job.id, now);
+    const sent = await gh(env, 'POST', `/actions/workflows/${TESTS_WORKFLOW}/dispatches`, { ref: 'main', inputs: { che_dispatch_id: dispatchId } }, fetcher);
     if (!(sent.status === 204 || sent.ok)) return fail(explainGithubError(sent.status, sent.data?.message), { cloud: { phase: 'dispatch_failed' } });
-    // GitHub answers 204 with no run id; the newest dispatch run created after `at` is this one (same rule as appBuildRun).
-    const run = await findDispatchedRun(env, at, fetcher);
+    const run = await findDispatchedRun(env, { dispatchId }, fetcher);
     const note = run ? `Dispatched ${TESTS_WORKFLOW}; GitHub run ${run.id}.` : `Dispatched ${TESTS_WORKFLOW}; GitHub accepted it (204) and the run id is not visible yet.`;
     return {
       id: job.id, status: 'queued', attempts: 0, retry_at: now + POLL_MS, result: '', error: '',
-      cloud: { phase: 'dispatched', started_at: at, dispatched_at: at, run_id: run?.id || null, html_url: run?.html_url || '', log: logLine(job, note) },
+      cloud: { phase: 'dispatched', started_at: at, dispatched_at: at, dispatch_id: dispatchId, run_id: run?.id || null, html_url: run?.html_url || '', log: logLine(job, note) },
     };
   }
   let runId = cloud.run_id;
   let htmlUrl = cloud.html_url || '';
   if (!runId) {
-    const run = await findDispatchedRun(env, cloud.dispatched_at, fetcher);
+    const run = await findDispatchedRun(env, { dispatchId: cloud.dispatch_id, at: cloud.dispatched_at, known: cloud.known_run_ids }, fetcher);
     if (!run) {
       if (now - Date.parse(cloud.dispatched_at) > NEVER_STARTED_MS) return fail('GitHub never started the test run: no run appeared 15 minutes after the dispatch. Nothing was tested.', { cloud: { phase: 'never_started' } });
       return { id: job.id, status: 'queued', attempts: 0, retry_at: now + POLL_MS, result: '', error: '', cloud: { phase: 'waiting_for_runner', log: logLine(job, 'Waiting for GitHub to show the run.') } };
@@ -404,10 +406,37 @@ export async function runCloudTask(job, { env = {}, fetcher = fetch, now = Date.
   });
 }
 
-async function findDispatchedRun(env, at, fetcher) {
-  const runs = await gh(env, 'GET', `/actions/workflows/${TESTS_WORKFLOW}/runs?event=workflow_dispatch&branch=main&per_page=5`, null, fetcher);
-  if (!runs.ok) return null;
-  return (runs.data?.workflow_runs || []).find((r) => Date.parse(r.created_at || 0) >= Date.parse(at) - 60_000) || null;
+/** The workflow's recent dispatch runs, newest first as GitHub lists them; null when GitHub did not answer. */
+async function listDispatchRuns(env, fetcher) {
+  const runs = await gh(env, 'GET', `/actions/workflows/${TESTS_WORKFLOW}/runs?event=workflow_dispatch&branch=main&per_page=20`, null, fetcher);
+  return runs.ok ? (Array.isArray(runs.data?.workflow_runs) ? runs.data.workflow_runs : []) : null;
+}
+
+/** The title flutter-check.yml gives a run dispatched with `che_dispatch_id` (its run-name). */
+export const TESTS_RUN_TITLE_PREFIX = 'CHE cloud tests ';
+
+/** A dispatch-specific id: the job id plus the dispatch time, so a retried job's new run never matches an old title. */
+export function testsDispatchId(jobId, now = Date.now()) {
+  return `${String(jobId || 'job').replace(/[^A-Za-z0-9_-]/g, '').slice(0, 48) || 'job'}-${Number(now).toString(36)}`;
+}
+
+/**
+ * This job's run, or null while it cannot be told apart. With a dispatch id, only the one run titled with it counts:
+ * none (not listed yet) or more than one (ambiguous) leaves the job unassociated instead of guessing. A job dispatched
+ * before dispatch ids existed has only its pre-dispatch snapshot: it takes a new run only when exactly one appeared.
+ */
+async function findDispatchedRun(env, { dispatchId = '', at = '', known = [] } = {}, fetcher) {
+  const runs = await listDispatchRuns(env, fetcher);
+  if (!runs) return null;
+  if (dispatchId) {
+    const title = `${TESTS_RUN_TITLE_PREFIX}${dispatchId}`;
+    const own = runs.filter((r) => r?.id != null && String(r.display_title || r.name || '') === title);
+    return own.length === 1 ? own[0] : null;
+  }
+  const skip = new Set((Array.isArray(known) ? known : []).map(String));
+  const since = Date.parse(at) - 60_000;
+  const fresh = runs.filter((r) => r?.id != null && !skip.has(String(r.id)) && Date.parse(r.created_at || 0) >= since);
+  return fresh.length === 1 ? fresh[0] : null;
 }
 
 async function failedSteps(env, runId, fetcher) {
@@ -462,7 +491,7 @@ export function speakFacts(f) {
 
 /**
  * Start a handoff kind through its EXISTING starter. `ctx`: { env, fetcher, queueSelfDevelopment, rea, startVideo,
- * confirmed }. App builds need ctx.confirmed === true. Nothing paid is ever started.
+ * onAppBuildDispatched, confirmed }. App builds need ctx.confirmed === true. Nothing paid is ever started.
  */
 export async function startCloudTask(kind, params = {}, ctx = {}) {
   const env = ctx.env || {};
@@ -494,8 +523,16 @@ export async function startCloudTask(kind, params = {}, ctx = {}) {
       return { ok: Boolean(result?.ok), started: Boolean(result?.ok), kind, provider: pick.provider, task_id: result?.task_id || null, reason: result?.ok ? '' : String(result?.error || 'The renderer refused.').slice(0, 300) };
     }
     case 'ios_build': case 'ios_patch': {
-      const result = await dispatchAppBuild(env, kind === 'ios_patch' ? 'patch' : 'release', fetcher);
-      return { ok: result.ok, started: result.ok, kind, provider: pick.provider, workflow: result.workflow || '', dispatched_at: result.ok ? new Date().toISOString() : null, reason: result.ok ? '' : result.detail };
+      const mode = kind === 'ios_patch' ? 'patch' : 'release';
+      const dispatchedAt = new Date().toISOString();
+      const result = await dispatchAppBuild(env, mode, fetcher);
+      // The same receipt as the chat path: the Worker records the build and queues verify_app_build, so the owner
+      // hears "shipped" or "failed" from GitHub's result, not only "started".
+      let tracked = false;
+      if (result.ok && typeof ctx.onAppBuildDispatched === 'function') {
+        try { await ctx.onAppBuildDispatched(mode, dispatchedAt); tracked = true; } catch (_) { tracked = false; }
+      }
+      return { ok: result.ok, started: result.ok, kind, provider: pick.provider, workflow: result.workflow || '', dispatched_at: result.ok ? dispatchedAt : null, tracked, reason: result.ok ? '' : result.detail };
     }
     default:
       return { ok: false, started: false, kind, provider: pick.provider, reason: `${kind} has no starter in the Cloud Computer.` };
@@ -589,7 +626,8 @@ export async function cloudJobs(storage, env = {}) {
   for (const item of Array.isArray(media) ? media : []) {
     if (item?.blob !== 'github-artifact') continue;
     const kind = item.mode === 'edit' ? 'edit_render' : 'video_render';
-    const id = String(item.task_id || item.root_id || item.id);
+    // media.js stores the GitHub dispatch id (gha_…) as render_task_id; the dispatch stamps are keyed by that id.
+    const id = String(item.render_task_id || item.task_id || item.root_id || item.id);
     finished.add(id);
     rows.push(row({
       id, kind, title: item.title || kind, agent: 'Lyra', provider: 'github_ubuntu', tools: ['ffmpeg', ...(kind === 'video_render' ? ['piper-tts', 'espeak-ng'] : ['Pillow'])],
@@ -704,6 +742,9 @@ export function speakStartResult(r) {
   if (r.kind === 'coding') return r.deduplicated ? `That coding job is already queued, sir (${short(r.job_id)}).` : `Coding job ${short(r.job_id)} is queued for the coding team on ${where}, sir.`;
   if (r.kind === 'video_render') return `The video render ${r.task_id || ''} was dispatched on ${where}, sir. I will call it done only when a verified MP4 comes back.`;
   if (r.kind === 'browser' || r.kind === 'research') return r.text || `REA started on ${where}, sir.`;
+  if (r.kind === 'ios_build' || r.kind === 'ios_patch') {
+    return `Started the ${r.kind === 'ios_patch' ? 'app update' : 'iPhone build'} on ${where}, sir.${r.tracked ? ' I will tell you when GitHub reports it shipped or failed.' : ' I could not set up the finish report, so check the run on GitHub.'}`;
+  }
   return `Started ${String(r.kind).replace(/_/g, ' ')} on ${where}, sir.`;
 }
 

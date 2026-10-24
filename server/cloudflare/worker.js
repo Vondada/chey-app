@@ -6112,6 +6112,18 @@ export class CheState extends DurableObject {
     return ndjsonReply(`/${command.id} has no runner, sir. Nothing was run.`, { source: 'che_command', ok: false, model_calls: 0 });
   }
 
+  /**
+   * After an app build or patch dispatch (chat "update my phone", or the Cloud Computer's ios_build/ios_patch):
+   * remember it for "app build status" and queue verify_app_build, which reports shipped or failed from GitHub.
+   */
+  async recordAppBuildDispatch(mode, dispatchedAt) {
+    await this.ctx.storage.put(APP_BUILD_KEY, { mode, dispatched_at: dispatchedAt, state: 'dispatched' });
+    const current = await this.loadData();
+    enqueueJob(current, { kind: 'verify_app_build', title: `Verify ${mode === 'patch' ? 'app update' : 'iPhone build'}`, prompt: dispatchedAt, build_mode: mode, dispatched_at: dispatchedAt, idempotency_key: `app_build:${mode}:${dispatchedAt}`, retry_at: Date.now() + 120_000 });
+    await this.ctx.storage.put('che', current);
+    await this.scheduleWork();
+  }
+
   // ─── Cloud Computer (cloud_computer.js) ─────────────────────────────────
   // One manager over the existing compute. Handoff kinds go to their existing starters; repo tests become a
   // cloud_task job in this queue that waits for the owner's approval; file inspection finishes on the Worker.
@@ -6125,6 +6137,7 @@ export class CheState extends DurableObject {
         queueSelfDevelopment: (args) => this.queueSelfDevelopment(args),
         rea: (text) => handleReaRequest(this.ctx.storage, env, text, this.reaOptions({ history: [], owner: true })),
         startVideo: (topic, seconds) => startGithubVideo(env, topic, seconds),
+        onAppBuildDispatched: (mode, dispatchedAt) => this.recordAppBuildDispatch(mode, dispatchedAt),
       });
       return { ...result, plan, spoken: speakStartResult(result) };
     }
@@ -12532,11 +12545,7 @@ export class CheState extends DurableObject {
           const dispatchedAt = new Date().toISOString();
           const sent = await dispatchAppBuild(this.env, appBuild.mode);
           if (!sent.ok) return ndjsonReply(`I could not start the ${appBuild.mode === 'patch' ? 'app update' : 'iPhone build'}, sir. ${sent.detail} Nothing was changed.`, { source: 'che_app_build', ok: false });
-          await this.ctx.storage.put(APP_BUILD_KEY, { mode: appBuild.mode, dispatched_at: dispatchedAt, state: 'dispatched' });
-          const current = await this.loadData();
-          enqueueJob(current, { kind: 'verify_app_build', title: `Verify ${appBuild.mode === 'patch' ? 'app update' : 'iPhone build'}`, prompt: dispatchedAt, build_mode: appBuild.mode, dispatched_at: dispatchedAt, idempotency_key: `app_build:${appBuild.mode}:${dispatchedAt}`, retry_at: Date.now() + 120_000 });
-          await this.ctx.storage.put('che', current);
-          await this.scheduleWork();
+          await this.recordAppBuildDispatch(appBuild.mode, dispatchedAt);
           return ndjsonReply(appBuild.mode === 'patch'
             ? 'I started your app update, sir. It usually takes 15 to 30 minutes. I will tell you when it is ready; then close and reopen me to get it.'
             : 'I started a new iPhone app build, sir. It takes up to an hour. I will tell you when it finishes or if it fails.', { source: 'che_app_build', workflow: sent.workflow });

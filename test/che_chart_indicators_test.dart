@@ -2,6 +2,7 @@
 import 'dart:convert';
 
 import 'package:chey/rooms/che_chart_indicators.dart';
+import 'package:chey/rooms/che_live_chart.dart';
 import 'package:chey/rooms/che_ticker_selector.dart';
 import 'package:chey/rooms/che_trading_chart.dart';
 import 'package:flutter/material.dart';
@@ -53,6 +54,21 @@ void main() {
     expect(r.high, 241, reason: 'first six 5-minute bars of the session');
     expect(r.low, 199);
     expect(openingRange(_bars([1, 2, 3], step: const Duration(hours: 1))), isNull, reason: 'hourly bars cannot show a 30-minute range');
+  });
+
+  test('the opening range is anchored to the session start and needs the whole opening interval loaded', () {
+    final closes = <double>[200, 210, 205, 220, 230, 240, 250, 260];
+    final midSession = _bars(closes, start: DateTime.utc(2026, 10, 24, 0, 10));
+    expect(openingRange(midSession), isNull, reason: 'history that starts at 00:10 does not hold the 00:00 open');
+    final gap = _bars(closes, start: DateTime.utc(2026, 10, 24))..removeAt(2);
+    expect(openingRange(gap), isNull, reason: 'a missing bar inside the first 30 minutes leaves the range incomplete');
+    final forming = _bars([200, 210, 205], start: DateTime.utc(2026, 10, 24));
+    expect(openingRange(forming), isNull, reason: 'the range is not finished at 00:15');
+    // Futures: the session opens at 22:00 UTC the evening before.
+    final futures = _bars(closes, start: DateTime.utc(2026, 10, 23, 22));
+    expect(sessionStartOf(futures.last.t, futures: true), DateTime.utc(2026, 10, 23, 22));
+    expect(openingRange(futures, futures: true), (high: 241.0, low: 199.0));
+    expect(openingRange(_bars(closes, start: DateTime.utc(2026, 10, 23, 22, 30)), futures: true), isNull, reason: 'futures history from 22:30 misses the open');
   });
 
   test('the spoken summary names each switched-on indicator and says they are not signals', () {
@@ -164,6 +180,14 @@ void main() {
     expect(find.byKey(const Key('chart_rsi')), findsOneWidget);
     expect(key.currentState!.summary, contains('Indicators (drawing aids, not signals): EMA 9 '));
     expect((await SharedPreferences.getInstance()).getStringList('trading_chart_indicators'), ['ema9', 'rsi']);
+    expect(CheLiveChart.indicators.value, {'ema9', 'rsi'}, reason: 'taps are shared with voice');
+    // "CHE, turn off RSI and turn on VWAP" from chat: the open chart follows and saves it.
+    CheLiveChart.indicators.value = CheChartCommand.parse('turn off RSI and turn on VWAP')!.applyIndicators(CheLiveChart.indicators.value);
+    await tester.pumpAndSettle();
+    expect(key.currentState!.indicators, {'ema9', 'vwap'});
+    expect(find.byKey(const Key('chart_rsi')), findsNothing);
+    expect((await SharedPreferences.getInstance()).getStringList('trading_chart_indicators'), ['ema9', 'vwap']);
     await tester.pumpWidget(const SizedBox());
+    CheLiveChart.indicators.value = <String>{};
   });
 }

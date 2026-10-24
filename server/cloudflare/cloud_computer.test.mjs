@@ -6,8 +6,9 @@ import test from 'node:test';
 import { replyFromNdjson } from './brain_memory.js';
 import { EXECUTION } from './capability_registry.js';
 import { commandById } from './command_catalog.js';
+import { APP_BUILD_KEY } from './app_builds.js';
 import {
-  CLOUD_JOB_KIND, MISSING, PROVIDERS, TEMPLATES, approveCloudJob, cancelCloudJob, cloudIntent, explainGithubError, inspectFile,
+  CLOUD_JOB_KIND, MISSING, PROVIDERS, TEMPLATES, approveCloudJob, cancelCloudJob, cloudIntent, cloudJobs, explainGithubError, inspectFile,
   parseControl, requestCloudWork, retryCloudJob, runCloudTask, selectProvider, startCloudTask, stopCloudJob,
 } from './cloud_computer.js';
 
@@ -15,17 +16,32 @@ import {
 const calls = [];
 let github = { runStatus: 'in_progress', conclusion: null, cancel: 202, dispatch: 204 };
 const RUN = { id: 777, html_url: 'https://github.com/Vondada/chey-app/actions/runs/777' };
+// Like GitHub, every accepted dispatch creates a new run (777, 778, ...); `hidden` runs are not listed yet.
+let ghRuns = [];
+let nextRunId = 777;
+const resetGithub = () => { github = { runStatus: 'in_progress', conclusion: null, cancel: 202, dispatch: 204 }; ghRuns = []; nextRunId = 777; };
+const addRun = (id, extra = {}) => { const run = { id, html_url: `https://github.com/Vondada/chey-app/actions/runs/${id}`, created_at: new Date().toISOString(), ...extra }; ghRuns.push(run); return run; };
 async function fakeFetch(input, init = {}) {
   const url = new URL(String(input?.url || input));
   const method = init.method || 'GET';
   if (url.host !== 'api.github.com') throw new TypeError(`fetch failed (offline test: ${url.host})`);
   calls.push({ method, path: url.pathname + url.search, body: init.body ? JSON.parse(init.body) : null });
   const reply = (status, body) => new Response(body === null ? null : JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
-  if (method === 'POST' && url.pathname.endsWith('/actions/workflows/flutter-check.yml/dispatches')) return reply(github.dispatch, github.dispatch === 204 ? null : { message: 'Resource not accessible by integration' });
-  if (method === 'GET' && url.pathname.endsWith('/actions/workflows/flutter-check.yml/runs')) return reply(200, { workflow_runs: [{ ...RUN, created_at: new Date().toISOString() }] });
-  if (method === 'GET' && url.pathname.endsWith('/actions/runs/777')) return reply(200, { ...RUN, status: github.runStatus, conclusion: github.conclusion });
-  if (method === 'GET' && url.pathname.endsWith('/actions/runs/777/jobs')) return reply(200, { jobs: [{ name: 'analyze', steps: [{ name: 'flutter analyze', conclusion: 'success' }, { name: 'flutter test', conclusion: 'failure' }] }] });
-  if (method === 'POST' && url.pathname.endsWith('/actions/runs/777/cancel')) return reply(github.cancel, {});
+  const runPath = url.pathname.match(/\/actions\/runs\/(\d+)(\/jobs|\/cancel)?$/);
+  const run = runPath && ghRuns.find((r) => String(r.id) === runPath[1]);
+  if (method === 'POST' && url.pathname.endsWith('/actions/workflows/flutter-check.yml/dispatches')) {
+    // flutter-check.yml's run-name titles a run with the dispatch's che_dispatch_id; without one GitHub uses the workflow name.
+    const tag = JSON.parse(init.body || '{}')?.inputs?.che_dispatch_id;
+    if (github.dispatch === 204) addRun(nextRunId++, { hidden: Boolean(github.hideNewRuns), display_title: tag ? `CHE cloud tests ${tag}` : 'Check CHE Flutter client' });
+    return reply(github.dispatch, github.dispatch === 204 ? null : { message: 'Resource not accessible by integration' });
+  }
+  if (method === 'POST' && /\/actions\/workflows\/che-(?:shorebird|iphone-ipa)\.yml\/dispatches$/.test(url.pathname)) return reply(204, null);
+  if (method === 'GET' && url.pathname.endsWith('/actions/workflows/flutter-check.yml/runs')) {
+    return reply(200, { workflow_runs: ghRuns.filter((r) => !r.hidden).sort((a, b) => b.id - a.id).map(({ hidden, ...r }) => r) });
+  }
+  if (method === 'GET' && run && !runPath[2]) return reply(200, { ...run, status: github.runStatus, conclusion: github.conclusion });
+  if (method === 'GET' && run && runPath[2] === '/jobs') return reply(200, { jobs: [{ name: 'analyze', steps: [{ name: 'flutter analyze', conclusion: 'success' }, { name: 'flutter test', conclusion: 'failure' }] }] });
+  if (method === 'POST' && run && runPath[2] === '/cancel') return reply(github.cancel, {});
   if (method === 'GET' && url.pathname.endsWith('/pulls')) return reply(200, [{ number: 512, title: 'Truth receipts', html_url: 'https://github.com/Vondada/chey-app/pull/512', draft: false, head: { ref: 'x' } }]);
   return reply(404, { message: 'Not Found' });
 }
@@ -147,6 +163,7 @@ test('A. "create a Blender animation" checks existing resources first, then name
 
 test('B. "run your coding tests" prepares a flutter-check.yml job that waits for approval; approval dispatches it and GitHub decides pass or fail', async () => {
   const che = await owner({ env: GH_ENV });
+  resetGithub();
   calls.length = 0;
   const asked = await che.say('Run your coding tests');
   assert.equal(asked.route, 'che_cloud_computer');
@@ -178,7 +195,8 @@ test('B. "run your coding tests" prepares a flutter-check.yml job that waits for
   await che.state.processJobs();
   const dispatch = calls.find((c) => c.method === 'POST');
   assert.equal(dispatch.path, '/repos/Vondada/chey-app/actions/workflows/flutter-check.yml/dispatches');
-  assert.deepEqual(dispatch.body, { ref: 'main' });
+  assert.equal(dispatch.body.ref, 'main');
+  assert.match(dispatch.body.inputs.che_dispatch_id, /^[A-Za-z0-9_-]+-[0-9a-z]+$/, 'each dispatch carries its own correlation id');
   let stored = che.jobs().find((j) => j.id === job.id);
   assert.equal(stored.status, 'queued', 'waiting on GitHub');
   assert.equal(stored.cloud.run_id, 777);
@@ -265,7 +283,7 @@ test('E. the job state machine: approve, cancel, stop, retry, failure explained 
   assert.equal(b.approval.approved_via, 'owner_retry');
 
   calls.length = 0;
-  github = { runStatus: 'in_progress', conclusion: null, cancel: 202, dispatch: 204 };
+  resetGithub();
   const first = await runCloudTask(b, { env, fetcher: fakeFetch });
   assert.equal(first.status, 'queued');
   b.cloud = { ...b.cloud, ...first.cloud };
@@ -284,7 +302,9 @@ test('E. the job state machine: approve, cancel, stop, retry, failure explained 
   github.runStatus = 'completed'; github.conclusion = 'failure';
   const done = await runCloudTask(c, { env, fetcher: fakeFetch });
   assert.equal(done.status, 'failed');
-  assert.match(done.error, /did not pass: GitHub run 777 finished with "failure"; failed steps: analyze: flutter test\./);
+  // The retry is its own dispatch, so it is GitHub's next run, not the stopped 777.
+  assert.equal(c.cloud.run_id, 778);
+  assert.match(done.error, /did not pass: GitHub run 778 finished with "failure"; failed steps: analyze: flutter test\./);
   c.status = done.status;
   assert.equal(retryCloudJob(data, 'nope', enqueueJob).ok, false);
 
@@ -311,6 +331,110 @@ test('E. the job state machine: approve, cancel, stop, retry, failure explained 
   assert.match(notStopped.reason, /The run was not stopped\./);
   assert.notEqual(f.status, 'cancelled');
   github.cancel = 202;
+});
+
+// ─── Codex follow-ups (#514): run correlation, app-build receipts, media ids ───
+
+test('a test job takes the run titled with its own dispatch id, never an older or concurrent run', async () => {
+  const data = newData();
+  resetGithub();
+  // Someone else's manual run, created seconds ago (inside the old one-minute window).
+  addRun(776, { display_title: 'Check CHE Flutter client' });
+  nextRunId = 777;
+  const job = requestCloudWork(data, { kind: 'repo_tests' }, { env: GH_ENV, enqueue: enqueueJob }).job;
+  approveCloudJob(data, job.id);
+  calls.length = 0;
+  const first = await runCloudTask(job, { env: GH_ENV, fetcher: fakeFetch });
+  assert.deepEqual(calls.map((c) => c.method).slice(0, 1), ['POST'], 'no pre-dispatch snapshot is needed');
+  assert.ok(first.cloud.dispatch_id);
+  assert.equal(first.cloud.run_id, 777, 'run 776 does not carry this dispatch id, so it is not this job');
+
+  // The reviewer's case: nothing existed before the dispatch, a concurrent dispatch created run 101, and ours is 102.
+  // Oldest-new-run picking would take 101 and stopCloudJob could cancel someone else's run.
+  resetGithub();
+  github.hideNewRuns = true;
+  nextRunId = 102;
+  const later = requestCloudWork(newData(), { kind: 'repo_tests' }, { env: GH_ENV, enqueue: enqueueJob }).job;
+  approveCloudJob({ jobs: [later] }, later.id);
+  const d = await runCloudTask(later, { env: GH_ENV, fetcher: fakeFetch });
+  assert.equal(d.cloud.run_id, null, 'no visible run yet: nothing is guessed');
+  later.cloud = { ...later.cloud, ...d.cloud };
+  addRun(101, { display_title: 'CHE cloud tests some-other-job-1x', created_at: new Date(Date.now() - 5_000).toISOString() });
+  const waiting = await runCloudTask(later, { env: GH_ENV, fetcher: fakeFetch });
+  assert.equal(waiting.cloud.phase, 'waiting_for_runner', 'the concurrent run 101 is visible but is not ours');
+  later.cloud = { ...later.cloud, ...waiting.cloud };
+  assert.equal(later.cloud.dispatch_id, d.cloud.dispatch_id, 'the dispatch id survives the waiting polls');
+  for (const r of ghRuns) r.hidden = false;
+  github.runStatus = 'completed'; github.conclusion = 'success';
+  const done = await runCloudTask(later, { env: GH_ENV, fetcher: fakeFetch });
+  assert.equal(done.status, 'complete');
+  assert.match(done.result, /GitHub run 102 of flutter-check\.yml finished with success/, 'run 102 carries this dispatch id; 101 is never taken');
+
+  // Two runs with the same title is ambiguous: the job stays unassociated rather than guessing.
+  resetGithub();
+  const twin = requestCloudWork(newData(), { kind: 'repo_tests' }, { env: GH_ENV, enqueue: enqueueJob }).job;
+  approveCloudJob({ jobs: [twin] }, twin.id);
+  const t1 = await runCloudTask(twin, { env: GH_ENV, fetcher: fakeFetch });
+  addRun(900, { display_title: `CHE cloud tests ${t1.cloud.dispatch_id}` });
+  twin.cloud = { ...twin.cloud, ...t1.cloud, run_id: null };
+  const t2 = await runCloudTask(twin, { env: GH_ENV, fetcher: fakeFetch });
+  assert.equal(t2.cloud.phase, 'waiting_for_runner');
+  assert.equal(t2.cloud.run_id, undefined, 'no run id is recorded while two runs share the title');
+
+  // A job dispatched before dispatch ids existed takes a new run only when exactly one appeared.
+  resetGithub();
+  addRun(500, { display_title: 'Check CHE Flutter client' });
+  addRun(501, { display_title: 'Check CHE Flutter client' });
+  const legacy = { ...later, status: 'queued', cloud: { phase: 'dispatched', dispatched_at: new Date(Date.now() - 10_000).toISOString(), known_run_ids: [], run_id: null } };
+  const l1 = await runCloudTask(legacy, { env: GH_ENV, fetcher: fakeFetch });
+  assert.equal(l1.cloud.phase, 'waiting_for_runner', 'two new runs and no dispatch id: unassociated');
+  legacy.cloud.known_run_ids = [500];
+  const l2 = await runCloudTask(legacy, { env: GH_ENV, fetcher: fakeFetch });
+  assert.equal(l2.cloud.run_id, 501);
+  resetGithub();
+});
+
+test('an app build started from the Cloud Computer is recorded and verified like the chat path', async () => {
+  const hooked = [];
+  const refused = await startCloudTask('ios_patch', {}, { env: GH_ENV, fetcher: fakeFetch, onAppBuildDispatched: async () => assert.fail('no yes, no build') });
+  assert.equal(refused.needs_confirmation, true);
+  const out = await startCloudTask('ios_patch', {}, { env: GH_ENV, fetcher: fakeFetch, confirmed: true, onAppBuildDispatched: async (mode, at) => { hooked.push({ mode, at }); } });
+  assert.equal(out.ok, true);
+  assert.equal(out.tracked, true);
+  assert.deepEqual(hooked.map((h) => h.mode), ['patch']);
+  assert.equal(hooked[0].at, out.dispatched_at);
+  const release = await startCloudTask('ios_build', {}, { env: GH_ENV, fetcher: fakeFetch, confirmed: true, onAppBuildDispatched: async (mode) => { hooked.push({ mode }); } });
+  assert.equal(release.ok, true);
+  assert.equal(hooked.at(-1).mode, 'release');
+
+  // Through the real Worker route: APP_BUILD_KEY is stored and verify_app_build is queued, as "update my phone" does.
+  const che = await owner({ env: GH_ENV });
+  const res = await che.post('/api/cloud-computer/start', { kind: 'ios_patch', confirmed: true });
+  assert.equal(res.body.ok, true);
+  assert.equal(res.body.tracked, true);
+  assert.match(res.body.spoken, /I will tell you when GitHub reports it shipped or failed\./);
+  const build = che.saved.get(APP_BUILD_KEY);
+  assert.equal(build.mode, 'patch');
+  assert.equal(build.state, 'dispatched');
+  assert.equal(build.dispatched_at, res.body.dispatched_at);
+  const verify = che.jobs().find((j) => j.kind === 'verify_app_build');
+  assert.ok(verify, 'verify_app_build is queued');
+  assert.equal(verify.build_mode, 'patch');
+  assert.equal(verify.dispatched_at, res.body.dispatched_at);
+});
+
+test('a finished GitHub video matches its dispatch by render_task_id, so it is listed once as complete', async () => {
+  const saved = new Map([
+    ['media_index', [{ id: 'media-uuid-1', root_id: 'media-uuid-1', blob: 'github-artifact', kind: 'video', mode: 'render', title: 'Gold explainer', render_task_id: 'gha_abc123', verified: true, width: 1080, height: 1920, duration_seconds: 15, created_at: '2026-10-24T10:00:00.000Z' }]],
+    ['che_video_dispatched:gha_abc123', { at: Date.parse('2026-10-24T09:50:00Z'), topic: 'Gold explainer' }],
+    ['che_video_dispatched:gha_still_running', { at: Date.parse('2026-10-24T09:55:00Z'), topic: 'Silver' }],
+  ]);
+  const ledger = await cloudJobs(storageFor(saved), GH_ENV);
+  const rows = (Array.isArray(ledger) ? ledger : ledger.jobs).filter((r) => String(r.id).startsWith('gha_'));
+  const done = rows.filter((r) => r.id === 'gha_abc123');
+  assert.equal(done.length, 1, 'no second "no finished file" row for a finished video');
+  assert.equal(done[0].status, 'complete');
+  assert.equal(rows.find((r) => r.id === 'gha_still_running').status, 'unverified');
 });
 
 // ─── Routes, voice and the catalog ──────────────────────────────────────────
