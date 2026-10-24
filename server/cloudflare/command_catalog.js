@@ -593,6 +593,14 @@ export const COMMANDS = Object.freeze([
     examples: ['Audit the trades', 'Run a trade audit'],
     prompt: 'Audit the trades.', produces: 'audit', evidence: 'Real counts from the stored records; nothing is altered.', keywords: ['audit', 'duplicates', 'look-ahead', 'trade audit'],
   }),
+  // The trading P&L calendar (owner, 2026-10-24): che_calendars.js through its own chat route. Read only.
+  C('trade-calendar', 'trading', 'EXPLORE', 'The monthly P&L calendar, per record set.', {
+    title: 'Trading P&L Calendar',
+    does: 'Reads this month\'s closed trades day by day: net P&L, wins and losses, win rate, weekly subtotals and the month. Simulation (in R), forward paper and broker are separate and never added together. Tapping a day lists its trades, each opening its replay. Changes nothing.',
+    needs: ['office'], route: 'che_calendars', handler: 'che_calendars.tradingCalendar', input: null,
+    examples: ['Open my trading calendar', 'Show the P&L calendar for the simulation'],
+    prompt: 'Open my trading calendar.', produces: 'pnl calendar', evidence: 'Stored trade records only, one per trade ID; an empty month stays empty.', keywords: ['calendar', 'p&l calendar', 'pnl calendar', 'monthly', 'trading calendar'],
+  }),
   // Orion's crypto desk (owner master mission, 2026-10-23): crypto_markets.js through its own chat route.
   C('trade-crypto', 'trading', 'EXPLORE', "Orion: BTC and ETH research and paper trading, 24/7.", {
     title: 'Orion Crypto Desk',
@@ -981,6 +989,15 @@ export const COMMANDS = Object.freeze([
     prompt: 'Who runs the Office departments?', produces: 'org chart',
     evidence: 'The roster and stored Office tasks only; tool status is configured, not configured or not checked.',
     cost: 'Free: no AI engine is used.', keywords: ['org chart', 'departments', 'department heads', 'chain of command', 'who runs'],
+  }),
+  C('office-calendar', 'office', 'EXPLORE', 'What the Office did, day by day.', {
+    title: 'Office Calendar',
+    does: 'Reads each day\'s recorded work: completed jobs, active jobs, pending tasks, approvals, failures, milestones and who finished what, green, yellow or red. Tapping a day opens its jobs with their receipts. Changes nothing.',
+    needs: ['office'], route: 'che_calendars', handler: 'che_calendars.officeCalendar', input: null,
+    examples: ['Show the office calendar for September', 'What did we do yesterday?'],
+    prompt: 'Show the office calendar.', produces: 'office calendar',
+    evidence: 'Stored jobs, Office tasks, objectives, approvals and reliability counts only.',
+    cost: 'Free: no AI engine is used.', keywords: ['office calendar', 'what did we do', 'accomplished', 'work calendar'],
   }),
   C('office-coordinate', 'office', 'BUILD', 'Have Nova coordinate a multi-department job.', {
     title: 'Coordinated Office Job',

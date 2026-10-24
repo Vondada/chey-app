@@ -1,0 +1,198 @@
+{
+ "ok": true,
+ "windows": [
+  7,
+  30,
+  90
+ ],
+ "min_evidence": 30,
+ "rule": "A change is called improving or worse only when both periods have at least 30 trades; otherwise it says insufficient evidence.",
+ "rows": [
+  {
+   "source": "paper",
+   "source_label": "Forward paper",
+   "unit": "USD",
+   "strategy": "ema-pullback-5m",
+   "total_trades": 2,
+   "windows": [
+    {
+     "days": 7,
+     "now": {
+      "trades": 0,
+      "net": null,
+      "unit": null,
+      "win_rate": null,
+      "profit_factor": null,
+      "avg_r": null,
+      "max_drawdown": null,
+      "sample": "insufficient"
+     },
+     "before": {
+      "trades": 2,
+      "net": -10.5,
+      "unit": "USD",
+      "win_rate": 50,
+      "profit_factor": 0.59,
+      "avg_r": -0.2625,
+      "max_drawdown": 25.5,
+      "sample": "insufficient"
+     },
+     "verdict": "insufficient evidence",
+     "needs": 30
+    },
+    {
+     "days": 30,
+     "now": {
+      "trades": 2,
+      "net": -10.5,
+      "unit": "USD",
+      "win_rate": 50,
+      "profit_factor": 0.59,
+      "avg_r": -0.2625,
+      "max_drawdown": 25.5,
+      "sample": "insufficient"
+     },
+     "before": {
+      "trades": 0,
+      "net": null,
+      "unit": null,
+      "win_rate": null,
+      "profit_factor": null,
+      "avg_r": null,
+      "max_drawdown": null,
+      "sample": "insufficient"
+     },
+     "verdict": "insufficient evidence",
+     "needs": 28
+    },
+    {
+     "days": 90,
+     "now": {
+      "trades": 2,
+      "net": -10.5,
+      "unit": "USD",
+      "win_rate": 50,
+      "profit_factor": 0.59,
+      "avg_r": -0.2625,
+      "max_drawdown": 25.5,
+      "sample": "insufficient"
+     },
+     "before": {
+      "trades": 0,
+      "net": null,
+      "unit": null,
+      "win_rate": null,
+      "profit_factor": null,
+      "avg_r": null,
+      "max_drawdown": null,
+      "sample": "insufficient"
+     },
+     "verdict": "insufficient evidence",
+     "needs": 28
+    }
+   ],
+   "out_of_sample": {
+    "basis": "forward paper trades happen after the rules were fixed, so every one is out of sample",
+    "trades": 2
+   },
+   "failures": [
+    "30-day net is negative",
+    "90-day net is negative"
+   ]
+  },
+  {
+   "source": "paper",
+   "source_label": "Forward paper",
+   "unit": "USD",
+   "strategy": "orb-5m",
+   "total_trades": 2,
+   "windows": [
+    {
+     "days": 7,
+     "now": {
+      "trades": 1,
+      "net": 35,
+      "unit": "USD",
+      "win_rate": 100,
+      "profit_factor": null,
+      "avg_r": 1.75,
+      "max_drawdown": 0,
+      "sample": "insufficient"
+     },
+     "before": {
+      "trades": 1,
+      "net": -1005.5,
+      "unit": "USD",
+      "win_rate": 0,
+      "profit_factor": 0,
+      "avg_r": -50.275,
+      "max_drawdown": 1005.5,
+      "sample": "insufficient"
+     },
+     "verdict": "insufficient evidence",
+     "needs": 29
+    },
+    {
+     "days": 30,
+     "now": {
+      "trades": 2,
+      "net": -970.5,
+      "unit": "USD",
+      "win_rate": 50,
+      "profit_factor": 0.03,
+      "avg_r": -24.2625,
+      "max_drawdown": 1005.5,
+      "sample": "insufficient"
+     },
+     "before": {
+      "trades": 0,
+      "net": null,
+      "unit": null,
+      "win_rate": null,
+      "profit_factor": null,
+      "avg_r": null,
+      "max_drawdown": null,
+      "sample": "insufficient"
+     },
+     "verdict": "insufficient evidence",
+     "needs": 28
+    },
+    {
+     "days": 90,
+     "now": {
+      "trades": 2,
+      "net": -970.5,
+      "unit": "USD",
+      "win_rate": 50,
+      "profit_factor": 0.03,
+      "avg_r": -24.2625,
+      "max_drawdown": 1005.5,
+      "sample": "insufficient"
+     },
+     "before": {
+      "trades": 0,
+      "net": null,
+      "unit": null,
+      "win_rate": null,
+      "profit_factor": null,
+      "avg_r": null,
+      "max_drawdown": null,
+      "sample": "insufficient"
+     },
+     "verdict": "insufficient evidence",
+     "needs": 28
+    }
+   ],
+   "out_of_sample": {
+    "basis": "forward paper trades happen after the rules were fixed, so every one is out of sample",
+    "trades": 2
+   },
+   "failures": [
+    "30-day net is negative",
+    "90-day net is negative"
+   ]
+  }
+ ],
+ "paper_only": true,
+ "at": "2026-09-30T12:00:00.000Z"
+}

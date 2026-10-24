@@ -1,0 +1,77 @@
+{
+ "ok": true,
+ "time_zone": "America/Chicago",
+ "colors": {
+  "green": "everything recorded succeeded",
+  "yellow": "pending or mixed",
+  "red": "something failed or is blocked"
+ },
+ "sources": [
+  "cloud jobs (coding, cloud tasks, REA, renders, film, app builds, Creation Engine)",
+  "Office team tasks",
+  "coordinated Office jobs",
+  "objectives",
+  "owner approvals",
+  "reliability ledger (counts only)"
+ ],
+ "day": "2026-09-22",
+ "counts": {
+  "total": 2,
+  "done": 1,
+  "active": 0,
+  "pending": 0,
+  "failed": 1,
+  "approvals": 0,
+  "milestones": 0
+ },
+ "color": "red",
+ "summary": "1 done, 0 active, 0 pending, 1 failed; finished by Nova 1.",
+ "items": [
+  {
+   "id": "t1",
+   "kind": "task",
+   "type": "office_task",
+   "title": "Write the release notes",
+   "agent": "Nova",
+   "status": "complete",
+   "state": "done",
+   "at": "2026-09-22T15:00:00Z",
+   "receipt": "Notes saved to the mailbox.",
+   "error": "",
+   "source": "team_tasks",
+   "link": {
+    "screen": "office_task",
+    "id": "t1"
+   },
+   "day": "2026-09-22"
+  },
+  {
+   "id": "t2",
+   "kind": "task",
+   "type": "office_task",
+   "title": "Check the deploy logs",
+   "agent": "Atlas",
+   "status": "failed",
+   "state": "failed",
+   "at": "2026-09-22T16:10:00Z",
+   "receipt": "",
+   "error": "GitHub answered 403",
+   "source": "team_tasks",
+   "link": {
+    "screen": "office_task",
+    "id": "t2"
+   },
+   "day": "2026-09-22"
+  }
+ ],
+ "accomplishments": [
+  {
+   "agent": "Nova",
+   "done": 1,
+   "titles": [
+    "Write the release notes"
+   ]
+  }
+ ],
+ "reliability": null
+}

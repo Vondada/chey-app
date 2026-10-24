@@ -7,6 +7,7 @@
 
 import '../world/che_meetings.dart';
 import 'che_war_room_screen.dart';
+import '../office/che_office_calendar.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -606,6 +607,13 @@ class _CheOfficeFloorScreenState extends State<CheOfficeFloorScreen> {
             icon: const Icon(Icons.volume_up_rounded),
             label: const Text('Read to me'),
           ),
+        ),
+        // What the Office did, day by day (owner, 2026-10-24): real jobs and their receipts.
+        IconButton(
+          key: const Key('office_calendar_button'),
+          tooltip: 'Office calendar',
+          onPressed: () => unawaited(Navigator.of(context).push(CheOfficeCalendarPage.route(baseUrl: widget.client.baseUrl, headers: widget.client.headers, onRead: (w) => unawaited(_speak(w))))),
+          icon: const Icon(Icons.calendar_month_rounded),
         ),
         IconButton(tooltip: 'Refresh', onPressed: _runtime.refresh, icon: const Icon(Icons.refresh_rounded)),
         IconButton(tooltip: 'New agent', onPressed: _newAgent, icon: const Icon(Icons.person_add_alt_1_rounded)),

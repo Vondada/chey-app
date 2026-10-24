@@ -564,6 +564,27 @@ extension _CheHomeStreaming on _CHEHomeState {
             onRead: (words) { speakText(words, record: false, readOnDemand: true); },
           )));
         }
+        // "Open my trading calendar", "show the office calendar for September", "what did we do yesterday" (che_calendars.js).
+        final calendarAsk = data['calendar'] is Map ? Map<String, dynamic>.from(data['calendar'] as Map) : const <String, dynamic>{};
+        if (data['open_view'] == 'trading_calendar' && mounted) {
+          unawaited(Navigator.of(context).push(CheTradingCalendarPage.route(
+            baseUrl: () => cheAgentBaseUrl,
+            headers: () => _authHeaders,
+            onRead: (words) { speakText(words, record: false, readOnDemand: true); },
+            month: '${calendarAsk['month'] ?? ''}',
+            source: '${calendarAsk['source'] ?? 'paper'}',
+            day: '${calendarAsk['day'] ?? ''}',
+          )));
+        }
+        if (data['open_view'] == 'office_calendar' && mounted) {
+          unawaited(Navigator.of(context).push(CheOfficeCalendarPage.route(
+            baseUrl: () => cheAgentBaseUrl,
+            headers: () => _authHeaders,
+            onRead: (words) { speakText(words, record: false, readOnDemand: true); },
+            month: '${calendarAsk['month'] ?? ''}',
+            day: '${calendarAsk['day'] ?? ''}',
+          )));
+        }
         // "Have Orion research BTC and ETH…", "how is crypto paper trading going": the Trading Room on its CRYPTO market.
         if (data['open_view'] == 'trading_crypto' && mounted) {
           unawaited(Navigator.of(context).push(CheTradingRoomPage.route(

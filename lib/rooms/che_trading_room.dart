@@ -13,6 +13,7 @@ import 'dart:async';
 import '../trading/che_crypto_desk.dart';
 import '../trading/che_setup_board.dart';
 import '../trading/che_setup_desk.dart';
+import '../trading/che_trading_calendar.dart';
 import 'che_alpaca_paper.dart';
 import 'che_fye_draft.dart';
 import 'che_live_paper.dart';
@@ -312,6 +313,16 @@ class _CheTradingRoomState extends State<CheTradingRoom> {
       case CheTradingSection.history:
         return [
           if (_note.isNotEmpty) _pad(Text(_note, key: const Key('trading_note'), style: const TextStyle(color: Colors.white, fontSize: 15))),
+          // The P&L calendar and "Is CHE improving?" (owner, 2026-10-24): sim, paper and broker kept apart.
+          _pad(Align(
+            alignment: Alignment.centerLeft,
+            child: OutlinedButton.icon(
+              key: const Key('trading_calendar_button'),
+              onPressed: () => unawaited(Navigator.of(context).push(CheTradingCalendarPage.route(baseUrl: p.baseUrl, headers: p.headers, onRead: widget.onRead))),
+              icon: const Icon(Icons.calendar_month_rounded),
+              label: const Text('P&L calendar and learning'),
+            ),
+          )),
           _fold('history', 'TRADE HISTORY', 'Simulation, paper journal and broker ledgers, each labelled',
               CheTradingLedgersPanel(baseUrl: p.baseUrl, headers: p.headers, onAsk: p.onAsk, client: p.client), open: true),
         ];
