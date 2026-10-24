@@ -61,10 +61,21 @@ test('the studio lists real capabilities and an offline, unpaired Creation Engin
   assert.equal(body.engine.label, 'Creation Engine not connected');
   assert.equal(body.engine.notebook_url, NOTEBOOK_URL);
   assert.ok(!('jobs' in body.engine));
-  assert.deepEqual(body.capabilities.map((c) => [c.id, c.status]), [['person', 'available'], ['object', 'unavailable'], ['room', 'unavailable'], ['animation', 'partial']]);
+  assert.deepEqual(body.capabilities.map((c) => [c.id, c.status]), [['person', 'available'], ['object', 'available'], ['room', 'available'], ['animation', 'partial']]);
   assert.equal(CAPABILITIES.length, 4);
-  const obj = await call('/api/creations', 'POST', { kind: 'object' });
-  assert.equal(obj.status, 422); assert.match(obj.body.detail, /Not built yet/);
+  // Objects and rooms say plainly what they are: a fixed family list, not free-form text-to-3D.
+  for (const id of ['object', 'room']) {
+    const c = body.capabilities.find((x) => x.id === id);
+    assert.match(c.detail, /Procedural parametric objects and rooms from a fixed family list; not free-form text-to-3D\./);
+  }
+  assert.deepEqual(body.capabilities.find((x) => x.id === 'object').choices, ['lamp', 'chair', 'table', 'mug', 'vase', 'shelf']);
+  assert.deepEqual(body.capabilities.find((x) => x.id === 'room').choices, ['living_room', 'bedroom', 'office', 'studio']);
+  const dragon = await call('/api/creations', 'POST', { kind: 'object', base: 'dragon' });
+  assert.equal(dragon.status, 422); assert.match(dragon.body.detail, /only these objects: lamp, chair, table, mug, vase, shelf, desk\. .*not free-form text-to-3D/);
+  const kitchen = await call('/api/creations', 'POST', { kind: 'room', base: 'kitchen' });
+  assert.equal(kitchen.status, 422); assert.match(kitchen.body.detail, /only these rooms: living room, bedroom, office, studio/);
+  const anim = await call('/api/creations', 'POST', { kind: 'animation' });
+  assert.equal(anim.status, 422); assert.match(anim.body.detail, /a preview only/);
 });
 
 test('Create Person -> generate -> the worker streams the GLB then previews -> real stages -> completed with the model', async () => {
@@ -307,4 +318,119 @@ test('planning routes: a pre-job estimate and the scale scenarios, read-only, wi
   assert.ok(cap.body.assumptions.gpu_h100_hour.source);
   assert.equal(cap.body.storage.ok, false); assert.match(cap.body.storage.reason, /not enabled/);
   assert.equal((await call('/api/creations/capacity', 'POST', {})).status, 405);
+});
+
+// ── Create Object and Create Room (creation_objects.js) ─────────────────────────────────────────────────────────────
+
+test('Create Object: a chair from the fixed families, edited by words into versions, queued as object_model on the same queue (any worker, CPU included)', async () => {
+  const { call } = setup();
+  const made = await call('/api/creations', 'POST', { kind: 'object', base: 'chair' });
+  assert.equal(made.status, 201);
+  const p = made.body.project;
+  assert.equal(p.kind, 'object'); assert.equal(p.title, 'Chair (new object)'); assert.equal(p.base_id, 'chair');
+  assert.deepEqual(p.params, { family: 'chair', size: 1, color: '#8a5a36', roughness: 0.5, metallic: 0, style: 'modern' });
+  assert.match(made.body.spoken, /^Chair \(new object\) started: a modern chair/);
+  assert.match(p.resources, /an estimate, not measured on that runner/);
+  const say = async (text) => (await call(`/api/creations/${p.id}/edit`, 'POST', { text })).body;
+  let r = await say('CHE, make it red.');
+  assert.equal(r.changed, true); assert.deepEqual(r.applied, ['Colour changed to red.']); assert.equal(r.project.params.color, '#b0302a');
+  assert.match(r.spoken, /Saved as version 2\. Say generate to build it\./);
+  r = await say('bigger'); assert.equal(r.project.params.size, 1.2); assert.match(r.applied[0], /Size up to 1\.2 times the real chair size/);
+  r = await say('make it shinier and metallic'); assert.equal(r.project.params.roughness, 0.25); assert.equal(r.project.params.metallic, 1);
+  r = await say('classic style'); assert.equal(r.project.params.style, 'classic'); assert.equal(r.project.style, 'classic');
+  r = await say('turn it into a desk'); assert.equal(r.project.params.family, 'table'); assert.equal(r.project.params.form, 'desk');
+  assert.equal(r.viewport, null, '"turn it into" is an edit, not a rotation');
+  assert.equal(r.project.params.color, '#b0302a', 'colour, finish, style and size are kept');
+  const n = r.project.version;
+  r = await say('make it a dragon');
+  assert.equal(r.changed, false); assert.match(r.unsupported[0], /only these object families: lamp, chair, table, mug, vase, shelf\. A dragon is not one of them, and free-form text-to-3D is not built/);
+  r = await say('rotate the model left');
+  assert.equal(r.changed, false); assert.deepEqual(r.viewport, { action: 'rotate', deg: -45 }); assert.equal(r.project.version, n);
+  r = await say('size 3'); assert.equal(r.changed, true); assert.equal(r.project.params.size, 2, 'clamped to the largest size built');
+  r = await say('make it smell nice'); assert.equal(r.changed, false); assert.match(r.unsupported[0], /can't change that on a table yet/);
+  const undo = await call(`/api/creations/${p.id}/undo`, 'POST', {});
+  assert.equal(undo.body.project.params.size, 1.2);
+
+  const gen = await call(`/api/creations/${p.id}/generate`, 'POST', {});
+  assert.equal(gen.status, 202);
+  const j = gen.body.job;
+  assert.equal(j.kind, 'object_model'); assert.deepEqual(j.requires, { gpu: 'none' }); assert.equal(j.priority, 'high');
+  assert.deepEqual(JSON.parse(j.settings.SPEC), undo.body.project.params, 'the job carries the exact spec, nothing else');
+  assert.deepEqual(Object.keys(j.settings), ['SPEC']);
+  assert.deepEqual([j.samples, j.res], [32, 480]); assert.deepEqual(j.views, [0, 45, 90]);
+  assert.match(j.title, /^Chair \(new object\) v\d+: 3D model and previews$/);
+  assert.equal((await call(`/api/creations/${p.id}/generate`, 'POST', {})).body.duplicate, true);
+  const hi = await say('high detail');
+  assert.equal(hi.project.render.quality, 'high'); assert.match(hi.spoken, /High Detail: 64 samples, 720 pixels/);
+  const g2 = await call(`/api/creations/${p.id}/generate`, 'POST', {});
+  assert.deepEqual([g2.body.job.samples, g2.body.job.res], [64, 720]);
+  const got = await call(`/api/creations/${p.id}`);
+  assert.match(got.body.spoken, /^Chair \(new object\), version \d+ of \d+: a classic desk, red, metallic with roughness 0\.25, at 1\.2 times real size\./);
+});
+
+test('Create Room: an office edited by words (furniture, size, walls, floor, light), refusals with reasons, queued as room_model', async () => {
+  const { call } = setup();
+  const made = await call('/api/creations', 'POST', { kind: 'room', base: 'office' });
+  assert.equal(made.status, 201);
+  const p = made.body.project;
+  assert.equal(p.kind, 'room'); assert.equal(p.title, 'Office (new room)');
+  assert.deepEqual(p.params.furniture, ['desk', 'chair', 'lamp', 'shelf', 'plant', 'mug']);
+  const say = async (text) => (await call(`/api/creations/${p.id}/edit`, 'POST', { text })).body;
+  let r = await say('add a rug and a sofa');
+  assert.deepEqual(r.project.params.furniture.slice(-2), ['rug', 'sofa']); assert.equal(r.applied.length, 2);
+  r = await say('add a desk'); assert.equal(r.changed, false); assert.match(r.unsupported[0], /already has a desk/);
+  r = await say('remove the sofa'); assert.ok(!r.project.params.furniture.includes('sofa')); assert.match(r.applied[0], /undo brings it back/);
+  r = await say('warmer light'); assert.equal(r.project.params.lighting, 'neutral', 'one step warmer from cool');
+  r = await say('warm lighting'); assert.equal(r.project.params.lighting, 'warm');
+  r = await say('5 metres wide'); assert.equal(r.project.params.width, 5);
+  r = await say('higher ceiling'); assert.equal(r.project.params.height, 3);
+  r = await say('paint the walls green'); assert.equal(r.project.params.wall_color, '#3c7a4a');
+  r = await say('tile floor'); assert.equal(r.project.params.floor, 'tile');
+  r = await say('make it bigger'); assert.deepEqual([r.project.params.width, r.project.params.depth], [6, 4.2]);
+  r = await say('20 metres wide'); assert.equal(r.project.params.width, 8); assert.match(r.applied[0], /8 metres, the most CHE builds/);
+  const n = r.project.version;
+  r = await say('a red sofa'); assert.equal(r.changed, false); assert.match(r.unsupported[0], /Only the wall colour is a room setting/);
+  r = await say('add a piano'); assert.equal(r.changed, false); assert.match(r.unsupported[0], /A piano is not built yet/);
+  r = await say('make it a kitchen'); assert.equal(r.changed, false); assert.match(r.unsupported[0], /only these rooms: living room, bedroom, office, studio/);
+  r = await say('zoom in'); assert.deepEqual(r.viewport, { action: 'zoom', factor: 0.8 }); assert.equal(r.project.version, n);
+  r = await say('make it a bedroom');
+  assert.equal(r.project.params.type, 'bedroom'); assert.deepEqual(r.project.params.furniture, ['bed', 'lamp', 'shelf', 'rug', 'plant']);
+  assert.equal(r.project.params.width, 8, 'size, walls, floor and light stay');
+  const gen = await call(`/api/creations/${p.id}/generate`, 'POST', {});
+  assert.equal(gen.body.job.kind, 'room_model'); assert.deepEqual(gen.body.job.requires, { gpu: 'none' });
+  const spec = JSON.parse(gen.body.job.settings.SPEC);
+  assert.deepEqual(spec, r.project.params); assert.ok(gen.body.job.settings.SPEC.length <= 400, 'within the queue setting limit');
+});
+
+test('an object job completes only with its model uploaded and measured by the runner (verify_glb.py --static) for that very file', async () => {
+  const { call, worker, owner } = setup();
+  const p = (await call('/api/creations', 'POST', { kind: 'object', base: 'vase' })).body.project;
+  const gen = await call(`/api/creations/${p.id}/generate`, 'POST', {});
+  const { token } = await (await owner('/api/gpu/worker-token', 'POST', {})).json();
+  for (const j of (await (await owner('/api/gpu')).json()).jobs.filter((x) => x.kind === 'face_preview')) await owner('/api/gpu/jobs/cancel', 'POST', { id: j.id });
+  const id = gen.body.job.id;
+  const claim = await worker('claim', { worker_id: 'colab-1', gpu: GPU }, token);
+  assert.equal(claim.body.job.id, id); assert.equal(claim.body.job.kind, 'object_model');
+  const model = glb(40);
+  await worker('model', null, token, `?worker=colab-1&job=${id}`, model);
+  for (const v of [0, 45, 90]) await worker('preview', null, token, `?worker=colab-1&job=${id}&view=${v}`, PNG);
+  const sha = (await call(`/api/creations/${p.id}`)).body.project.job.model.sha256;
+  const views = Object.fromEntries([0, 45, 90].map((v) => [v, { status: 'ok', device: DEV, render_seconds: 3, sha256: 'a'.repeat(64) }]));
+  const base = { status: 'ok', file: 'model.glb', sha256: sha, bytes: model.length, vertices: 100, mode: 'object' };
+  const verify = { ok: true, failures: [], meshes: 1, primitives: 1, vertices: 640, triangles: 1408, materials: ['Vase glaze (classic)'],
+    bbox_m: { min: [-0.09, 0, -0.09], max: [0.09, 0.32, 0.09], size: [0.18, 0.32, 0.18] }, expected_bbox_m: [0.17, 0.32, 0.17], tolerance: 0.25, sha256: sha, bytes: model.length };
+  const unmeasured = await worker('complete', { worker_id: 'colab-1', job_id: id, status: 'complete', receipt: { status: 'complete', views, model: base } }, token);
+  assert.equal(unmeasured.body.job.state, 'queued'); assert.match(unmeasured.body.job.history.at(-1).note, /not re-read and measured/);
+  await worker('claim', { worker_id: 'colab-1', gpu: GPU }, token);
+  const other = await worker('complete', { worker_id: 'colab-1', job_id: id, status: 'complete',
+    receipt: { status: 'complete', views, model: { ...base, verify: { ...verify, sha256: 'f'.repeat(64) } } } }, token);
+  assert.equal(other.body.job.state, 'queued', 'a measurement of another file does not count');
+  await worker('claim', { worker_id: 'colab-1', gpu: GPU }, token);
+  const done = await worker('complete', { worker_id: 'colab-1', job_id: id, status: 'complete', receipt: { status: 'complete', views, model: { ...base, verify } } }, token);
+  assert.equal(done.body.job.state, 'completed', JSON.stringify(done.body.job.history.at(-1)));
+  assert.equal(done.body.job.measured.ok, true);
+  assert.equal(done.body.job.measured.line, '1 mesh, 1,408 triangles, 1 material, 0.18 x 0.32 x 0.18 m');
+  const fin = await call(`/api/creations/${p.id}`);
+  assert.ok(fin.body.project.stages.some((s) => s.label === 'Model verified: 1 mesh, 1,408 triangles, 1 material, 0.18 x 0.32 x 0.18 m'));
+  assert.match(fin.body.spoken, /The 3D model and previews for this version are ready\. Measured: 1 mesh, 1,408 triangles/);
 });

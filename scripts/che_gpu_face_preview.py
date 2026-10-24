@@ -361,7 +361,7 @@ def view_line(l, t, job, receipt, receipt_path, live, kind):
     if l.startswith('DEVICE ') and not live['dev']:
         live['dev'], live['last'] = l, t
         return
-    m = re.match(r'WROTE (.*(?:dress|body)_(\d+)\.png)$', l)
+    m = re.match(r'WROTE (.*(?:dress|body|creation)_(\d+)\.png)$', l)   # creation_: scripts/che_creation_job.py
     if not m or not device_ok(live['dev'], kind) or not os.path.isfile(m.group(1)): return
     v = int(m.group(2)); dst = os.path.join(job, f'view_{v:02d}.png')
     shutil.move(m.group(1), dst)

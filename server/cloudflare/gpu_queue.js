@@ -27,6 +27,7 @@ import { saveRenderedImage } from './media.js';
 import { mediaStore, sha256Hex } from './che_media_store.js';
 import { verifyGithubOidc } from './gpu_oidc.js';
 import { ensureCapacity } from './creation_orchestrator.js';
+import { verifyLine } from './creation_objects.js';
 
 const RATE_KEY = 'gpu:rate';            // per-tenant token buckets for new jobs (job_quota.js rateLimit)
 export const LEASE_MS = 3 * 60_000;           // a claimed job pauses after 3 minutes without a heartbeat
@@ -45,7 +46,13 @@ export const MAX_PREVIEW_BYTES = 4 * 1024 * 1024;
 export const MAX_MODEL_BYTES = 16 * 1024 * 1024;
 // face_preview: pictures only. person_model (Live Studio, creation_studio.js): the same pictures plus the 3D model
 // (a GLB the worker exports from the same Blender build, uploaded the moment it exists, before the renders finish).
-export const JOB_KINDS = ['face_preview', 'person_model'];
+// object_model and room_model (Create Object, Create Room; creation_objects.js): a procedural GLB any worker may build,
+// CPU included (requires.gpu none), complete only with the model uploaded and its measurement (receipt.model.verify).
+export const JOB_KINDS = ['face_preview', 'person_model', 'object_model', 'room_model'];
+export const MODEL_KINDS = ['person_model', 'object_model', 'room_model'];
+const DEFAULT_NEED = { person_model: 'preferred', object_model: 'none', room_model: 'none' };
+/** What compute a job needs: its own requires.gpu, else its kind's default (face previews need a GPU). */
+export const needOf = (j) => j?.requires?.gpu || DEFAULT_NEED[j?.kind] || 'required';
 export const VIEW_NAMES = { 0: 'front', 45: 'three-quarter', 90: 'side' };
 const GPU_DEVICE = /^DEVICE (OPTIX|CUDA) \[.+\]/;
 const CPU_DEVICE = /^DEVICE CPU\b/;
@@ -138,7 +145,7 @@ export function engineSettingsOf(rec) {
 const isGpuWorker = (w) => w?.class !== 'github_cpu' && isGpuName(w?.gpu);
 /** Whether a worker of this kind may take the job now (a CPU worker takes a GPU-preferred job only with no GPU online). */
 export function compatible(j, gpuWorker, gpuOnline) {
-  const need = j.requires?.gpu || (j.kind === 'person_model' ? 'preferred' : 'required');
+  const need = needOf(j);
   return need === 'none' || gpuWorker || (need === 'preferred' && !gpuOnline);
 }
 const waiting = (j) => j.state === 'queued' || j.state === 'paused';
@@ -175,8 +182,8 @@ export class GpuQueue {
       tenant_id: /^[a-z0-9_-]{1,64}$/i.test(String(spec.tenant_id || '')) ? String(spec.tenant_id) : 'owner',
       created_at: iso(t), updated_at: iso(t), state: 'queued', failures: 0, sessions: 0, lease: null,
       priority: PRIORITIES[spec.priority] !== undefined ? spec.priority : 'normal',
-      requires: { gpu: GPU_NEEDS.includes(spec.requires?.gpu) ? spec.requires.gpu : (spec.kind === 'person_model' ? 'preferred' : 'required') },
-      progress: { views_done: [], message: spec.kind === 'person_model' ? 'Waiting for a Creation Engine worker.' : 'Waiting for your Colab GPU session.' },
+      requires: { gpu: GPU_NEEDS.includes(spec.requires?.gpu) ? spec.requires.gpu : needOf({ kind: spec.kind }) },
+      progress: { views_done: [], message: MODEL_KINDS.includes(spec.kind) ? 'Waiting for a Creation Engine worker.' : 'Waiting for your Colab GPU session.' },
       previews: {}, model: null, receipt: null, checkpoints: {}, cloud: null, history: [],
     };
     note(job, t, 'queued', job.requires.gpu === 'required' ? 'Queued. It renders the next time your Colab T4 notebook runs.'
@@ -414,21 +421,29 @@ export class GpuQueue {
       // line from a cloud CPU worker (and a GPU-required job never reaches a CPU worker).
       const DEV = cpu ? CPU_DEVICE : GPU_DEVICE;
       const bad = j.views.filter((v) => views[v]?.status !== 'ok' || !DEV.test(String(views[v]?.device || '')) || !j.previews?.[v]);
-      // A person model is complete only with its 3D model uploaded and named in the receipt with the same hash.
-      const modelBad = j.kind === 'person_model' && !(j.model && r?.model?.status === 'ok' && r.model.sha256 === j.model.sha256);
+      // A model job is complete only with its 3D model uploaded and named in the receipt with the same hash.
+      const modelBad = MODEL_KINDS.includes(j.kind) && !(j.model && r?.model?.status === 'ok' && r.model.sha256 === j.model.sha256);
+      // An object or room is complete only once the runner re-read the GLB and measured it (verify_glb.py --static):
+      // meshes, triangles, materials and a bounding box matching the size asked for, of this very file.
+      const v = j.receipt?.model?.verify;
+      const measureBad = (j.kind === 'object_model' || j.kind === 'room_model') && !modelBad && !(v?.ok === true && v.sha256 === j.model.sha256);
       // A full-body person model also needs its skeleton verified: the runner re-imported the GLB and measured its
       // bones, weights, clips and morphs (verify_glb.py). A model that only claims to move is not accepted.
       const rigBad = j.kind === 'person_model' && wantsRig(j) && !modelBad && j.receipt?.model?.rig?.ok !== true;
-      if (r?.status !== 'complete' || bad.length || modelBad || rigBad) {
+      if (r?.status !== 'complete' || bad.length || modelBad || rigBad || measureBad) {
         j.failures += 1;
         const why = [bad.length || r?.status !== 'complete' ? `view${bad.length === 1 ? '' : 's'} ${bad.join(', ') || '?'} lack a ${cpu ? 'CPU' : 'GPU'} receipt or an uploaded picture` : '',
           modelBad ? 'the 3D model was not uploaded or does not match the receipt' : '',
-          rigBad ? 'the full-body model has no verified skeleton and animation check' : ''].filter(Boolean).join('; ');
+          rigBad ? 'the full-body model has no verified skeleton and animation check' : '',
+          measureBad ? 'the model was not re-read and measured (meshes, triangles, size) or did not pass' : ''].filter(Boolean).join('; ');
         note(j, t, j.failures >= MAX_FAILURES ? 'failed' : 'queued', `Not accepted as complete: ${why}.${j.failures >= MAX_FAILURES ? '' : ` Attempt ${j.failures} of ${MAX_FAILURES}; queued again.`}`);
       } else {
         const rig = j.receipt?.model?.rig;
         if (rig?.ok) {
           j.history = [...(j.history || []), { at: iso(t), state: j.state, note: `Skeleton verified: ${rigLine(rig)}.` }].slice(-20);
+        }
+        if (v?.ok && (j.kind === 'object_model' || j.kind === 'room_model')) {
+          j.history = [...(j.history || []), { at: iso(t), state: j.state, note: `Model verified: ${verifyLine(v)}.` }].slice(-20);
         }
         j.progress = { views_done: [...j.views], message: `All views rendered on the ${cpu ? 'CPU' : 'GPU'}.`, pct: 100, stage: 'save' };
         j.rendered_on = { class: cpu ? 'github_cpu' : 'colab', device: cpu ? 'CPU' : String(r.nvidia_smi || r.cycles_gpus || lease?.device || 'GPU').slice(0, 80), worker_id: lease?.worker_id || null };
@@ -441,7 +456,7 @@ export class GpuQueue {
       // views kept, up to MAX_FAILURES attempts; then it fails with the real reason.
       j.failures += 1; j.error = String(body.error || status || 'render failed').slice(0, 300);
       const final = status === 'checks_failed' || j.failures >= MAX_FAILURES;
-      note(j, t, final ? 'failed' : 'queued', `${status === 'checks_failed' ? 'A face check failed before rendering' : 'The render failed'}: ${j.error}${final ? '' : ` Attempt ${j.failures} of ${MAX_FAILURES}; queued again with finished work kept.`}`);
+      note(j, t, final ? 'failed' : 'queued', `${status === 'checks_failed' ? (j.kind === 'object_model' || j.kind === 'room_model' ? 'The spec or model check failed' : 'A face check failed before rendering') : 'The render failed'}: ${j.error}${final ? '' : ` Attempt ${j.failures} of ${MAX_FAILURES}; queued again with finished work kept.`}`);
     }
     await this.save(jobs);
     return { ok: true, job: publicJob(j) };
@@ -456,8 +471,14 @@ function trimReceipt(r) {
     const m = r.model;
     out.model = { status: String(m.status || ''), file: String(m.file || '').slice(0, 120), sha256: String(m.sha256 || '').slice(0, 64), bytes: Number(m.bytes) || 0,
       vertices: Number(m.vertices) || 0, exported_at: String(m.exported_at || '').slice(0, 40), contents: String(m.contents || '').slice(0, 200),
-      mode: m.mode === 'bust' ? 'bust' : m.mode === 'full_body' ? 'full_body' : '' };
+      mode: ['bust', 'full_body', 'object', 'room'].includes(m.mode) ? m.mode : '' };
     if (m.rig && typeof m.rig === 'object') out.model.rig = trimRig(m.rig);
+    if (m.verify && typeof m.verify === 'object') out.model.verify = trimVerify(m.verify);
+    if (m.layout && typeof m.layout === 'object') {
+      const item = (x) => ({ item: String(x?.item || '').slice(0, 20), ...(x?.on ? { on: String(x.on).slice(0, 20) } : {}), ...(x?.reason ? { reason: String(x.reason).slice(0, 120) } : {}) });
+      out.model.layout = { placed: (Array.isArray(m.layout.placed) ? m.layout.placed : []).slice(0, 12).map(item),
+        skipped: (Array.isArray(m.layout.skipped) ? m.layout.skipped : []).slice(0, 12).map(item) };
+    }
   }
   out.views = {};
   for (const [v, info] of Object.entries(r.views || {}).slice(0, 8)) {
@@ -465,6 +486,19 @@ function trimReceipt(r) {
       render_seconds: Number(info?.render_seconds) || 0, sha256: String(info?.sha256 || '').slice(0, 64), rendered_at: String(info?.rendered_at || '') };
   }
   return out;
+}
+
+/** The static model check as the runner reported it (verify_glb.py --static), kept small and typed. */
+function trimVerify(g) {
+  const num = (x) => (Number.isFinite(Number(x)) ? Number(x) : 0);
+  const trio = (a) => (Array.isArray(a) ? a.slice(0, 3).map(num) : []);
+  return {
+    ok: g.ok === true, failures: (Array.isArray(g.failures) ? g.failures : []).slice(0, 8).map((x) => String(x).slice(0, 160)),
+    meshes: num(g.meshes), primitives: num(g.primitives), vertices: num(g.vertices), triangles: num(g.triangles),
+    materials: (Array.isArray(g.materials) ? g.materials : []).slice(0, 40).map((x) => String(x).slice(0, 40)),
+    bbox_m: { min: trio(g.bbox_m?.min), max: trio(g.bbox_m?.max), size: trio(g.bbox_m?.size) }, expected_bbox_m: trio(g.expected_bbox_m),
+    tolerance: num(g.tolerance), sha256: String(g.sha256 || '').slice(0, 64), bytes: num(g.bytes),
+  };
 }
 
 /** Whether a person_model job asked for the full body (MODEL_MODE full_body, the default) and so needs a verified rig. */
@@ -506,8 +540,11 @@ export function publicJob(j) {
   // The rig only counts as verified once the job completed with it (the receipt's ok alone is the runner's claim).
   const rig = g ? { ok: g.ok === true && j.state === 'completed', bones: g.bones, clips: rigClips(g.clips).map((c) => c.name), morphs: g.morphs || [],
     mode: j.receipt.model.mode || null } : null;
+  // The measured model (objects and rooms): counted as verified only once the job completed with it.
+  const mv = j.receipt?.model?.verify;
+  const measured = mv ? { ok: mv.ok === true && j.state === 'completed', line: verifyLine(mv), size_m: mv.bbox_m?.size || [], triangles: mv.triangles, materials: (mv.materials || []).length } : null;
   return { ...rest, kind: j.kind || 'face_preview', model, rig, worker_id: lease?.worker_id || null, worker_class: lease?.class || null,
-    lease_expires: lease ? iso(lease.expires_ms) : null, priority: j.priority || 'normal', requires: { gpu: j.requires?.gpu || (j.kind === 'person_model' ? 'preferred' : 'required') },
+    lease_expires: lease ? iso(lease.expires_ms) : null, priority: j.priority || 'normal', requires: { gpu: needOf(j) }, measured,
     checkpoints: { ...(j.checkpoints || {}) }, ...displayOf(j) };
 }
 
@@ -532,7 +569,7 @@ export function displayOf(j) {
         status_line: `${j.state === 'paused' ? 'Paused; ' : ''}CHE asked GitHub for a free cloud worker at ${hhmm(c.at)} UTC; it usually picks the job up within a few minutes.${kept}${attempt}` };
     }
     if (j.state === 'paused') return { display_state: 'Paused', status_line: `Paused at ${hhmm(last?.at)} UTC after ${done} of ${views} views: the worker stopped answering. The next compatible worker resumes it.${kept}${c?.reason ? ` ${c.reason}` : ''}` };
-    const need = j.requires?.gpu || (j.kind === 'person_model' ? 'preferred' : 'required');
+    const need = needOf(j);
     const why = c?.reason || (need === 'required' ? 'This job needs a GPU: it runs when your Colab T4 notebook is open.' : 'Waiting for a worker.');
     if (c?.state === 'waiting_gpu') return { display_state: 'Waiting for GPU', status_line: `Waiting since ${hhmm(j.created_at)} UTC. ${why}${kept}${attempt}` };
     return { display_state: 'Waiting for Resources', status_line: `Waiting since ${hhmm(j.created_at)} UTC. ${why}${kept}${attempt}` };
