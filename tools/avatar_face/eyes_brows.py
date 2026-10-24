@@ -124,7 +124,7 @@ def lash_strands(fwd, up, seed=11):
     return _curves('Lashes_strands', strands, 0.00004, 0.00001, _hair_material('LashHair', 1.0, 0.35))
 
 
-def brow_strands(fwd, up, seed=12, per_brow=420):
+def brow_strands(fwd, up, seed=12, per_brow=260):
     random.seed(seed)
     bvh = _body_bvh()
     strands = []
@@ -136,7 +136,7 @@ def brow_strands(fwd, up, seed=12, per_brow=420):
             t = random.random()  # 0 inner end, 1 tail
             # Brow arc: rises over the iris, falls at the tail.
             arc_h = r * (1.45 + 0.35 * math.sin(math.pi * min(1.0, t * 1.2)) - 0.25 * t)
-            width = r * (0.32 - 0.18 * t)
+            width = r * (0.24 - 0.15 * t)
             p = c + side * (r * (-0.9 + 2.4 * t)) + up * (arc_h + random.uniform(-width, width)) + fwd * r * 2.5
             hit = bvh.ray_cast(p, -fwd, r * 6)
             if not hit or hit[0] is None:
@@ -146,4 +146,4 @@ def brow_strands(fwd, up, seed=12, per_brow=420):
             d = (up * (0.9 - 0.75 * t) + side * (0.15 + 0.8 * t) + normal * 0.25).normalized()
             length = (0.005 if t < 0.15 else 0.008) * random.uniform(0.8, 1.15)
             strands.append(_bezier(root + normal * 0.0002, d, length, 0.35, normal))
-    return _curves('Brow_strands', strands, 0.000045, 0.00001, _hair_material('BrowHair', 0.95, 0.45))
+    return _curves('Brow_strands', strands, 0.00003, 0.000008, _hair_material('BrowHair', 0.85, 0.45))
