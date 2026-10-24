@@ -24,6 +24,7 @@ import 'che_trading_intelligence.dart';
 import 'che_trading_ledgers.dart';
 import 'che_trading_research.dart';
 import 'che_trading_side_by_side.dart';
+import 'che_ticker_selector.dart';
 import '../che_ui/che_hud.dart';
 import '../trading/che_paper_account_panel.dart';
 import '../che_ui/che_screen_awareness.dart';
@@ -131,6 +132,7 @@ class _CheTradingRoomState extends State<CheTradingRoom> {
     final read = widget.onRead;
     if (read != null) _desk.alerts.speak ??= (t) async => read(t);
     unawaited(_loadEvidence());
+    unawaited(_restoreTicker());
     CheTradingRoom.requestedSection.value = null;
     CheTradingRoom.requestedSection.addListener(_onRequest);
     CheUiPreferences.instance.addListener(_onPrefs);
@@ -170,10 +172,30 @@ class _CheTradingRoomState extends State<CheTradingRoom> {
   /// The futures market the research and the live chart follow.
   late String _market = const {'NQ', 'MNQ'}.contains(widget.initialSymbol.toUpperCase()) ? widget.initialSymbol.toUpperCase() : 'MNQ';
 
-  void _setMarket(String m) {
-    setState(() => _market = m);
-    // CHE's live futures feed is MNQ; the chart shows MNQ for both, and says so when NQ research is chosen.
-    _chart.show(account: 'futures_paper', symbol: 'MNQ');
+  /// The ticker on the chart (owner, 2026-10-24): any universe id. MNQ stays on CHE's MNQ PAPER chart (Rithmic and her
+  /// journal); every other market opens the Markets chart on public data. Research follows NQ and MNQ only.
+  late String _ticker = _market == 'NQ' ? 'futures:NQ' : 'futures:MNQ';
+
+  void _setMarket(String id) {
+    final m = id == 'futures:NQ' ? 'NQ' : id == 'futures:MNQ' ? 'MNQ' : _market;
+    setState(() {
+      _ticker = id;
+      _market = m;
+    });
+    unawaited(CheTickerPrefs.instance.choose(id));
+    if (id == 'futures:MNQ') {
+      _chart.show(account: 'futures_paper', symbol: 'MNQ');
+    } else {
+      _chart.show(account: 'market', symbol: id);
+    }
+  }
+
+  /// Opens on the owner's last ticker when it is not the MNQ default.
+  Future<void> _restoreTicker() async {
+    final prefs = CheTickerPrefs.instance;
+    await prefs.load();
+    if (!mounted || widget.initialSymbol.isNotEmpty || widget.initialAccount != 'futures_paper') return;
+    if (prefs.last != _ticker) _setMarket(prefs.last);
   }
 
   // The owner's layout density (Owner Improvements: "this page is too cramped") scales the room's spacing.
@@ -243,11 +265,11 @@ class _CheTradingRoomState extends State<CheTradingRoom> {
         return [
           _pad(Wrap(spacing: 10, runSpacing: 6, crossAxisAlignment: WrapCrossAlignment.center, children: [
             Semantics(header: true, child: Text('LIVE MARKET', style: CheHud.label.copyWith(fontSize: 12))),
-            CheMarketToggle(market: _market, onChanged: _setMarket),
-            if (_market == 'NQ')
-              const Text('Chart: MNQ live feed. Research: NQ history.',
-                  key: Key('nq_chart_note'), style: TextStyle(color: Colors.white70, fontSize: 13)),
           ])),
+          _pad(CheTickerSelector(selected: _ticker, onSelect: _setMarket, baseUrl: p.baseUrl, headers: p.headers, client: p.client)),
+          if (_ticker != 'futures:MNQ' && _ticker != 'futures:NQ')
+            _pad(Text('Strategy research below is for $_market.',
+                key: const Key('research_market_note'), style: const TextStyle(color: Colors.white70, fontSize: 13))),
           _pad(LayoutBuilder(
             builder: (context, box) => CheTradingChart(
               key: _compact,

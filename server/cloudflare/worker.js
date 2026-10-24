@@ -88,6 +88,7 @@ import { readTrades, tradeDayOf } from './trading_evidence.js';
 import { TRADE_EVIDENCE_SOURCE, lastTrade, readTradeEvidence, speakTradeReplay, tradeBars, tradeEvidenceOf, tradeList, tradeReplayIntent } from './trade_evidence.js';
 import { DAILY_TARGET, EXECUTION_TYPES, VISUAL_SOURCE, auditTrades, compareWindows, currentLeader, dailyEvidence, dailyPnl, filterTrades, historyChart, journalView, lastForwardBar, metricsOf, openPositions, rankStrategies, readSkips, readVisualTrades, replayFrame, speakAudit, speakEvidence, speakCard, speakLeader, speakPnl, tradingVisualIntent } from './trading_visual.js';
 import { cancelCandidates, cancelConfirmation, cancelOrderIntent, chartIntent, chartView, drawIntent, futuresOrderIntent, marketOrderFeedProblem, paperAccountIntent, readDrawings, saveDrawings, speakOrder } from './trading_chart.js';
+import { marketUniverse, searchUniverse } from './market_universe.js';
 import { readRithmicCandles, storeRithmicCandles } from './rithmic_dataset.js';
 // A spoken cancel of one Alpaca PAPER order waiting for the owner's yes, or for his pick from a numbered list.
 const CHART_CANCEL_PENDING = 'trading_chart_cancel_pending';
@@ -8524,10 +8525,21 @@ export class CheState extends DurableObject {
       if (path === '/api/trading/chart' && request.method === 'GET') {
         if (!ownerDevice) return tradingOwnerOnly();
         const q = new URL(request.url).searchParams;
-        const view = await chartView(this.ctx.storage, this.keyEnv || this.env, { account: q.get('account') || 'alpaca_paper', symbol: (q.get('symbol') || '').trim().toUpperCase().slice(0, 8), tf: q.get('tf') || '5m', at: q.get('at') || null });
-        if (view.ok) view.drawings = await readDrawings(this.ctx.storage, view.account, view.symbol || '');
+        // A universe ticker ("coinbase:BTC-USD", "futures:MNQ") is longer than a stock symbol.
+        const view = await chartView(this.ctx.storage, this.keyEnv || this.env, { account: q.get('account') || 'alpaca_paper', symbol: (q.get('symbol') || '').trim().toUpperCase().slice(0, 24), tf: q.get('tf') || '5m', at: q.get('at') || null });
+        if (view.ok) view.drawings = await readDrawings(this.ctx.storage, view.account, (view.account === 'market' ? view.ticker?.id : view.symbol) || '');
         if (view.ok && view.account === 'alpaca_paper' && view.symbol) await this.ctx.storage.put('trading_chart_last_symbol', view.symbol);
+        if (view.ok && view.account === 'market' && view.ticker?.id) await this.ctx.storage.put('trading_market_last_ticker', view.ticker.id);
         return json(view, view.ok ? 200 : 400);
+      }
+      // The universal ticker selector (owner, 2026-10-24): crypto pairs discovered from Coinbase and Kraken, the
+      // CME futures catalog with each front month, searchable by ticker or name. Public data only, owner only.
+      if (path === '/api/markets/universe' && request.method === 'GET') {
+        if (!ownerDevice) return tradingOwnerOnly();
+        const q = new URL(request.url).searchParams;
+        const universe = await marketUniverse(this.ctx.storage, { refresh: q.get('refresh') === '1' });
+        const results = searchUniverse(universe, q.get('q') || '', { category: q.get('category') || '', limit: Math.min(100, Number(q.get('limit')) || 40) });
+        return json({ ok: true, discovered_at: universe.discovered_at, problems: universe.problems, defaults: universe.defaults, intervals: universe.intervals, counts: { crypto: universe.crypto.length, futures: universe.futures.length }, results, last_ticker: (await this.ctx.storage.get('trading_market_last_ticker')) || null });
       }
       // CHE's own forward-recorded Rithmic minutes (owner, 2026-10-23): closed 1-minute candles the owner's iPhone
       // built from real Rithmic trades. Market data only; the Rithmic login never reaches the Worker.
