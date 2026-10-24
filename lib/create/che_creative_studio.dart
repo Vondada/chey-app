@@ -237,7 +237,10 @@ class CheCreativeStudioState extends State<CheCreativeStudio> {
       if (c is Map && c['id'] == id) return ('${c['status'] ?? ''}', '${c['detail'] ?? ''}');
     }
     return switch (id) {
-      'person' => ('available', 'Start from CHE or an agent, edit by voice, and build a 3D model on your Creation Engine.'),
+      'person' => (
+        'available',
+        'Start from CHE or an agent, edit by voice, and build a 3D model on your Creation Engine.',
+      ),
       'animation' => ('partial', 'Preview the crew models’ built-in clips. Making new animations is not built yet.'),
       'object' => ('unavailable', 'Creating 3D objects is not built yet.'),
       _ => ('unavailable', 'Creating 3D rooms is not built yet.'),
@@ -269,10 +272,12 @@ class CheCreativeStudioState extends State<CheCreativeStudio> {
     final text = '$title is not available yet. $detail';
     HapticFeedback.heavyImpact();
     if (mounted) {
-      ScaffoldMessenger.maybeOf(context)?.showSnackBar(SnackBar(
-        content: Text(text, style: const TextStyle(fontSize: 16)),
-        duration: const Duration(seconds: 6),
-      ));
+      ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+        SnackBar(
+          content: Text(text, style: const TextStyle(fontSize: 16)),
+          duration: const Duration(seconds: 6),
+        ),
+      );
     }
     return text;
   }
@@ -311,11 +316,16 @@ class CheCreativeStudioState extends State<CheCreativeStudio> {
       if (n < 1 || n > c.length) return 'There is no choice $n. $spokenSummary';
       return _runChoice(n - 1);
     }
-    if (RegExp(r"^(?:what(?:'s| is) (?:the )?)?creation engine status$|^(?:is|how is) (?:the )?creation engine(?: doing| working| running| ready)?$").hasMatch(t)) {
-      if (engine.status == 'unknown') return 'I have not loaded the Creation Engine yet. Say open the creation engine for its settings.';
+    if (RegExp(
+      r"^(?:what(?:'s| is) (?:the )?)?creation engine status$|^(?:is|how is) (?:the )?creation engine(?: doing| working| running| ready)?$",
+    ).hasMatch(t)) {
+      if (engine.status == 'unknown') {
+        return 'I have not loaded the Creation Engine yet. Say open the creation engine for its settings.';
+      }
       return '${engine.label}. ${engine.detail}';
     }
-    if (RegExp(r'^(?:open |go to )?(?:the )?creation engine(?: settings)?$|^connect(?: the)?(?: creation)? engine$').hasMatch(t)) {
+    if (RegExp(r'^(?:open |go to )?(?:the )?creation engine(?: settings)?$|^connect(?: the)?(?: creation)? engine$')
+        .hasMatch(t)) {
       a.onConnectEngine?.call(engine);
       return engine.online
           ? 'The Creation Engine is online on ${engine.gpu ?? 'your GPU'}.'
@@ -338,7 +348,10 @@ class CheCreativeStudioState extends State<CheCreativeStudio> {
       }
     }
     final named = <RegExp, (String, VoidCallback?)>{
-      RegExp(r'^create new|^more to create$|^new (?:creation|thing)$'): ('Create New', () => unawaited(showCreateNew())),
+      RegExp(r'^create new|^more to create$|^new (?:creation|thing)$'): (
+        'Create New',
+        () => unawaited(showCreateNew()),
+      ),
       RegExp(r'^open (?:the )?film studio$'): ('Film Studio', a.onOpenFilmStudio),
       RegExp(r'^(?:new|make a|create a) video$'): ('a new video', a.onNewVideo),
       RegExp(r'^(?:open (?:the )?)?theat(?:er|re)$'): ('Theater', a.onOpenTheater),
@@ -385,7 +398,9 @@ class CheCreativeStudioState extends State<CheCreativeStudio> {
       case 4:
         unawaited(showMyCreations());
         final n = creationProjects.length;
-        return n == 0 ? 'You have no 3D creations yet. Say create person.' : 'My Creations: $n. Say a number to open one.';
+        return n == 0
+            ? 'You have no 3D creations yet. Say create person.'
+            : 'My Creations: $n. Say a number to open one.';
       case 5:
         unawaited(showActiveProjects());
         return 'Active Projects. Say a number to open one.';
@@ -465,7 +480,8 @@ class CheCreativeStudioState extends State<CheCreativeStudio> {
     final people = await a.loadPeople!().catchError((_) => <(String, String, String)>[]);
     if (!mounted) return;
     if (people.isEmpty) {
-      ScaffoldMessenger.maybeOf(context)?.showSnackBar(const SnackBar(content: Text('Could not load the characters from CHE. Try again.')));
+      ScaffoldMessenger.maybeOf(context)
+          ?.showSnackBar(const SnackBar(content: Text('Could not load the characters from CHE. Try again.')));
       return;
     }
     await _showSheet('Create a person', 'Start from CHE or one of the crew. You can change everything after.', [
@@ -481,7 +497,15 @@ class CheCreativeStudioState extends State<CheCreativeStudio> {
     await _showSheet(
       'My Creations',
       list.isEmpty ? 'No 3D creations yet. Use Create Person to start one.' : 'Your 3D creations, newest first.',
-      [for (final p in list) (_creationTitle(p), _creationLine(p), Icons.view_in_ar_rounded, open == null ? null : () => open('${p['id']}'))],
+      [
+        for (final p in list)
+          (
+            _creationTitle(p),
+            _creationLine(p),
+            Icons.view_in_ar_rounded,
+            open == null ? null : () => open('${p['id']}'),
+          ),
+      ],
     );
   }
 
@@ -499,10 +523,20 @@ class CheCreativeStudioState extends State<CheCreativeStudio> {
       'Active Projects',
       busy.isEmpty && projects.isEmpty ? 'Nothing active right now.' : 'Work in progress first.',
       [
-        for (final p in busy) (_creationTitle(p), _creationLine(p), Icons.view_in_ar_rounded, open == null ? null : () => open('${p['id']}')),
+        for (final p in busy)
+          (
+            _creationTitle(p),
+            _creationLine(p),
+            Icons.view_in_ar_rounded,
+            open == null ? null : () => open('${p['id']}'),
+          ),
         for (final p in projects)
-          ('${p['title'] ?? 'Untitled project'}', 'Project${'${p['status'] ?? ''}'.isEmpty ? '' : ' · ${p['status']}'}', Icons.folder_outlined,
-            () => widget.actions.onOpenProject(p)),
+          (
+            '${p['title'] ?? 'Untitled project'}',
+            'Project${'${p['status'] ?? ''}'.isEmpty ? '' : ' · ${p['status']}'}',
+            Icons.folder_outlined,
+            () => widget.actions.onOpenProject(p),
+          ),
       ],
     );
   }
@@ -546,7 +580,11 @@ class CheCreativeStudioState extends State<CheCreativeStudio> {
     }
   }
 
-  Future<void> _showChoiceSheet(String title, String subtitle, List<(String, String, IconData, VoidCallback?)> items) async {
+  Future<void> _showChoiceSheet(
+    String title,
+    String subtitle,
+    List<(String, String, IconData, VoidCallback?)> items,
+  ) async {
     await showModalBottomSheet<void>(
       context: context,
       backgroundColor: CheStudioColors.card,
@@ -713,7 +751,10 @@ class CheCreativeStudioState extends State<CheCreativeStudio> {
             const SizedBox(height: 16),
             // ── Creation Engine state (real, from the Worker) ──────────────────────
             if (widget.loadCreations != null && engine.status != 'unknown') ...[
-              _EngineRow(engine: engine, onConnect: a.onConnectEngine == null ? null : () => a.onConnectEngine!(engine)),
+              _EngineRow(
+                engine: engine,
+                onConnect: a.onConnectEngine == null ? null : () => a.onConnectEngine!(engine),
+              ),
               const SizedBox(height: 14),
             ],
             // ── The six main choices ───────────────────────────────────────────────
@@ -726,7 +767,11 @@ class CheCreativeStudioState extends State<CheCreativeStudio> {
                 final (aStatus, _) = capability('animation');
                 final nCreations = creationProjects.length;
                 final nActive = creationProjects
-                    .where((p) => p['job'] is Map && const {'queued', 'rendering', 'paused'}.contains((p['job'] as Map)['state']))
+                    .where(
+                      (p) =>
+                          p['job'] is Map &&
+                          const {'queued', 'rendering', 'paused'}.contains((p['job'] as Map)['state']),
+                    )
                     .length;
                 String word(String s) => switch (s) {
                   'available' => 'Ready',
@@ -737,10 +782,29 @@ class CheCreativeStudioState extends State<CheCreativeStudio> {
                   ('person', 'Create Person', Icons.person_add_alt_1_rounded, word(pStatus), pStatus != 'unavailable'),
                   ('object', 'Create Object', Icons.widgets_rounded, word(oStatus), oStatus != 'unavailable'),
                   ('room', 'Create Room', Icons.meeting_room_rounded, word(rStatus), rStatus != 'unavailable'),
-                  ('animation', 'Create Animation', Icons.directions_walk_rounded, word(aStatus), aStatus != 'unavailable'),
-                  ('mine', 'My Creations', Icons.view_in_ar_rounded, '$nCreations 3D creation${nCreations == 1 ? '' : 's'}', true),
-                  ('active', 'Active Projects', Icons.hourglass_top,
-                    nActive == 0 ? '${widget.projects.length} project${widget.projects.length == 1 ? '' : 's'}' : '$nActive building now', true),
+                  (
+                    'animation',
+                    'Create Animation',
+                    Icons.directions_walk_rounded,
+                    word(aStatus),
+                    aStatus != 'unavailable',
+                  ),
+                  (
+                    'mine',
+                    'My Creations',
+                    Icons.view_in_ar_rounded,
+                    '$nCreations 3D creation${nCreations == 1 ? '' : 's'}',
+                    true,
+                  ),
+                  (
+                    'active',
+                    'Active Projects',
+                    Icons.hourglass_top,
+                    nActive == 0
+                        ? '${widget.projects.length} project${widget.projects.length == 1 ? '' : 's'}'
+                        : '$nActive building now',
+                    true,
+                  ),
                 ];
                 return Wrap(
                   spacing: 12,
@@ -834,7 +898,8 @@ class CheCreativeStudioState extends State<CheCreativeStudio> {
               id: 'art',
               icon: Icons.palette_outlined,
               title: 'Art & Character Studio',
-              tagline: 'Images, avatars, 3D characters, outfits and animation. Blender renders on your Creation Engine.',
+              tagline:
+                  'Images, avatars, 3D characters, outfits and animation. Blender renders on your Creation Engine.',
               tags: const ['Images', 'Avatars', '3D characters', 'Outfits', 'Animation', 'Blender'],
               status: widget.imageConnected ? 'Image generation ready' : 'Image generator not connected',
               ready: widget.imageConnected,
@@ -1313,7 +1378,6 @@ class _LinkRow extends StatelessWidget {
   );
 }
 
-
 /// One of the room's six main choices: a large square with its real status.
 class _MainTile extends StatelessWidget {
   const _MainTile({
@@ -1332,6 +1396,15 @@ class _MainTile extends StatelessWidget {
   final String status;
   final bool live;
   final VoidCallback onTap;
+
+  /// Picture-first tiles: CHE's own Blender renders (tools/avatar_body/thumbs.py), not stock art. A choice that is not
+  /// built yet shows its picture dimmed, and its status says so.
+  static const _pictures = {
+    'person': 'assets/characters/app/thumb_person.jpg',
+    'object': 'assets/characters/app/thumb_object.jpg',
+    'room': 'assets/characters/app/thumb_room.jpg',
+    'animation': 'assets/characters/app/thumb_animation.jpg',
+  };
 
   @override
   Widget build(BuildContext context) => Semantics(
@@ -1353,25 +1426,49 @@ class _MainTile extends StatelessWidget {
         },
         child: ConstrainedBox(
           constraints: const BoxConstraints(minHeight: 128),
-          child: Padding(
-            padding: const EdgeInsets.all(14),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Icon(icon, size: 30, color: live ? CheStudioColors.teal : CheStudioColors.dim),
-                const SizedBox(height: 12),
-                Text(
-                  title,
-                  style: TextStyle(
-                    color: live ? CheStudioColors.text : CheStudioColors.silver,
-                    fontSize: 16.5,
-                    fontWeight: FontWeight.w800,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              if (_pictures[id] != null)
+                ClipRRect(
+                  borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+                  child: AspectRatio(
+                    aspectRatio: 4 / 3,
+                    child: Opacity(
+                      opacity: live ? 1 : 0.45,
+                      child: Image.asset(
+                        _pictures[id]!,
+                        key: ValueKey('studio-tile-picture-$id'),
+                        fit: BoxFit.cover,
+                        alignment: const Alignment(0, -0.2),
+                        errorBuilder: (_, _, _) => const SizedBox.shrink(),
+                      ),
+                    ),
                   ),
                 ),
-                const SizedBox(height: 4),
-                Text(status, style: const TextStyle(color: CheStudioColors.dim, fontSize: 13, height: 1.3)),
-              ],
-            ),
+              Padding(
+                padding: const EdgeInsets.all(14),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    if (_pictures[id] == null) ...[
+                      Icon(icon, size: 30, color: live ? CheStudioColors.teal : CheStudioColors.dim),
+                      const SizedBox(height: 12),
+                    ],
+                    Text(
+                      title,
+                      style: TextStyle(
+                        color: live ? CheStudioColors.text : CheStudioColors.silver,
+                        fontSize: 16.5,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(status, style: const TextStyle(color: CheStudioColors.dim, fontSize: 13, height: 1.3)),
+                  ],
+                ),
+              ),
+            ],
           ),
         ),
       ),
@@ -1417,7 +1514,10 @@ class _EngineRow extends StatelessWidget {
                       style: const TextStyle(color: CheStudioColors.text, fontSize: 15.5, fontWeight: FontWeight.w700),
                     ),
                     if (engine.detail.isNotEmpty)
-                      Text(engine.detail, style: const TextStyle(color: CheStudioColors.dim, fontSize: 13, height: 1.3)),
+                      Text(
+                        engine.detail,
+                        style: const TextStyle(color: CheStudioColors.dim, fontSize: 13, height: 1.3),
+                      ),
                   ],
                 ),
               ),

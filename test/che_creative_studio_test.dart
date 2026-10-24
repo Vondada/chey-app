@@ -344,6 +344,7 @@ void main() {
     expect(find.text('No active jobs right now.'), findsNothing);
     expect(find.text('Coding job'), findsOneWidget);
     expect(find.text('Running'), findsOneWidget);
+    await _scrollTo(tester, find.text('Coding job'));
     await tester.tap(find.text('Coding job'));
     expect(calls.list.last, 'job');
   });
