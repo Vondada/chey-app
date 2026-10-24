@@ -74,6 +74,20 @@ Then, on GitHub:
 
 ## 2. Current position
 
+**PROGRESS DASHBOARD (Claude, 2026-10-24 ~10:55Z). Verified statuses only; UNKNOWN means not checked.**
+
+| Workstream | Status | Last verified result | Next action |
+|---|---|---|---|
+| CHE face (owner calls her Jay; same character) | In progress, FACE FIRST | `66341ad` on `claude/che-latency-optimization-8ruaus`: MPFB2 head fitted to CHE, lashes on the real lid edge, eyes aimed through the lid opening, written features applied. 480px CPU sheet sent to the owner (actual render, not approval quality). | Darker iris and smaller highlights, fuller brows, lip texture, skin pores, hair-part patch. Owner approval needed before body work. |
+| GPU (Colab T4) | Ready to run, not verified on the T4 | `24f6069`: notebook `tools/avatar_face/colab/che_face_gpu.ipynb` + 32 MB bundle sent to the owner. The whole path passed a CPU dry run here; the GPU and Drive steps can only be verified on the owner's Colab. | Owner runs cells 1-7 and sends the cell 5/6 output. |
+| Brain (memory, context) | PR open | #515 `6efe640` (short corrections like "No, strawberry Sprite", follow-up subjects, dated owner facts). Local: Worker 3757/3764 (7 skipped), skills 17/17, replays 11/11, 4/4, 5/5. Flutter NOT RUN here. | CI on #515, then merge with `[worker-deploy]` and verify the deploy. worker.js has ~400 bytes left under its size budget. |
+| Coding | Live | main `632df0d` (#514), deploy run 40077496109 "VERIFIED 632df0de5fa8 is live"; probes: memory 18/18, Command Center 5/5, Atlas 11/11. #513 and #514 are merged (the older line below saying they wait is stale). | Codex follow-ups for #513/#514 on `claude/che-codex-513-514-followups` (agent running). |
+| Voice | TTS live; wake word UNKNOWN on device | ElevenLabs probe at `632df0d`: 50198 bytes in 291 ms. | §8f (no live transcript, long wait) still open; wake word needs the owner's device. |
+| Trading (paper only) | Code live; latest paper P&L UNKNOWN | #513 `28eb9cf` (tickers, Coinbase/Kraken candles, indicators; places no orders). No live trading anywhere. | Read `/api/trading/status` in production (not reachable from the sandbox). |
+| Creation | Paused by the owner | Cinematic v2 paused at about 217/288 frames (owner: no full video renders). #512 verified-MP4 receipts merged. | Resume only when the owner says so. |
+
+Decisions logged 2026-10-24: the face moved to the MPFB2 (CC0) base; CHE keeps an original face. Claude declined to model her on photos of a real private person who appears to be a minor (school setting); features are taken from the owner's written descriptions only. A later TikTok screenshot of another real woman is used for generic styling and light only (arched brows, voluminous dark hair, golden-hour light), not her face.
+
 **Claude, 2026-10-24 avatar/cinematic session (hyper-speed mode: the owner authorized deciding without asking; decisions are logged here).**
 - Branch `claude/che-latency-optimization-8ruaus`: `d14e684` cinematic sample (tools/cinematic_sample, 12 s MP4 verified in scratch, Rhubarb lip sync, Piper voice — NOT CHE's selected voice), `b5b522d` tools/avatar_portraits (strand-hair portrait renderer). Pushed, not merged, no PR (owner: Blender/avatar work stays on the branch).
 - Avatar status: actual Blender 5.0.1 Cycles CPU renders, semi-realistic, NOT photoreal. v1: 12 portraits + 2 body shots (idle_relaxed pose, ~13k strands; hair read grey, temple clump). v2: thinner darker strands, hairline cards 141/142 dropped (found with a card-id false-colour render), rim light halved. Renders live in the session scratchpad gallery only (not committed; PNGs are not repo assets). Remaining defects: painted eyebrows, feet, no skin micro-detail.
