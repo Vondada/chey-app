@@ -430,7 +430,9 @@ function RECORD_FACETS_ONLY(body) {
 const NAMED_VERB = /^(?:show|retrieve|check|get|tell|read|give|pull|fetch|find|look\s+up|open)\b/i;
 
 // One named job by its short ID ("coding job f1a27d86"): a particular record, so it is definite.
-const NAMED_JOB = /\b(?:coding|opencode)\s+(?:jobs?|runs?)\s+(?:id\s+|number\s+|#\s*)?[0-9a-f]{8}\b/i;
+const NAMED_JOB = /\b(?:(?:coding|opencode)\s+)?(?:jobs?|runs?)\s+(?:id\s+|number\s+|#\s*)?[0-9a-f]{8}\b/i;
+// A yes/no or pass/fail question about one named record: "did coding job f1a27d86 pass or fail?".
+const NAMED_OUTCOME = /\b(?:pass|passed|fail|failed|succeed|succeeded|finish|finished|complete|completed|done|status)\b/i;
 const RUNTIME_PLACE = /\b(?:coding|opencode)\s+(?:runtime|runner|pipeline)\b/gi;
 // A coding run, job or session: the record a history question is about.
 const WORK = '(?:coding|opencode|self[- ]development)\\s+(?:jobs?|runs?|sessions?|attempts?|executions?|tasks?|work)';
@@ -627,6 +629,7 @@ export function codingHistoryIntent(message, history = []) {
     .filter((part) => !NEGATION_CLAUSE.test(part.replace(OPENING_ASIDE, '').trim()))
     .join('. ');
   if (CHANGE_INSTRUCTION.test(active) || trailingAction(active)) return false;
+  if (NAMED_JOB.test(text) && NAMED_OUTCOME.test(text)) return true;
   if (codingFollowupKind(text) && latestWorkSubject(history) === 'coding') return true;
   // "Your last completed coding task, and the GitHub proof" is CHE's own record, whatever words the proof uses.
   if (PROOF_ASK.test(text)) return true;
