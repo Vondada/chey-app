@@ -268,7 +268,7 @@ class _CheTradingDashboardState extends State<CheTradingDashboard> {
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisAlignment: MainAxisAlignment.center, children: [
             Row(children: [
               Expanded(child: Text(cheStatTitle(stat).toUpperCase(), maxLines: 1, overflow: TextOverflow.ellipsis, style: CheHud.label.copyWith(fontSize: 10.5))),
-              Icon(open ? Icons.expand_less_rounded : Icons.info_outline_rounded, size: 15, color: Colors.white54),
+              Icon(open ? Icons.expand_less_rounded : Icons.help_outline_rounded, size: 15, color: Colors.white54),
             ]),
             const SizedBox(height: 2),
             Text(value,
