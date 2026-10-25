@@ -40,4 +40,19 @@ void main() {
     await tester.pumpWidget(const SizedBox());
     expect(CheGpuBrowser.voiceHandler, isNull);
   });
+  testWidgets('the Colab page gets most of an iPhone screen and the controls stay reachable (owner, 2026-10-25)', (tester) async {
+    tester.view.physicalSize = const Size(390 * 3, 844 * 3);
+    tester.view.devicePixelRatio = 3;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final client = MockClient((r) async => http.Response(jsonEncode({'workers': []}), 200));
+    await tester.pumpWidget(MaterialApp(home: CheGpuBrowser(
+      baseUrl: 'https://che.test', headers: const {'Authorization': 'Bearer test'},
+      client: client, browser: const SizedBox(key: Key('colab-page')), onRead: (_) {},
+    )));
+    await tester.pumpAndSettle();
+    expect(tester.getSize(find.byKey(const Key('colab-page'))).height, greaterThan((844 - kToolbarHeight) * 0.5));
+    expect(tester.getRect(find.widgetWithText(TextButton, 'Open')).bottom, lessThan(844));
+    await tester.pumpWidget(const SizedBox());
+  });
 }

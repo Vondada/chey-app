@@ -60,7 +60,7 @@ function jobState(job, stale) {
 
 // The short job ID the owner names ("coding job f1a27d86"); '' when none is named.
 export function namedJobId(message) {
-  const m = /\b(?:coding|opencode)\s+(?:jobs?|runs?)\s+(?:id\s+|number\s+|#\s*)?([0-9a-f]{8})\b/i.exec(String(message || ''));
+  const m = /\b(?:(?:coding|opencode)\s+)?(?:jobs?|runs?)\s+(?:id\s+|number\s+|#\s*)?([0-9a-f]{8})\b/i.exec(String(message || ''));
   return m ? m[1].toLowerCase() : '';
 }
 
