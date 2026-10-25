@@ -68,7 +68,8 @@ export async function mintInstallationToken({ appId, privateKeyPem, installation
   try {
     r = await fetcher(`https://api.github.com/app/installations/${encodeURIComponent(installationId)}/access_tokens`, {
       method: 'POST',
-      headers: { Authorization: `Bearer ${jwt}`, Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28', 'Content-Type': 'application/json' },
+      // GitHub rejects requests without a User-Agent, and a Worker fetch sends none by itself (review of #531).
+      headers: { Authorization: `Bearer ${jwt}`, Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28', 'Content-Type': 'application/json', 'User-Agent': 'chey-app-worker' },
       body: JSON.stringify({ repositories: repositories || [] }),
       signal: AbortSignal.timeout(10000),
     });

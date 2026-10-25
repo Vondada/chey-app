@@ -50,6 +50,7 @@ test('minting posts the JWT to the installation and restricts the token to the n
   assert.equal(call.url, 'https://api.github.com/app/installations/777/access_tokens');
   assert.equal(call.init.method, 'POST');
   assert.match(call.init.headers.Authorization, /^Bearer [\w-]+\.[\w-]+\.[\w-]+$/);
+  assert.ok(call.init.headers['User-Agent'], 'GitHub requires a User-Agent header');
   assert.deepEqual(JSON.parse(call.init.body), { repositories: ['chey-app'] });
 });
 
