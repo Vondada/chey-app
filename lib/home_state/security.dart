@@ -1264,6 +1264,11 @@ extension _CheHomeSecurity on _CHEHomeState {
       await speakText(notice, record: false, show: true);
     }
 
+    // Master profile values ("set my business phone to ...") stay out of the
+    // live session's context too. Same residual limit as passwords: Realtime
+    // transcribed the audio before CHE saw the words.
+    if (cheIsProfileTurn(clean)) _realtimeVoice?.forgetUserItem(itemId);
+
     // Use the same intake, authorization, streaming guard and TTS as typing.
     // A typed/local turn can already own the HTTP request. Keep these exact
     // words in this queued callback until it releases the composer.

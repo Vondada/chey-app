@@ -1149,6 +1149,17 @@ export const COMMANDS = Object.freeze([
     prompt: 'Cloud job control: {input}', produces: 'status', evidence: 'The job record read back after the change.',
     cost: 'Free; an approved test run uses GitHub Actions minutes.', keywords: ['approve cloud job', 'stop cloud job', 'retry cloud job'],
   }),
+  // Master profile form fill (owner, 2026-10-25): runs ONLY on the iPhone (lib/browser/che_form_filler.dart).
+  // The Worker routes the command name; profile values and passwords never come here.
+  C('master-profile', 'office', 'BUILD', 'Fill the open form from your approved profiles.', {
+    title: 'Master Profile',
+    does: 'Fills the form open in CHE\'s iPhone browser from your approved Personal or CHE Office profile, remembered answers and the on-device password vault, then reads back each field. It never submits: say "submit it" separately, and paying needs your yes.',
+    needs: [], route: 'che_master_profile', local: 'master_profile', handler: 'app: CheFormFiller (lib/browser/che_form_filler.dart) + assets/browser/che_form_fill.js',
+    input: { name: 'profile', required: false, hint: 'personal, business, or everything for all pages' },
+    examples: ['CHE, use my master profile', 'Fill this with my business profile', 'Fill everything with my personal profile'],
+    prompt: 'Use my master profile {input}', produces: 'filled form', evidence: 'Each field\'s value read back from the page on the phone; the report names fields, never values.',
+    cost: 'Free. Runs on the iPhone; nothing is sent to a model.', keywords: ['master profile', 'fill this form', 'fill out the form', 'autofill', 'business profile', 'personal profile'],
+  }),
 ]);
 
 // Aliases are other names for one command (/rea-map is /rea-features), never a second command.
