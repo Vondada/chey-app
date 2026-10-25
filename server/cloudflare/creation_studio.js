@@ -365,7 +365,7 @@ const BODY_WORDS = [
   [/\bslimmer\b|\bleaner\b|\bskinnier\b|\bthinner\b|\blighter build\b|\blose weight\b/, 'weight', -0.15, 'slimmer'],
   [/\bmore muscular\b|\bmore muscle\b|\bmuscl(?:ier|e up)\b|\bstronger\b|\bbuff(?:er)?\b/, 'muscle', 0.2, 'more muscular'],
   [/\bless muscular\b|\bless muscle\b|\bsofter build\b/, 'muscle', -0.2, 'less muscular'],
-  [/\bbroad[- ]shouldered\b|\bbroader shoulders\b|\bbroad shoulders\b/, 'muscle', 0.15, 'broader shoulders'],
+  [/\bbroad[- ]shouldered\b|\bbroader(?: shoulders| build| frame)?\b|\bbroad shoulders\b/, 'muscle', 0.15, 'broader build'],
   [/\bheroic proportions\b|\bidealized proportions\b|\bmore ideal proportions\b/, 'proportions', 0.3, 'more idealized proportions'],
   [/\bnatural proportions\b|\brealistic proportions\b|\baverage proportions\b/, 'proportions', null, 'natural proportions'],
 ];
@@ -767,6 +767,19 @@ export class CreationStudio {
     const gen = await this.generate(id);
     if (!gen.ok) return { ok: true, project: await this.detailOf(p), applied: d.applied, unsupported: d.unsupported, unused: d.unused, generated: false, spoken: `${head} It was not queued: ${gen.detail}` };
     return { ok: true, project: gen.project, job: gen.job, generated: true, applied: d.applied, unsupported: d.unsupported, unused: d.unused, spoken: `${head} ${gen.spoken}` };
+  }
+
+  /** A described person as a new version of an existing project (no reference photo, voice or variation carried). */
+  async redescribe(id, description) {
+    const { list, p } = await this.find(id);
+    if (!p || isThing(p)) return { ok: false, detail: 'No such person creation.' };
+    const d = describePerson(description, (await listIdentities(this.storage)).presets);
+    if (!d.ok) return { ok: false, detail: d.detail };
+    const next = this.pushVersion(p, `Described: "${String(description).slice(0, 160)}".`, { params: d.params, style: d.style,
+      shape: Object.keys(d.shape).length ? d.shape : undefined, reference: undefined, voice: undefined, variation: undefined, render: undefined });
+    p.description = String(description).slice(0, 300);
+    await store(this.storage, list);
+    return { ok: true, version: next.n };
   }
 
   /**
