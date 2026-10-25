@@ -168,6 +168,64 @@ R15. Then import `walk_r15.fbx` in the Animation Editor. CHE serves both at `/ap
 - **Stop.** Code Studio lists the Creation Engine's waiting and running builds with a Stop each and a "Stop the job" button; voice "stop the job" stops the one active job or reads a numbered list. It uses the queue's existing cancel; a running build's worker gets `stop` at its next heartbeat (≤ 30 s) and ends Blender, and that heartbeat is recorded (`stop_confirmed_at`), so Refresh reports the real outcome. A running coding job still cannot be cancelled (existing rule), and Code Studio says so.
 - **CI.** Roblox and benchmark workflows were already green (runs 40135088487, 40134296546). Added: the benchmark now also runs when `mpfb_body.py` changes; `flutter-check.yml` now runs the worker scripts' Python tests (`test_che_creation_job`, `test_che_gpu_worker`, `test_che_gpu_face_preview`, `test_che_gpu_push_results`, `test_avatar_body_verify`) and `test_cc0_textures`, which no workflow ran before.
 
+## Reference photo, body shape and hair (2026-10-25, lane/char-photo)
+
+Contract: `docs/CHE_CHARACTER_REALISM_CHECKLIST.md` (job setting `REFERENCE`, receipt `reference_fit` and
+`device_summary`). Everything below is free and local: Blender, CC0 MakeHuman/MPFB2 data, an Apache-2.0 landmark model,
+the CPU. No account, key or paid service.
+
+- **Landmarks: MediaPipe Face Landmarker.** pip `mediapipe==1.1.1` (Apache-2.0, github.com/google-ai-edge/mediapipe)
+  and `face_landmarker.task` float16 v1 from
+  `storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task`
+  (3,758,596 bytes, SHA-256 `64184e22…bc9ff`, pinned in `tools/avatar_face/photo_fit.py`, checked on every use). Licence
+  read from the three model cards the task file bundles (Face Mesh V2, Blendshape V2, BlazeFace short range): each says
+  "LICENSED UNDER Apache License, Version 2.0". 478 landmarks and the head pose per face, on the CPU, about 0.3 s.
+  The native library needs `libEGL.so.1` (`libegl1`, already installed by the worker).
+- **Refusals** (exit 2 for the job, receipt `status: reference_refused` with the reason): no face; more than one face;
+  eyes closer than 28 px; head turned or tilted more than 20 degrees (pose matrix and a 2D nose-centring check); a photo
+  whose SHA-256 differs from `REFERENCE.sha256`; no consent (`self` or `fictional`).
+- **Shape fit, measured not assumed.** Landmarks in the eye frame (origin between the irises, unit = their distance).
+  A detector reports only part of a shape change, so mapping its points straight onto mesh vertices under-read every
+  slider (first attempt: errors up to 0.6 and wrong signs). Instead `photo_calibration.npz` records how the detector's
+  468 landmarks move per slider on 28 synthetic renders (base, each frontal slider at +-0.6, three colour renders;
+  `make_photo_fixtures.py --calibrate`), and the sliders are fitted by coordinate descent against that response, with a
+  pull to the average and a +-0.8 bound. Fitted: `head_w, chin_h, mouth_w, mouth_up, lip_lower, nose_h` (the sliders a
+  frontal photo moves by at least 0.018 eye gaps per unit). Not fitted, left at the average and listed in the receipt as
+  `not_measured`: `nose_w`, `nose_flare`, `chin_w`, `cheek_bones`, `lip_upper` (the detector barely sees them; fitting
+  `nose_w` gave the wrong sign on 3 of 4 fixtures), `nose_up` (trades against `nose_h` in a frontal view) and every depth
+  slider. A render-in-the-loop refinement (re-render the fit, re-detect, Gauss-Newton with re-measured responses) was
+  tried and dropped: 5 minutes per photo on this CPU and no better sliders.
+- **Measured on synthetic fixtures** (`tools/fixtures/photo_fit`, `test/fixtures/character/synthetic_face.png`;
+  renders of the CC0 base with known values, never a real person): mean absolute slider error over the fitted sliders
+  0.081 (wide), 0.156 (long), 0.090 (narrow_nose), 0.143 (synthetic_face); worst single slider 0.36 (`nose_h` on
+  synthetic_face). Colours (max sRGB channel difference): skin 3-16, hair 5-20, iris 18-46. These are renders under the
+  calibration light; a real photo's lens, light and expression add error the fixtures cannot measure, so the receipt
+  always calls the result an approximate likeness.
+- **In the person job** (`che_gpu_face_preview.py`, STAGE reference): the worker fetches the photo from
+  `/api/gpu/worker/reference` with its own credential, checks the SHA-256 and passes a private temporary file
+  (`che_gpu_worker.py reference_photo`, deleted after the job). The fit is cached in the job folder by SHA-256
+  (`reference_fit_<sha16>.json`); the job id hashes the SHA-256, never the URL; the photo is never copied into the job
+  folder. The fitted sliders replace CHE's built-in face features (`FIT`, `FIT_W=1`, `FACE` cleared unless the job set
+  it); the photo's colours apply unless the job set that colour itself.
+- **Body macros** (`mpfb_base.macro_from_settings`): `BODY_GENDER, BODY_AGE, BODY_HEIGHT, BODY_WEIGHT, BODY_MUSCLE,
+  BODY_PROPORTIONS` (0..1; `BODY_PROPORTIONS` 0.5 is today's half-way-to-ideal look). With none set the body is
+  byte-for-byte the previous `macro_woman` body (test). Measured on saved GLBs: height 1.305 m (`BODY_HEIGHT 0`),
+  1.672 m (default), 2.395 m (`BODY_HEIGHT 1`); waist width 0.156 m (weight and muscle 0) vs 0.199 m (both 1); the rig
+  check (`verify_glb.py`) passes at every extreme.
+- **Hair as meshes** (`mpfb_body.py hair_style`): every style in `identity.HAIR_BUILT` (`long_wavy, wavy_medium,
+  bun_high, bun_low, curly_short, afro, beanie, close_crop`) is a mesh in the GLB, rigid to the head bone, in
+  `HAIR_SRGB`. Measured hair vertices: close_crop 283, buns 893, long/medium 1,018, curly/afro/beanie 1,201. The bust
+  preview (`mpfb_dress.py`) still has strands only for long_wavy and shows other styles close-cropped.
+- **`OUTFIT_TOP=t_shirt`** builds short sleeves; the other tops (hoodie, sweater, shirt, coat, blazer, jacket) are recorded
+  in the GLB (`asset.extras.che_character.outfit_top`) and built as the long-sleeved top (`outfit_top_built`).
+- **What built the GLB** is written into it: `asset.extras.che_character` (face sliders, FACE targets, body macros,
+  hair style, reference SHA-256, outfit). `tools/avatar_body/glb_inspect.py` reads it and measures the file without
+  Blender: height, chest/waist/hip widths, face widths, hair meshes and vertices, garment materials, joints, clips.
+- **Realism pass:** the eye was one orange blot (a 32x16 sphere with its pole pointing up smeared the iris vertex
+  colours); now a 48x40 sphere looks forward with a round pupil, iris, limbal ring and an off-white sclera. The
+  hairline was a saw-tooth (the cap's edge stepped from 3 mm to full thickness at one ring of quads); it now thins over
+  three rings and its edge loop is smoothed. Both change the default GLB's bytes (the eye adds 2,784 vertices).
+
 ## Next steps (not done)
 
 1. Run the GitHub-runner benchmark (automatic on the PR) and replace the local numbers above with its clean ones.
