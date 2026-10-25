@@ -33,6 +33,11 @@ Branch: `claude/che-character-realism` (from main `afb8de1`). Lanes push to `lan
     distinguish records vs generated models vs simultaneously active characters; benchmark generation, storage and
     world performance; "millions per day" is an unverified target. Lane D `lane/char-world`.
 
+15. Create Room demonstration (2026-10-25): playable video (not a still) + walkthrough of the finished experience:
+    describe/reference → Create → three styles → rig, expressions, lip-sync → walk, turn, sit, gesture, speak → change
+    hair/clothing/body/voice (say what preserves rig) → in CHE's Office → save, reopen, use. Every segment labelled
+    REAL / PROTOTYPE / NOT AT $0. Lane E `lane/char-demo`; doc `docs/CHE_CREATE_ROOM_DEMO.md`.
+
 ## Infrastructure facts (inspected, not assumed)
 - Cloudflare Worker: queue, storage, routing only. No GPU, no Blender.
 - Free GitHub Actions CPU worker (ubuntu, 4 cores, Blender 5.0.1, MPFB2): verified live. Run 40153146586 built a
@@ -66,6 +71,7 @@ Branch: `claude/che-character-realism` (from main `afb8de1`). Lanes push to `lan
 | G10 | Acceptance driver + publish job | me | pushed `6651850`; needs lane B accept routes |
 | G11 | Compute pool (providers, cooldowns, handoff) | C | in progress |
 | G12 | World population + benchmarks | D | in progress |
+| G13 | Create Room demo video + walkthrough | E | in progress |
 | G9 | e2e server "k.startsWith" (research queue never ran in e2e) | me | done `4ad45c9`; e2e 2/2 |
 
 ## Integration and release
