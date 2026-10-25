@@ -70,3 +70,55 @@ The Creation Room opens on six choices under the Creation Engine's real state:
 - "Put this in my Office" is not built.
 
 **Settings → Creation Engine** holds Pair Colab, the GPU job queue and the notebook link. Connect opens the notebook; CHE cannot start Colab herself.
+
+## Recording Studio engine: Beat Producer, Engineer Mode, recreated presets, vocal analysis (2026-10-25)
+
+These are built on the existing Recording Studio (`lib/music`), not as a second studio. Everything runs on the iPhone in Dart, on real samples.
+
+| Feature | Files | Voice (also typed) |
+|---|---|---|
+| **Beat Producer**: genre, tempo and key produce drums and a bass line. The result is rendered as audio onto the **Produced beat** track, ready for the mixer, effects, mastering and export. Generation is deterministic: the same settings always give the same pattern and samples. "Another one" means the next variation. | `che_beat_producer.dart` | "make a trap beat in F minor at 140", "produce a beat", "make another one" |
+| **Engineer Mode**: a numbered option list, with spoken choices by number while it is on. | `che_engineer.dart` | "engineer mode", "option 3", "engineer mode off" |
+| **Punch-in by bar or time**: snapshots the song first. The original take's audio stays on disk, and undo puts it back. | `che_engineer.dart`, `che_studio_controller.dart` | "punch in bars 3 to 4", "punch in bar 2 and record", "punch in from 12 to 16 seconds" |
+| **Undo**: every change is one step (a slider drag counts as one). After reopening a song, undo falls back to the saved snapshots. | `che_studio_controller.dart` | "undo", "undo that" |
+| **Bring me back**: returns to the last good mix. Good points are saved when Engineer Mode starts, when the owner says it sounds good, and on every export. Snapshots are kept in `snapshots.json` beside `song.json`, so they survive reopening. A restore reads takes that are no longer in memory back from the song folder. | `che_engineer.dart`, `che_song.dart` (store) | "bring me back", "this sounds good", "list snapshots", "restore snapshot 2" |
+| **Recreated presets**: labelled **recreated, not imported**. | `che_preset_recreate.dart` | "recreate BandLab Hip Hop Vocal", "recreate preset 2", "recreate a preset with cut lows, bright, heavy compression, short delay and big reverb" |
+| **Vocal analysis and personalized processing**: measures pitch range (YIN), average and peak level, sibilance (5 to 10 kHz energy), noise floor, dynamics and off-key cents. It then suggests a chain and applies it, with a before-to-after numbers receipt. | `che_vocal_analysis.dart` | "analyze my vocals", "personalize my vocal processing" |
+
+**New effects** on every track are a high-pass filter, a movable mid-EQ frequency (for presence boosts at 3 to 5 kHz) and a split-band de-esser.
+- The de-esser uses a Linkwitz-Riley crossover. It runs after the compressor, because compression raises sibilance.
+- It skips anything below -45 dBFS, so room hiss is left alone.
+- Older song files load unchanged.
+
+### BandLab research (what is and is not documented)
+
+Researched 2026-10-25 by web search. The help pages themselves could not be opened from the development machine (DNS blocked), so these findings rest on the search engine's text from those pages.
+- BandLab documents import and export as **audio and MIDI only**: WAV, MP3 and M4A audio, plus MIDI ([Supported Import and Export File Formats](https://help.bandlab.com/hc/en-us/articles/360036010533-Supported-Audio-Formats-)).
+- Effects presets are shared **inside BandLab**, as a profile post or a link that another BandLab user opens in their Studio ([Sharing your Presets](https://help.bandlab.com/hc/en-us/articles/6443820016665-Sharing-your-Presets), [Adding Effects](https://help.bandlab.com/hc/en-us/articles/115002945473-Adding-Effects)). No preset file download is documented.
+- One preset seller's blog claims chains are JSON files with an "Import Chain" option. BandLab documents no such thing, so CHE does not rely on it.
+- BandLab publishes no parameter values for its stock vocal presets.
+
+So CHE **cannot import** BandLab presets and says so. Asked to import one, it explains this and offers to recreate the preset.
+
+The recreated starting values come from widely published vocal-mixing ranges. The sources are blogs and retailer guides, not BandLab:
+- high-pass at 80 to 100 Hz
+- a 2 to 3 dB presence boost at 3 to 5 kHz
+- de-essing at 5 to 8 kHz
+- compression at 2:1 to 4:1, with 10 to 20 ms attack and 50 to 100 ms release
+- delay at 100 to 400 ms
+
+Sources: reverb.com "How to Mix Rap Vocals: Basic Techniques and Effects", violetrecording.com "Vocal chain for rap", audiofanzine "Mixing rap vocals, part 2: EQ".
+
+### Tests
+
+`test/che_studio_engine_test.dart` (all fixtures are synthetic) covers:
+- De-esser levels.
+- Beat determinism, length, onsets and the bass pitch of the key.
+- Recreated preset ranges.
+- Analysis numbers.
+- One end-to-end run: beat, then vocal, then punch-in, then recreated preset, then WAV export (header, length, not silent), then reload, then snapshot restore and bring me back.
+
+### Not verified yet
+
+- These features have not been tried on an iPhone with real takes. The analysis thresholds and the de-esser were tuned only on synthetic fixtures.
+- The produced beats use the studio's synthesised drums, not sampled kits.

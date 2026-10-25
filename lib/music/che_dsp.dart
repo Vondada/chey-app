@@ -384,6 +384,58 @@ ChePitchReport chePitchCorrect(Float32List x, {double strength = 1, int key = 0,
   return ChePitchReport(frames, pitched, pitched == 0 ? 0 : cents / pitched);
 }
 
+/// What the de-esser did: the share of the take it turned down and the deepest cut.
+class CheDeEssReport {
+  const CheDeEssReport(this.reducedFraction, this.maxReductionDb);
+  final double reducedFraction;
+  final double maxReductionDb;
+}
+
+/// Split-band de-esser. The take is split at [splitHz] by a Linkwitz-Riley crossover (two Butterworth sections per
+/// band, whose low and high bands add back to the original level at every frequency; subtracting a single high-pass
+/// from the original would not, because of its phase shift). A detector band-pass at [freqHz] (the "s" and "sh"
+/// region) is compared with the whole signal: when the sibilant band rises to within [amount]-dependent dB of the
+/// full level, and the signal is louder than [minLevelDb] (so room hiss is left alone), only the high band is turned
+/// down (at most 14 dB times [amount]). Vowels, whose energy sits far below the sibilant band, keep their level.
+/// [amount] 0 leaves the take alone, sample for sample.
+CheDeEssReport cheDeEss(Float32List x,
+    {double amount = 0.5, double freqHz = 6500, double splitHz = 4500, double minLevelDb = -45, int rate = cheStudioRate}) {
+  final a = amount.clamp(0, 1).toDouble();
+  if (a <= 0 || x.isEmpty) return const CheDeEssReport(0, 0);
+  final high = Float32List.fromList(x), low = Float32List.fromList(x);
+  CheBiquad.highPass(splitHz, rate: rate).run(high);
+  CheBiquad.highPass(splitHz, rate: rate).run(high);
+  CheBiquad.lowPass(splitHz, rate: rate).run(low);
+  CheBiquad.lowPass(splitHz, rate: rate).run(low);
+  final gate = cheGain(minLevelDb);
+  final det = Float32List.fromList(x);
+  CheBiquad.bandPass(freqHz, q: 0.8, rate: rate).run(det);
+  final att = math.exp(-1 / (rate * 0.001)), rel = math.exp(-1 / (rate * 0.04));
+  // Sibilant when the detector band is within this many dB of the whole signal's level.
+  final relThreshold = -14 + 8 * (1 - a);
+  final maxCut = 14 * a;
+  var envS = 0.0, envF = 0.0, g = 1.0;
+  var reduced = 0, deepest = 0.0;
+  final gAtt = math.exp(-1 / (rate * 0.0005)), gRel = math.exp(-1 / (rate * 0.03));
+  for (var i = 0; i < x.length; i++) {
+    final s = det[i].abs(), f = x[i].abs();
+    envS = s > envS ? att * envS + (1 - att) * s : rel * envS + (1 - rel) * s;
+    envF = f > envF ? att * envF + (1 - att) * f : rel * envF + (1 - rel) * f;
+    var cutDb = 0.0;
+    if (envF > gate) {
+      final over = cheDb(envS) - cheDb(envF) - relThreshold;
+      if (over > 0) cutDb = math.min(maxCut, over * 0.75 + 3 * a);
+    }
+    final target = cheGain(-cutDb);
+    g = target < g ? gAtt * g + (1 - gAtt) * target : gRel * g + (1 - gRel) * target;
+    if (g < 0.97) reduced++;
+    final d = -cheDb(g);
+    if (d > deepest) deepest = d;
+    x[i] = low[i] + high[i] * g;
+  }
+  return CheDeEssReport(reduced / x.length, deepest);
+}
+
 /// Equal-power pan of a mono plane into left/right, [pan] -1 (left) .. 1 (right).
 (double, double) chePanGains(double pan) {
   final a = (pan.clamp(-1, 1) + 1) * math.pi / 4;
@@ -394,10 +446,15 @@ ChePitchReport chePitchCorrect(Float32List x, {double strength = 1, int key = 0,
 
 final _rng = math.Random(7);
 
-Float32List _noise(int n) => Float32List.fromList([for (var i = 0; i < n; i++) _rng.nextDouble() * 2 - 1]);
+Float32List _noise(int n, [math.Random? rng]) {
+  final r = rng ?? _rng;
+  return Float32List.fromList([for (var i = 0; i < n; i++) r.nextDouble() * 2 - 1]);
+}
 
-/// One drum hit. Instruments: kick, snare, clap, hat, open_hat, perc, bass (an 808-style tone at [hz]).
-Float32List cheDrum(String instrument, {int rate = cheStudioRate, double hz = 55}) {
+/// One drum hit. Instruments: kick, snare, clap, hat, open_hat, perc, bass (an 808-style tone at [hz]). With [rng],
+/// the noise in snares, claps and hats comes from it, so a seeded render is identical every time.
+Float32List cheDrum(String instrument, {int rate = cheStudioRate, double hz = 55, math.Random? rng}) {
+  Float32List makeNoise(int n) => _noise(n, rng);
   switch (instrument) {
     case 'kick':
       final n = (rate * 0.45).round();
@@ -412,7 +469,7 @@ Float32List cheDrum(String instrument, {int rate = cheStudioRate, double hz = 55
       return out;
     case 'snare':
       final n = (rate * 0.22).round();
-      final noise = _noise(n);
+      final noise = makeNoise(n);
       CheBiquad.highPass(1200).run(noise);
       return Float32List.fromList([
         for (var i = 0; i < n; i++)
@@ -420,7 +477,7 @@ Float32List cheDrum(String instrument, {int rate = cheStudioRate, double hz = 55
       ]);
     case 'clap':
       final n = (rate * 0.25).round();
-      final noise = _noise(n);
+      final noise = makeNoise(n);
       CheBiquad.bandPass(1300, q: 1.2).run(noise);
       return Float32List.fromList([
         for (var i = 0; i < n; i++)
@@ -430,7 +487,7 @@ Float32List cheDrum(String instrument, {int rate = cheStudioRate, double hz = 55
     case 'open_hat':
       final decay = instrument == 'hat' ? 60.0 : 9.0;
       final n = (rate * (instrument == 'hat' ? 0.06 : 0.35)).round();
-      final noise = _noise(n);
+      final noise = makeNoise(n);
       CheBiquad.highPass(7000).run(noise);
       return Float32List.fromList([for (var i = 0; i < n; i++) noise[i] * 0.5 * math.exp(-i / rate * decay)]);
     case 'perc':
