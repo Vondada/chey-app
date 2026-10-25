@@ -105,19 +105,22 @@ class _CheGpuBrowserState extends State<CheGpuBrowser> {
   Widget build(BuildContext context) => Scaffold(
     appBar: AppBar(title: const Text('GPU Browser')),
     body: Column(children: [
-      Padding(padding: const EdgeInsets.all(8), child: Column(children: [
-        ConstrainedBox(
-          constraints: BoxConstraints(maxHeight: MediaQuery.sizeOf(context).height * 0.45),
-          child: SingleChildScrollView(child: CheGpuConnectPanel(controller: _connect, onRead: widget.onRead)),
-        ),
-        Text(_status),
-        const Text('Google decides whether it allows signing in here; if it refuses, CHE opens the notebook in Safari. '
-            'Colab can end a runtime at any time; jobs resume from their checkpoints.'),
-        Wrap(spacing: 8, children: [
-          for (final command in const ['open', 'refresh', 'reconnect', 'gpu status'])
-            TextButton(onPressed: () => unawaited(_action(command)),
-                child: Text(const {'open': 'Open', 'refresh': 'Refresh', 'reconnect': 'Reconnect', 'gpu status': 'GPU Status'}[command]!)),
-        ]),
+      // The status takes at most 30% of the screen and scrolls; the Colab page keeps the rest (owner, 2026-10-25:
+      // the panel left no room for the web page, so Open and Refresh only reloaded a strip).
+      ConstrainedBox(
+        constraints: BoxConstraints(maxHeight: MediaQuery.sizeOf(context).height * 0.3),
+        child: SingleChildScrollView(padding: const EdgeInsets.all(8), child: Column(children: [
+          CheGpuConnectPanel(controller: _connect, onRead: widget.onRead),
+          Text(_status),
+          const Text('Google decides whether it allows signing in here; if it refuses, CHE opens the notebook in Safari. '
+              'Colab can end a runtime at any time; jobs resume from their checkpoints.'),
+        ])),
+      ),
+      // The controls stay on screen whatever the status above is (they were inside the scroll area before).
+      Padding(padding: const EdgeInsets.symmetric(horizontal: 8), child: Wrap(spacing: 8, children: [
+        for (final command in const ['open', 'refresh', 'reconnect', 'gpu status'])
+          TextButton(onPressed: () => unawaited(_action(command)),
+              child: Text(const {'open': 'Open', 'refresh': 'Refresh', 'reconnect': 'Reconnect', 'gpu status': 'GPU Status'}[command]!)),
       ])),
       Expanded(child: widget.browser ?? CheBrowserScreen(initialUrl: cheGpuNotebookUrl(cheGpuDefaultAccount), title: 'Colab', sessionKey: cheGpuSessionKey, appMode: false, googleSignInInPage: true)),
     ]),

@@ -34,7 +34,7 @@ import { auditView, fineTuneDisclosure, setProviderPermission } from './privacy_
 import {
   accountsView, approveProviderPlugin, authorizeProvider, ensureAiState, proposeProviderPlugin,
 } from './provider_registry.js';
-import { discoverKeylessModels, engineStatus, paidAllowed, routedEnv } from './ai_router.js';
+import { discoverKeylessModels, engineStatus, paidAllowed, routedEnv, routeText } from './ai_router.js';
 import { capabilityPromptLine, inferTurnCapabilities, runtimeCapabilityRegistry } from './cognitive_capabilities.js';
 import { identityQuestionIntent, speakIdentity } from './che_maturity.js';
 import { deleteMedia, generateImage, generateVideo, listMedia, readBlob, saveOwnerFile, upscaleImage, verifyMediaFile } from './media.js';
@@ -5218,7 +5218,7 @@ export class CheState extends DurableObject {
       // A definition the index already holds is answered directly, not guessed.
       const lookupIndex = cachedCodeIndex(repoGrounding?.head_sha);
       const directAnswer = definitionAnswer(incoming, repoGrounding) || lookupAnswer(incoming, repoGrounding, lookupIndex ? (path) => lookupIndex.text(path) : null);
-      const runModel = (retryNote = '') => this.env.AI.run(this.env.CHE_STRONG_MODEL || STRONG_MODEL, {
+      const runModel = (retryNote = '') => routeText(this.env, this.env.CHE_STRONG_MODEL || STRONG_MODEL, {
         messages: [
           {
             role: 'system',
