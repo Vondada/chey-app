@@ -77,6 +77,9 @@ Then, on GitHub:
 
 ## 2. Current position
 
+**Claude, 2026-10-25 — character creation work in progress on `claude/che-character-realism`.** Read `docs/CHE_CHARACTER_REALISM_CHECKLIST.md` on that branch first (requirements, infrastructure facts, gap table). Lanes: `lane/char-photo` (Python/Blender: photo fit, body, hair, per-style samples) and `lane/char-photo-app` (Worker + app: reference upload, describe-a-person, body/voice/regenerate). Main is `afb8de1` (PR #524, live).
+
+
 **Claude, 2026-10-25 ~02:10 UTC — PR #524 MERGED as `afb8de1`; Worker LIVE and verified.**
 - Deploy run 40152765240: "VERIFIED afb8de155d3a is live" (Worker version 22362764-d908-4966-900a-3a6f7938b6af); memory truth 22/22 (0 model calls), Command Center 5/5 (130 commands ready), Knowledge Atlas 11/11, ElevenLabs voice 52287 bytes in 625 ms.
 - Live trading (paper, read-only): futures paper ON, DELAYED MNQ=F MNQZ6 (weekend), 219 closed, 53 won/166 lost, net -6917.09; Orion crypto PAUSED, read real Coinbase BTC/ETH 5m/15m/1h LIVE bars (BTC 5m close 80781.14 at 01:55Z).
