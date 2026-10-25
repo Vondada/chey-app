@@ -942,8 +942,7 @@ class CheLiveStudioState extends State<CheLiveStudio> with WidgetsBindingObserve
 
   @override
   Widget build(BuildContext context) {
-    final h = MediaQuery.sizeOf(context).height;
-    final title = _personMode ? '${project['title'] ?? 'Live Studio'}' : 'Animation preview';
+    final title = _personMode ? '${project['title'] ?? 'Character Studio'}' : 'Animation preview';
     return Scaffold(
       backgroundColor: CheStudioColors.bg,
       appBar: AppBar(
@@ -951,68 +950,51 @@ class CheLiveStudioState extends State<CheLiveStudio> with WidgetsBindingObserve
         foregroundColor: CheStudioColors.text,
         title: Semantics(header: true, child: Text(title, overflow: TextOverflow.ellipsis)),
         leading: IconButton(
-          key: const ValueKey('live-back'),
+          key: const ValueKey('studio-back'),
           tooltip: 'Back',
           onPressed: () => Navigator.maybePop(context),
           icon: const Icon(Icons.arrow_back_rounded),
         ),
         actions: [
-          IconButton(
-            key: const ValueKey('live-undo'),
-            tooltip: 'Undo',
-            onPressed: busy ? null : () => unawaited(undo()),
-            icon: const Icon(Icons.undo_rounded),
-          ),
-          IconButton(
-            key: const ValueKey('live-redo'),
-            tooltip: 'Redo',
-            onPressed: busy ? null : () => unawaited(redo()),
-            icon: const Icon(Icons.redo_rounded),
-          ),
-          IconButton(
-            key: const ValueKey('live-save'),
-            tooltip: 'Save',
-            onPressed: busy ? null : () => unawaited(save()),
-            icon: const Icon(Icons.save_rounded),
-          ),
-          IconButton(
-            key: const ValueKey('live-exit'),
-            tooltip: 'Exit',
-            onPressed: () => Navigator.maybePop(context),
-            icon: const Icon(Icons.close_rounded),
-          ),
+          IconButton(key: const ValueKey('studio-undo'), tooltip: 'Undo', onPressed: busy ? null : () => unawaited(undo()), icon: const Icon(Icons.undo_rounded)),
+          IconButton(key: const ValueKey('studio-redo'), tooltip: 'Redo', onPressed: busy ? null : () => unawaited(redo()), icon: const Icon(Icons.redo_rounded)),
+          IconButton(key: const ValueKey('studio-save'), tooltip: 'Save', onPressed: busy ? null : () => unawaited(save()), icon: const Icon(Icons.save_rounded)),
+          IconButton(key: const ValueKey('studio-exit'), tooltip: 'Exit', onPressed: () => Navigator.maybePop(context), icon: const Icon(Icons.close_rounded)),
         ],
       ),
       body: SafeArea(
-        top: false,
         child: Column(
           children: [
-            if (_personMode) _EngineBar(engine: engine, onConnect: () => unawaited(connectEngine())),
-            if (banner.isNotEmpty) Padding(padding: const EdgeInsets.all(8), child: _Banner(text: banner, ok: bannerOk)),
-            // Large always-visible 3D viewport
             Expanded(
-              flex: 3,
+              flex: 6,
               child: Semantics(
-                label: '3D viewport. ${shown.label} Drag to rotate 360 degrees, pinch to zoom, double tap to reset. Character remains visible while editing.',
+                label: '3D character viewport. ${shown.label}. Drag to rotate, pinch to zoom.',
                 child: Container(
-                  key: const ValueKey('live-viewport'),
+                  key: const ValueKey('studio-viewport'),
                   margin: const EdgeInsets.fromLTRB(12, 8, 12, 4),
                   decoration: BoxDecoration(
-                    color: CheStudioColors.bg,
-                    border: Border.all(color: const Color(0xFF2FD6C8).withOpacity(0.35)),
+                    border: Border.all(color: const Color(0xFF2FD6C8).withValues(alpha: 0.4)),
                     borderRadius: BorderRadius.circular(16),
                   ),
                   clipBehavior: Clip.antiAlias,
                   child: Stack(
+                    fit: StackFit.expand,
                     children: [
                       _viewport.build(context),
                       Positioned(
-                        top: 8,
-                        left: 8,
+                        left: 10,
+                        top: 10,
                         child: Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                          decoration: BoxDecoration(color: Colors.black54, borderRadius: BorderRadius.circular(8)),
-                          child: Text(shown.label, style: const TextStyle(color: Colors.white, fontSize: 12)),
+                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                          decoration: BoxDecoration(color: Colors.black.withValues(alpha: 0.65), borderRadius: BorderRadius.circular(8)),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(shown.source == 'generated' ? 'Generated GLB' : (shown.source == 'bundled' ? 'Bundled stylized model' : 'No model'), style: const TextStyle(color: Color(0xFF2FD6C8), fontSize: 12, fontWeight: FontWeight.w600)),
+                              Text(shown.label, style: const TextStyle(color: Colors.white, fontSize: 11), maxLines: 2, overflow: TextOverflow.ellipsis),
+                              if (shown.key.isNotEmpty) Text('ID: ${shown.key}', style: const TextStyle(color: CheStudioColors.silver, fontSize: 10)),
+                            ],
+                          ),
                         ),
                       ),
                     ],
@@ -1020,90 +1002,37 @@ class CheLiveStudioState extends State<CheLiveStudio> with WidgetsBindingObserve
                 ),
               ),
             ),
-            // Persistent camera controls
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
               child: Wrap(
                 spacing: 6,
-                runSpacing: 4,
                 alignment: WrapAlignment.center,
                 children: [
-                  _tool('Rotate left', Icons.rotate_left, () => viewportCommand({'action': 'rotate', 'deg': -45})),
-                  _tool('Rotate right', Icons.rotate_right, () => viewportCommand({'action': 'rotate', 'deg': 45})),
-                  _tool('Zoom in', Icons.zoom_in, () => viewportCommand({'action': 'zoom', 'factor': 1.3})),
-                  _tool('Zoom out', Icons.zoom_out, () => viewportCommand({'action': 'zoom', 'factor': 0.77})),
-                  _tool('Full body', Icons.accessibility_new, () => viewportCommand({'action': 'view', 'deg': 0, 'fit': 'full'})),
-                  _tool('Face close-up', Icons.face, () => viewportCommand({'action': 'view', 'deg': 0, 'fit': 'face'})),
+                  _tool('Full Body', Icons.accessibility_new, () => viewportCommand({'action': 'view', 'deg': 0, 'fit': 'full'})),
+                  _tool('Face', Icons.face, () => viewportCommand({'action': 'view', 'deg': 0, 'fit': 'face'})),
+                  _tool('Side', Icons.account_circle_outlined, () => viewportCommand({'action': 'view', 'deg': 90})),
+                  _tool('Back', Icons.arrow_back, () => viewportCommand({'action': 'view', 'deg': 180})),
                   _tool('Reset', Icons.center_focus_strong, () => viewportCommand({'action': 'reset'})),
                 ],
               ),
             ),
-            // Collapsible bottom customization panel with 5 tabs
             Expanded(
-              flex: 2,
+              flex: 4,
               child: _CharacterEditPanel(
                 personMode: _personMode,
-                onEdit: (words) => unawaited(applyEdit(words)),
+                onEdit: (w) => unawaited(applyEdit(w)),
                 clips: clips,
                 onAnimate: (c) => unawaited(animate(c)),
                 playing: playing,
+                shown: shown,
               ),
             ),
           ],
         ),
       ),
     );
-              const SizedBox(height: 8),
-              Text(
-                shown.label,
-                key: const ValueKey('live-shown'),
-                style: const TextStyle(color: CheStudioColors.silver, fontSize: 14, height: 1.35),
-              ),
-              if (modelInfo.isNotEmpty)
-                Padding(
-                  padding: const EdgeInsets.only(top: 4),
-                  child: Text(
-                    '${modelInfo['vertices']} vertices, ${modelInfo['triangles']} triangles, ${modelInfo['meshes']} parts'
-                    '${clips.isEmpty ? '' : ', ${clips.length} animation clips'}.',
-                    style: const TextStyle(color: CheStudioColors.dim, fontSize: 13),
-                  ),
-                ),
-              const SizedBox(height: 10),
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: [
-                  _tool(
-                    'Turn left',
-                    Icons.chevron_left_rounded,
-                    () => viewportCommand({'action': 'rotate', 'deg': -45}),
-                  ),
-                  _tool(
-                    'Turn right',
-                    Icons.chevron_right_rounded,
-                    () => viewportCommand({'action': 'rotate', 'deg': 45}),
-                  ),
-                  _tool('Zoom in', Icons.zoom_in_rounded, () => viewportCommand({'action': 'zoom', 'factor': 1.4})),
-                  _tool(
-                    'Zoom out',
-                    Icons.zoom_out_rounded,
-                    () => viewportCommand({'action': 'zoom', 'factor': 1 / 1.4}),
-                  ),
-                  _tool('Front', Icons.person_outline_rounded, () => viewportCommand({'action': 'view', 'deg': 0})),
-                  _tool('Side', Icons.account_circle_outlined, () => viewportCommand({'action': 'view', 'deg': 90})),
-                  _tool('Reset view', Icons.center_focus_strong_rounded, () => viewportCommand({'action': 'reset'})),
-                  _tool('Turntable', Icons.autorenew, () => viewportCommand({'action': 'spin', 'on': true})),
-                  _tool('Lip sync test', Icons.record_voice_over_rounded, lipSyncTest),
-                  if (clips.isNotEmpty)
-                    _tool(
-                      playing == null ? 'Animate' : 'Stop animation',
-                      Icons.directions_walk_rounded,
-                      () => playing == null ? animate() : viewportCommand({'action': 'stop'}),
-                    ),
-                ],
-              ),
-    );
   }
+
 
   Widget _tool(String label, IconData icon, Future<Object?> Function() onTap) => Semantics(
     button: true,
@@ -1474,6 +1403,7 @@ class _CharacterEditPanel extends StatefulWidget {
     required this.clips,
     required this.onAnimate,
     required this.playing,
+    required this.shown,
   });
 
   final bool personMode;
@@ -1481,6 +1411,7 @@ class _CharacterEditPanel extends StatefulWidget {
   final List<String> clips;
   final void Function(String clip) onAnimate;
   final String? playing;
+  final CheShownModel shown;
 
   @override
   State<_CharacterEditPanel> createState() => _CharacterEditPanelState();
