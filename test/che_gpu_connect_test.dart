@@ -317,12 +317,17 @@ void _accountLabelTests() {
     });
 
     test('a page initial or name is never spoken as the account', () {
-      expect(cheGpuAccountLabel('V'), 'your CHE Office account');
-      expect(cheGpuAccountLabel('Vondada'), 'your CHE Office account');
+      expect(cheGpuAccountLabel('V'), 'an account I cannot read');
+      expect(cheGpuAccountLabel('Vondada'), 'an account I cannot read');
     });
 
-    test('an empty value falls back to the CHE Office label', () {
-      expect(cheGpuAccountLabel(''), 'your CHE Office account');
+    test('an empty value is said as an unreadable account', () {
+      expect(cheGpuAccountLabel(''), 'an account I cannot read');
+    });
+
+    test('Colab opens with the CHE Office account by default', () {
+      expect(cheGpuDefaultAccount, 'chaytheoffice@gmail.com');
+      expect(cheGpuNotebookUrl(cheGpuDefaultAccount), contains('authuser=chaytheoffice%40gmail.com'));
     });
   });
 }

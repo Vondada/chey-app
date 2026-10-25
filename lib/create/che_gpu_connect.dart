@@ -62,9 +62,12 @@ bool cheValidEmail(String s) => RegExp(r'^[^\s@<>,;"]+@[^\s@<>,;"]+\.[a-z]{2,}$'
 String cheGpuNotebookUrl(String email) =>
     email.isEmpty ? cheColabNotebookUrl : '$cheColabNotebookUrl?authuser=${Uri.encodeQueryComponent(email)}';
 
-/// What CHE says for the signed-in Colab account. Only a real address is spoken. A page initial, a name or an empty
-/// value becomes "your CHE Office account", never a guess (owner, 2026-10-25: the default must not show a letter).
-String cheGpuAccountLabel(String shown) => cheValidEmail(shown) ? shown : 'your CHE Office account';
+/// The Google account Colab opens with unless the owner sets another (owner, 2026-10-25: his CHE Office account).
+const cheGpuDefaultAccount = 'chaytheoffice@gmail.com';
+
+/// What CHE says for the signed-in Colab account. A real address is spoken as written. A page initial or name that
+/// CHE cannot match to an address is never spoken as the account; it is said as an unreadable account.
+String cheGpuAccountLabel(String shown) => cheValidEmail(shown) ? shown : 'an account I cannot read';
 
 /// The owner's preferred Google account for Colab (his CHE Office account). An address only, kept on this iPhone.
 class CheGpuAccount {
@@ -72,9 +75,10 @@ class CheGpuAccount {
   static const key = 'che_gpu_google_account';
   static Future<String> read() async {
     try {
-      return ((await SharedPreferences.getInstance()).getString(key) ?? '').trim().toLowerCase();
+      final saved = ((await SharedPreferences.getInstance()).getString(key) ?? '').trim().toLowerCase();
+      return saved.isEmpty ? cheGpuDefaultAccount : saved;
     } catch (_) {
-      return '';
+      return cheGpuDefaultAccount;
     }
   }
 
@@ -828,7 +832,7 @@ class _CheGpuConnectPanelState extends State<CheGpuConnectPanel> {
                 autocorrect: false,
                 decoration: InputDecoration(
                   labelText: 'CHE Office Google account for Colab',
-                  helperText: _saved.isEmpty ? 'Not set. Or say: my CHE Office Google account is, then the address.' : 'Saved on this iPhone: $_saved',
+                  helperText: _saved.isEmpty ? 'Default: $cheGpuDefaultAccount. Or say: my CHE Office Google account is, then the address.' : 'Saved on this iPhone: $_saved',
                 ),
                 onSubmitted: (_) => unawaited(_saveEmail()),
               )),

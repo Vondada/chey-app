@@ -87,7 +87,7 @@ class _CheGpuBrowserState extends State<CheGpuBrowser> {
     if (RegExp(r'^(?:reconnect(?: (?:the )?gpu)?|open(?: (?:the )?(?:notebook|colab))?)$').hasMatch(t)) {
       final open = CheBrowserActions.openUrl;
       if (open == null) return 'The notebook browser is not ready. Try Open again.';
-      await open(cheColabNotebookUrl);
+      await open(cheGpuNotebookUrl(cheGpuDefaultAccount));
       return 'Notebook refreshed. Choose Runtime, Reconnect or Run all in Colab. CHE cannot start the GPU herself. ${await _check()}';
     }
     return null;
@@ -119,7 +119,7 @@ class _CheGpuBrowserState extends State<CheGpuBrowser> {
                 child: Text(const {'open': 'Open', 'refresh': 'Refresh', 'reconnect': 'Reconnect', 'gpu status': 'GPU Status'}[command]!)),
         ]),
       ])),
-      Expanded(child: widget.browser ?? const CheBrowserScreen(initialUrl: cheColabNotebookUrl, title: 'Colab', sessionKey: cheGpuSessionKey, appMode: false, googleSignInInPage: true)),
+      Expanded(child: widget.browser ?? CheBrowserScreen(initialUrl: cheGpuNotebookUrl(cheGpuDefaultAccount), title: 'Colab', sessionKey: cheGpuSessionKey, appMode: false, googleSignInInPage: true)),
     ]),
   );
 }
