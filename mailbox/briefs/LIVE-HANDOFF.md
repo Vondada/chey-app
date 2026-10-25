@@ -77,6 +77,13 @@ Then, on GitHub:
 
 ## 2. Current position
 
+**Claude, 2026-10-25 (owner: CLAUDE — ADD KIMI-LEVEL INTERACTIVE 3D BUILDING TO CHE) — first slice pushed.**
+- Branch `lane/invention-jet-engine` at `1786d2b3` (from main `2d713a4b`). Not merged, no PR, not deployed, not on the iPhone.
+- Done: `jet_engine` template (15 named box parts; stage and group per part) in `server/cloudflare/invention_visuals.js`; `server/cloudflare/invention_scene.js` edits the named parts (explode by stage, exact reassemble, open casing halves, spoken part-name resolution, size/scale one part, hide/show, JSON save/reload). Every edit returns a receipt naming the parts it changed.
+- Verified: `invention_scene.test.mjs` 10/10 (includes a GLB round-trip: the edited mesh's bounds are read back from the exported file); full Worker suite 4130 pass / 0 fail / 7 skipped. `worker.js` is 1,100,036 bytes on main as well (not caused by this lane).
+- NOT done: the Three.js viewer (`assets/characters/app/studio.html`) does not yet receive these ops; no chat/voice route ("build a jet engine", "open the casing"); no saved-version store or reopen in the app; no Blender/FreeCAD source; no architectural room or first-person walk; no real device test. Those are the next steps in that order.
+- Coordination: `lib/create/che_live_studio.dart` is being edited by `feature/character-studio-redesign` and `feature/character-studio-unified`; this lane does not touch it.
+
 
 <!-- codex-music-truth-20261025:start -->
 **Codex, 2026-10-25T16:15:54.866Z — owner: “Help she is lying” (11:04 phone recording).**
