@@ -43,3 +43,6 @@ test/failures/
 
 # Agent worktrees (each is its own checkout; push its branch, never commit the folder)
 .claude/worktrees/
+
+# Python bytecode from running the tool/ and tools/ checks
+__pycache__/
