@@ -25,6 +25,48 @@ bool cheGoogleSignInUrl(String url) => Uri.tryParse(url)?.host.toLowerCase() == 
 final _retainedBrowserTabs = <String, List<_BrowserTab>>{};
 final _retainedBrowserActive = <String, int>{};
 
+// GPU Connect (owner, 2026-10-25; additive): CHE reads and drives one named session, on screen or retained off
+// screen, without disposing it, so the notebook stays available while the owner moves between CHE's screens.
+final _liveBrowserSessions = <String, _CheBrowserScreenState>{};
+
+_BrowserTab? _sessionTab(String key) {
+  final live = _liveBrowserSessions[key];
+  if (live != null && live._tabs.isNotEmpty) return live._tab;
+  final kept = _retainedBrowserTabs[key];
+  if (kept == null || kept.isEmpty) return null;
+  return kept[(_retainedBrowserActive[key] ?? 0).clamp(0, kept.length - 1)];
+}
+
+/// Whether the named session (e.g. 'creation-gpu') has a page, open or retained.
+bool cheBrowserSessionExists(String key) => _sessionTab(key) != null;
+
+/// The named session's current page address, or null when it has no page.
+String? cheBrowserSessionUrl(String key) => _sessionTab(key)?.url;
+
+/// Runs [js] in the named session's active page and returns its result as text; null without a page or on error.
+Future<String?> cheBrowserSessionEval(String key, String js) async {
+  final tab = _sessionTab(key);
+  if (tab == null) return null;
+  try {
+    var text = (await tab.controller.runJavaScriptReturningResult(js)).toString();
+    try {
+      final decoded = jsonDecode(text);
+      if (decoded is String) text = decoded;
+    } catch (_) {}
+    return text;
+  } catch (_) {
+    return null;
+  }
+}
+
+/// Loads [url] in the named session's active page; false when the session has no page.
+Future<bool> cheBrowserSessionLoad(String key, String url) async {
+  final tab = _sessionTab(key);
+  if (tab == null) return false;
+  await tab.load(url);
+  return true;
+}
+
 /// App-level hooks the browser uses to reach CHE. Set once by the app.
 class CheBrowserActions {
   CheBrowserActions._();
@@ -145,7 +187,7 @@ const _fileExtensions = ['.pdf', '.zip', '.dmg', '.pkg', '.ipa', '.apk', '.mp3',
 typedef ChePageDialog = Future<bool> Function(String site, String message, {required bool confirm});
 
 class _BrowserTab {
-  _BrowserTab(this.url, {required this.onChanged, this.onDialog}) {
+  _BrowserTab(this.url, {required this.onChanged, this.onDialog, this.googleSignInInPage = false}) {
     _desktopAgent = cheIsTradeSeaUrl(url);
     controller = WebViewController()
       ..setBackgroundColor(const Color(0xFF060B11))
@@ -197,7 +239,9 @@ class _BrowserTab {
           final uri = Uri.tryParse(request.url);
           if (uri == null) return NavigationDecision.prevent;
           // Google's sign-in policy forbids embedded user agents. Do not spoof a user agent or copy cookies.
-          if (request.isMainFrame && cheGoogleSignInUrl(request.url)) {
+          // A session opened with googleSignInInPage (GPU Connect only) lets Google's own page load here, unchanged,
+          // so Google itself decides; CHE detects Google's refusal and falls back to Safari (che_gpu_connect.dart).
+          if (request.isMainFrame && cheGoogleSignInUrl(request.url) && !googleSignInInPage) {
             unawaited(launchUrl(uri, mode: LaunchMode.inAppBrowserView));
             return NavigationDecision.prevent;
           }
@@ -338,6 +382,7 @@ if(user&&u&&!user.value)set(user,u);set(pw,p);})($u,$p)''');
   bool _desktopAgent = false;
   VoidCallback onChanged;
   ChePageDialog? onDialog;
+  final bool googleSignInInPage;
   // TradeSea check state (issue #342): failures by site and code, whether iOS stopped the page,
   // and whether the owner's check is watching this page.
   final List<String> siteIssues = [];
@@ -356,8 +401,12 @@ class CheBrowserScreen extends StatefulWidget {
     this.title,
     this.appMode = true,
     this.sessionKey,
+    this.googleSignInInPage = false,
   });
   final String initialUrl;
+
+  /// GPU Connect only: Google's sign-in page loads in this session unchanged instead of the system sheet.
+  final bool googleSignInInPage;
   final String? title;
   final String? sessionKey;
 
@@ -396,6 +445,8 @@ class _CheBrowserScreenState extends State<CheBrowserScreen> {
     }
     CheBrowserActions.voice = _voiceCommand;
     CheBrowserActions.openUrl = _loadUrl;
+    final key = widget.sessionKey;
+    if (key != null) _liveBrowserSessions[key] = this;
     _addressFocus.addListener(() {
       if (!_addressFocus.hasFocus) _syncAddress();
       if (mounted) setState(() {});
@@ -406,6 +457,7 @@ class _CheBrowserScreenState extends State<CheBrowserScreen> {
   void dispose() {
     if (CheBrowserActions.openUrl == _loadUrl) CheBrowserActions.openUrl = null;
     final key = widget.sessionKey;
+    if (key != null && _liveBrowserSessions[key] == this) _liveBrowserSessions.remove(key);
     if (key != null) {
       _retainedBrowserTabs[key] = List.of(_tabs);
       _retainedBrowserActive[key] = _active;
@@ -759,7 +811,7 @@ if(!best)return '';var label=(best.getAttribute('aria-label')||best.innerText||'
   void _syncAddress() => _address.text = _tabs.isEmpty ? '' : _tab.url;
 
   void _openTab(String url) {
-    _tabs.add(_BrowserTab(url, onChanged: _changed, onDialog: _pageDialog));
+    _tabs.add(_BrowserTab(url, onChanged: _changed, onDialog: _pageDialog, googleSignInInPage: widget.googleSignInInPage));
     _active = _tabs.length - 1;
     _syncAddress();
     setState(() {});
