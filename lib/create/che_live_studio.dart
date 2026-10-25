@@ -950,53 +950,109 @@ class CheLiveStudioState extends State<CheLiveStudio> with WidgetsBindingObserve
         backgroundColor: CheStudioColors.bg,
         foregroundColor: CheStudioColors.text,
         title: Semantics(header: true, child: Text(title, overflow: TextOverflow.ellipsis)),
+        leading: IconButton(
+          key: const ValueKey('live-back'),
+          tooltip: 'Back',
+          onPressed: () => Navigator.maybePop(context),
+          icon: const Icon(Icons.arrow_back_rounded),
+        ),
         actions: [
           IconButton(
-            key: const ValueKey('live-read'),
-            tooltip: 'Read the Live Studio aloud',
-            onPressed: widget.onRead == null ? null : () => widget.onRead!(spokenSummary),
-            icon: const Icon(Icons.volume_up_rounded),
+            key: const ValueKey('live-undo'),
+            tooltip: 'Undo',
+            onPressed: busy ? null : () => unawaited(undo()),
+            icon: const Icon(Icons.undo_rounded),
           ),
-          if (_personMode)
-            IconButton(
-              key: const ValueKey('live-refresh'),
-              tooltip: 'Refresh progress',
-              onPressed: busy ? null : () => unawaited(refresh()),
-              icon: const Icon(Icons.refresh_rounded),
-            ),
+          IconButton(
+            key: const ValueKey('live-redo'),
+            tooltip: 'Redo',
+            onPressed: busy ? null : () => unawaited(redo()),
+            icon: const Icon(Icons.redo_rounded),
+          ),
+          IconButton(
+            key: const ValueKey('live-save'),
+            tooltip: 'Save',
+            onPressed: busy ? null : () => unawaited(save()),
+            icon: const Icon(Icons.save_rounded),
+          ),
+          IconButton(
+            key: const ValueKey('live-exit'),
+            tooltip: 'Exit',
+            onPressed: () => Navigator.maybePop(context),
+            icon: const Icon(Icons.close_rounded),
+          ),
         ],
       ),
       body: SafeArea(
         top: false,
-        // One built column (not a lazy list): VoiceOver can reach every control, and voice routes need no scrolling.
-        child: SingleChildScrollView(
-          key: const ValueKey('live-studio-scroll'),
-          padding: const EdgeInsets.fromLTRB(16, 4, 16, 32),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              if (_personMode) _EngineBar(engine: engine, onConnect: () => unawaited(connectEngine())),
-              if (banner.isNotEmpty) ...[const SizedBox(height: 10), _Banner(text: banner, ok: bannerOk)],
-              const SizedBox(height: 10),
-              // ── Viewport ──────────────────────────────────────────────────────────────
-              Semantics(
-                label:
-                    '3D viewport. ${shown.label} Drag to turn, pinch to zoom, double tap to reset. '
-                    'Or use the buttons below, or say rotate, zoom in, or front view.',
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(20),
-                  child: Container(
-                    key: const ValueKey('live-viewport'),
-                    height: (h * 0.46).clamp(260.0, 560.0),
-                    decoration: BoxDecoration(
-                      color: CheStudioColors.bg,
-                      border: Border.all(color: CheStudioColors.stroke),
-                      borderRadius: BorderRadius.circular(20),
-                    ),
-                    child: _viewport.build(context),
+        child: Column(
+          children: [
+            if (_personMode) _EngineBar(engine: engine, onConnect: () => unawaited(connectEngine())),
+            if (banner.isNotEmpty) Padding(padding: const EdgeInsets.all(8), child: _Banner(text: banner, ok: bannerOk)),
+            // Large always-visible 3D viewport
+            Expanded(
+              flex: 3,
+              child: Semantics(
+                label: '3D viewport. ${shown.label} Drag to rotate 360 degrees, pinch to zoom, double tap to reset. Character remains visible while editing.',
+                child: Container(
+                  key: const ValueKey('live-viewport'),
+                  margin: const EdgeInsets.fromLTRB(12, 8, 12, 4),
+                  decoration: BoxDecoration(
+                    color: CheStudioColors.bg,
+                    border: Border.all(color: const Color(0xFF2FD6C8).withOpacity(0.35)),
+                    borderRadius: BorderRadius.circular(16),
+                  ),
+                  clipBehavior: Clip.antiAlias,
+                  child: Stack(
+                    children: [
+                      _viewport.build(context),
+                      Positioned(
+                        top: 8,
+                        left: 8,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                          decoration: BoxDecoration(color: Colors.black54, borderRadius: BorderRadius.circular(8)),
+                          child: Text(shown.label, style: const TextStyle(color: Colors.white, fontSize: 12)),
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ),
+            ),
+            // Persistent camera controls
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+              child: Wrap(
+                spacing: 6,
+                runSpacing: 4,
+                alignment: WrapAlignment.center,
+                children: [
+                  _tool('Rotate left', Icons.rotate_left, () => viewportCommand({'action': 'rotate', 'deg': -45})),
+                  _tool('Rotate right', Icons.rotate_right, () => viewportCommand({'action': 'rotate', 'deg': 45})),
+                  _tool('Zoom in', Icons.zoom_in, () => viewportCommand({'action': 'zoom', 'factor': 1.3})),
+                  _tool('Zoom out', Icons.zoom_out, () => viewportCommand({'action': 'zoom', 'factor': 0.77})),
+                  _tool('Full body', Icons.accessibility_new, () => viewportCommand({'action': 'view', 'deg': 0, 'fit': 'full'})),
+                  _tool('Face close-up', Icons.face, () => viewportCommand({'action': 'view', 'deg': 0, 'fit': 'face'})),
+                  _tool('Reset', Icons.center_focus_strong, () => viewportCommand({'action': 'reset'})),
+                ],
+              ),
+            ),
+            // Collapsible bottom customization panel with 5 tabs
+            Expanded(
+              flex: 2,
+              child: _CharacterEditPanel(
+                personMode: _personMode,
+                onEdit: (words) => unawaited(applyEdit(words)),
+                clips: clips,
+                onAnimate: (c) => unawaited(animate(c)),
+                playing: playing,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
               const SizedBox(height: 8),
               Text(
                 shown.label,
@@ -1046,55 +1102,6 @@ class CheLiveStudioState extends State<CheLiveStudio> with WidgetsBindingObserve
                     ),
                 ],
               ),
-              if (!_personMode) ...[
-                const SizedBox(height: 18),
-                const _Label('CHARACTER'),
-                const SizedBox(height: 8),
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: [
-                    for (final id in cheCrewModelIds)
-                      ChoiceChip(
-                        key: ValueKey('anim-base-$id'),
-                        label: Text(_name(id)),
-                        selected: _animBase == id,
-                        onSelected: (_) {
-                          setState(() => _animBase = id);
-                          unawaited(_showBundled(id));
-                        },
-                      ),
-                  ],
-                ),
-                if (clips.isNotEmpty) ...[
-                  const SizedBox(height: 14),
-                  const _Label('CLIPS'),
-                  const SizedBox(height: 8),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: [
-                      for (final c in clips)
-                        ChoiceChip(
-                          key: ValueKey('anim-clip-$c'),
-                          label: Text(c),
-                          selected: playing == c,
-                          onSelected: (_) => unawaited(animate(c)),
-                        ),
-                    ],
-                  ),
-                ],
-                const SizedBox(height: 14),
-                const Text(
-                  'These are the clips built into the crew models. Making new animations and rendering animation videos is not built yet.',
-                  style: TextStyle(color: CheStudioColors.dim, fontSize: 13.5, height: 1.4),
-                ),
-              ],
-              if (_personMode) ..._personPanels(),
-            ],
-          ),
-        ),
-      ),
     );
   }
 
@@ -1456,4 +1463,123 @@ class _Label extends StatelessWidget {
       ),
     ),
   );
+}
+
+/// Collapsible bottom panel with five clear tabs. Keeps the character visible above.
+/// Edits that require a full regeneration are labeled as such; the current preview stays until the new GLB is verified.
+class _CharacterEditPanel extends StatefulWidget {
+  const _CharacterEditPanel({
+    required this.personMode,
+    required this.onEdit,
+    required this.clips,
+    required this.onAnimate,
+    required this.playing,
+  });
+
+  final bool personMode;
+  final void Function(String words) onEdit;
+  final List<String> clips;
+  final void Function(String clip) onAnimate;
+  final String? playing;
+
+  @override
+  State<_CharacterEditPanel> createState() => _CharacterEditPanelState();
+}
+
+class _CharacterEditPanelState extends State<_CharacterEditPanel> with SingleTickerProviderStateMixin {
+  late final TabController _tabs = TabController(length: 5, vsync: this);
+
+  @override
+  void dispose() {
+    _tabs.dispose();
+    super.dispose();
+  }
+
+  Widget _chip(String label, String words) => Padding(
+        padding: const EdgeInsets.only(right: 8, bottom: 8),
+        child: ActionChip(
+          label: Text(label),
+          onPressed: () => widget.onEdit(words),
+        ),
+      );
+
+  @override
+  Widget build(BuildContext context) {
+    if (!widget.personMode) {
+      return const Center(child: Text('Animation preview mode', style: TextStyle(color: CheStudioColors.dim)));
+    }
+    return Container(
+      decoration: const BoxDecoration(
+        color: Color(0xFF0A0C0E),
+        border: Border(top: BorderSide(color: Color(0x332FD6C8))),
+      ),
+      child: Column(
+        children: [
+          TabBar(
+            controller: _tabs,
+            isScrollable: true,
+            labelColor: const Color(0xFF2FD6C8),
+            unselectedLabelColor: CheStudioColors.silver,
+            indicatorColor: const Color(0xFF2FD6C8),
+            tabs: const [
+              Tab(text: 'Face'),
+              Tab(text: 'Hair'),
+              Tab(text: 'Body'),
+              Tab(text: 'Outfit'),
+              Tab(text: 'Animation'),
+            ],
+          ),
+          Expanded(
+            child: TabBarView(
+              controller: _tabs,
+              children: [
+                _tab(children: [
+                  _chip('Bigger eyes', 'bigger eyes'),
+                  _chip('Smaller eyes', 'smaller eyes'),
+                  _chip('Fuller lips', 'fuller lips'),
+                  _chip('Narrower nose', 'narrower nose'),
+                  const Text('Face shape changes are sent to the Worker. Immediate preview uses existing morphs when present; full regeneration is required for major changes and the current model stays visible until the new GLB is verified.', style: TextStyle(color: CheStudioColors.dim, fontSize: 12)),
+                ]),
+                _tab(children: [
+                  _chip('Longer hair', 'make the hair longer'),
+                  _chip('Shorter hair', 'make the hair shorter'),
+                  _chip('Darker hair', 'darker hair'),
+                  _chip('Blonde', 'blonde hair'),
+                ]),
+                _tab(children: [
+                  _chip('Taller', 'taller'),
+                  _chip('Shorter', 'shorter'),
+                  _chip('More muscular', 'more muscular'),
+                  _chip('Full body', 'full body'),
+                ]),
+                _tab(children: [
+                  _chip('Change outfit', 'change the outfit'),
+                  _chip('Darker clothes', 'darker clothes'),
+                  _chip('Teal accent', 'teal outfit'),
+                ]),
+                _tab(children: [
+                  for (final c in widget.clips)
+                    Padding(
+                      padding: const EdgeInsets.only(right: 8, bottom: 8),
+                      child: ChoiceChip(
+                        label: Text(c),
+                        selected: widget.playing == c,
+                        onSelected: (_) => widget.onAnimate(c),
+                      ),
+                    ),
+                  if (widget.clips.isEmpty)
+                    const Text('No animation clips on this model yet.', style: TextStyle(color: CheStudioColors.dim)),
+                ]),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _tab({required List<Widget> children}) => SingleChildScrollView(
+        padding: const EdgeInsets.all(12),
+        child: Wrap(children: children),
+      );
 }
