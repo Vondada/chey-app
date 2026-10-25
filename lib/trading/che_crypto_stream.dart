@@ -490,4 +490,7 @@ class CheCryptoStreamHub {
   }
 
   int watchers(String product) => _refs[product] ?? 0;
+
+  /// The running stream for [product] if a chart has it open, without opening one (the status card reads it).
+  CheCryptoStream? peek(String product) => _streams[product];
 }

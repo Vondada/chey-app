@@ -6,12 +6,17 @@
 // The Alpaca paper key pair is typed into masked fields, sent once to CHE (which checks it with
 // Alpaca's paper service before saving), and cleared from the screen. CHE never sends it back.
 
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import '../che_ui/che_theme.dart';
+import '../che_ui/che_clock.dart' show cheFuturesOpen;
+import '../rithmic/rithmic_live.dart';
+import '../trading/che_crypto_stream.dart';
+import '../trading/che_live_status.dart' show cheCmeReopens, cheEtClock;
 import 'che_trading_hud.dart';
 
 final _dim = CheColors.textDim;
@@ -25,7 +30,8 @@ const _bad = Color(0xFFFF5C7A);
 const cheConnectionStateWords = {
   'on': 'on', 'off': 'off', 'not_configured': 'not set up', 'configured': 'set up, not signed in',
   'signed_in': 'signed in', 'expired': 'sign-in expired', 'verified': 'verified', 'rejected': 'key rejected',
-  'refused': 'live key refused', 'unavailable': 'could not be checked', 'unsupported': 'not supported',
+  'refused': 'live key refused', 'unavailable': 'could not be checked', 'unsupported': 'orders not supported',
+  'public': 'public data, no account',
 };
 
 Color _tone(String state) => switch (state) {
@@ -238,6 +244,146 @@ class _CheTradingConnectionsPanelState extends State<CheTradingConnectionsPanel>
       // The result of an action the owner just took is announced (AGENTS.md: every action is reported).
       if (_status.isNotEmpty)
         Padding(padding: const EdgeInsets.only(top: 8), child: Semantics(liveRegion: true, child: Text(_status, style: const TextStyle(color: Colors.white70, fontSize: 14)))),
+    ]);
+  }
+}
+
+// ─── Market data feeds (owner, 2026-10-25, Trading Room v3: "Rithmic and Coinbase status confusion") ────────────
+// Rithmic is shown as separate facts, one per line: the authenticated session, the market-data subscription, the
+// instrument entitlement, the first trade received, the last trade's time, freshness, and the actual error only when
+// there is one. LIVE needs fresh received trades; signing in alone never reads live. Coinbase public market data needs
+// no login and is never an account: with no account it says "Public market data — no trading account".
+
+/// The Rithmic facts as (label, value) rows, from the phone's live session.
+List<(String, String)> cheRithmicChecklist(CheRithmicLive r, DateTime now) {
+  String ago(DateTime t) {
+    final s = now.difference(t).inSeconds;
+    return s < 120 ? '${s < 0 ? 0 : s} s ago' : '${s ~/ 60} min ago';
+  }
+
+  final failed = r.status == RithmicLiveStatus.loginFailed;
+  final dropped = r.status == RithmicLiveStatus.disconnected;
+  final permission = RegExp(r'permission|entitle|not authori[sz]ed|not permitted|subscription', caseSensitive: false).hasMatch(r.detail);
+  final session = failed
+      ? 'Not signed in (login refused)'
+      : r.attached
+          ? 'Signed in${r.symbol.isEmpty ? '' : ' · ${r.symbol}'}'
+          : dropped
+              ? 'Dropped'
+              : 'Not signed in';
+  final subscription = !r.attached
+      ? (failed && permission ? 'Refused' : 'None')
+      : r.subscriptionConfirmed
+          ? 'Confirmed by Rithmic'
+          : 'Requested, not confirmed yet';
+  final entitlement = failed && permission
+      ? 'Not permitted for ${r.symbol.isEmpty ? 'this contract' : r.symbol}'
+      : r.attached && (r.subscriptionConfirmed || r.firstReceivedAt != null)
+          ? 'Permitted (${r.symbol})'
+          : 'Not checked yet';
+  final first = r.firstReceivedAt == null ? 'None yet' : '${cheEtClock(r.firstReceivedAt!)} (${ago(r.firstReceivedAt!)})';
+  final last = r.lastTradeAt == null ? 'None yet' : cheEtClock(r.lastTradeAt!);
+  final fresh = r.isLive
+      ? 'LIVE · last trade received ${ago(r.lastReceivedAt!)}'
+      : r.lastReceivedAt != null
+          ? (cheFuturesOpen(now) ? 'STALE · nothing for ${ago(r.lastReceivedAt!)}' : 'WAITING · market closed until ${cheCmeReopens(now)}')
+          : r.attached
+              ? 'WAITING · no market data received yet${cheFuturesOpen(now) ? '' : '; CME is closed until ${cheCmeReopens(now)}'}'
+              : 'DISCONNECTED';
+  return [
+    ('Session', session),
+    ('Market-data subscription', subscription),
+    ('Instrument entitlement', entitlement),
+    ('First trade received', first),
+    ('Last trade', last),
+    ('Freshness', fresh),
+    if ((failed || dropped) && r.detail.isNotEmpty) ('Error', r.detail),
+    if (!r.attached && !failed && !dropped && r.detail.isNotEmpty) ('Why not connected', r.detail),
+  ];
+}
+
+/// The Coinbase public stream's line: no login, no account, never a trading connection.
+(String, String) cheCoinbaseLine(CheCryptoStream? btc, {DateTime? now}) {
+  if (btc == null || !btc.running) return ('Coinbase', 'Public market data — no trading account. The BTC and ETH stream opens with their chart.');
+  final v = btc.describe(restAvailable: false);
+  return ('Coinbase', 'Public market data — no trading account. ${v.label}');
+}
+
+class CheMarketDataFeedsCard extends StatefulWidget {
+  const CheMarketDataFeedsCard({super.key, this.live, this.cryptoHub, this.now, this.onConnectRithmic});
+
+  /// Null uses the app's session (CheRithmicLive.instance).
+  final CheRithmicLive? live;
+
+  /// Null uses the app-wide hub (none under flutter test).
+  final CheCryptoStreamHub? cryptoHub;
+  final DateTime Function()? now;
+  final VoidCallback? onConnectRithmic;
+
+  @override
+  State<CheMarketDataFeedsCard> createState() => _CheMarketDataFeedsCardState();
+}
+
+class _CheMarketDataFeedsCardState extends State<CheMarketDataFeedsCard> {
+  late final CheRithmicLive _live = widget.live ?? CheRithmicLive.instance;
+  Timer? _tick;
+
+  @override
+  void initState() {
+    super.initState();
+    _live.addListener(_changed);
+    // Freshness changes with time alone (live → stale), so the lines are re-read every 10 seconds; silently.
+    _tick = Timer.periodic(const Duration(seconds: 10), (_) => _changed());
+  }
+
+  @override
+  void dispose() {
+    _tick?.cancel();
+    _live.removeListener(_changed);
+    super.dispose();
+  }
+
+  void _changed() {
+    if (mounted) setState(() {});
+  }
+
+  Widget _row(String k, String v, {Color? tone}) => Semantics(
+        container: true,
+        label: '$k: $v',
+        excludeSemantics: true,
+        child: Padding(
+          padding: const EdgeInsets.only(top: 4),
+          child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            SizedBox(width: 150, child: Text(k, style: TextStyle(color: _dim, fontSize: 13.5))),
+            Expanded(child: Text(v, style: TextStyle(color: tone ?? Colors.white, fontSize: 14, fontWeight: FontWeight.w600))),
+          ]),
+        ),
+      );
+
+  @override
+  Widget build(BuildContext context) {
+    final now = (widget.now ?? DateTime.now)();
+    final rows = cheRithmicChecklist(_live, now);
+    final hub = widget.cryptoHub ?? CheCryptoStreamHub.appWide;
+    final coinbase = cheCoinbaseLine(hub?.peek('BTC-USD'));
+    return Column(key: const Key('market_data_feeds'), crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+      Semantics(header: true, child: const Text('Rithmic (futures market data on this iPhone)', style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w800))),
+      for (final (k, v) in rows)
+        _row(k, v, tone: k == 'Error' ? _bad : (k == 'Freshness' ? (v.startsWith('LIVE') ? _good : _warn) : null)),
+      if (!_live.attached && widget.onConnectRithmic != null)
+        Align(
+          alignment: Alignment.centerLeft,
+          child: TextButton(onPressed: widget.onConnectRithmic, child: const Text('Connect Rithmic', semanticsLabel: 'Connect Rithmic for live futures data')),
+        ),
+      const SizedBox(height: 10),
+      Semantics(header: true, child: const Text('Coinbase (BTC and ETH)', style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w800))),
+      _row('Account', 'None — public market data needs no login'),
+      _row('Market data', coinbase.$2.replaceFirst('Public market data — no trading account. ', '')),
+      const Padding(
+        padding: EdgeInsets.only(top: 4),
+        child: Text('Public market data — no trading account. Research on BTC and ETH never needs an exchange account; CHE places no crypto orders.',
+            style: TextStyle(color: Colors.white70, fontSize: 13)),
+      ),
     ]);
   }
 }

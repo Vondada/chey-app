@@ -1,10 +1,18 @@
 // Trading Room v3 regressions (owner, 2026-10-25: "fix, simplify and verify"). Each test reproduces a failure the
 // owner recorded, first failing on the old code.
+import 'dart:async';
+
+import 'package:chey/rithmic/rithmic_client.dart';
+import 'package:chey/rithmic/rithmic_live.dart';
+import 'package:chey/rithmic/rithmic_wire.dart';
+import 'package:chey/rooms/che_trading_connections.dart';
 import 'package:chey/rooms/che_trading_dashboard.dart';
 import 'package:chey/rooms/che_trading_hud.dart';
 import 'package:chey/rooms/che_trading_room.dart';
 import 'package:chey/trading/che_account_stats.dart';
 import 'package:chey/trading/che_crypto_desk.dart';
+import 'package:chey/trading/che_live_status.dart';
+import 'package:chey/trading/che_market_feed.dart';
 import 'package:chey/trading/che_paper_account.dart';
 import 'package:chey/trading/che_paper_engine.dart';
 import 'package:chey/trading/che_trading_calendar.dart';
@@ -293,6 +301,91 @@ void main() {
       }
     });
   });
+
+  group('market data status', () {
+    // Thursday Oct 22 2026, 10:00 AM New York (open); Saturday Oct 24, noon (closed).
+    final open = DateTime.utc(2026, 10, 22, 14);
+    final closed = DateTime.utc(2026, 10, 24, 16);
+
+    test('Rithmic authenticated but with no data is never LIVE, and says why', () async {
+      var now = open;
+      final live = CheRithmicLive(clock: () => now);
+      final feed = _Feed();
+      live.attach(feed, symbol: 'MNQZ6', exchange: 'CME');
+      final rows = Map.fromEntries(cheRithmicChecklist(live, now).map((r) => MapEntry(r.$1, r.$2)));
+      expect(rows['Session'], 'Signed in · MNQZ6');
+      expect(rows['Market-data subscription'], 'Requested, not confirmed yet');
+      expect(rows['First trade received'], 'None yet');
+      expect(rows['Freshness'], 'WAITING · no market data received yet');
+      expect(rows.containsKey('Error'), isFalse, reason: 'error text only when an actual error exists');
+      expect(live.isLive, isFalse);
+      final s = CheLiveStatus.fromFeed(CheMarketFeed(live: live, clock: () => now).current, hasCandles: false, now: now);
+      expect(s.word, 'WAITING');
+      expect(s.kind, CheFeedKind.waiting);
+      expect(s.detail, 'Signed in to Rithmic — no market data received yet. Market-data subscription not confirmed yet.');
+      expect(s.detail.toLowerCase(), isNot(contains('connected')));
+      // Closed market: the reason is the CME schedule.
+      now = closed;
+      final c = CheLiveStatus.fromFeed(CheMarketFeed(live: live, clock: () => now).current, hasCandles: false, now: now);
+      expect(c.detail, endsWith('CME is closed until Sunday 6:00 PM ET.'));
+      expect(Map.fromEntries(cheRithmicChecklist(live, now).map((r) => MapEntry(r.$1, r.$2)))['Freshness'], 'WAITING · no market data received yet; CME is closed until Sunday 6:00 PM ET');
+      // The first received trade makes it LIVE, and records when it arrived.
+      now = open;
+      feed.confirmed = true;
+      feed.trade(21000.25, now);
+      await Future<void>.delayed(Duration.zero);
+      final after = Map.fromEntries(cheRithmicChecklist(live, now).map((r) => MapEntry(r.$1, r.$2)));
+      expect(after['Market-data subscription'], 'Confirmed by Rithmic');
+      expect(after['Instrument entitlement'], 'Permitted (MNQZ6)');
+      expect(after['First trade received'], startsWith('10:00 AM ET'));
+      expect(after['Freshness'], startsWith('LIVE'));
+      // Five quiet minutes while the market is open: STALE with its age.
+      now = open.add(const Duration(minutes: 5));
+      final stale = CheLiveStatus.fromFeed(CheMarketFeed(live: live, clock: () => now).current, hasCandles: true, now: now);
+      expect(stale.word, 'STALE');
+      expect(stale.detail, 'No trade for 5 min · last trade 10:00 AM ET');
+    });
+
+    test('a refused login shows the actual error; the shared model maps every state to five words', () {
+      final live = CheRithmicLive();
+      live.loginFailed('Rithmic refused the market data permission for MNQZ6 (rp 13).');
+      final rows = Map.fromEntries(cheRithmicChecklist(live, open).map((r) => MapEntry(r.$1, r.$2)));
+      expect(rows['Session'], 'Not signed in (login refused)');
+      expect(rows['Error'], contains('market data permission'));
+      expect(rows['Instrument entitlement'], startsWith('Not permitted'));
+      final words = {for (final c in CheFeedConnection.values) CheLiveStatus.fromFeed(CheMarketFeed(live: CheRithmicLive()).current, hasCandles: false, now: open).word};
+      expect(words.difference({'LIVE', 'DELAYED', 'WAITING', 'STALE', 'DISCONNECTED'}), isEmpty);
+      expect(CheLiveStatus.delayed(symbol: 'MNQ').kind, CheFeedKind.delayed);
+    });
+
+    testWidgets('the feeds card shows Coinbase as public market data with no trading account', (tester) async {
+      await tester.pumpWidget(MaterialApp(theme: ThemeData.dark(), home: Scaffold(body: SingleChildScrollView(child: CheMarketDataFeedsCard(live: CheRithmicLive(), now: () => open)))));
+      expectNoGrayBox(tester);
+      expect(find.textContaining('Public market data — no trading account'), findsWidgets);
+      expect(find.bySemanticsLabel(RegExp(r'^Account: None — public market data needs no login$')), findsOneWidget);
+      expect(find.bySemanticsLabel(RegExp(r'^Freshness: DISCONNECTED$')), findsOneWidget);
+      expect(find.bySemanticsLabel(RegExp(r'^Error: ')), findsNothing);
+      await tester.pumpWidget(const SizedBox());
+    });
+  });
+}
+
+class _Feed implements RithmicMarketFeed {
+  _Feed({this.confirmed = false});
+  bool confirmed;
+  final _trades = StreamController<RithmicLastTrade>.broadcast();
+  @override
+  Stream<RithmicLastTrade> get trades => _trades.stream;
+  @override
+  Stream<RithmicBestBidOffer> get quotes => const Stream.empty();
+  @override
+  bool get subscriptionConfirmed => confirmed;
+  @override
+  Future<void> connect({required String user, required String password, required String systemName, required String appName, required String appVersion, required String symbol, required String exchange}) async {}
+  @override
+  Future<void> close() async {}
+  void trade(double price, DateTime at) => _trades.add(RithmicLastTrade(
+      symbol: 'MNQZ6', exchange: 'CME', price: price, size: 1, ssboe: at.millisecondsSinceEpoch ~/ 1000, usecs: (at.millisecondsSinceEpoch % 1000) * 1000));
 }
 
 class _Routes extends NavigatorObserver {

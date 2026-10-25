@@ -386,6 +386,8 @@ class _CheTradingRoomState extends State<CheTradingRoom> {
           // Hidden while kShowAlpacaPaper is false (owner, 2026-10-23); the panel and its data path are kept.
           if (kShowAlpacaPaper) _fold('alpaca', 'ALPACA PAPER', 'Paper balance, orders and fills (delayed data)',
               CheAlpacaPaperPanel(baseUrl: p.baseUrl, headers: p.headers, onAsk: p.onAsk, client: p.client), open: true),
+          // Rithmic and Coinbase market data as separate facts (Trading Room v3); open by default.
+          _fold('feeds', 'MARKET DATA FEEDS', 'Rithmic session, subscription, trades and freshness; Coinbase public data', const CheMarketDataFeedsCard(), open: true),
           _fold('connections', 'CONNECTIONS', 'Broker and data connections',
               CheTradingConnectionsPanel(baseUrl: p.baseUrl, headers: p.headers, onAsk: p.onAsk, client: p.client)),
           ...widget.accountExtras,

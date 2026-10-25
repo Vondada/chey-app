@@ -97,7 +97,7 @@ void main() {
     final feed = _Feed();
     live.attach(feed, symbol: 'MNQZ6', exchange: 'CME');
     final chart = await pump(tester, live);
-    expect(text(tester, 'chart-rithmic'), contains('waiting for the first trade'));
+    expect(text(tester, 'chart-rithmic'), contains('no market data received yet'));
 
     final t0 = minute.subtract(const Duration(minutes: 2)).add(const Duration(seconds: 5));
     feed.trade(21100, t0);

@@ -65,10 +65,11 @@ void main() {
       String word(CheFeedConnection c, {bool candles = false, DateTime? now, String label = ''}) =>
           CheLiveStatus.fromFeed(_snap(c, label: label, last: _open), hasCandles: candles, now: now ?? _open).word;
       expect(word(CheFeedConnection.connected), 'LIVE');
-      expect(word(CheFeedConnection.waiting), 'CONNECTING');
-      expect(word(CheFeedConnection.waiting, candles: true), 'RECONNECTING');
-      expect(word(CheFeedConnection.quiet), 'NO TRADES');
-      expect(word(CheFeedConnection.quiet, now: _closed), 'MARKET CLOSED');
+      // Trading Room v3 (2026-10-25): five shared words. Signed in with no trade is WAITING, never "connecting".
+      expect(word(CheFeedConnection.waiting), 'WAITING');
+      expect(word(CheFeedConnection.waiting, candles: true), 'WAITING');
+      expect(word(CheFeedConnection.quiet), 'STALE');
+      expect(word(CheFeedConnection.quiet, now: _closed), 'WAITING');
       expect(word(CheFeedConnection.off), 'DISCONNECTED');
       expect(word(CheFeedConnection.disconnected, label: 'Rithmic MNQZ6 · disconnected: the connection closed'), 'DISCONNECTED');
       expect(word(CheFeedConnection.failed), 'DISCONNECTED');
@@ -79,9 +80,9 @@ void main() {
       expect(off.detail, 'Rithmic not connected');
       final dropped = CheLiveStatus.fromFeed(_snap(CheFeedConnection.disconnected, label: 'Rithmic MNQZ6 · disconnected: the connection closed', last: _open),
           hasCandles: true, now: _open);
-      expect(dropped.detail, startsWith('the connection closed · last update'));
+      expect(dropped.detail, startsWith('the connection closed · last trade 10:00 AM ET'));
       final closed = CheLiveStatus.fromFeed(_snap(CheFeedConnection.quiet, last: _open), hasCandles: true, now: _closed);
-      expect(closed.detail, startsWith('Market closed · last update'));
+      expect(closed.detail, 'Market closed · last trade 10:00 AM ET. CME is closed until Sunday 6:00 PM ET.');
       expect(closed.isCurrent, isFalse);
     });
 
@@ -164,7 +165,8 @@ void main() {
       final rithmic = _Feed();
       live.attach(rithmic, symbol: 'MNQZ6', exchange: 'CME');
       await tester.pumpWidget(_app(CheLiveChartCard(hub: hub, now: () => now)));
-      expect(find.text('CONNECTING'), findsOneWidget);
+      expect(find.text('WAITING'), findsOneWidget);
+      expect(find.text('Signed in to Rithmic — no market data received yet.'), findsOneWidget);
       await tester.runAsync(() async {
         rithmic.trade(21000.25, now.add(const Duration(seconds: 1)));
         await Future<void>.delayed(Duration.zero);
@@ -338,7 +340,7 @@ void main() {
       final hub = CheLiveFeedHub(feed: CheMarketFeed(live: live, clock: () => now), throttle: Duration.zero);
       live.attach(_Feed(), symbol: 'MNQZ6', exchange: 'CME');
       await tester.pumpWidget(_app(CheLiveChartCard(hub: hub, now: () => now), reduceMotion: true));
-      expect(find.text('CONNECTING'), findsOneWidget);
+      expect(find.text('WAITING'), findsOneWidget);
       expect(tester.hasRunningAnimations, isFalse);
       await tester.pumpWidget(const SizedBox());
     });

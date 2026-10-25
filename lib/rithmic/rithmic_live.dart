@@ -49,6 +49,12 @@ class CheRithmicLive extends ChangeNotifier {
   DateTime? lastReceivedAt;
   DateTime? get lastTradeAt => book.lastTradeAt;
 
+  /// When this session's first trade reached the phone (null until one has): "first received trade".
+  DateTime? firstReceivedAt;
+
+  /// Rithmic confirmed the market-data subscription (or a trade proved it). False while the request is only sent.
+  bool get subscriptionConfirmed => _feed?.subscriptionConfirmed ?? false;
+
   /// The Rithmic socket lives in this app on the iPhone (the password never leaves the phone, so the Worker cannot hold
   /// the session). CHE declares only the audio and fetch background modes (tool/bootstrap.sh), and iOS suspends an
   /// app shortly after it leaves the screen unless audio is playing, so the feed stops then.
@@ -109,8 +115,8 @@ class CheRithmicLive extends ChangeNotifier {
   String get statusLabel => switch (status) {
         RithmicLiveStatus.off => 'Rithmic not connected${detail.isEmpty ? '' : ': $detail'}',
         RithmicLiveStatus.connected => 'Rithmic live — $symbol · connected',
-        RithmicLiveStatus.waiting => 'Rithmic $symbol · connected, waiting for the first trade',
-        RithmicLiveStatus.quiet => 'Rithmic $symbol · connected, no trades for ${_clock().difference(lastReceivedAt!).inMinutes} min (market may be closed)',
+        RithmicLiveStatus.waiting => 'Signed in to Rithmic ($symbol) — no market data received yet',
+        RithmicLiveStatus.quiet => 'Rithmic $symbol · no trade for ${_clock().difference(lastReceivedAt!).inMinutes} min (market may be closed)',
         RithmicLiveStatus.disconnected => 'Rithmic $symbol · disconnected${detail.isEmpty ? '' : ': $detail'}',
         RithmicLiveStatus.loginFailed => 'Rithmic did not connect${detail.isEmpty ? '' : ': $detail'}',
       };
@@ -122,6 +128,7 @@ class CheRithmicLive extends ChangeNotifier {
     if (symbol != this.symbol) book.clear();
     // A new session is not live until its own first trade arrives (the candles from before stay).
     lastReceivedAt = null;
+    firstReceivedAt = null;
     _closeGap();
     _feed = feed;
     this.symbol = symbol;
@@ -147,6 +154,7 @@ class CheRithmicLive extends ChangeNotifier {
     if (t.symbol.isNotEmpty && symbol.isNotEmpty && t.symbol != symbol) return;
     if (!book.addTrade(t)) return;
     lastReceivedAt = _clock();
+    firstReceivedAt ??= lastReceivedAt;
     _accepted.add(t);
     notifyListeners();
   }

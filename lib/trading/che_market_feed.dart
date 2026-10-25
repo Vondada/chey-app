@@ -77,7 +77,15 @@ class CheMarketSnapshot {
     required this.lastTradeAt,
     required this.lastUpdate,
     this.gaps = const [],
+    this.subscriptionConfirmed,
+    this.firstReceivedAt,
   });
+
+  /// Whether Rithmic confirmed the market-data subscription for this contract (null: no session to ask).
+  final bool? subscriptionConfirmed;
+
+  /// When this session's first trade reached the phone; null until one has.
+  final DateTime? firstReceivedAt;
 
   final String symbol, exchange;
 
@@ -163,6 +171,8 @@ class CheMarketFeed {
       lastTradeAt: _live.lastTradeAt,
       lastUpdate: _live.lastReceivedAt,
       gaps: List.unmodifiable(_live.gaps),
+      subscriptionConfirmed: _live.attached ? _live.subscriptionConfirmed : null,
+      firstReceivedAt: _live.firstReceivedAt,
     );
   }
 
