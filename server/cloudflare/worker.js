@@ -264,6 +264,7 @@ import { FilmStore, filmIntent, filmProgress, farmProviders, loadRates, loadUsag
 import { GpuQueue, gpuWorkerRoute, speakGpuSummary } from './gpu_queue.js';
 import { CreationStudio, studioOwnerRoute } from './creation_studio.js';
 import { creationProbeRoute } from './creation_probe.js';
+import { poolRoute, poolView, speakPool } from './compute_pool.js';
 import { projectAudit, projectLibraryRoute } from './project_library.js';
 import { FILM_ACTIVE_STATES, filmPlan, filmTick, filmTokenRoute, refreshValidation as refreshFilmValidation, remakeShot, setFilmState, startFilm } from './film_pipeline.js';
 import { performanceBanner, performanceIntent, performanceReport, recordTiming, routeKey as perfRouteKey, speakPerformance } from './perf_watch.js';
@@ -6048,6 +6049,8 @@ export class CheState extends DurableObject {
       const view = await cloudView(this.ctx.storage, env);
       return reply(`Opening my cloud computer, sir. ${speakCloudSummary(view)}`, { open_screen: 'cloud_computer' });
     }
+    // "Which computers can build characters" / "why is my character waiting": the compute pool (compute_pool.js).
+    if (command.local === 'cloud_gpu' && /^pool\b/.test(String(input || ''))) return reply(speakPool(await poolView(env, { storage: this.ctx.storage })));
     if (command.local === 'cloud_gpu') return reply(speakGpuSummary(await new GpuQueue(this.ctx.storage).view()));
     if (command.local === 'cloud_blender') {
       const plan = selectProvider('blender_render', { env });
@@ -6972,6 +6975,7 @@ export class CheState extends DurableObject {
       // The deploy's Creation Engine end-to-end check: only this deploy's probe token opens it (creation_probe.js).
       if (path.startsWith('/api/creations/probe/')) {
         if (!isMemoryProbeRequest(request, this.env)) return json({ detail: 'Not found.' }, 404);
+        if (path === '/api/creations/probe/pool') return poolRoute({ storage: this.ctx.storage, env: this.keyEnv || this.env }, path, request);
         return creationProbeRoute({ storage: this.ctx.storage, env: this.keyEnv || this.env }, path, request);
       }
       if (path === '/api/projects/probe/audit') return isMemoryProbeRequest(request, this.env) ? json(projectAudit(await this.loadData())) : json({ detail: 'Not found.' }, 404);
@@ -7693,6 +7697,7 @@ export class CheState extends DurableObject {
       }
       if (/^\/api\/(gpu|creations)(\/|$)/.test(path)) {
         if (!ownerDevice) return json({ detail: 'Only the CHE owner can use the GPU queue.' }, 403);
+        if (path.startsWith('/api/creations/pool')) return (await poolRoute({ storage: this.ctx.storage, env: this.keyEnv || this.env }, path, request, body)) || json({ detail: 'Not found.' }, 404);
         return (await studioOwnerRoute({ storage: this.ctx.storage, env: this.keyEnv || this.env }, path, request, body)) || json({ detail: 'Not found.' }, 404);
       }
       // Project manager (project_library.js): cards over data.projects, the crew's tasks and 3D creations; Roblox recovery.

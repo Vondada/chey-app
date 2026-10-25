@@ -834,12 +834,16 @@ const AGENT_WORK = /^(?:show(?: me)?|tell me|list|read(?: me)?)\s+what\s+(?:your
 const INSTALL = /^(?:install|add|set up)\s+(?:a\s+|an\s+|some\s+)?(?:(?:compatible|free|open[- ]source)\s+){1,3}(?:[a-z][a-z0-9.+-]{0,30}\s+)?(?:tool|tools|software|program|package)(?:\s+.{1,80})?$/i;
 const INSTALL_ON = /^(?:install|add|put|set up)\s+(.{1,60}?)\s+(?:on|onto|to|in)\s+(?:your|the|my)\s+cloud\s+computer$/i;
 const GPU_JOBS = /^(?:(?:what|how)(?:'s| are| is)\s+(?:my|the|your)\s+(?:gpu|colab)\s+(?:jobs?|queue|renders?|worker)(?:\s+doing)?|(?:show|read|check|open|list)(?: me)?\s+(?:my|the|your)\s+(?:gpu|colab)\s+(?:jobs?|queue|renders?|worker)|(?:is|are)\s+(?:my|the|your)\s+(?:gpu|colab)(?:\s+(?:worker|session))?\s+(?:online|on|running|working))$/i;
+// The compute pool (compute_pool.js): which computers can build characters, and why a character waits. Asked as a
+// question too; answered by /cloud-gpu with input "pool".
+const POOL = /^(?:(?:which|what)\s+(?:computers?|machines?|gpus?|workers?)\s+(?:can|could)\s+(?:build|make|create|render)\s+(?:my\s+|the\s+)?(?:characters?|people|persons?|avatars?)|why\s+(?:is|are)\s+(?:my|the)\s+(?:characters?|avatars?|person|people|character jobs?)\s+(?:still\s+)?(?:waiting|queued|stuck|not (?:started|building))|(?:show|read|check)(?: me)?\s+(?:my|the|your)\s+compute\s+pool|(?:what(?:'s| is)\s+)?(?:my|the|your)\s+compute\s+pool(?:\s+status)?)$/i;
 const CONTROL = /^(approve|cancel|stop|retry)\s+(?:the\s+|that\s+|my\s+|your\s+)?cloud\s+job(?:\s+([0-9a-f]{6,36}))?$/i;
 
 /** The owner's spoken request to the Cloud Computer as { command, input }, or null. Questions never match. */
 export function cloudIntent(message) {
   const t = plain(message);
   if (t && t.length <= 160 && GPU_JOBS.test(t)) return { command: 'cloud-gpu', input: '' };   // asked as a question too
+  if (t && t.length <= 160 && POOL.test(t.replace(/\?+$/, ''))) return { command: 'cloud-gpu', input: 'pool' };
   if (!t || t.length > 160 || /\?\s*$/.test(String(message || ''))) return null;
   if (OPEN.test(t)) return { command: 'cloud-open', input: '' };
   if (BLENDER.test(t)) return { command: 'cloud-blender', input: t };

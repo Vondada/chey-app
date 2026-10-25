@@ -191,6 +191,22 @@ test('every available command reaches the existing handler it names (no fake rou
   assert.deepEqual(unavailable.sort(), ['trade-execute', 'yt-analytics', 'yt-publish']);
 });
 
+// The compute pool (compute_pool.js) by voice: one existing entry, /cloud-gpu, answers with input "pool".
+test('"which computers can build characters" and "why is my character waiting" reach /cloud-gpu (pool) with no model', async () => {
+  const che = await owner({ env: READY_ENV });
+  assert.equal(commandById('cloud-gpu').route, 'che_cloud_computer');
+  for (const said of ['Which computers can build characters?', 'Why is my character waiting?', 'show me the compute pool', '/cloud-gpu pool']) {
+    const out = await che.say(said);
+    assert.equal(out.route, 'che_cloud_computer', said);
+    assert.equal(out.modelCalls, 0, said);
+    assert.match(out.reply, /can build characters right now|No computer can build a character right now/, said);
+    assert.match(out.reply, /Cannot run Blender: Hugging Face ZeroGPU Space, Cloudflare Workers AI/, said);
+    assert.match(out.reply, /Spending limit: zero dollars/, said);
+    assert.doesNotMatch(out.reply, /ghp_test_only/, 'no secret is spoken');
+  }
+  assert.match((await che.say('What are my GPU jobs?')).reply, /^GPU jobs:/, 'the plain GPU question keeps its answer');
+});
+
 // ─── 3. Slash commands and natural-language equivalents ───────────────────
 
 test('3. a slash command and its plain-English request reach the same handler', async () => {
