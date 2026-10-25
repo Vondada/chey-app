@@ -1055,6 +1055,18 @@ export const COMMANDS = Object.freeze([
     examples: ['Check my keys'],
     prompt: 'Check my keys', produces: 'setup steps', keywords: ['connect', 'integration', 'keys', 'setup', 'api key'],
   }),
+  // Service onboarding (owner, 2026-10-25): one entry over service_onboarding.js.
+  C('connect-service', 'office', 'BUILD', 'Connect a service end to end and verify it.', {
+    title: 'Connect a Service',
+    does: 'Checks the connection CHE already has first and keeps it if it works. Otherwise creates a Hugging Face token with the fewest permissions in CHE\'s browser using your sign-in, or opens the page for guided providers. Stores it in the place CHE really reads and says "Connected" only after real checks pass.',
+    needs: [], route: 'che_onboarding', local: 'connect_service', handler: 'service_onboarding.startOnboarding / storeSecret / verifyOnboarding',
+    input: { name: 'service', required: true, hint: 'Hugging Face, Groq, Gemini…' },
+    examples: ['CHE, connect Hugging Face', 'Connect Hugging Face for film studio', 'Is Hugging Face connected?'],
+    prompt: 'Connect {input}', produces: 'connection status',
+    evidence: 'Three separate outcomes: token created, secret configured (where), connection verified (the provider\'s own checks). Fingerprints only, never a key.',
+    cost: 'Free. Verification makes no paid calls; nothing is bought.',
+    keywords: ['connect', 'hugging face', 'onboarding', 'token', 'connected', 'set up service'],
+  }),
   C('voice-test', 'office', 'EXPLORE', "Test CHE's actual voice systems.", {
     does: 'Checks which of CHE\'s voices answer right now (ElevenLabs, Fish) and reports real results. Hearing it on your phone is the final test.',
     needs: ['voice'], route: 'che_voice_test', local: 'voice_test', handler: 'voiceProbe (one real ElevenLabs call) + fishAudioKeyStatus',

@@ -38,7 +38,7 @@ const MISSION_IDS = {
   money: ['money-dashboard', 'cashflow', 'budget', 'expenses', 'invoices', 'money-forecast', 'pricing', 'profit-report'],
   clients: ['lead-scout', 'lead-audit', 'lead-score', 'lead-match', 'lead-proposal', 'lead-outreach', 'lead-crm', 'lead-followup', 'client-deliver'],
   marketing: ['brand-build', 'marketing-plan', 'social-content', 'ads-plan', 'seo-growth', 'sales-funnel', 'business-launch'],
-  office: ['office-status', 'office-delegate', 'office-org', 'office-calendar', 'office-coordinate', 'office-jobs', 'warroom', 'automate', 'skill-learn', 'connect', 'voice-test', 'create-3d', 'cloud-open', 'cloud-gpu', 'world-population', 'cloud-blender', 'cloud-render', 'cloud-tests', 'cloud-prs', 'cloud-install', 'cloud-agents', 'cloud-control', 'master-profile'],
+  office: ['office-status', 'office-delegate', 'office-org', 'office-calendar', 'office-coordinate', 'office-jobs', 'warroom', 'automate', 'skill-learn', 'connect', 'connect-service', 'voice-test', 'create-3d', 'cloud-open', 'cloud-gpu', 'world-population', 'cloud-blender', 'cloud-render', 'cloud-tests', 'cloud-prs', 'cloud-install', 'cloud-agents', 'cloud-control', 'master-profile'],
   // Creator Studio (owner issue #347).
   studio: ['studio-bible', 'studio-pilot', 'studio-render', 'studio-export', 'studio-post', 'studio-growth', 'film-make', 'music-studio', 'film-status'],
 };
@@ -112,8 +112,8 @@ async function owner({ saved = new Map(), model = () => 'Here is the answer, sir
 // ─── 1. Catalog identities ────────────────────────────────────────────────
 
 test('1. the owner\'s 71 commands exist exactly as listed, plus ten REA, six Creator Studio, two Strategy Control Center, two strategy learning commands, the historical study, the timeframe matrix, the CHE paper account and the two calendars, in 9 categories, each fully described', () => {
-  assert.equal(COMMANDS.length, 133);
-  assert.equal(new Set(COMMANDS.map((c) => c.id)).size, 133, 'ids are unique');
+  assert.equal(COMMANDS.length, 134);
+  assert.equal(new Set(COMMANDS.map((c) => c.id)).size, 134, 'ids are unique');
   assert.deepEqual(CATEGORIES.map((c) => c.id), Object.keys(MISSION_IDS));
   for (const [category, ids] of Object.entries(MISSION_IDS)) {
     assert.deepEqual(COMMANDS.filter((c) => c.category === category).map((c) => c.id), ids, category);
@@ -164,7 +164,7 @@ test('2. availability comes from real configuration: ready, needs setup, unsuppo
   const expired = connectorStatus({ CHE_TRADOVATE_OAUTH_CLIENT_ID: 'x', CHE_TRADOVATE_OAUTH_CLIENT_SECRET: 'y' }, { broker: { expired: true } });
   assert.equal(expired.broker.state, 'needs_reconnect');
   const view = catalogView(bare);
-  assert.equal(view.commands.length, 133);
+  assert.equal(view.commands.length, 134);
   assert.ok(view.commands.every((c) => ['available', 'setup_required', 'unsupported', 'temporarily_unavailable'].includes(c.status)));
 });
 
@@ -824,7 +824,7 @@ test('the Flutter catalog fixture matches what the Worker serves (regenerate: no
   const { fixtureCatalog } = await import('../../tool/dump_command_catalog.mjs');
   const fixture = JSON.parse(readFileSync(new URL('../../test/fixtures/command_catalog.json', import.meta.url), 'utf8'));
   assert.deepEqual(fixture, JSON.parse(JSON.stringify(fixtureCatalog())));
-  assert.equal(fixture.commands.length, 133);
+  assert.equal(fixture.commands.length, 134);
   assert.ok(fixture.templates.length >= 4);
 });
 
@@ -943,7 +943,7 @@ test('the owner\'s six spoken phrases are answered from the catalog with no mode
   for (const words of variants('CHE, open your Commands page.')) {
     const out = await che.say(words);
     assert.equal(out.route, 'che_command_center', words);
-    assert.match(out.reply, /133 commands in 9 groups[\s\S]*2\. YouTube, 11[\s\S]*9\. Creator Studio, 9[\s\S]*Nothing was run/, words);
+    assert.match(out.reply, /134 commands in 9 groups[\s\S]*2\. YouTube, 11[\s\S]*9\. Creator Studio, 9[\s\S]*Nothing was run/, words);
   }
   for (const words of variants('CHE, search for YouTube.')) {
     const out = await che.say(words);

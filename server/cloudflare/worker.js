@@ -135,6 +135,7 @@ import { jsRegexFlagProblems } from './flagstaff_code_check.js';
 import { ownToolPermissionProblems } from './flagstaff_reply_check.js';
 import { cachedCodeIndex } from './code_index.js';
 import { CHE_SELF_BRIEF, starredFocus, studyLesson } from './che_self_knowledge.js';
+import { connectServiceIntent, onboardingChatReply, onboardingIntent, onboardingRoute } from './service_onboarding.js';
 import { KEY_PROVIDERS, MEMORY_DB, hasStoredMemoryDatabase, memorySetupIntent, memorySetupSteps, removeMemoryDatabase, saveMemoryDatabase, removeKey, storedKeys, withStoredKeys, cachedAnswer, checkAllKeys, fileLetter, fileTech, forgetAnswer, isLockedDown, listLetters, looksLikeAttack, markLetter, nextLetter, rememberAnswer, resilienceIntent, runScout, saveKey, setLockdown, setupSteps, speakKeyHealth, speakMailboxSummary, speakTech, techItems } from './resilience.js';
 import { applyCorrections, correctedPrevious, correctionsContext, detectCorrection, learnCorrection, loadCorrections } from './speech_learning.js';
 import { applyModelReading, asksAboutScreen, clipKeepingLimits, interpretOwnerTurn, interpretWithModel } from './speech_intent.js';
@@ -4961,6 +4962,18 @@ export class CheState extends DurableObject {
     try { socket.close(code, 'closed'); } catch (_) { /* already closed */ }
   }
 
+  // The spoken/typed connect words and /connect-service (service_onboarding.js).
+  async onboardingChat(onboard, ownerDevice, extra = {}) {
+    await this.refreshKeyEnv();
+    const out = await onboardingChatReply(this.onboardingCtx(), onboard, { owner: ownerDevice });
+    return ndjsonReply(out.text, { ...out.meta, ...extra });
+  }
+
+  // Service onboarding's view: storage, Worker secrets (read only), the merged env consumers read.
+  onboardingCtx() {
+    return { storage: this.ctx.storage, env: this.env, keyEnv: () => this.keyEnv || this.env, refresh: () => this.refreshKeyEnv(), fetcher: (...args) => fetch(...args) };
+  }
+
   // Keys the owner saved in CHE's Keys tab count everywhere a Worker secret
   // would, so a pasted key "just works" for the Office crew too.
   async refreshKeyEnv() {
@@ -5932,6 +5945,7 @@ export class CheState extends DurableObject {
       return withDoneFields(await this.improvementChat(body || {}, ask), { command: command.id });
     }
     // CHE World population: records, generated base models and (only the viewer knows) active characters, kept apart.
+    if (command.local === 'connect_service') return this.onboardingChat(connectServiceIntent(input), OWNER_CHAT_REQUESTS.has(request), { command: command.id, model_calls: 0 });
     if (command.local === 'world_population') {
       if (!OWNER_CHAT_REQUESTS.has(request)) return ndjsonReply('Only the CHE owner can read CHE World.', { source: 'che_world_population', ok: false, command: command.id, model_calls: 0 });
       const out = await populationAnswer(this.ctx.storage, new GpuQueue(this.ctx.storage));
@@ -8733,6 +8747,12 @@ export class CheState extends DurableObject {
         }
         const saved = await saveKey(this.ctx.storage, String(body.provider || ''), String(body.key || ''));
         return json(saved.ok ? { ok: true, provider: saved.provider, last4: saved.last4, status: saved.test.status } : { detail: saved.detail }, saved.ok ? 200 : 422);
+      }
+      // Service onboarding: owner-only; the token arrives once on /secret; only fingerprints come back.
+      if (path.startsWith('/api/onboarding/')) {
+        await this.refreshKeyEnv();
+        const routed = await onboardingRoute(this.onboardingCtx(), path, request.method, body, { owner: ownerDevice, lockedDown: await isLockedDown(this.ctx.storage), query: new URL(request.url).search });
+        if (routed) return json(routed.body, routed.status);
       }
       if (path === '/api/letters' && request.method === 'GET') {
         return json({ letters: (await listLetters(this.ctx.storage)).slice(-200).reverse() });
@@ -11881,6 +11901,9 @@ export class CheState extends DurableObject {
           // 503 → the app answers with CHE's on-phone brain instead.
           return json({ detail: 'Lockdown is on: remote engines are paused. Say "end lockdown" to resume.' }, 503);
         }
+        // "CHE, connect Hugging Face" / "is Hugging Face connected?": the onboarding state machine, no model.
+        const onboard = onboardingIntent(message);
+        if (onboard) return this.onboardingChat(onboard, ownerDevice);
         if (resil) {
           const st = this.ctx.storage;
           if (resil.kind === 'lockdown') {

@@ -4765,6 +4765,46 @@
    "optional_missing": []
   },
   {
+   "id": "connect-service",
+   "category": "office",
+   "title": "Connect a Service",
+   "summary": "Connect a service end to end and verify it.",
+   "does": "Checks the connection CHE already has first and keeps it if it works. Otherwise creates a Hugging Face token with the fewest permissions in CHE's browser using your sign-in, or opens the page for guided providers. Stores it in the place CHE really reads and says \"Connected\" only after real checks pass.",
+   "mode": "BUILD",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": {
+    "name": "service",
+    "required": true,
+    "hint": "Hugging Face, Groq, Gemini…"
+   },
+   "examples": [
+    "CHE, connect Hugging Face",
+    "Connect Hugging Face for film studio",
+    "Is Hugging Face connected?"
+   ],
+   "needs": [],
+   "optional": [],
+   "handler": "service_onboarding.startOnboarding / storeSecret / verifyOnboarding",
+   "route": "che_onboarding",
+   "produces": "connection status",
+   "evidence": "Three separate outcomes: token created, secret configured (where), connection verified (the provider's own checks). Fingerprints only, never a key.",
+   "cost": "Free. Verification makes no paid calls; nothing is bought.",
+   "keywords": [
+    "connect",
+    "hugging face",
+    "onboarding",
+    "token",
+    "connected",
+    "set up service"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
    "id": "voice-test",
    "category": "office",
    "title": "Voice Test",

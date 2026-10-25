@@ -67,11 +67,22 @@ export async function setStoredKeys(storage, changes) {
   return keys;
 }
 
+// Names whose stored key wins over a Worker secret of the same name. Only
+// service onboarding sets one, after the Worker secret failed verification and
+// the stored replacement passed (service_onboarding.js), so a dead deploy-time
+// secret can never shadow a verified key the owner just connected.
+export const STORED_KEY_WINS = 'CHE_STORED_KEY_WINS';
+export function storedKeyWins(keys) {
+  const list = keys?.[STORED_KEY_WINS];
+  return new Set(Array.isArray(list) ? list.filter((n) => typeof n === 'string') : []);
+}
+
 export function withStoredKeys(env, keys) {
   if (!keys || !Object.keys(keys).length) return env;
   const merged = Object.create(env);
+  const wins = storedKeyWins(keys);
   for (const [name, value] of Object.entries(keys)) {
-    if (!env[name] && typeof value === 'string' && value) merged[name] = value;
+    if ((!env[name] || wins.has(name)) && typeof value === 'string' && value) merged[name] = value;
   }
   // A memory database the owner connected through CHE replaces the Worker
   // secret pair, so switching databases really switches where memories go.
@@ -144,6 +155,8 @@ export async function removeKey(storage, provider) {
   const keys = await storedKeys(storage);
   const had = Boolean(keys[p.env]);
   delete keys[p.env];
+  const wins = storedKeyWins(keys);
+  if (wins.delete(p.env)) keys[STORED_KEY_WINS] = [...wins];
   await put(storage, STORED_KEYS, keys);
   const health = await get(storage, HEALTH, {});
   delete health[provider];
@@ -261,8 +274,9 @@ export async function checkAllKeys(env, storage, fetcher = fetch) {
   const keys = await storedKeys(storage);
   const before = await get(storage, HEALTH, {});
   const health = {};
+  const wins = storedKeyWins(keys);
   for (const [id, p] of Object.entries(KEY_PROVIDERS)) {
-    const key = env?.[p.env] || keys[p.env];
+    const key = (wins.has(p.env) && keys[p.env]) || env?.[p.env] || keys[p.env];
     if (!key) continue;
     const test = await testKey(id, key, fetcher);
     health[id] = { status: test.status, code: test.code || null, at: Date.now(), latency_ms: test.latency_ms || null, last4: last4(key) };
