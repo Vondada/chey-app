@@ -209,7 +209,13 @@ class _CheBrainOverviewState extends State<CheBrainOverview> {
     if (CheBrainOverview.voiceHandler == _voice) CheBrainOverview.voiceHandler = null;
     if (CheBrainSpaceController.regionOpener == _openRegion) CheBrainSpaceController.regionOpener = null;
     if (CheBrainSpaceController.beforeCommand == _beforeSpaceCommand) CheBrainSpaceController.beforeCommand = null;
-    CheBrainOverview.chromeHidden.value = false;
+    // After the frame (a listener must not rebuild while the tree is being torn down), and only when no other Brain
+    // Room took over.
+    if (CheBrainOverview.chromeHidden.value) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (CheBrainOverview.voiceHandler == null) CheBrainOverview.chromeHidden.value = false;
+      });
+    }
     super.dispose();
   }
 
