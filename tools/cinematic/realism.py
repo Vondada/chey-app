@@ -236,7 +236,7 @@ def _sample_surface(ob, n, rng):
 
 
 def head_hair(c, n_guides=420, children=60, seed=5, step=0.006, max_len=0.42, melanin=0.92, redness=0.2,
-              root_r=0.00006, tip_r=0.00002, hide_mesh=True):
+              root_r=0.00006, tip_r=0.00002, hide_mesh=True, lite_every=4):
     """Strand hair over the hair meshes. Guides start on the scalp cap, flow down and back over the hair surface
     (kept a few mm above it), and stop where the hair mesh ends; each guide gets `children` clumped, waved strands."""
     rng = np.random.default_rng(seed)
@@ -252,8 +252,9 @@ def head_hair(c, n_guides=420, children=60, seed=5, step=0.006, max_len=0.42, me
         p = Vector(r0); loc, nrm, _, _ = bvh.find_nearest(p)
         lift = rng.uniform(0.002, 0.007)
         side = 1.0 if p.x > 0 else -1.0
-        front = max(0.0, min(1.0, ((eye_mid.y + 0.07) - p.y) / 0.05))   # hairline roots sweep to the side and back
-        d = (Vector((side * (0.5 + 1.2 * front), 0.25 + 0.9 * front, -1.0 + 0.6 * front))).normalized()
+        front = max(0.0, min(1.0, ((eye_mid.y + 0.07) - p.y) / 0.05))   # hairline roots are combed back over the scalp
+        # (sweeping them sideways laid strands across the forehead like a visor in the first close-up renders)
+        d = (Vector((side * (0.5 - 0.25 * front), 0.25 + 1.1 * front, -1.0 + 0.85 * front))).normalized()
         pts = [p + nrm * 0.0015]
         for k in range(int(max_len / step)):
             q = pts[-1] + d * step
@@ -303,12 +304,13 @@ def head_hair(c, n_guides=420, children=60, seed=5, step=0.006, max_len=0.42, me
     hc.materials.append(m)
     ob = bpy.data.objects.new('HeadHair', hc); c['scene'].collection.objects.link(ob)
     parent_to_bone(ob, c['arm'])
-    # a thinned copy (every third strand, thicker) for wide shots, where the full set costs render time for detail
+    lite_scale = lite_every ** 0.5   # thicker strands keep roughly the coverage of the thinned set
+    # a thinned copy (every `lite_every`-th strand, thicker) for wide shots, where the full set costs render time for detail
     # nobody can see; the sample switches between them per shot
-    lite = strands[::3]
+    lite = strands[::lite_every]
     hl = bpy.data.hair_curves.new('HeadHairLite'); hl.add_curves([len(s) for s in lite])
     hl.points.foreach_set('position', np.concatenate(lite).ravel())
-    hl.points.foreach_set('radius', np.concatenate([1.7 * (root_r + (tip_r - root_r) * np.linspace(0, 1, len(s))) for s in lite]))
+    hl.points.foreach_set('radius', np.concatenate([lite_scale * (root_r + (tip_r - root_r) * np.linspace(0, 1, len(s))) for s in lite]))
     hl.materials.append(m)
     obl = bpy.data.objects.new('HeadHairLite', hl); c['scene'].collection.objects.link(obl)
     parent_to_bone(obl, c['arm']); obl.hide_render = True

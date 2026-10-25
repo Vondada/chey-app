@@ -16,7 +16,7 @@ Method (world-space delta retargeting with a matched rest frame):
 """
 import numpy as np
 
-from quat import arc  # noqa: E402  (tools/avatar_motion on sys.path)
+from quat import arc, axis_angle, yaw_of  # noqa: E402  (tools/avatar_motion on sys.path)
 
 # MPFB game_engine bone -> (CMU joint, joint it points at). World-space retargeting, so CMU's extra joints (Neck1,
 # LHipJoint, FingerBase) need no 1:1 partner.
@@ -183,6 +183,29 @@ def foot_contacts(H_ankle, H_ball, floor=None, height_tol=0.035, speed_tol=0.25,
     return c
 
 
+def contact_slip(H_foot, H_ball, fps=30.0, floor=None, height_tol=0.035, speed_tol=0.25, min_frames=3):
+    """Foot-contact check on finished motion (numpy FK or positions read back from Blender): finds the planted
+    segments in THESE positions (same rule as foot_contacts) and measures how far each contact point drifts sideways
+    while it is actually on the floor: the heel (foot head) on the frames it is within touch_tol of its lowest
+    height, the ball likewise. A heel lifting while the ball stays put (the roll before toe-off) is not slip; either
+    point gliding while grounded is. Segments shorter than min_frames are ignored (touch-and-go steps).
+    Returns {segments, contact_frames, max_slip_mm, mean_slip_mm, per_segment_mm: [...]} (slip 0 when none)."""
+    H_foot = np.asarray(H_foot, float); H_ball = np.asarray(H_ball, float)
+    c = foot_contacts(H_foot, H_ball, floor=floor, height_tol=height_tol, speed_tol=speed_tol, fps=fps)
+    touch_tol = 0.015
+    grounded = [(P, P[:, 2] - np.percentile(P[:, 2], 5) < touch_tol) for P in (H_foot, H_ball)]
+    per = []
+    for s0, s1 in segments(c):
+        if s1 - s0 < min_frames: continue
+        worst = 0.0
+        for P, g in grounded:
+            idx = np.nonzero(g[s0:s1])[0] + s0
+            if len(idx) >= 2: worst = max(worst, float(np.linalg.norm(P[idx, :2] - P[idx[0], :2], axis=1).max()))
+        per.append(1000 * worst)
+    return {'segments': len(per), 'contact_frames': int(c.sum()), 'max_slip_mm': round(max(per), 1) if per else 0.0,
+            'mean_slip_mm': round(float(np.mean(per)), 1) if per else 0.0, 'per_segment_mm': [round(x, 1) for x in per]}
+
+
 def ground_offset(rig, local, root_loc, pct=10):
     """Vertical shift (m) that puts the clip's planted feet on the floor: the lowest foot point per frame, measured
     against CHE's rest ankle and ball heights, at its `pct` percentile over the clip, goes to zero."""
@@ -211,7 +234,7 @@ def two_bone_ik(hip, knee, ankle, target, a, b):
     return hip + a * (cos_t * u + np.sqrt(1 - cos_t ** 2) * pole)
 
 
-def foot_lock(rig, local, root_loc, fps=30.0, blend=4, floor=0.0):
+def foot_lock(rig, local, root_loc, fps=30.0, blend=4, floor=0.0, speed_tol=0.25):
     """Pins each planted foot where it landed (two-bone IK on thigh and calf; the foot keeps its world rotation) and
     raises nothing above the floor. Returns (new local, report {side: {segments, slip_before_mm, slip_after_mm}})."""
     local = {k: v.copy() for k, v in local.items()}
@@ -220,20 +243,46 @@ def foot_lock(rig, local, root_loc, fps=30.0, blend=4, floor=0.0):
     report = {}
     for s in 'lr':
         th, ca, fo, ba = (f'{k}_{s}' for k in ('thigh', 'calf', 'foot', 'ball'))
-        contact = foot_contacts(H[fo], H[ba], floor=None, fps=fps)
+        contact = foot_contacts(H[fo], H[ba], floor=None, fps=fps, speed_tol=speed_tol)
         a = float(np.linalg.norm(rig.head[ca] - rig.head[th])); b = float(np.linalg.norm(rig.head[fo] - rig.head[ca]))
         target = H[fo].copy(); w = np.zeros(F)
         segs = segments(contact)
         slip_before = []
+        # Which point carries the foot: the heel (foot head) while it is down, the ball while the heel is lifted
+        # (the roll before toe-off, pivots). The grounded point is pinned horizontally; the heel keeps the mocap
+        # height, so it can still lift. Switching points moves the anchor so the goal stays continuous.
+        heel_g = H[fo][:, 2] - np.percentile(H[fo][:, 2], 5) < 0.015
+        ball_g = H[ba][:, 2] - np.percentile(H[ba][:, 2], 5) < 0.015
+        # A flat foot (heel and ball both down) cannot turn on the floor: its world yaw is held from the frame it
+        # went flat (mocap feet often twist a few degrees there, which swings the ball sideways by centimetres).
+        Gfoot = G[fo].copy()
         for s0, s1 in segs:
-            pin = H[fo][s0].copy()
-            slip_before.append(float(np.linalg.norm(H[fo][s0:s1, :2] - pin[:2], axis=1).max()))
-            target[s0:s1] = pin
+            yaw0 = None
+            for f in range(s0, s1):
+                if heel_g[f] and ball_g[f]:
+                    y = float(yaw_of(Gfoot[f] @ rig.rest[fo].T))
+                    if yaw0 is None: yaw0 = y
+                    Gfoot[f] = axis_angle((0, 0, 1), yaw0 - y) @ Gfoot[f]
+                else:
+                    yaw0 = None
+        off = np.einsum('fij,j->fi', Gfoot @ rig.rest[fo].T, rig.head[ba] - rig.head[fo])
+        for s0, s1 in segs:
+            slip_before.append(float(np.linalg.norm(H[fo][s0:s1, :2] - H[fo][s0, :2], axis=1).max()))
+            mode = 'heel' if heel_g[s0] or not ball_g[s0] else 'ball'
+            anchor = H[fo][s0, :2].copy() if mode == 'heel' else H[ba][s0, :2].copy()
+            for f in range(s0, s1):
+                m = 'heel' if heel_g[f] else ('ball' if ball_g[f] else mode)
+                if m != mode and f > s0:
+                    anchor = target[f - 1, :2].copy() if m == 'heel' else target[f - 1, :2] + off[f - 1, :2]
+                    mode = m
+                target[f, :2] = anchor if mode == 'heel' else anchor - off[f, :2]
+                target[f, 2] = H[fo][f, 2]
             w[s0:s1] = 1.0
             for k in range(1, blend + 1):   # ease in and out of the lock
-                if s0 - k >= 0 and w[s0 - k] < 1: w[s0 - k] = max(w[s0 - k], 1 - k / (blend + 1)); target[s0 - k] = pin
-                if s1 - 1 + k < F and w[s1 - 1 + k] < 1: w[s1 - 1 + k] = max(w[s1 - 1 + k], 1 - k / (blend + 1)); target[s1 - 1 + k] = pin
-        Gfoot = G[fo].copy()
+                if s0 - k >= 0 and w[s0 - k] < 1:
+                    w[s0 - k] = max(w[s0 - k], 1 - k / (blend + 1)); target[s0 - k, :2] = target[s0, :2]
+                if s1 - 1 + k < F and w[s1 - 1 + k] < 1:
+                    w[s1 - 1 + k] = max(w[s1 - 1 + k], 1 - k / (blend + 1)); target[s1 - 1 + k, :2] = target[s1 - 1, :2]
         for f in range(F):
             goal = H[fo][f] * (1 - w[f]) + target[f] * w[f]
             if w[f] == 0: continue
@@ -253,7 +302,7 @@ def foot_lock(rig, local, root_loc, fps=30.0, blend=4, floor=0.0):
     G2, H2, _ = pose_world(rig, local, root_loc)
     for s in 'lr':
         fo, ba = f'foot_{s}', f'ball_{s}'
-        contact = foot_contacts(H[fo], H[ba], floor=None, fps=fps)
-        after = [float(np.linalg.norm(H2[fo][s0:s1, :2] - H2[fo][s0, :2], axis=1).max()) for s0, s1 in segments(contact)]
-        report[s]['slip_after_mm'] = round(1000 * max(after), 1) if after else 0.0
+        # the same independent check before and after (contact_slip: grounded heel or ball gliding)
+        report[s]['check_before_mm'] = contact_slip(H[fo], H[ba], fps)['max_slip_mm']
+        report[s]['slip_after_mm'] = contact_slip(H2[fo], H2[ba], fps)['max_slip_mm']
     return local, report
