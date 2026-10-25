@@ -117,7 +117,7 @@ def blend(kind, x):
 def body_values(settings, youth=0.0):
     """The six macro values (0..1) of a job. Unset keys keep today's look: gender = SEX, age from MATURE (0.1 is about
     31: 0.5 + MATURE / 2) and the fit's youth (0.5 - 0.3125 * youth), average muscle, weight and height, proportions
-    0.75 (half-way to ideal, as macro_woman applies them)."""
+    MakeHuman 0.75 (half-way to ideal, as macro_woman applies them; BODY_PROPORTIONS 0.5 maps to it)."""
     def f(k, d):
         x = settings.get(k)
         return float(x) if x not in (None, '') else float(d)

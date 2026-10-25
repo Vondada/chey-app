@@ -367,10 +367,22 @@ def build():
         for k in p.edge_keys: edge_count[k] += 1
     rim = {i for k, c in edge_count.items() if c == 1 for i in k}
     hnorm = [vx.normal.copy() for vx in hme.vertices]
+    adj = {}
+    for (a, b) in edge_count: adj.setdefault(a, []).append(b); adj.setdefault(b, []).append(a)
+    ring_of = {i: 0 for i in rim}; todo = list(rim)
+    while todo:
+        nxt = []
+        for i in todo:
+            for j in adj.get(i, []):
+                if j not in ring_of: ring_of[j] = ring_of[i] + 1; nxt.append(j)
+        todo = nxt
     for k, vx in enumerate(hme.vertices):
         rz = vx.co.z - eye_mid[2]
         thick = 0.005 + 0.012 * min(1.0, max(0.0, (rz + 0.02) / 0.12))
-        vx.co += hnorm[k] * (0.003 if k in rim else thick)
+        # The edge thins over two rings of vertices instead of stepping from 3 mm straight to the full thickness (the
+        # step drew a saw-tooth hairline; realism pass 2026-10-25).
+        r = ring_of.get(k, 9)
+        vx.co += hnorm[k] * (0.003 + (thick - 0.003) * min(1.0, r / 3.0))
     style = os.environ.get('HAIR_STYLE') or 'close_crop'
     extra, hair_info = hair_style(style, sc, arm, hair, hme, Vector(eye_mid))
 
@@ -408,10 +420,28 @@ def _curl(p, f=1.0):
             + 0.5 * math.sin((p.x + p.z) * 330 * f + 0.4) * math.sin((p.y - p.z) * 290 * f + 1.9)) / 1.5
 
 
+def smooth_hairline(hme, iters=8):
+    """The cap's edge follows the body's quads, so the hairline rendered as a saw-tooth (realism pass 2026-10-25). Each
+    pass moves every edge vertex half-way to the mean of its two neighbours along the edge loop, which rounds the
+    hairline without moving the rest of the cap."""
+    count = {}
+    for p in hme.polygons:
+        for k in p.edge_keys: count[k] = count.get(k, 0) + 1
+    nb = {}
+    for (a, b), c in count.items():
+        if c == 1: nb.setdefault(a, []).append(b); nb.setdefault(b, []).append(a)
+    loop = {v: n for v, n in nb.items() if len(n) == 2}
+    for _ in range(iters):
+        new = {v: hme.vertices[v].co * 0.5 + (hme.vertices[n[0]].co + hme.vertices[n[1]].co) * 0.25 for v, n in loop.items()}
+        for v, co in new.items(): hme.vertices[v].co = co
+    hme.update()
+
+
 def hair_style(style, sc, arm, hair, hme, eye_mid):
     """Shapes the scalp cap (built above) into `style` and adds any separate pieces (a bun, a long curtain). Every
     piece is a mesh in the hair material, rigidly weighted to the head bone, so it is exported in the GLB and moves
     with the head. close_crop is the cap exactly as before. Returns (extra objects, description)."""
+    smooth_hairline(hme)
     if style not in HAIR_STYLES:
         return [], f'close_crop: hair style {style!r} is not one CHE builds; close-cropped cap instead'
     if style == 'close_crop':
@@ -442,7 +472,7 @@ def hair_style(style, sc, arm, hair, hme, eye_mid):
             v.co = v.co + v.normal * edge * (0.010 + 0.006 * _curl(v.co))
         elif style == 'afro':
             # Rounder than a beret: full volume on top, tapering toward the lower edge over the ears and the nape.
-            low = min(1.0, max(0.3, (d.z + 0.35) / 0.6))
+            low = min(1.0, max(0.2, (d.z + 0.15) / 0.55))
             bulk = (0.05 + 0.012 * max(0.0, d.z)) * (1.0 - 0.55 * front) * low
             v.co = c + d * max(dist, R + edge * bulk) + v.normal * 0.006 * _curl(v.co, 0.6) * edge
         elif style == 'beanie':
