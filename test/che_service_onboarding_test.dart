@@ -71,7 +71,7 @@ class FakeServer implements CheOnboardingServer {
     }
     if (path.endsWith('/event')) {
       if (body['kind'] == 'account_seen' && approval) {
-        return const CheServerReply(200, {'needs_approval': true, 'state': 'paused', 'speech': 'Hugging Face setup is paused: I\'m signed in to Hugging Face as vondada. Say "yes, use vondada" to approve it.', 'pause': {'step': 'confirm_account'}});
+        return const CheServerReply(200, {'needs_approval': true, 'state': 'paused', 'speech': 'Hugging Face setup is paused: I\'m signed in to Hugging Face as vondada. Say "yes, use vondada on Hugging Face" to approve it.', 'pause': {'step': 'confirm_account'}});
       }
       if (body['kind'] == 'paused') return CheServerReply(200, {'state': 'paused', 'speech': 'Hugging Face setup is paused: ${body['detail']}.', 'pause': {'step': body['step']}});
       return const CheServerReply(200, {'state': 'token_created'});
@@ -161,7 +161,7 @@ void main() {
     final page = FakePage();
     final result = await driver(FakeServer(approval: true), page).run();
     expect(result.status, CheOnboardingStatus.needsAccountApproval);
-    expect(result.speech, contains('Say "yes, use vondada"'));
+    expect(result.speech, contains('Say "yes, use vondada on Hugging Face"'));
     expect(page.calls.any((c) => c.contains('submit()')), isFalse);
   });
 

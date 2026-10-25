@@ -276,7 +276,8 @@ test('pause and resume: sign-in, captcha and account approval pause with the exa
   // Unknown account: pause for the owner's yes; a different account than approved fails without creating.
   const seen = await che.post('/api/onboarding/huggingface/event', { capability: 'inference', kind: 'account_seen', username: 'vondada' });
   assert.equal(seen.body.needs_approval, true);
-  assert.match(seen.body.pause.detail, /Say "yes, use vondada" to approve it/);
+  assert.match(seen.body.pause.detail, /Say "yes, use vondada on Hugging Face" to approve it/);
+  assert.doesNotMatch(seen.body.speech, /when you're ready/);
   const yes = await che.say('yes, use vondada on hugging face');
   assert.equal(yes.done.onboarding.plan.expected_account, 'vondada');
   const wrong = await che.post('/api/onboarding/huggingface/event', { capability: 'inference', kind: 'account_seen', username: 'stranger' });

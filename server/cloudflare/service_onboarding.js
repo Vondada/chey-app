@@ -253,7 +253,7 @@ export function speakOutcome(rec, adapter) {
     const perm = v.checks.find((c) => c.id === 'permissions')?.detail;
     return clip(`Connected: ${auth}${perm ? `, ${perm.split(', with')[0]}` : ''}. I can ${v.works || 'use it'}.${rec.preserved ? ' It was already working, so I created nothing new.' : ''}`, 500);
   }
-  if (rec.state === 'paused') return clip(`${name} setup is paused: ${rec.pause?.detail || rec.pause?.reason}. Say "connect ${name}" when you're ready and I'll continue from here.`, 400);
+  if (rec.state === 'paused') return clip(`${name} setup is paused: ${rec.pause?.detail || rec.pause?.reason}.${rec.pause?.step === 'confirm_account' ? '' : ` Say "connect ${name}" when you're ready and I'll continue from here.`}`, 400);
   if (rec.state === 'failed') return clip(`${name} is not connected: ${rec.failure?.detail || rec.failure?.reason}.`, 400);
   if (rec.state === 'secret_configured') return clip(`${name}: the token is stored but the connection is not verified yet.`, 300);
   if (rec.state === 'token_created') return clip(`${name}: a token was created and I am waiting for it to reach my server; it is not connected yet.`, 300);
@@ -377,7 +377,7 @@ export async function onboardingEvent(ctx, provider, body = {}) {
       return { ok: false, status: 409, ...publicView(rec, adapter) };
     }
     if (!rec.account.approved) {
-      rec.pause = { reason: 'missing_info', step: 'confirm_account', detail: `I'm signed in to ${adapter.name} as ${seen || 'an account I could not read'}. Say "yes, use ${seen || 'it'}" to approve it`, resume_state: 'token_requested', at: now };
+      rec.pause = { reason: 'missing_info', step: 'confirm_account', detail: seen ? `I'm signed in to ${adapter.name} as ${seen}. Say "yes, use ${seen} on ${adapter.name}" to approve it` : `I could not read which ${adapter.name} account is signed in. Say "yes, use" and your ${adapter.name} username, then "on ${adapter.name}"`, resume_state: 'token_requested', at: now };
       await save(ctx.storage, rec, 'paused', 'account needs owner approval', now);
       return { ok: true, needs_approval: true, ...publicView(rec, adapter) };
     }
