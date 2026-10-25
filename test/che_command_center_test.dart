@@ -360,6 +360,40 @@ void main() {
     expect(spoken, isNotEmpty, reason: 'owner actions report their real result aloud');
   });
 
+  testWidgets('reopening Commands shows a finished run\'s verified result quietly, with a VoiceOver label', (tester) async {
+    final sha = 'ab12cd34ef56${'0' * 52}';
+    final che = FakeChe()
+      ..missions = [
+        {
+          'id': 'm9', 'name': 'Notes report', 'status': 'complete', 'paused': false,
+          'spoken': 'Workflow: Notes report: 2 of 2 steps done, 0 running, 0 failed, 0 waiting on a failed step.',
+          'steps': [
+            {'id': 's1', 'command': 'che-memory', 'title': '/che-memory my business', 'status': 'complete', 'depends_on': [], 'output': 'Joe\'s Barbershop in Phoenix.', 'evidence': [], 'verified_by': 'che_memory_provenance'},
+            {'id': 's2', 'command': 'che-plan', 'title': '/che-plan summary', 'status': 'complete', 'depends_on': ['s1'], 'output': 'Summary report.', 'evidence': [], 'verified_by': 'model'},
+          ],
+          'artifact': {'sha256': sha, 'bytes': 412, 'verified': true, 'receipt': 'mission_artifact:m9', 'spoken': 'Result saved and verified: 412 bytes, SHA-256 ab12cd34ef56.'},
+        },
+      ];
+    final spoken = <String>[];
+    final semantics = tester.ensureSemantics();
+    await openCenter(tester, che: che, spoken: spoken);
+    await tester.tap(find.text('Activity'));
+    await tester.pumpAndSettle();
+    expect(find.text('Result saved and verified: 412 bytes, SHA-256 ab12cd34ef56.'), findsOneWidget);
+    await tester.ensureVisible(find.text('Result saved and verified: 412 bytes, SHA-256 ab12cd34ef56.'));
+    await tester.pumpAndSettle();
+    expect(find.bySemanticsLabel('Result saved and verified. 412 bytes. SHA-256 starts ab12cd34ef56.'), findsOneWidget);
+    expect(find.text('Cancel run'), findsNothing, reason: 'a finished run has no run controls');
+    expect(spoken, isEmpty, reason: 'a passive result is shown, never spoken on its own');
+    semantics.dispose();
+  });
+
+  test('a mission without a sealed result has no artifact; a malformed one is ignored', () {
+    expect(CheMission.fromJson({'id': 'a', 'steps': []}).artifact, isNull);
+    expect(CheMission.fromJson({'id': 'a', 'artifact': 'x'}).artifact, isNull);
+    expect(CheMission.fromJson({'id': 'a', 'artifact': {'sha256': 'ff', 'bytes': 3, 'verified': true}}).artifact?.bytes, 3);
+  });
+
   testWidgets('a dropped connection is reported and leaves the controls usable', (tester) async {
     final che = FakeChe()
       ..missions = [

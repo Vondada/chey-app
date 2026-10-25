@@ -306,6 +306,32 @@ class CheMissionCard extends StatelessWidget {
               ),
             _StepRow(step: step, index: i, busy: busy, onControl: onControl),
           ],
+          // The saved result: quiet text only (it is never spoken on its own); VoiceOver reads it as one line.
+          if (mission.artifact case final artifact?) ...[
+            const SizedBox(height: 10),
+            Semantics(
+              key: ValueKey('mission-result-${mission.id}'),
+              container: true,
+              label: artifact.verified
+                  ? 'Result saved and verified. ${artifact.bytes} bytes. SHA-256 starts ${artifact.sha256.substring(0, artifact.sha256.length < 12 ? artifact.sha256.length : 12)}.'
+                  : 'Result saved, but not verified.',
+              excludeSemantics: true,
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Icon(artifact.verified ? Icons.verified_rounded : Icons.error_outline_rounded,
+                      size: 16, color: artifact.verified ? CheColors.accent : CheColors.textFaint),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      artifact.spoken.isNotEmpty ? artifact.spoken : (artifact.verified ? 'Result saved and verified.' : 'Result saved, not verified.'),
+                      style: CheType.caption,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
           if (!mission.finished) ...[
             const SizedBox(height: 10),
             Wrap(
