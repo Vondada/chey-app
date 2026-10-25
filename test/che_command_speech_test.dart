@@ -132,7 +132,7 @@ void main() {
     // A topic in a readiness question is that topic, not the last list.
     expect(await say('are the trading ones ready?'), startsWith('24 of the 25 Trading commands are ready.'));
     expect(find.text('/trade-execute'), findsNothing, reason: 'the screen lists only what CHE read: the ready ones');
-    expect(await say('which money ones need setup'), 'All 8 Money Management commands are ready.');
+    expect(await say('which money ones need setup'), 'All 11 Money Management commands are ready.');
     expect(await say('show me 0 YouTube commands'), contains('Say "more" for the next 5.'), reason: 'zero is not a page size');
     // How-to questions are not about the list: they go on to Chat.
     expect(await say('show me how to set up YouTube'), isNull);
