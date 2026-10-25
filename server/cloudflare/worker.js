@@ -161,6 +161,7 @@ import { brainTruthSummary, brainTruthView, truthScreenAsk } from './brain_truth
 import { CLOUD_JOB_KIND, CLOUD_SOURCE, approveCloudJob, cancelCloudJob, cloudIntent, cloudJobs, cloudView, latestCloudJob, openPullRequests, parseControl, providerStatuses, requestCloudWork, retryCloudJob, runCloudTask, runFileJob, selectProvider, speakAgentWork, speakBlocked, speakCloudSummary, speakControl, speakInstall, speakPullRequests, speakRender, speakRequest, speakStartResult, startCloudTask, stopCloudJob } from './cloud_computer.js';
 import { auditLedger, knowVsGuessQuestion, knowVsGuessReply, MEMORY_CLAIM_MS, memorySavedQuestion, memorySavedReply } from './hallucination_auditor.js';
 import { verifyReply } from './truth_pipeline.js';
+import { auditReply } from './hallucination_auditor.js';
 import { memoryTruthProbe } from './memory_probe.js';
 import { asksForCurrentOwnerLocation, executeWithReceipt, guardExecutionClaims, guardRetrievalClaims, changeHistoryIntent, guardClaimedOwnerActions, guardClaimedResearchActions, guardGroundedFacts, guardLocationWeatherReply, guardOwnerReply, loadChangeHistory, loadReceipts, OWNER_LOCATION_NOT_VERIFIED, recordReceipt, requestedCodeNames, speakChangeHistory, vagueResearchRequest, verifiedState, verifiedStatusText } from './truth_layer.js';
 import { ENGINEERING_PLAYBOOK_SPOKEN, playbookIntent } from './engineering_playbook.js';
@@ -5729,8 +5730,7 @@ export class CheState extends DurableObject {
     if (outsideCorrespondenceIntent(message)) {
       return ndjsonReply('Only the CHE owner can read the outside correspondence in his Brain. Nothing was read or changed.', { source: 'che_guest', ok: false, model_calls: 0 });
     }
-    // Gmail, Calendar, Drive and YouTube belong to the owner's full device. Without this, a guest or private
-    // phone's model answered "I cannot access external emails" (the owner saw that on his phone), which is false.
+    // Guest Google access is refused.
     if (googleChatIntent(message) || youtubeChatIntent(message)) {
       return ndjsonReply('Only the CHE owner can read or change Gmail, Calendar, Drive or YouTube from this phone. Nothing was read or changed.', { source: 'che_guest', ok: false, model_calls: 0 });
     }
@@ -5748,7 +5748,7 @@ export class CheState extends DurableObject {
         max_tokens: 700,
         che_audit: { tenant_id: tenant?.id, agent: 'CHE', route: 'guest_chat' },
       });
-      const reply = String(answer?.response || answer?.choices?.[0]?.message?.content || '').trim();
+      const reply = auditReply(String(answer?.response || answer?.choices?.[0]?.message?.content || '').trim(), { evidence: null, fiction: storyRequested(message), ownerRecords: false }).text;
       return ndjsonReply(reply || 'I could not answer that just now. Please try again.', { source: 'che_guest', ok: Boolean(reply), model_calls: 1 });
     } catch (_) {
       return ndjsonReply('I could not reach my engines just now. Please try again in a moment.', { source: 'che_guest', ok: false, model_calls: 1 });

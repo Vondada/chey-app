@@ -173,7 +173,7 @@ export const TRUTH_STAGES = Object.freeze([
   { name: 'auditor', async run(reply, ctx) {
     const fiction = storyRequested(ctx.rawMessage);
     try {
-      const audit = auditReply(reply, { evidence: await auditEvidenceFrom(ctx.storage, { executions: ctx.skillResults.map((r) => r.execution_receipt) }), requestId: ctx.requestId, fiction });
+      const audit = auditReply(reply, { evidence: await auditEvidenceFrom(ctx.storage, { executions: ctx.skillResults.map((r) => r.execution_receipt), requestId: ctx.requestId }), requestId: ctx.requestId, fiction });
       if (audit.outcome === 'corrected' || audit.outcome === 'blocked') console.log('CHE hallucination auditor', audit.outcome, JSON.stringify(audit.claims).slice(0, 400));
       await recordAudit(ctx.storage, [...ctx.shared.removals, ...audit.entries]);
       ctx.shared.audit = audit;

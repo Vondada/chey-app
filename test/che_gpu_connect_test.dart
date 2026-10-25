@@ -112,6 +112,7 @@ Rig rig(FakeBrowser b, FakeWorker w, {String account = _email, void Function(Che
 }
 
 void main() {
+  _accountLabelTests();
   TestWidgetsFlutterBinding.ensureInitialized();
 
   test('voice commands: Connect GPU, continue and the CHE Office account', () {
@@ -306,5 +307,27 @@ void main() {
     r.c.cancel();
     await tester.pumpWidget(const SizedBox());
     expect(CheGpuBrowser.openCount, 0);
+  });
+}
+
+void _accountLabelTests() {
+  group('Colab account label', () {
+    test('a real address is spoken as written', () {
+      expect(cheGpuAccountLabel('owner@che.office'), 'owner@che.office');
+    });
+
+    test('a page initial or name is never spoken as the account', () {
+      expect(cheGpuAccountLabel('V'), 'an account I cannot read');
+      expect(cheGpuAccountLabel('Vondada'), 'an account I cannot read');
+    });
+
+    test('an empty value is said as an unreadable account', () {
+      expect(cheGpuAccountLabel(''), 'an account I cannot read');
+    });
+
+    test('Colab opens with the CHE Office account by default', () {
+      expect(cheGpuDefaultAccount, 'chetheoffice@gmail.com');
+      expect(cheGpuNotebookUrl(cheGpuDefaultAccount), contains('authuser=chetheoffice%40gmail.com'));
+    });
   });
 }
