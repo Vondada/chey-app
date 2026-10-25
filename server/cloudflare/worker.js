@@ -10777,13 +10777,15 @@ export class CheState extends DurableObject {
             const items = await listMedia(this.ctx.storage);
             const id = openMedia.id || (openMedia.latest ? '' : String(body.last_media_id || '').trim().toLowerCase());
             const row = openMedia.latest ? mediaLatestOpenRow(items) : mediaOpenRow(items, id);
-            if (!row) return ndjsonReply(mediaOpenMissingReply(id), { source: 'che_media_store', ok: false, media_id: id || null });
+            const room = openMedia.room !== false;
+            if (!row) return ndjsonReply(mediaOpenMissingReply(id, { room }), { source: 'che_media_store', ok: false, media_id: id || null, media_retrieval: 'not_found' });
             const check = await verifyMediaFile(this.keyEnv || this.env, this.ctx.storage, row);
-            if (!check.ok) return ndjsonReply(`I could not open ID ${row.id} in your Creation Room, sir: ${check.reason || 'its file was not checked'}.`, { source: 'che_media_store', ok: false, media_id: row.id });
-            const opened = mediaOpenReply(row, { origin: new URL(request.url).origin });
+            if (!check.ok) return ndjsonReply(`I could not open ID ${row.id}${room ? ' in your Creation Room' : ''}, sir: ${check.reason || 'its file was not checked'}.`, { source: 'che_media_store', ok: false, media_id: row.id, media_retrieval: 'failed' });
+            const opened = mediaOpenReply(row, { origin: new URL(request.url).origin, room });
+            // media_retrieval is the Worker's part (bytes read back); display is reported only by the phone's image load.
             return ndjsonReply(opened.text, {
               source: 'che_media_store', ok: true, media_id: opened.media_id, media_type: opened.media_type,
-              media_url: opened.media_url, open_creation: true,
+              media_url: opened.media_url, media_retrieval: 'verified', ...(room ? { open_creation: true } : {}),
             });
           }
           // "Show me the last picture": the newest saved picture, its bytes read back first, returned as an image for the chat.
