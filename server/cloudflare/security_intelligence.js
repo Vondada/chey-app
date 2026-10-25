@@ -8,9 +8,10 @@
 import { setLockdown, isLockedDown } from './resilience.js';
 // The generic engines live in the portable Security Core (security_core/); this module is CHE's adapter over them
 // and keeps its exports so existing callers are unchanged.
-import { redact, redactDeep, scanSecrets } from './security_core/secrets.js';
+import { redact, redactDeep, scanSecrets, summarizeKinds } from './security_core/secrets.js';
 import { sha256 } from './security_core/supply_chain.js';
-export { BROAD_SECRET_RE, guardModelInput, looksSecret, redact, redactDeep, scanSecrets } from './security_core/secrets.js';
+import { appendArchive } from './security_archive.js';
+export { BROAD_SECRET_RE, guardModelInput, hasSecretRef, looksSecret, redact, redactDeep, resolveSecretRefs, scanSecrets, secretRef, summarizeKinds } from './security_core/secrets.js';
 export { ADVISORIES, checkTargetIdentity, checkToolAccess, dependencyAdvisories, inspectArtifacts, inspectFile, mayExecute, reviewGeneratedCode, securityCheckForCapability, sha256 } from './security_core/supply_chain.js';
 
 export const SECURITY_KEY = 'che:security_v1';
@@ -34,8 +35,13 @@ export async function loadSecurity(storage) {
 }
 
 export async function saveSecurity(storage, state) {
+  // Older events and audit rows move to the archive; security evidence is never dropped (security_archive.js).
+  const older = (state.events || []).slice(MAX_EVENTS);
+  const olderAudit = (state.audit || []).slice(100);
   pruneSecurity(state);
   await storage.put(SECURITY_KEY, state);
+  if (older.length) await appendArchive(storage, 'security_event', older).catch(() => 0);
+  if (olderAudit.length) await appendArchive(storage, 'security_audit', olderAudit).catch(() => 0);
 }
 
 function pruneSecurity(state, now = Date.now()) {
@@ -47,20 +53,55 @@ function pruneSecurity(state, now = Date.now()) {
 }
 
 function audit(state, action, detail, now = new Date().toISOString()) {
-  state.audit = [{ at: now, action, detail: clip(detail, 200) }, ...(state.audit || [])].slice(0, 100);
+  state.audit = [{ at: now, action, detail: clip(detail, 200) }, ...(state.audit || [])];
 }
 
+// Sanitized metadata an event may carry: where and who, pattern names and counts. Never a value.
+const META_FIELDS = ['boundary', 'route', 'caller', 'peer', 'model', 'host'];
+
 /** One security event. `evidence` is what was observed; there is never a guess about who did it. */
-export function recordEvent(state, { type, severity = 'info', classification = 'benign', evidence = '', source = '' }, now = new Date().toISOString()) {
+export function recordEvent(state, { type, severity = 'info', classification = 'benign', evidence = '', source = '', meta = null }, now = new Date().toISOString()) {
   const event = { id: crypto.randomUUID().slice(0, 12), at: now, type: clip(type, 60), severity, classification, evidence: clip(redact(evidence).text, 300), source: clip(source, 60) };
-  state.events = [event, ...(state.events || [])].slice(0, MAX_EVENTS);
+  if (meta && typeof meta === 'object') {
+    for (const f of META_FIELDS) if (meta[f]) event[f] = clip(redact(String(meta[f])).text, 80);
+    if (meta.kinds && typeof meta.kinds === 'object') event.kinds = Object.fromEntries(Object.entries(meta.kinds).slice(0, 12).map(([k, n]) => [clip(k, 40).replace(/[^\w]/g, '_'), Number(n) || 0]));
+    if (Number.isFinite(meta.count)) event.count = meta.count;
+    if (typeof meta.transmitted === 'boolean') event.transmitted = meta.transmitted;
+  }
+  state.events = [event, ...(state.events || [])];
   return event;
 }
 
-/** Records secret findings from one place (prompt, log, export…): the kinds and where, never the values. */
-export function recordFindings(state, where, kinds, now) {
+const kindWords = (kinds) => Object.entries(kinds).map(([k, n]) => `${n} ${k}`).join(', ');
+
+/**
+ * A redaction that worked: credential-shaped text was replaced before it left CHE (a model prompt, an agent message, a
+ * log). It is a Protected Event, informational, never an active threat. `meta` says where (boundary, route, caller);
+ * counts are per pattern name. Nothing about the value is kept.
+ */
+export function recordFindings(state, where, kinds, now, meta = {}) {
   if (!kinds.length) return null;
-  return recordEvent(state, { type: 'secret_redacted', severity: 'medium', classification: 'contained', evidence: `${kinds.length} credential-shaped value(s) (${[...new Set(kinds)].join(', ')}) were redacted from ${where}.`, source: where }, now);
+  const summary = summarizeKinds(kinds);
+  const route = meta.route ? ` (${meta.route})` : '';
+  return recordEvent(state, {
+    type: 'secret_redacted', severity: 'info', classification: 'protected', source: where,
+    evidence: `Protected: ${kindWords(summary.kinds)} credential-shaped match${summary.count === 1 ? '' : 'es'} redacted from ${where}${route} before it left CHE. Nothing was sent.`,
+    meta: { boundary: 'model_prompt', ...meta, ...summary, transmitted: false },
+  }, now);
+}
+
+/**
+ * Evidence that a credential actually left or was already outside: it reached an external call, a log, a reply, or
+ * arrived in someone else's message. A genuine alert: high, open, rotate the key.
+ */
+export function recordExposure(state, where, kinds, now, meta = {}) {
+  if (!kinds.length) return null;
+  const summary = summarizeKinds(kinds);
+  return recordEvent(state, {
+    type: 'secret_exposed', severity: 'high', classification: 'suspicious', source: where,
+    evidence: `${kindWords(summary.kinds)} credential-shaped value${summary.count === 1 ? '' : 's'} reached ${where}${meta.route ? ` (${meta.route})` : ''}. CHE's stored copy is redacted; rotate any real key.`,
+    meta: { ...meta, ...summary, transmitted: true },
+  }, now);
 }
 
 /** Hourly counters of authorized telemetry (pair failures, unknown tokens, errors). */
@@ -166,8 +207,7 @@ export function detectThreats(state, { data = {}, deploy = null, registry = null
     if (['VERIFIED', 'AVAILABLE'].includes(cap.status) && !(cap.checks?.security?.ok)) add({ type: 'unreviewed_capability', severity: 'high', classification: 'suspicious', evidence: `${cap.capability_id} is marked usable without a passing security review${promoted ? '' : ' or a recorded promotion'}.`, source: 'capabilities' });
     if ([].concat(cap.permissions?.network || [], cap.permissions?.credentials || []).includes('*')) add({ type: 'wide_capability_access', severity: 'medium', classification: 'suspicious', evidence: `${cap.capability_id} has wildcard network or credential access.`, source: 'capabilities' });
   }
-  const leaks = (state.events || []).filter((e) => e.type === 'secret_redacted' && now - Date.parse(e.at) < 86_400_000).length;
-  if (leaks) add({ type: 'secret_exposure_contained', severity: 'medium', classification: 'contained', evidence: `${leaks} redaction(s) in the last day: credential-shaped values were kept out of prompts, logs or exports. Rotate any real key that was pasted.`, source: 'scanner' });
+  // A successful redaction is already its own Protected Event; a check adds no second, alarming summary of it.
   for (const a of advisories?.advisories || []) add({ type: 'dependency_advisory', severity: a.severity === 'critical' ? 'high' : a.severity, classification: 'suspicious', evidence: `${a.name} ${a.version} matches ${a.id}.`, source: 'dependencies' });
   return found;
 }
@@ -178,6 +218,8 @@ export function speakStatus(state, { lockedDown = false, findings = [] } = {}) {
   const serious = day.filter((e) => ['high', 'critical'].includes(e.severity) && e.classification !== 'benign');
   const parts = [lockedDown ? 'Lockdown is on.' : 'Lockdown is off.'];
   parts.push(serious.length ? `${serious.length} serious security event${serious.length === 1 ? '' : 's'} in the last day: ${serious.slice(0, 3).map((e, i) => `${i + 1}. ${e.evidence}`).join(' ')}` : 'No serious security events in the last day.');
+  const protectedN = day.filter((e) => e.classification === 'protected').length;
+  if (protectedN) parts.push(`${protectedN} protected event${protectedN === 1 ? '' : 's'}: credential-shaped text was redacted before it left CHE, and nothing was sent.`);
   const sessions = Object.values(state.sessions || {}).filter((s) => !s.revoked_at && s.expires_at > Date.now()).length;
   parts.push(`${sessions} active Face ID session${sessions === 1 ? '' : 's'}.`);
   if (findings.length) parts.push(`This check found: ${findings.slice(0, 4).map((e, i) => `${i + 1}. ${e.evidence}`).join(' ')}`);
@@ -280,10 +322,36 @@ export function setEgressPolicy(policy, selfUrl = '') {
 
 export function egressBlockedCount() { return EGRESS.blocked; }
 
+// AI and voice providers: every request body to one of these is scanned on its way out, whichever code path built it
+// (the router, vision, image, speech, realtime setup). Headers carry the provider's own key and are not touched. OAuth
+// and other APIs are not listed: their bodies legitimately hold a client secret for that same service.
+export const AI_EGRESS_HOSTS = Object.freeze(['api.openai.com', 'api.anthropic.com', 'api.x.ai', 'generativelanguage.googleapis.com', 'api.groq.com', 'openrouter.ai', 'api.mistral.ai', 'api.cerebras.ai', 'api.sambanova.ai', 'router.huggingface.co', 'models.github.ai', 'api.elevenlabs.io', 'api.fish.audio', 'api.together.xyz', 'api.deepseek.com', 'integrate.api.nvidia.com', 'text.pollinations.ai', 'gateway.ai.cloudflare.com']);
+const EGRESS_REDACTIONS = { requests: 0, matches: 0, kinds: {} };
+
+/** Counts of what the egress scan redacted in this Worker instance (pattern names and counts only). */
+export function egressRedactions() { return structuredClone(EGRESS_REDACTIONS); }
+
+/** A provider request body with every credential-shaped text value redacted; null when nothing was found. */
+export function guardEgressBody(url, body) {
+  let host = '';
+  try { host = new URL(String(url)).hostname; } catch (_) { return null; }
+  if (!AI_EGRESS_HOSTS.includes(host) || typeof body !== 'string' || !body) return null;
+  const found = [];
+  let out;
+  try { out = JSON.stringify(redactDeep(JSON.parse(body), found)); } catch (_) { const r = redact(body); found.push(...r.findings.map((f) => f.kind)); out = r.text; }
+  if (!found.length) return null;
+  EGRESS_REDACTIONS.requests += 1;
+  EGRESS_REDACTIONS.matches += found.length;
+  for (const k of found) EGRESS_REDACTIONS.kinds[k] = (EGRESS_REDACTIONS.kinds[k] || 0) + 1;
+  return { body: out, host, kinds: found };
+}
+
 export function installEgressGuard() {
   if (globalThis.fetch?.cheEgressGuard) return false;
   const original = globalThis.fetch;
   const guarded = (input, init) => {
+    const scrubbed = init && guardEgressBody(input?.url || input, init.body);
+    if (scrubbed) init = { ...init, body: scrubbed.body };
     if (EGRESS.internalOnly || EGRESS.holds > 0) {
       let host = '';
       try { host = new URL(String(input?.url || input)).hostname; } catch (_) { host = ''; }

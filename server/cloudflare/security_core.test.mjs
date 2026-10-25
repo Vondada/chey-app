@@ -196,10 +196,10 @@ test('S13. readiness is computed from measured metrics only, shows its working, 
   const none = readiness.computeReadiness({});
   assert.equal(none.score, 0, 'only the snapshot component counts as measured (missing snapshot = 0)');
   assert.equal(none.unknown.length, 7);
-  const good = readiness.computeReadiness({ last_check_age_h: 2, open_incidents: 0, open_high_events: 0, wide_grants: 0, unreviewed_capabilities: 0, dependency_advisories: 0, snapshot_age_h: 10, secret_redactions_24h: 0 });
+  const good = readiness.computeReadiness({ last_check_age_h: 2, open_incidents: 0, open_high_events: 0, wide_grants: 0, unreviewed_capabilities: 0, dependency_advisories: 0, snapshot_age_h: 10, secret_exposures_24h: 0, secret_redactions_24h: 4 });
   assert.equal(good.score, 100);
   assert.match(good.how, /not immunity/);
-  const bad = readiness.computeReadiness({ last_check_age_h: 2, open_incidents: 1, open_high_events: 3, wide_grants: 1, unreviewed_capabilities: 0, dependency_advisories: null, snapshot_age_h: null, secret_redactions_24h: 0 });
+  const bad = readiness.computeReadiness({ last_check_age_h: 2, open_incidents: 1, open_high_events: 3, wide_grants: 1, unreviewed_capabilities: 0, dependency_advisories: null, snapshot_age_h: null, secret_exposures_24h: 0 });
   assert.ok(bad.score < 60);
   assert.ok(bad.components.find((c) => c.id === 'open_incidents').evidence.includes('1 open'));
   assert.ok(bad.unknown.includes('dependencies'));

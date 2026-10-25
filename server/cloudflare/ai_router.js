@@ -1058,6 +1058,9 @@ export function routerProviderIds() {
 
 // Wraps the Worker env so every `env.AI.run` for text goes through the router.
 export function routedEnv(env, fetcher = fetch, usageStorage = null) {
+  // The Durable Object is built before its first request installs the egress guard on fetch, so the global fetch is
+  // looked up at call time: provider calls then pass the guard (internal-only mode and the egress body scan).
+  if (fetcher === globalThis.fetch) fetcher = (input, init) => globalThis.fetch(input, init);
   const wrapped = Object.create(env);
   Object.defineProperty(wrapped, 'AI', {
     value: {
@@ -1065,7 +1068,10 @@ export function routedEnv(env, fetcher = fetch, usageStorage = null) {
         // Security Intelligence: the last guard before any model provider. Credential-shaped text never leaves.
         const { input, findings } = guardModelInput(rawInput);
         if (findings.length && usageStorage) {
-          loadSecurity(usageStorage).then((state) => { recordFindings(state, 'a model prompt', findings); return saveSecurity(usageStorage, state); }).catch(() => null);
+          // Where it came from, by name only, so the Security Room can say which route and caller it was.
+          const audit = rawInput?.che_audit || {};
+          const meta = { boundary: 'model_prompt', route: audit.route || (rawInput?.che_owner_chat ? 'owner_chat' : 'unlabelled'), caller: audit.agent || '', peer: audit.peer || '', model: String(model || '').slice(0, 80) };
+          loadSecurity(usageStorage).then((state) => { recordFindings(state, 'a model prompt', findings, undefined, meta); return saveSecurity(usageStorage, state); }).catch(() => null);
         }
         return /flux|stable-diffusion|image/i.test(String(model)) || !Array.isArray(input?.messages)
           ? env.AI.run(model, input, options)

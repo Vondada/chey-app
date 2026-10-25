@@ -6,9 +6,12 @@ import { redactDeep } from './secrets.js';
 
 export const EVENT_FIELDS = Object.freeze([
   'event_id', 'timestamp', 'event_type', 'source', 'affected_resource', 'severity', 'confidence',
-  'evidence_refs', 'status', 'actions_taken', 'verification', 'tenant_id', 'customer_scope',
+  'evidence_refs', 'status', 'actions_taken', 'verification', 'tenant_id', 'customer_scope', 'resolution',
 ]);
-export const EVENT_STATUSES = Object.freeze(['open', 'investigating', 'contained', 'resolved', 'dismissed']);
+// 'protected' is a control that worked (a secret redacted before it left): informational, never an active threat.
+// 'acknowledged' is the owner saying he has seen an open alert; only the owner moves an alert to 'resolved'.
+export const EVENT_STATUSES = Object.freeze(['open', 'acknowledged', 'investigating', 'contained', 'protected', 'resolved', 'dismissed']);
+export const OWNER_RESOLUTIONS = Object.freeze(['open', 'acknowledged', 'resolved']);
 // 'simulation' marks an event produced by a drill. It is never mixed into real status, scores or animations.
 export const VERIFICATION = Object.freeze(['unverified', 'verified', 'failed', 'simulation']);
 
@@ -40,7 +43,10 @@ export function createEvent(input = {}, { tenant_id, now = new Date().toISOStrin
     verification: VERIFICATION.includes(input.verification) ? input.verification : 'unverified',
     tenant_id,
     customer_scope: text(input.customer_scope || tenant_id, 64),
+    // The owner's open / acknowledged / resolved decision with its history; null until he acts.
+    resolution: null,
   };
+  if (input.metadata && typeof input.metadata === 'object') event.metadata = redactDeep(JSON.parse(JSON.stringify(input.metadata)), found);
   if (found.length) event.redacted = [...new Set(found)];
   return event;
 }
@@ -70,7 +76,9 @@ export function openBus(store, tenant_id, config = productConfig()) {
       if (input.tenant_id && input.tenant_id !== tenant_id) throw new Error('Cross-tenant publish refused.');
       if (input.event_id && part.events.some((e) => e.event_id === input.event_id)) return part.events.find((e) => e.event_id === input.event_id);
       const event = createEvent(input, { tenant_id });
-      part.events = [event, ...part.events].slice(0, config.max_events_per_tenant);
+      part.events = [event, ...part.events];
+      // Evidence is never dropped: events past the live limit wait in `overflow` for the host to archive them.
+      if (part.events.length > config.max_events_per_tenant) part.overflow = [...(part.overflow || []), ...part.events.splice(config.max_events_per_tenant)];
       for (const fn of subscribers) { try { fn(event); } catch (_) { /* a subscriber failure never loses the event */ } }
       return event;
     },
@@ -92,6 +100,18 @@ export function openBus(store, tenant_id, config = productConfig()) {
       if (status && EVENT_STATUSES.includes(status)) e.status = status;
       if (action) e.actions_taken = [...e.actions_taken, clip(redactDeep(String(action)), 160)].slice(-20);
       if (verification && VERIFICATION.includes(verification) && e.verification !== 'simulation') e.verification = verification;
+      return e;
+    },
+    /**
+     * The owner's decision on one event: open, acknowledged or resolved, with who, when and an optional note. The
+     * observation itself is never rewritten or removed; every decision is kept in the history.
+     */
+    resolve(event_id, { status, by = 'owner', note = '', now = new Date().toISOString() } = {}) {
+      const e = part.events.find((x) => x.event_id === event_id);
+      if (!e || !OWNER_RESOLUTIONS.includes(status)) return null;
+      const step = { status, by: clip(by, 40), at: now, ...(note ? { note: clip(redactDeep(String(note)), 200) } : {}) };
+      e.resolution = { status, by: step.by, at: now, history: [...(e.resolution?.history || []), step].slice(-20) };
+      e.actions_taken = [...(e.actions_taken || []), `${status} by ${step.by} at ${now}`].slice(-20);
       return e;
     },
   };

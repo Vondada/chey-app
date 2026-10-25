@@ -6,6 +6,7 @@ import { access, agent, brain, createSecurityCore, detection, events as coreEven
 import { USABLE } from './capability_registry.js';
 import { BrainLedger } from './brain_ledger.js';
 import { registerCategories } from './knowledge_library.js';
+import { appendArchive, archiveSummary, readArchive } from './security_archive.js';
 
 export const CORE_KEY = 'che:security_core_v1';
 export const CHE_TENANT = 'owner';
@@ -79,22 +80,54 @@ export async function loadCore(storage) {
   return store;
 }
 
-/** Trims oldest drills, then resolved incidents, then oldest events until the store fits one storage value. */
-export function fitStore(store, max = MAX_STORE_BYTES) {
+/**
+ * Trims oldest drills, then resolved incidents, then oldest events until the store fits one storage value. Real
+ * evidence that leaves the live store is returned in `moved` for the archive; only drills are discarded (they are
+ * labelled practice, never evidence).
+ */
+export function fitStore(store, max = MAX_STORE_BYTES, moved = []) {
   store.simulations = (store.simulations || []).slice(0, MAX_SIMULATIONS);
   const size = () => JSON.stringify(store).length;
-  for (const part of Object.values(store.tenants || {})) {
+  for (const [tenant, part] of Object.entries(store.tenants || {})) {
+    if (part.overflow?.length) moved.push(...part.overflow.map((e) => ({ type: 'event', tenant, record: e })));
+    delete part.overflow;
     while (size() > max && store.simulations.length) store.simulations.pop();
-    while (size() > max && part.incidents.some((i) => i.stage === 'RESOLVED')) part.incidents.splice(part.incidents.map((i) => i.stage).lastIndexOf('RESOLVED'), 1);
-    while (size() > max && part.events.length > 20) part.events.splice(-10);
-    while (size() > max && part.knowledge.length > 5) part.knowledge.pop();
+    while (size() > max && part.incidents.some((i) => i.stage === 'RESOLVED')) moved.push({ type: 'incident', tenant, record: part.incidents.splice(part.incidents.map((i) => i.stage).lastIndexOf('RESOLVED'), 1)[0] });
+    while (size() > max && part.events.length > 20) moved.push(...part.events.splice(-10).map((e) => ({ type: 'event', tenant, record: e })));
+    while (size() > max && part.knowledge.length > 5) moved.push({ type: 'knowledge', tenant, record: part.knowledge.pop() });
   }
   return size();
 }
 
 export async function saveCore(storage, store) {
-  fitStore(store);
+  const moved = [];
+  fitStore(store, MAX_STORE_BYTES, moved);
   await storage.put(CORE_KEY, store);
+  if (moved.length) await appendArchive(storage, 'security_core', moved).catch(() => 0);
+}
+
+/**
+ * The owner's decision on one security event (open, acknowledged, resolved). Owner-only at the route; never deletes.
+ * A Protected Event needs no decision, so it cannot be "resolved" into looking like a closed threat.
+ */
+export function setEventResolution(store, { event_id, status, note = '' } = {}, now = new Date().toISOString()) {
+  const bus = CHE_SECURITY.bus(store, CHE_TENANT);
+  const e = bus.get(String(event_id || ''));
+  if (!e) return { ok: false, reason: 'no_event' };
+  if (e.verification === 'simulation') return { ok: false, reason: 'simulation' };
+  if (e.status === 'protected') return { ok: false, reason: 'protected_event_needs_no_action' };
+  const r = bus.resolve(e.event_id, { status, by: 'owner', note, now });
+  if (!r) return { ok: false, reason: 'bad_status', allowed: coreEvents.OWNER_RESOLUTIONS };
+  if (status === 'resolved' && r.status !== 'resolved') bus.update(r.event_id, { status: 'resolved' });
+  if (status === 'open' && r.status === 'resolved') bus.update(r.event_id, { status: 'open' });
+  return { ok: true, event: r, spoken: `Marked ${status}: ${r.summary || r.event_type}. The evidence stays on record.` };
+}
+
+/** Security records routes (owner-only at the Worker): an event decision, and the evidence archive. Null = not ours. */
+export async function securityRecordsApi(storage, store, action, request, body = {}) {
+  if (action === 'event/status' && request.method === 'POST') return setEventResolution(store, body);
+  if (action === 'archive') return { summary: await archiveSummary(storage), ...(await readArchive(storage, body.page ?? new URL(request.url).searchParams.get('page'))) };
+  return null;
 }
 
 const SEVERITY = { info: 'info', low: 'low', medium: 'medium', high: 'high', critical: 'critical' };

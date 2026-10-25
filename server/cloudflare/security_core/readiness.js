@@ -10,7 +10,8 @@ const COMPONENTS = Object.freeze([
   { id: 'reviewed_capabilities', label: 'Every usable tool security-reviewed', weight: 10, score: (m) => (m.unreviewed_capabilities == null ? null : m.unreviewed_capabilities === 0 ? 1 : 0), evidence: (m) => `${m.unreviewed_capabilities} usable tool(s) without a passing review` },
   { id: 'dependencies', label: 'No matched dependency advisories', weight: 10, score: (m) => (m.dependency_advisories == null ? null : m.dependency_advisories === 0 ? 1 : 0), evidence: (m) => `${m.dependency_advisories} advisory match(es)` },
   { id: 'backup', label: 'Trusted snapshot within a week', weight: 10, score: (m) => (m.snapshot_age_h == null ? 0 : m.snapshot_age_h <= 168 ? 1 : 0.5), evidence: (m) => (m.snapshot_age_h == null ? 'no trusted snapshot' : `snapshot ${Math.round(m.snapshot_age_h)} h old`) },
-  { id: 'exposed_secrets', label: 'No credential exposures in the last day', weight: 5, score: (m) => (m.secret_redactions_24h == null ? null : m.secret_redactions_24h === 0 ? 1 : 0.5), evidence: (m) => `${m.secret_redactions_24h} redaction(s) in the last day` },
+  // A redaction that worked is protection, not exposure: only evidence that a credential got out counts against this.
+  { id: 'exposed_secrets', label: 'No credential exposures in the last day', weight: 5, score: (m) => (m.secret_exposures_24h == null ? null : m.secret_exposures_24h === 0 ? 1 : 0), evidence: (m) => `${m.secret_exposures_24h} exposure(s) and ${m.secret_redactions_24h ?? 0} protected redaction(s) in the last day` },
 ]);
 
 export function readinessComponents() { return COMPONENTS.map(({ id, label, weight }) => ({ id, label, weight })); }
