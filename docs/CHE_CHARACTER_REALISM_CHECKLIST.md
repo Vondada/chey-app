@@ -1,40 +1,60 @@
-# Character realism: persistent checklist (owner request 2026-10-25)
+# Character creation: requirements, progress and handoff (read this first after any restart)
 
-Owner ask: realistic, animated characters from the Create room, reference photos supported, free compute only (Blender,
-freely licensed models, CPU/GPU CHE already has), honest GPU detection with a CPU fallback, jobs that continue after the
-app closes, retries, finished files viewable in CHE, measured render times. No new keys, accounts or paid services.
+Branch: `claude/che-character-realism` (from main `afb8de1`). Lanes push to `lane/char-photo` (Python/Blender) and
+`lane/char-photo-app` (Worker + app). A box is ticked only with evidence: commit, test command + count, or run id.
 
-Branch: `claude/che-character-realism` (pushed after each milestone). Update this file at each step; a box is ticked
-only with evidence (commit, test command and count, or run id).
+## Owner requirements (recovered 2026-10-25 from this conversation, LIVE-HANDOFF and code; not invented)
+1. One Create button makes customizable characters in three styles: hyperrealistic, game-like, stylized.
+2. Inputs: text description, optional reference images, appearance, clothing, body, hair, style, voice (where supported).
+3. Real assets for CHE's animation workflow (rigged GLB with clips), preview, saved results, regeneration, reopen.
+4. Open-source tools and appropriately licensed models; available compute only. No new API keys, paid services,
+   accounts or ongoing manual setup. Preserve existing integrations and CHE's internal APIs.
+5. Detect whether a usable GPU exists; otherwise a working CPU fallback with its limits shown honestly.
+6. Jobs continue on the server when the app closes; progress saved; retries; finished files viewable in CHE.
+7. Measure render time; never promise minutes or photorealism without a produced, inspected sample.
+8. Voice-first owner (AGENTS.md): VoiceOver labels, voice/typed route for every action, passive screens silent.
+9. Reference photos only of the owner or fictional/generated images; never other real private people or minors
+   (owner's earlier photos of private people were declined on 2026-10-24 and are not stored).
+10. Flow to test end to end: Create → generate → customize → preview → animate → save → reopen. Real samples per style.
+11. Merge when required checks pass; report merge SHA, samples, deploy status, limits; iPhone kept separate.
 
-## Already true before this work (verified in code, 2026-10-25)
-- [x] Server-side queue keeps jobs after the app closes, with checkpoints and resume (`gpu_queue.js`, `che_creation_job.py` CHECKPOINT/RESUME).
-- [x] GPU detection: `nvidia-smi` + Cycles OptiX/CUDA probe; no silent CPU fallback on the GPU path (exit 3).
-- [x] Free CPU worker on GitHub Actions; live check `afb8de1` run 40153146586: full-body GLB in 1.4 min, 23,946 vertices, viewport played walk.
-- [x] Finished GLB viewable in CHE's Live Studio viewport (`assets/characters/app/studio.html`).
-- [x] `final` render profile: Cycles, adaptive sampling, OIDN, skin subsurface, procedural pores (`render_profiles.py`).
+## Infrastructure facts (inspected, not assumed)
+- Cloudflare Worker: queue, storage, routing only. No GPU, no Blender.
+- Free GitHub Actions CPU worker (ubuntu, 4 cores, Blender 5.0.1, MPFB2): verified live. Run 40153146586 built a
+  full-body rigged GLB in 1.4 min (23,946 vertices, 5 clips).
+- GPU: none on the Worker, none on GitHub-hosted runners, none in this dev container (`nvidia-smi` absent). The owner's
+  Colab T4 joins only while its notebook is open. Free Colab cannot be started unattended (`docs/CHE_CLOUD_COMPUTER.md`).
+  Kaggle and Hugging Face need accounts and tokens, which the owner ruled out. So the CPU worker is the default.
+- The browser and WebView do no generation; the phone only views GLBs (three.js `studio.html`).
 
-## Contract between the two workstreams
-- Job settings gain `REFERENCE` (JSON text): `{"url": "<Worker URL the worker fetches with its worker token>", "sha256": "<hex>", "bytes": n, "consent": "self"|"fictional"}`.
-- The person job's receipt gains `reference_fit`: `{sha256, method, landmarks, sliders:{...}, colors:{skin, hair, eyes}, fit_error, limits}`
-  and `device_summary`: `{kind: "GPU"|"CPU", name, threads, limits}`; stage seconds are measured, never estimated.
+## Already working before this branch (code verified)
+- [x] Server queue survives app close; checkpoints, resume and retries (`gpu_queue.js`, `che_creation_job.py`).
+- [x] Honest GPU detection, no silent CPU fallback on the GPU path (exit 3).
+- [x] Three styles in the identity (`avatar_identity.js` STYLES photoreal | hybrid | stylized; `identity.py`).
+- [x] Versions with undo/redo/save; Generate queues `person_model`; the Live Studio viewport plays clips.
+- [x] Rigged full body: 53 bones, idle/walk/run/wave/talk, verified on re-import.
+- [x] `final` render profile: subsurface skin, procedural pores, OIDN.
 
-## Workstream A: photo → character (Python/Blender), lane `lane/char-photo`
-- [ ] Reference photo → face landmarks with a freely licensed CPU model; refuse no-face / multi-face photos with the reason.
-- [ ] Landmarks → MPFB face sliders (reusing `face_fit.py`/`landmarks.py` ideas) + skin, hair and eye colours.
-- [ ] Wired into the person_model job; receipt `reference_fit`; resumable.
-- [ ] Synthetic fixtures with known sliders (no real people); recovery error measured.
-- [ ] Measured CPU timing for a full person job with the final profile; sample GLB + renders inspected.
-
-## Workstream B: Worker + app plumbing, lane `lane/char-photo-app`
-- [ ] Upload a reference photo to a creation project (consent: me or fictional; size/type limits; stored by SHA-256).
-- [ ] Worker passes `REFERENCE` to the person job; worker fetch route authorised by the worker token only.
-- [ ] Create room shows the device (GPU or CPU), its limits and measured times; voice + VoiceOver routes.
-- [ ] Tests (Worker + Flutter).
+## Gaps and status
+| # | Gap | Lane | Status |
+|---|---|---|---|
+| G1 | Reference photo → face shape + skin/hair/eye colours | A + B | in progress |
+| G2 | Device + CPU-limits + measured time shown to the owner | A + B | in progress |
+| G3 | Only long_wavy hair has geometry (other 7 styles render bald) | A | in progress |
+| G4 | Body: only age (no gender, height, weight, muscle, proportions) | A + B | in progress |
+| G5 | Free-text "describe a person" → one Create | B | in progress |
+| G6 | Voice per character from the existing voice catalog | B | in progress |
+| G7 | Regenerate/variation; reopen from My Creations | B | in progress |
+| G8 | Real samples per style, inspected; measured CPU times | A | in progress |
+| G9 | e2e server "k.startsWith" (research queue never ran in e2e) | me | done `4ad45c9`; e2e 2/2 |
 
 ## Integration and release
-- [ ] Both lanes merged into this branch; full Worker + Flutter suites green.
-- [ ] PR, required checks green on the exact head, merge, deploy verified live.
-- [ ] Live creation_check with a reference fixture: measured time, GLB + renders.
+- [ ] Merge lanes in dependency order (A then B); sync HAIR_BUILT in JS and Python (parity test).
+- [ ] Full Worker suite, full Flutter suite, Python suites, analyze: all green locally.
+- [ ] PR; required checks green on the exact head; review threads answered; merge.
+- [ ] Deploy verified live; creation_check run with this code; sample receipts.
 - [ ] Full IPA if native code changed (not expected).
 - [ ] iPhone: NOT VERIFIED until the owner tries it.
+
+## Log
+- 2026-10-25: checklist + contract `b3b664b`; e2e storage fix `4ad45c9`; lanes A and B started and later extended to G3–G8.
