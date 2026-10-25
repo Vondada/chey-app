@@ -733,5 +733,5 @@ export function speakObjective(objective) {
   const live = objective.nodes.filter((n) => n.status !== 'cancelled').length;
   const recovering = objective.nodes.filter((n) => ['pending', 'running'].includes(n.status) && n.strategy && !['initial', 'owner_replan'].includes(n.strategy)).length;
   const owner = objective.nodes.filter((n) => (n.status === 'failed' && n.recovery === 'needs_owner') || approvalReached(objective, n)).length;
-  return `${objective.objective.slice(0, 120)}: ${count('complete')} of ${live} steps done, ${count('running')} running, ${count('failed')} failed, ${count('blocked')} waiting on a failed step.${recovering ? ` ${recovering} recovering with a new approach.` : ''}${owner ? ` ${owner} need${owner === 1 ? 's' : ''} your approval.` : ''}`;
+  return `${objective.objective.slice(0, 120)}: ${count('complete')} of ${live} steps done, ${count('running')} running, ${count('failed')} failed, ${count('blocked')} waiting on a failed step.${recovering ? ` ${recovering} recovering with a new approach.` : ''}${owner ? ` ${owner} need${owner === 1 ? 's' : ''} your approval.` : ''}${objective.artifact?.sha256 ? ` Result saved and verified, SHA-256 ${objective.artifact.sha256.slice(0, 12)}.` : ''}`;
 }

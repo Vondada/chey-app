@@ -152,6 +152,9 @@ void main() {
     expect(find.text('Booking app plan'), findsOneWidget);
     expect(find.textContaining('Plan: 1. Pick the niche'), findsOneWidget);
     expect(find.text('Completed'), findsWidgets);
+    // The finished run's card now carries its verified result (mission_artifact.js), so the history scrolls further.
+    expect(find.textContaining('Result saved'), findsWidgets, reason: 'the finished run shows its sealed result');
+    await tester.scrollUntilVisible(find.textContaining('/trade-journal'), 250, scrollable: find.byType(Scrollable).first);
     expect(find.textContaining('/trade-journal'), findsWidgets, reason: 'the chat run is in the history');
     // Let request timeouts on the test clock lapse after the page is gone.
     await tester.pumpWidget(const SizedBox());

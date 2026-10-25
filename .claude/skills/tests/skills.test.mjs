@@ -12,7 +12,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 const skillsDir = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const repo = resolve(skillsDir, '../..');
 const fixtures = join(skillsDir, 'tests/fixtures');
-const SKILLS = ['che-debug', 'che-fact-check', 'che-release', 'che-youtube'];
+const SKILLS = ['che-debug', 'che-fact-check', 'che-recover', 'che-release', 'che-youtube'];
 const script = (skill, file) => join(skillsDir, skill, 'scripts', file);
 const run = (cmd, args, opts = {}) => spawnSync(cmd, args, { cwd: repo, encoding: 'utf8', timeout: 120000, ...opts });
 const node = (args, opts) => run(process.execPath, ['--no-warnings', ...args], opts);
@@ -95,6 +95,11 @@ test('skill selection: the owner\'s kinds of requests reach the right skill, and
       'verify the live production commit after the merge',
       'ship a Shorebird patch for the iPhone',
       'is the newest IPA release installable?',
+    ],
+    'che-recover': [
+      'no space left on device; the disk is full',
+      'the session expired; resume from the handoff',
+      'recover the lost context and continue where the last AI stopped',
     ],
     'che-youtube': [
       'write a script for a faceless YouTube video about octopuses',
@@ -373,4 +378,38 @@ test('scripts use the checkout they run in, and fall back to their own outside g
   const outside = node([script('che-fact-check', 'claim_check.mjs'), '--route', 'Is that true, sir?'], { cwd: mkdtempSync(join(tmpdir(), 'nogit-')) });
   assert.equal(outside.status, 0, outside.stderr);
   assert.match(outside.stdout, /ROUTE: che_evidence_receipt/);
+});
+
+// ─── che-recover: cleanup removes only regenerable outputs and finds local-only work ───
+
+test('che-recover preflight: cleans build outputs, refuses tracked files, reports unpushed work', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'recover-'));
+  const sh = (...a) => run('git', a, { cwd: dir });
+  sh('init', '-q', '-b', 'main');
+  sh('config', 'user.email', 't@example.org');
+  sh('config', 'user.name', 't');
+  writeFileSync(join(dir, 'keep.dart'), 'void main() {}\n');
+  run('mkdir', ['-p', join(dir, 'build/ios'), join(dir, '.dart_tool')]);
+  writeFileSync(join(dir, 'build/ios/out.bin'), 'x'.repeat(1000));
+  writeFileSync(join(dir, '.dart_tool/state.json'), '{}');
+  writeFileSync(join(dir, '.dart_tool/tracked.txt'), 'someone committed this');
+  sh('add', 'keep.dart', '-f', '.dart_tool/tracked.txt');
+  sh('commit', '-q', '-m', 'init');
+  const pre = (...a) => node([script('che-recover', 'preflight.mjs'), '--repo', dir, '--need-gb', '0', '--json', ...a]);
+
+  const read = pre();
+  const report = JSON.parse(read.stdout);
+  assert.equal(read.status, 4, 'a never-pushed branch is local-only work');
+  assert.ok(report.local_only.some((w) => w.kind === 'never pushed' && w.where === 'main'));
+  assert.ok(existsSync(join(dir, 'build')), 'read-only by default');
+
+  const plan = JSON.parse(pre('--clean').stdout);
+  assert.deepEqual(plan.cleaned, [], '--clean without --yes deletes nothing');
+  assert.ok(existsSync(join(dir, 'build/ios/out.bin')));
+
+  const done = JSON.parse(pre('--clean', '--yes').stdout);
+  assert.ok(!existsSync(join(dir, 'build')), 'build/ removed');
+  assert.ok(existsSync(join(dir, '.dart_tool/tracked.txt')), 'a target holding a tracked file is refused');
+  assert.match(done.refused[0].reason, /tracked/);
+  assert.ok(existsSync(join(dir, 'keep.dart')), 'source untouched');
 });

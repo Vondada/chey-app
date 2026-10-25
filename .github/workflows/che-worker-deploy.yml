@@ -557,8 +557,9 @@ jobs:
           writeFileSync('che-creation-check/model.glb', bytes);
           const r = job.receipt || {};
           const rig = job.rig ? `${job.rig.bones} bones, clips ${job.rig.clips.join('/')}, rig ${job.rig.ok ? 'verified' : 'NOT verified'}` : 'no rig';
-          const worker = `${job.worker_class || r.worker_class || '?'} ${job.worker_id || ''}`.trim();
-          const line = `job ${start.job_id} completed in ${mins} min on ${worker} (${r.device || '?'}${r.cores ? `, ${r.cores} cores` : ''}, ${r.blender_version || '?'}); GLB ${bytes.length} bytes sha256 ${sha.slice(0, 16)}… (matches the receipt); ${r.model?.mode || '?'} model, ${rig}; previews ${job.previews.join(', ') || 'none'}; project ${start.project_id}`;
+          // The Worker names the real worker (gpu_queue.js workerName); unknown is said in words, never "?".
+          const worker = job.worker_name || 'unknown worker';
+          const line = `job ${start.job_id} completed in ${mins} min on ${worker} (${r.device || 'device not recorded'}${r.cores ? `, ${r.cores} cores` : ''}, ${r.blender_version || 'Blender version not recorded'}); GLB ${bytes.length} bytes sha256 ${sha.slice(0, 16)}… (matches the receipt); ${r.model?.mode || 'unrecorded'} model, ${rig}; previews ${job.previews.join(', ') || 'none'}; project ${start.project_id}`;
           console.log(`::notice title=Creation Engine end to end::${line}`);
           summary(`**Creation Engine end to end (live Worker, real cloud worker):** ${line}.`);
           JS

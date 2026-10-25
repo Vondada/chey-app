@@ -48,7 +48,7 @@ export async function creationProbeRoute(ctx, path, request) {
     const view = publicJob(job);
     const dispatches = ((await storage.get('gpu:dispatches')) || []).slice(-5);
     return json({ ok: true, project_id: rec.project_id, job: { id: view.id, state: view.state, display_state: view.display_state, status_line: view.status_line,
-      worker_id: view.worker_id, worker_class: view.worker_class, model: view.model, rig: view.rig, checkpoints: view.checkpoints, history: (job.history || []).slice(-20),
+      worker_id: view.worker_id, worker_class: view.worker_class, worker_name: view.worker_name, model: view.model, rig: view.rig, checkpoints: view.checkpoints, history: (job.history || []).slice(-20),
       receipt: job.receipt || null, previews: Object.keys(job.previews || {}), error: job.error || '' }, dispatches });
   }
   if (path === '/api/creations/probe/model.glb' && request.method === 'GET') {

@@ -255,4 +255,54 @@ void main() {
     expect(feed!.closed, isTrue);
     expect(CheRithmicLive.instance.attached, isFalse);
   });
+
+  group('Diagnose Rithmic', () {
+    test('no saved login: says so, and never touches the network', () async {
+      final finder = FakeFinder();
+      final checks = await cheRithmicDiagnose(store: FakeStore(), routeFinder: finder, feedFactory: (_) => FakeFeed(), now: () => october);
+      expect(checks.map((c) => c.ok).toList(), [false, false, null, null]);
+      expect(finder.calls, 0);
+      expect(cheRithmicDiagnosisText(checks), startsWith('Rithmic diagnosis: Saved login failed.'));
+    });
+
+    test('a saved login with reconnect off: the socket and login pass, and it says reconnect is off', () async {
+      final store = FakeStore()..saved['rithmic'] = CheVaultEntry(site: 'rithmic', username: 'trader1', password: 'pw-secret-1');
+      FakeFeed? feed;
+      final checks = await cheRithmicDiagnose(store: store, routeFinder: FakeFinder(), feedFactory: (_) => feed = FakeFeed(), now: () => october);
+      expect(checks.map((c) => c.ok).toList(), [true, false, true, true]);
+      expect(feed!.closed, isTrue, reason: 'the test session is closed again; nothing changes');
+      final text = cheRithmicDiagnosisText(checks);
+      expect(text, startsWith('Rithmic diagnosis: Automatic reconnect failed.'));
+      expect(text, contains('tr••••'));
+      expect(text, isNot(contains('pw-secret-1')), reason: 'the password is never shown or spoken');
+      expect(text, isNot(contains('trader1')), reason: 'the username is masked');
+    });
+
+    test('a refused login and an unreachable gateway each name the failing step', () async {
+      SharedPreferences.setMockInitialValues({'che_rithmic_auto_connect': true});
+      final store = FakeStore()..saved['rithmic'] = CheVaultEntry(site: 'rithmic', username: 'trader1', password: 'wrong');
+      final refused = await cheRithmicDiagnose(store: store, routeFinder: FakeFinder(), feedFactory: (_) => FakeFeed(error: rithmicLoginFailure(['3', 'bad password'])), now: () => october);
+      expect(refused.map((c) => c.ok).toList(), [true, true, true, false]);
+      expect(refused.last.detail, contains('rejected the username or password'));
+      final offline = await cheRithmicDiagnose(store: store, routeFinder: FakeFinder(error: const RithmicException(RithmicFailure.gatewayDiscovery, 'Could not reach Rithmic to find your gateway (offline).')), feedFactory: (_) => FakeFeed(), now: () => october);
+      expect(offline.map((c) => c.ok).toList(), [true, true, false, null]);
+      expect(cheRithmicDiagnosisText(offline), startsWith('Rithmic diagnosis: Socket to Rithmic failed.'));
+    });
+
+    testWidgets('the screen button runs it and shows each step', (tester) async {
+      await pump(tester, CheRithmicScreen(store: FakeStore(), routeFinder: FakeFinder(), now: () => october, feedFactory: (_) => FakeFeed()));
+      await tester.tap(find.byKey(const ValueKey('rithmic-diagnose')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('rithmic-diagnosis')), findsOneWidget);
+      expect(find.textContaining('Saved login: No Rithmic login is saved'), findsOneWidget);
+      expect(find.bySemanticsLabel(RegExp(r'^Diagnose Rithmic: check the saved login')), findsWidgets);
+    });
+
+    test('the spoken commands', () {
+      for (final said in ['Diagnose Rithmic', 'CHE, check my Rithmic connection', "Why isn't Rithmic connecting?", 'troubleshoot rithmic']) {
+        expect(cheRithmicDiagnoseCommand(said), isTrue, reason: said);
+      }
+      expect(cheRithmicDiagnoseCommand('open the trading room'), isFalse);
+    });
+  });
 }

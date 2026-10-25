@@ -500,9 +500,143 @@ class CheBrainSpaceController {
     }
     _flash = Float32List(n);
     pulses.removeWhere((p) => p.from >= n || p.to >= n);
+    _measureRegions();
     final dated = [for (var i = 0; i < n; i++) if (layout.nodes[i].dot.at != null && _adjacency[i].isNotEmpty) i]
       ..sort((a, b) => layout.nodes[b].dot.at!.compareTo(layout.nodes[a].dot.at!));
     _recent = dated.take(24).toList();
+  }
+
+  // ─── The eleven regions ────────────────────────────────────────────────
+
+  /// Each region's centre (the mean place of its records), measured once per layout, never per frame.
+  final Map<CheBrainRegion, vm.Vector3> regionCenters = {};
+
+  /// Real record counts per region in the brain on screen (Verified counts across every domain).
+  final Map<CheBrainRegion, int> regionCounts = {};
+
+  /// How widely each region's records spread (world units), for how far a flight to it stands back.
+  final Map<CheBrainRegion, double> regionSpread = {};
+
+  /// The region the owner flew to (drawn with a steady halo); null in the overview.
+  CheBrainRegion? focusedRegion;
+
+  /// Opens a region's records (the Brain Room overview sets it while it is on screen).
+  static void Function(CheBrainRegion region)? regionOpener;
+
+  void _measureRegions() {
+    regionCenters.clear();
+    regionCounts.clear();
+    regionSpread.clear();
+    final sums = <CheBrainRegion, vm.Vector3>{};
+    void add(CheBrainRegion r, vm.Vector3 p) {
+      (sums[r] ??= vm.Vector3.zero()).add(p);
+      regionCounts[r] = (regionCounts[r] ?? 0) + 1;
+    }
+    for (final node in layout.nodes) {
+      add(node.region, node.home);
+      if (node.verified) add(CheBrainRegion.verified, node.home);
+    }
+    for (final MapEntry(key: r, value: sum) in sums.entries) {
+      regionCenters[r] = sum / regionCounts[r]!.toDouble();
+    }
+    final spread = <CheBrainRegion, double>{};
+    for (final node in layout.nodes) {
+      for (final r in [node.region, if (node.verified) CheBrainRegion.verified]) {
+        spread[r] = (spread[r] ?? 0) + (node.home - regionCenters[r]!).length;
+      }
+    }
+    for (final MapEntry(key: r, value: total) in spread.entries) {
+      regionSpread[r] = total / regionCounts[r]!;
+    }
+    if (focusedRegion != null && (regionCounts[focusedRegion!] ?? 0) == 0) focusedRegion = null;
+  }
+
+  /// The region's real records in the brain on screen, newest first.
+  List<CheBrainNode> regionNodes(CheBrainRegion r) {
+    final out = [
+      for (final n in layout.nodes)
+        if (r == CheBrainRegion.verified ? n.verified : n.region == r) n,
+    ]..sort((a, b) => (b.dot.at ?? DateTime(0)).compareTo(a.dot.at ?? DateTime(0)));
+    return out;
+  }
+
+  /// Flies to a region (a halo marks it) and says its real count and newest records.
+  String flyToRegion(CheBrainRegion r) {
+    final n = regionCounts[r] ?? 0;
+    if (n == 0) return 'The ${r.label} region has no records on this phone yet, so there is nothing to fly to.';
+    _remember();
+    focusedRegion = r;
+    focusedCluster = null;
+    selectedId = null;
+    cardOpen = false;
+    // A region's records can sit in a collapsed lobe: open those lobes so the region is really shown.
+    for (final node in regionNodes(r)) {
+      final cl = layout.clusters[node.cluster];
+      if (cl != null && !cl.expanded) cl.expanded = true;
+    }
+    final c = regionCenters[r]!;
+    final yaw = c.x.abs() + c.z.abs() < .5 ? camera.yaw : math.atan2(-c.x, c.z);
+    final distance = ((regionSpread[r] ?? 2) * 2.6 + 3.5).clamp(5.0, 14.0).toDouble();
+    flyTo(CheBrainCamera(target: c.clone(), yaw: yaw, pitch: .12, distance: distance));
+    _changed();
+    final newest = regionNodes(r).take(2).map((x) => x.dot.title).join('; ');
+    return '${r.label} region: $n record${n == 1 ? '' : 's'}. Newest: $newest. Say "open the ${r.label.toLowerCase()} region" to hear them as a list.';
+  }
+
+  /// The eleven regions as a numbered list with their real counts.
+  String listRegions() => 'My brain has ${CheBrainRegion.values.length} regions. ${cheBrainRegionsSpoken(regionCounts)}. '
+      'Say "go to region" and a number or a name to fly there.';
+
+  /// Opens the region's records (the overview's region page), or says where they are when it is not on screen.
+  String openRegion(CheBrainRegion r) {
+    final n = regionCounts[r] ?? 0;
+    final open = regionOpener;
+    if (open == null) return 'The ${r.label} region has $n record${n == 1 ? '' : 's'}. Its list opens from the Brain Room.';
+    open(r);
+    return n == 0 ? 'The ${r.label} region has no records on this phone yet.' : 'Opening the ${r.label} region: $n record${n == 1 ? '' : 's'}, newest first.';
+  }
+
+  /// Turns the brain by voice, as a one-finger drag does.
+  String rotateBrain(String direction) {
+    final to = (_flyT < 1 && _flyTo != null ? _flyTo! : camera).copy();
+    switch (direction) {
+      case 'left':
+        to.yaw -= math.pi / 4;
+      case 'up':
+        to.pitch = (to.pitch + .35).clamp(-1.45, 1.45).toDouble();
+      case 'down':
+        to.pitch = (to.pitch - .35).clamp(-1.45, 1.45).toDouble();
+      default:
+        to.yaw += math.pi / 4;
+    }
+    flyTo(to);
+    _changed();
+    return 'Turned the brain $direction.';
+  }
+
+  /// The next or previous region that holds records (VoiceOver's region stops).
+  String stepRegion(int delta) {
+    final present = [for (final r in CheBrainRegion.values) if ((regionCounts[r] ?? 0) > 0) r];
+    if (present.isEmpty) return 'No region holds records yet.';
+    final i = focusedRegion == null ? (delta > 0 ? -1 : 0) : present.indexOf(focusedRegion!);
+    return flyToRegion(present[(i + delta) % present.length]);
+  }
+
+  /// The region halo under a screen point (only regions with records; the nearest centre wins).
+  CheBrainRegion? regionAt(Offset at, Size size) {
+    CheBrainRegion? best;
+    var bestD = double.infinity;
+    for (final MapEntry(key: r, value: c) in regionCenters.entries) {
+      if (r == CheBrainRegion.verified) continue; // Verified spans every region: it is reached by name or its label.
+      final p = camera.project(c, size, worldRadius: math.max(1.0, regionSpread[r] ?? 1));
+      if (p == null) continue;
+      final d = (p.offset - at).distance;
+      if (d <= math.max(p.radius * .6, 28) && d < bestD) {
+        best = r;
+        bestD = d;
+      }
+    }
+    return best;
   }
 
   /// Where node [i] is drawn right now: its place plus a slow neural drift.
@@ -658,6 +792,7 @@ class CheBrainSpaceController {
   String select(CheBrainNode node, {bool fly = true}) {
     if (node.id != selectedId) _remember();
     selectedId = node.id;
+    focusedRegion = null;
     final cluster = layout.clusters[node.cluster];
     if (cluster != null && !cluster.expanded) cluster.expanded = true;
     if (fly) flyTo(CheBrainCamera(target: node.position.clone(), yaw: camera.yaw, pitch: camera.pitch, distance: 3.4));
@@ -687,6 +822,7 @@ class CheBrainSpaceController {
   String overview() {
     _remember();
     cardOpen = false;
+    focusedRegion = null;
     flyTo(CheBrainCamera(yaw: math.pi, pitch: .08, distance: overviewDistance));
     _changed();
     return 'Showing the whole ${scope == null ? 'brain' : "of $scope's brain"}: ${layout.nodes.length} memories in ${layout.clusters.length} clusters'
@@ -841,6 +977,10 @@ class CheBrainSpaceController {
         CheBrainAction.lens => setLens(command.lens ?? CheBrainLens.none),
         CheBrainAction.list => showList(command.section),
         CheBrainAction.space => showSpace(),
+        CheBrainAction.region => command.region == null ? listRegions() : flyToRegion(command.region!),
+        CheBrainAction.regions => listRegions(),
+        CheBrainAction.openRegion => command.region == null ? listRegions() : openRegion(command.region!),
+        CheBrainAction.rotate => rotateBrain(command.direction ?? 'right'),
       };
 
   // ─── List view (owner, 2026-10-23) ─────────────────────────────────────
@@ -1142,7 +1282,16 @@ class _CheBrainSpaceState extends State<CheBrainSpace> with SingleTickerProvider
     }
     final node = hit.node;
     if (node == null) {
-      if (c.cardOpen || c.selectedId != null) c.deselect();
+      if (c.cardOpen || c.selectedId != null) {
+        c.deselect();
+        return;
+      }
+      // An empty spot inside a region's glow flies to that region.
+      final region = c.regionAt(at, _size);
+      if (region != null && region != c.focusedRegion) {
+        HapticFeedback.selectionClick();
+        _say(c.flyToRegion(region));
+      }
       return;
     }
     HapticFeedback.selectionClick();
@@ -1185,7 +1334,8 @@ class _CheBrainSpaceState extends State<CheBrainSpace> with SingleTickerProvider
               final sel = c.selected;
               return Semantics(
                 label: '${c.brainName}: ${c.scope == null && c.countWords.contains('Knowledge Atlas') ? 'real ${c.countWords}' : '${c.layout.nodes.length} real ${c.scope == null ? 'memories' : 'records'}'} in ${c.layout.clusters.length} clusters. '
-                    '${sel == null ? 'Nothing selected.' : 'Selected: ${sel.dot.title}, ${sel.dot.category}.'}',
+                    '${sel == null ? 'Nothing selected.' : 'Selected: ${sel.dot.title}, ${sel.dot.category}.'}'
+                    '${c.focusedRegion == null ? '' : ' In the ${c.focusedRegion!.label} region, ${c.regionCounts[c.focusedRegion!] ?? 0} records.'}',
                 hint: 'Use the actions to move between memories and clusters, open one, go inside, back out, or show the whole brain.',
                 customSemanticsActions: {
                   const CustomSemanticsAction(label: 'Next memory'): () => _say(c.step(1)),
@@ -1196,6 +1346,15 @@ class _CheBrainSpaceState extends State<CheBrainSpace> with SingleTickerProvider
                   const CustomSemanticsAction(label: 'Go inside the brain'): () => _say(c.inside()),
                   const CustomSemanticsAction(label: 'Back out'): () => _say(c.backOut()),
                   const CustomSemanticsAction(label: 'Show the whole brain'): () => _say(c.overview()),
+                  const CustomSemanticsAction(label: 'Next region'): () => _say(c.stepRegion(1)),
+                  const CustomSemanticsAction(label: 'Previous region'): () => _say(c.stepRegion(-1)),
+                  const CustomSemanticsAction(label: 'List the regions'): () => _say(c.listRegions()),
+                  if (c.focusedRegion != null)
+                    CustomSemanticsAction(label: 'Open the ${c.focusedRegion!.label} region records'): () => _say(c.openRegion(c.focusedRegion!)),
+                  const CustomSemanticsAction(label: 'Turn the brain left'): () => _say(c.rotateBrain('left')),
+                  const CustomSemanticsAction(label: 'Turn the brain right'): () => _say(c.rotateBrain('right')),
+                  const CustomSemanticsAction(label: 'Zoom in'): () => _say(c.zoomIn()),
+                  const CustomSemanticsAction(label: 'Zoom out'): () => _say(c.zoomOut()),
                 },
                 child: Listener(
                   onPointerDown: _pointerDown,
@@ -1597,8 +1756,77 @@ class CheBrainPainter extends CustomPainter {
     return _glow;
   }
 
+  // The luminous brain (lane brain-visual): fixed paints with blur mask filters, made once, never per frame. Colours
+  // that change per region are set on the shared paint before each draw (no new objects).
+  static final List<vm.Vector3> _volumeCenters = [for (final v in cheBrainVolumes) vm.Vector3(v.$1, v.$2, v.$3)];
+  static final Paint _bodyWide = Paint()
+    ..color = const Color(0x163C8CFF)
+    ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 40);
+  static final Paint _bodyMid = Paint()
+    ..color = const Color(0x1E3FD6F5)
+    ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 16);
+  static final Paint _bodyRim = Paint()
+    ..style = PaintingStyle.stroke
+    ..strokeWidth = 1.4
+    ..color = const Color(0x3A8FEFFF)
+    ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 2.5);
+  static final Paint _dustGlow = Paint()
+    ..color = const Color(0x2262E3F0)
+    ..strokeWidth = 5
+    ..strokeCap = StrokeCap.round
+    ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 3);
+  static final Paint _regionHalo = Paint()..maskFilter = const MaskFilter.blur(BlurStyle.normal, 24);
+  static final Paint _focusRing = Paint()
+    ..style = PaintingStyle.stroke
+    ..strokeWidth = 1.6;
+
+  /// Orbs drawn per frame at most (the nearest win), so a very large brain stays smooth; economy halves it.
+  static const int maxDrawnNodes = 1400;
+
   /// Label size follows the owner's text setting (capped so labels stay tidy).
   final double textScale;
+
+  /// The brain's body: each volume as layered soft light (wide haze, a brighter core and a faint rim), seen from the
+  /// camera's side. Skipped inside the brain, where the body surrounds the camera.
+  void _paintBody(Canvas canvas, Size size, CheBrainCamera cam) {
+    if (cam.inside) return;
+    final cy = math.cos(cam.yaw), sy = math.sin(cam.yaw);
+    for (var k = 0; k < cheBrainVolumes.length; k++) {
+      final (_, _, _, rx, ry, rz) = cheBrainVolumes[k];
+      final across = math.sqrt(rx * rx * cy * cy + rz * rz * sy * sy);
+      final p = cam.project(_volumeCenters[k], size, worldRadius: across, margin: 600);
+      if (p == null || p.radius > size.longestSide * 1.6) continue;
+      final w = p.radius * 2, h = p.radius * 2 * ry / across;
+      final oval = Rect.fromCenter(center: p.offset, width: w, height: h);
+      canvas.drawOval(oval.inflate(p.radius * .12), _bodyWide);
+      if (!c.economy) canvas.drawOval(oval.deflate(p.radius * .18), _bodyMid);
+      if (k < 3) canvas.drawOval(oval, _bodyRim);
+    }
+  }
+
+  /// Each region with records glows softly at its centre in its colour (brighter with more records, and while a real
+  /// learning event lights it); the region the owner flew to gets a ring and its name with the real count.
+  void _paintRegions(Canvas canvas, Size size, CheBrainCamera cam) {
+    if (c.regionCenters.isEmpty || cam.inside) return;
+    for (final MapEntry(key: r, value: centre) in c.regionCenters.entries) {
+      if (r == CheBrainRegion.verified) continue; // spans every region; its white cores are the verified orbs
+      final count = c.regionCounts[r] ?? 0;
+      final p = cam.project(centre, size, worldRadius: (c.regionSpread[r] ?? 1) * 1.1 + .8, margin: 200);
+      if (p == null) continue;
+      final focused = r == c.focusedRegion;
+      final lit = c.regionGlow(r);
+      final alpha = (math.min(.24, .08 + .03 * math.sqrt(count)) + (focused ? .2 : 0) + lit * .25).clamp(0.0, .6).toDouble();
+      _regionHalo.color = r.color.withValues(alpha: alpha);
+      canvas.drawCircle(p.offset, p.radius.clamp(16.0, size.shortestSide * .55).toDouble(), _regionHalo);
+      if (focused) {
+        final ring = p.radius.clamp(22.0, size.shortestSide * .45).toDouble() * (1 + math.sin(c.time * 2) * .03);
+        _focusRing.color = r.color.withValues(alpha: .85);
+        canvas.drawCircle(p.offset, ring, _focusRing);
+        final tp = _label('region:${r.name}', '${r.label} · $count', 13, Colors.white);
+        tp.paint(canvas, p.offset - Offset(tp.width / 2, ring + tp.height + 4));
+      }
+    }
+  }
 
   TextPainter _label(String key, String text, double size, Color color) => c.label(key, text, (size * textScale).roundToDouble(), color);
 
@@ -1614,6 +1842,8 @@ class CheBrainPainter extends CustomPainter {
       canvas.drawCircle(core.offset, math.min(core.radius * 1.4, size.longestSide), Paint()
         ..shader = ui.Gradient.radial(core.offset, math.max(1, math.min(core.radius * 1.4, size.longestSide)), const [Color(0x2239E6C5), Color(0x00000000)]));
     }
+
+    _paintBody(canvas, size, cam);
 
     final far = <double>[], dust = <double>[];
     for (final b in _bokeh) {
@@ -1632,7 +1862,10 @@ class CheBrainPainter extends CustomPainter {
         ..strokeCap = StrokeCap.round
         ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 3));
     }
-    canvas.drawRawPoints(ui.PointMode.points, Float32List.fromList(dust), Paint()
+    final dustPoints = Float32List.fromList(dust);
+    // The cortex surface glows: a soft halo under the fine dust (economy skips it).
+    if (!c.economy) canvas.drawRawPoints(ui.PointMode.points, dustPoints, _dustGlow);
+    canvas.drawRawPoints(ui.PointMode.points, dustPoints, Paint()
       ..color = const Color(0x8062E3F0)
       ..strokeWidth = 1.5
       ..strokeCap = StrokeCap.round);
@@ -1728,8 +1961,12 @@ class CheBrainPainter extends CustomPainter {
       }
     }
 
-    // Nodes far → near, one atlas draw.
-    final order = [for (var i = 0; i < n; i++) if (proj[i] != null) i]..sort((x, y) => proj[y]!.depth.compareTo(proj[x]!.depth));
+    _paintRegions(canvas, size, cam);
+
+    // Nodes far → near, one atlas draw; past the cap only the nearest are drawn.
+    var order = [for (var i = 0; i < n; i++) if (proj[i] != null) i]..sort((x, y) => proj[y]!.depth.compareTo(proj[x]!.depth));
+    final cap = c.economy ? maxDrawnNodes ~/ 2 : maxDrawnNodes;
+    if (order.length > cap) order = order.sublist(order.length - cap);
     final sprite = _glowSprite();
     final transforms = Float32List(order.length * 4);
     final rects = Float32List(order.length * 4);

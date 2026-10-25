@@ -9,11 +9,18 @@
 // it builds the GLB, re-reads and measures it (meshes, triangles, materials, bounding box in metres against the asked
 // size) and renders front, three-quarter and side previews from the file, and completes only with that measurement.
 //
+// Create Object from a description (creation-gaps, 2026-10-25): the `custom` family is composed from parametric
+// primitives by creation_freeform.js ("a snowman", "a red ball on top of a blue box"); what it cannot compose is said.
+//
 // Edits are deterministic sentences, like the person edits: "make it red", "bigger", "shinier", "make it a chair",
 // "add a desk", "remove the rug", "warmer light", "5 metres wide", "tile floor", "industrial style". Anything outside
 // the families and parameters is refused with the reason, never approximated in silence.
 
+import { composeFreeform, customErrors, RECIPE_NAMES } from './creation_freeform.js';
+
 export const FAMILIES = ['lamp', 'chair', 'table', 'mug', 'vase', 'shelf'];
+/** The families a spec may name: the fixed builders plus `custom` (composed from a description). */
+export const ALL_FAMILIES = [...FAMILIES, 'custom'];
 export const STYLES = ['modern', 'classic', 'industrial'];
 export const FORMS = { lamp: ['desk', 'floor'], table: ['dining', 'coffee', 'desk'] };
 export const ROOM_TYPES = ['living_room', 'bedroom', 'office', 'studio'];
@@ -50,7 +57,7 @@ export const OBJECT_QUALITY = {
   high: { label: 'High Detail', samples: 64, res: 720 },
   ultra: { label: 'Ultra Detail', samples: 128, res: 1080 },
 };
-export const CAPABILITY_NOTE = 'procedural parametric objects and rooms from a fixed family list; not free-form text-to-3D';
+export const CAPABILITY_NOTE = 'procedural parametric objects and rooms from a fixed family list, and objects composed from boxes, balls, cylinders, cones and rings from a description; not free-form text-to-3D';
 
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 const r2 = (v) => Math.round(v * 100) / 100;
@@ -62,11 +69,12 @@ export function specErrors(kind, s) {
   if (!s || typeof s !== 'object') return ['the spec must be an object'];
   const num = (k, lo, hi) => { const v = Number(s[k]); if (!Number.isFinite(v) || v < lo || v > hi) bad.push(`${k} must be ${lo} to ${hi}`); };
   if (kind === 'object') {
-    if (!FAMILIES.includes(s.family)) return [`family ${s.family} is not built; only ${FAMILIES.join(', ')}`];
+    if (!ALL_FAMILIES.includes(s.family)) return [`family ${s.family} is not built; only ${FAMILIES.join(', ')} or a described object`];
     num('size', ...SIZE); num('roughness', 0, 1); num('metallic', 0, 1);
     if (!HEX.test(String(s.color))) bad.push('color must be #rrggbb');
     if (!STYLES.includes(s.style)) bad.push(`style must be one of ${STYLES.join(', ')}`);
     if (FORMS[s.family] ? !FORMS[s.family].includes(s.form) : s.form !== undefined) bad.push(`form ${s.form} is not a ${s.family} form`);
+    if (s.family === 'custom') bad.push(...customErrors(s));
     return bad;
   }
   if (!ROOM_TYPES.includes(s.type)) return [`room type ${s.type} is not built; only ${ROOM_TYPES.join(', ')}`];
@@ -177,7 +185,14 @@ export function parseObjectEdit(text, spec) {
       if (FORMS[fam]) s.form = /desk/.test(w) && fam === 'table' ? 'desk' : /coffee/.test(w) ? 'coffee' : /floor/.test(w) ? 'floor' : OBJECT_DEFAULTS[fam].form;
       if (fam !== spec.family || s.form !== spec.form) applied.push(`Changed to a ${s.form && fam !== 'lamp' ? `${s.form} ` : s.form === 'floor' ? 'floor ' : ''}${fam}, keeping its colour, finish, style and size.`);
     } else if (!colourWord(w) && !styleWord(w)) {
-      unsupported.push(`CHE builds only these object families: ${FAMILIES.join(', ')}. A ${w} is not one of them, and free-form text-to-3D is not built.`);
+      // Not a family: compose it from primitives (creation_freeform.js) when it can, else say so.
+      const made = composeFreeform(m[0].replace(/^.*?\b(?:a|an)\s+/, 'a ') + t.slice(m.index + m[0].length));
+      if (made.ok) {
+        Object.keys(s).forEach((k) => delete s[k]); Object.assign(s, made.spec);
+        applied.push(`Changed to ${made.made}.${made.unused?.length ? ` I did not use: ${made.unused.join(', ')}.` : ''}`);
+        return { spec: s, quality: qualityWord(t), applied, unsupported };
+      }
+      unsupported.push(made.detail);
     }
   }
   // Forms within the family.
@@ -215,10 +230,13 @@ export function parseObjectEdit(text, spec) {
   }
   // Style.
   const st = styleWord(t);
-  if (st && st !== s.style) { s.style = st; applied.push(`Style changed to ${st}: the ${s.family}'s shape and fixed parts change with it.`); }
+  if (st && st !== s.style && s.family === 'custom') unsupported.push(`A described object has no ${st} style; its shapes stay as composed. Describe it again to change its shape.`);
+  else if (st && st !== s.style) { s.style = st; applied.push(`Style changed to ${st}: the ${s.family}'s shape and fixed parts change with it.`); }
   const quality = qualityWord(t);
   if (quality) applied.push(`Detail set. ${resourceLine({ quality })}`);
-  if (!applied.length && !unsupported.length) {
+  if (!applied.length && !unsupported.length && s.family === 'custom') {
+    unsupported.push('I can\'t change that on this object yet. Try: make it red, bigger, smaller, shinier, matte, metallic, or make it a snowman, a rocket, or a red ball on top of a blue box.');
+  } else if (!applied.length && !unsupported.length) {
     unsupported.push(`I can't change that on a ${s.family} yet. Try: make it red, bigger, smaller, shinier, matte, metallic, modern, classic, industrial, or make it a ${FAMILIES.find((f) => f !== s.family)}.`);
   }
   return { spec: s, quality, applied, unsupported };
@@ -319,6 +337,10 @@ export function parseRoomEdit(text, spec) {
 
 /** One plain sentence of what a spec builds (the studio's Read aloud and the project title). */
 export function describeSpec(kind, s) {
+  if (kind === 'object' && s.family === 'custom') {
+    const shapes = [...new Set((s.parts || []).map((p) => p.shape))];
+    return `${s.description} (composed of ${(s.parts || []).length} parts: ${shapes.join(', ')}), main colour ${colourName(s.color)}, ${s.metallic >= 0.5 ? 'metallic' : 'non-metallic'} with roughness ${s.roughness}, at ${s.size} times its composed size`;
+  }
   if (kind === 'object') {
     const form = s.form && s.family === 'table' ? `${s.form === 'desk' ? '' : `${s.form} `}` : s.form === 'floor' ? 'floor ' : '';
     const noun = s.family === 'table' && s.form === 'desk' ? 'desk' : `${form}${s.family}`;
@@ -329,6 +351,10 @@ export function describeSpec(kind, s) {
 
 /** Title for a new project. */
 export function titleOf(kind, s) {
+  if (kind === 'object' && s.family === 'custom') {
+    const d = String(s.description || 'Object').replace(/^(?:please\s+)?(?:create|make|build)(?: me)?\s+/i, '').replace(/^(?:an?|the)\s+/i, '').trim().slice(0, 50) || 'Object';
+    return `${d[0].toUpperCase()}${d.slice(1)} (new object)`;
+  }
   if (kind === 'object') return `${s.family === 'table' && s.form === 'desk' ? 'Desk' : `${s.family[0].toUpperCase()}${s.family.slice(1)}`} (new object)`;
   const l = ROOM_LABELS[s.type]; return `${l[0].toUpperCase()}${l.slice(1)} (new room)`;
 }
@@ -338,3 +364,7 @@ export function verifyLine(v) {
   const size = (v?.bbox_m?.size || []).map((x) => Number(x).toFixed(2)).join(' x ');
   return `${v.meshes} mesh${v.meshes === 1 ? '' : 'es'}, ${Number(v.triangles || 0).toLocaleString('en-US')} triangles, ${(v.materials || []).length} material${(v.materials || []).length === 1 ? '' : 's'}${size ? `, ${size} m` : ''}`;
 }
+
+/** A described object (Create Object, free text): { ok, spec, made, unused } or { ok: false, detail }. */
+export function describedObject(text) { return composeFreeform(text); }
+export { RECIPE_NAMES };

@@ -34,6 +34,14 @@ def function(swift: str, signature: str) -> str:
 class IosAudioSessionTest(unittest.TestCase):
     swift = app_delegate()
 
+    def test_live_partial_words_reach_flutter_after_the_echo_guard(self):
+        # Handoff 8f: partial transcripts are emitted for the composer, but never while CHE's own voice is playing.
+        body = function(self.swift, "private func handleRecognition(")
+        guard = body.index("if assistantSpeaking && !bargeInDetected {")
+        partial = body.index('"type": "partial"')
+        self.assertLess(guard, partial, "partials are sent only after the speaking guard")
+        self.assertIn("if !result.isFinal {", body[guard:partial + 40])
+
     def test_her_own_voice_is_never_ducked_to_a_whisper(self):
         # Voice processing counts CHE's AVAudioPlayer clip as "other audio".
         self.assertNotIn("duckingLevel: .max", self.swift)

@@ -22,7 +22,7 @@ import 'rithmic_recorder.dart';
 import 'rithmic_session.dart';
 import 'rithmic_wire.dart';
 
-export 'rithmic_session.dart' show kRithmicVaultSite, RithmicFeedFactory, RithmicCredentialStore, CheVaultCredentialStore;
+export 'rithmic_session.dart' show kRithmicVaultSite, RithmicFeedFactory, RithmicCredentialStore, CheVaultCredentialStore, RithmicCheck, cheRithmicDiagnose, cheRithmicDiagnosisText, cheRithmicDiagnoseCommand;
 
 class CheRithmicScreen extends StatefulWidget {
   const CheRithmicScreen({super.key, this.feedFactory, this.routeFinder, this.store, this.preferences, this.now, this.live});
@@ -233,6 +233,28 @@ class _CheRithmicScreenState extends State<CheRithmicScreen> {
     }
   }
 
+  List<RithmicCheck> _diagnosis = const [];
+
+  /// "Diagnose Rithmic": the four checks in order, shown, announced and felt. Changes nothing.
+  Future<void> _diagnose() async {
+    setState(() => _busy = true);
+    try {
+      final checks = await cheRithmicDiagnose(
+        live: _live,
+        store: _vault,
+        preferences: widget.preferences,
+        routeFinder: widget.routeFinder,
+        feedFactory: widget.feedFactory,
+        now: widget.now,
+      );
+      if (!mounted) return;
+      setState(() => _diagnosis = checks);
+      _report(cheRithmicDiagnosisText(checks), ok: checks.every((c) => c.ok != false));
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
   Widget _field(TextEditingController c, String label, {bool secret = false, String hint = ''}) => Semantics(
         textField: true,
         label: label,
@@ -283,6 +305,34 @@ class _CheRithmicScreenState extends State<CheRithmicScreen> {
               child: const Text('Disconnect'),
             ),
           ),
+          const SizedBox(height: 10),
+          Semantics(
+            button: true,
+            label: 'Diagnose Rithmic: check the saved login, the automatic reconnect, the connection and the login answer',
+            child: OutlinedButton(
+              key: const ValueKey('rithmic-diagnose'),
+              style: OutlinedButton.styleFrom(minimumSize: big, textStyle: const TextStyle(fontSize: 18)),
+              onPressed: _busy ? null : _diagnose,
+              child: const Text('Diagnose Rithmic'),
+            ),
+          ),
+          if (_diagnosis.isNotEmpty)
+            Semantics(
+              liveRegion: true,
+              label: cheRithmicDiagnosisText(_diagnosis),
+              child: Padding(
+                padding: const EdgeInsets.only(top: 10),
+                child: Column(
+                  key: const ValueKey('rithmic-diagnosis'),
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    for (final c in _diagnosis)
+                      Text('${c.ok == null ? '–' : c.ok! ? '✓' : '✗'} ${c.step}: ${c.detail}',
+                          style: theme.textTheme.bodyLarge?.copyWith(color: c.ok == false ? theme.colorScheme.error : null)),
+                  ],
+                ),
+              ),
+            ),
           const SizedBox(height: 16),
           Semantics(
             liveRegion: true,

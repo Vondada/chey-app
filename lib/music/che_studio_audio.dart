@@ -41,7 +41,30 @@ abstract class CheStudioAudio {
 
   /// Where sound is going: "speaker", "bluetooth", "headphones", "usb", ... and the measured output latency.
   Future<Map<String, dynamic>> route();
+
+  /// Encodes WAV bytes as AAC in an .m4a (Apple's encoder). Throws [CheAudioUnavailable] on builds without it.
+  Future<Uint8List> encodeM4a(Uint8List wav);
+
+  /// Decodes an MP3, M4A, AAC, AIFF or CAF file to WAV bytes. Throws [CheAudioUnavailable] on builds without it.
+  Future<Uint8List> decodeToWav(Uint8List bytes, String ext);
+
+  /// Starts live monitoring (the microphone through [effects] to the owner's headphones). Returns the native answer:
+  /// {monitoring: true, ...}, or {monitoring: false, reason: 'speaker', message: ...} when sound would feed back.
+  Future<Map<String, dynamic>> startMonitor(Map<String, Object> effects, {bool allowSpeaker = false});
+
+  /// Changes the monitored effects while it runs.
+  Future<void> updateMonitor(Map<String, Object> effects);
+
+  Future<void> stopMonitor();
 }
+
+/// The files the studio imports: WAV in Dart, the rest through the iPhone's decoder (AVAudioFile).
+const cheImportFormats = ['wav', 'mp3', 'm4a', 'aac', 'aif', 'aiff', 'caf'];
+
+const _formatNeedsBuild =
+    'needs the next CHE app build: this installed version cannot convert audio formats yet. WAV import and WAV export work now.';
+const _monitorNeedsBuild =
+    'Live monitoring needs the next CHE app build. Recording itself, and hearing the effects on playback, work now.';
 
 const _recordingNeedsBuild =
     'Recording needs the next CHE app build: this installed version has no microphone recorder yet. Playback, the Beat Maker, effects, mixing, mastering, importing WAV files and exporting all work now.';
@@ -120,6 +143,58 @@ class CheNativeStudioAudio implements CheStudioAudio {
     } catch (_) {
       return const {};
     }
+  }
+
+  @override
+  Future<Uint8List> encodeM4a(Uint8List wav) async {
+    try {
+      final v = await _ch.invokeMethod<Object?>('studioEncodeM4A', {'wav': wav, 'bitrate': 256000});
+      if (v is Map && v['m4a'] is Uint8List) return v['m4a'] as Uint8List;
+      throw CheAudioUnavailable('The M4A could not be written.');
+    } on MissingPluginException {
+      throw CheAudioUnavailable('M4A export $_formatNeedsBuild');
+    } on PlatformException catch (e) {
+      throw CheAudioUnavailable(e.message ?? 'The M4A could not be written.');
+    }
+  }
+
+  @override
+  Future<Uint8List> decodeToWav(Uint8List bytes, String ext) async {
+    try {
+      final v = await _ch.invokeMethod<Object?>('studioDecodeAudio', {'bytes': bytes, 'ext': ext});
+      if (v is Map && v['wav'] is Uint8List) return v['wav'] as Uint8List;
+      throw CheAudioUnavailable('CHE could not read that audio file.');
+    } on MissingPluginException {
+      throw CheAudioUnavailable('Importing ${ext.toUpperCase()} $_formatNeedsBuild');
+    } on PlatformException catch (e) {
+      throw CheAudioUnavailable(e.message ?? 'CHE could not read that audio file.');
+    }
+  }
+
+  @override
+  Future<Map<String, dynamic>> startMonitor(Map<String, Object> effects, {bool allowSpeaker = false}) async {
+    try {
+      final v = await _ch.invokeMethod<Object?>('studioMonitorStart', {...effects, 'allow_speaker': allowSpeaker});
+      return v is Map ? Map<String, dynamic>.from(v) : const {'monitoring': false};
+    } on MissingPluginException {
+      throw CheAudioUnavailable(_monitorNeedsBuild);
+    } on PlatformException catch (e) {
+      throw CheAudioUnavailable(e.message ?? 'Live monitoring did not start.');
+    }
+  }
+
+  @override
+  Future<void> updateMonitor(Map<String, Object> effects) async {
+    try {
+      await _ch.invokeMethod<Object?>('studioMonitorUpdate', effects);
+    } catch (_) {}
+  }
+
+  @override
+  Future<void> stopMonitor() async {
+    try {
+      await _ch.invokeMethod<Object?>('studioMonitorStop');
+    } catch (_) {}
   }
 }
 

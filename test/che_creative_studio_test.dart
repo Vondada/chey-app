@@ -511,6 +511,36 @@ void main() {
     await shoot('09_working_now_with_a_job');
   });
 
+  test('described objects: "create an object" then the words; a bare request is not a description', () {
+    expect(cheDescribedObjectFromWords('create an object: a snowman'), 'a snowman');
+    expect(cheDescribedObjectFromWords('CHE, describe an object, a wooden crate.'), 'a wooden crate');
+    expect(cheDescribedObjectFromWords('make me an object like a rocket 2 metres tall'), 'a rocket 2 metres tall');
+    for (final other in ['create an object', 'create a chair', 'make a video', 'create a room']) {
+      expect(cheDescribedObjectFromWords(other), isNull, reason: other);
+    }
+  });
+
+  testWidgets('Describe your own: the Create Object sheet opens a labelled text box and sends the words', (tester) async {
+    tester.view.physicalSize = const Size(1170, 2532);
+    tester.view.devicePixelRatio = 3;
+    addTearDown(tester.view.reset);
+    final calls = _Calls();
+    await tester.pumpWidget(_studio(calls));
+    await tester.pumpAndSettle();
+    final voice = CheCreativeStudio.voiceHandler!;
+    await voice('two');
+    await tester.pumpAndSettle();
+    expect(await voice('read'), contains('8 Describe your own'));
+    expect(await voice('eight'), 'Opening Describe your own.');
+    await tester.pumpAndSettle();
+    expect(find.text('Describe an object'), findsOneWidget);
+    expect(find.byWidgetPredicate((w) => w is Semantics && w.properties.label == 'What should the object be?'), findsOneWidget);
+    await tester.enterText(find.byKey(const ValueKey('describe-object-text')), 'a snowman');
+    await tester.tap(find.byKey(const ValueKey('describe-object-create')));
+    await tester.pumpAndSettle();
+    expect(calls.list.last, 'object describe:a snowman');
+  });
+
   test('create words name an object family or a room type, and nothing else', () {
     expect(cheCreateThingFromWords('create a chair'), ('object', 'chair'));
     expect(cheCreateThingFromWords('Make a floor lamp.'), ('object', 'lamp'));
@@ -562,7 +592,7 @@ void main() {
     // Create Object by number: the families as a numbered list, then a number starts one and CHE says the Worker's answer.
     final objects = await voice('two');
     await tester.pumpAndSettle();
-    expect(objects, 'Create Object. Say a number: 1 Lamp, 2 Chair, 3 Table, 4 Desk, 5 Mug, 6 Vase, 7 Shelf.');
+    expect(objects, 'Create Object. Say a number: 1 Lamp, 2 Chair, 3 Table, 4 Desk, 5 Mug, 6 Vase, 7 Shelf, 8 Describe your own. Or say: create an object, then what it is.');
     expect(await voice('read'), startsWith('Create an object. Say or choose: 1 Lamp, 2 Chair'));
     expect(await voice('two'), 'Worker: chair started. Opening it in the Live Studio.');
     await tester.pumpAndSettle();
@@ -578,6 +608,9 @@ void main() {
     expect(calls.list.last, 'room office (voice)');
     expect(await voice('make a coffee table'), startsWith('Worker: table started'));
     expect(calls.list.last, 'object table (voice)');
+    // An object in the owner's own words goes to the Worker as a description (creation_freeform.js composes or refuses it).
+    expect(await voice('CHE, create an object: a red ball on top of a blue box.'), startsWith('Worker: describe:a red ball on top of a blue box started'));
+    expect(calls.list.last, 'object describe:a red ball on top of a blue box (voice)');
     expect(await voice('character generator'), 'Opening the Character Generator.');
     expect(calls.list.last, 'character generator');
     expect(await voice('create animation'), contains('Opening the animation preview'));

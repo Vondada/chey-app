@@ -39,3 +39,19 @@ the item's earlier ledger text.
   it), `?batch=`, `?q=`; `POST /api/brain/ledger/decide {record_id, decision: commit|reject}`. Owner device only.
 - More → Brain Ledger: category cards, category view with subcategory filters, batches, event detail, Commit/Reject
   for pending items. Loading is quiet; Read Aloud and owner actions speak (with haptics and a VoiceOver announcement).
+
+## Connections (`CONNECTION_CREATED`, 2026-10-25)
+When CHE links two nodes, the ledger keeps one event (`recordConnection`). It holds `detail.from_id`, `detail.to_id`,
+`detail.reason`, `detail.status` (derived or candidate), `detail.origin` and the exact timestamp. The record id is
+`connectionKey(a, b)`, which is the same in either order, so a pair is never recorded twice. Ids and titles pass the
+same secret scanner. Two producers:
+- `brain_rooms.linkRelated` (room events, Knowledge Library, agent research, the relink pass): one event per link,
+  with `relationReason` as the reason.
+- The neural map's token-overlap pass (`research_memory.buildBrainGraph`), read on `GET /api/state` and
+  `GET /api/brain/graph`. The first read is a baseline that records nothing. Later reads record only links that
+  are new, at most 24 per read.
+
+Connections are bookkeeping, not knowledge. They are never counted in the category cards or in "what entered your
+brain today", and they stay out of `recent`. `GET /api/brain/ledger` returns them as `connections` (the newest 20),
+and `?type=CONNECTION_CREATED` returns up to 200. They need the SQL ledger; the key-value fallback records none.
+`GET /api/brain/graph` used to sit after the Worker's POST-only gate and never answered a GET. It now answers.

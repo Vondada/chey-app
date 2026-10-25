@@ -483,6 +483,7 @@ extension _CheHomeStreaming on _CHEHomeState {
         if (data['open_screen'] == 'workflows' && data['source'] == 'che_workflow_engine' && mounted) unawaited(_openWorkflows());
         if (data['open_screen'] == 'security' && data['source'] == 'che_security' && mounted) unawaited(_openSecurity(section: data['security_section']?.toString()));
         if (data['open_screen'] == 'film_studio' && data['source'] == 'che_film_studio' && mounted) unawaited(_openFilmStudio());
+        if (data['open_screen'] == 'recording_studio' && data['source'] == 'che_recording_studio' && mounted) unawaited(_openRecordingStudio());
         // "Open your cloud computer": only the Cloud Computer Manager's own reply opens the room.
         if (data['open_screen'] == 'cloud_computer' && data['source'] == 'che_cloud_computer' && mounted) unawaited(_openCloudComputer());
         // "Open Truth and Verification": only the Worker's own truth handler opens the Brain Room section.
@@ -574,6 +575,7 @@ extension _CheHomeStreaming on _CHEHomeState {
             month: '${calendarAsk['month'] ?? ''}',
             source: '${calendarAsk['source'] ?? 'paper'}',
             day: '${calendarAsk['day'] ?? ''}',
+            basis: '${calendarAsk['basis'] ?? 'owner'}',
           )));
         }
         if (data['open_view'] == 'office_calendar' && mounted) {

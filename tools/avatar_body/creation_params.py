@@ -8,6 +8,11 @@ type) and a few numbers; anything else is refused with the reason.
   object spec: {"family": "lamp|chair|table|mug|vase|shelf", "size": 0.5-2.0, "color": "#rrggbb",
                 "roughness": 0-1, "metallic": 0-1, "style": "modern|classic|industrial",
                 "form": lamp desk|floor, table dining|coffee|desk (optional)}
+  custom object (Create Object from a description, server/cloudflare/creation_freeform.js):
+               {"family": "custom", "description": text, "size", "color", "roughness", "metallic", "style",
+                "parts": [{"name", "shape": box|cylinder|sphere|cone|torus, "c": [x, y, z], "s": [w, h, d] (metres, glTF
+                axes, y up), "axis": x|y|z, "sides": 3-64, "flip": bool, "color", "metallic", "roughness",
+                "texture": wood|stone|metal|fabric|brick|concrete}]}
   room spec:   {"type": "living_room|bedroom|office|studio", "width": 2.5-8, "depth": 2.5-8, "height": 2.3-4 (metres),
                 "wall_color": "#rrggbb", "floor": "oak|walnut|tile|concrete|carpet", "furniture": [ROOM_ITEMS],
                 "lighting": "warm|neutral|cool", "style": "modern|classic|industrial"}
@@ -61,6 +66,15 @@ WALL = 0.1   # wall thickness: the room's back and left walls stand outside the 
 
 HEX = re.compile(r'^#[0-9a-f]{6}$')
 
+# Create Object from a description: the primitives the builder makes exactly (objects.py custom), and their limits.
+SHAPES = ('box', 'cylinder', 'sphere', 'cone', 'torus')
+AXES = ('x', 'y', 'z')
+TEXTURES = ('wood', 'stone', 'metal', 'fabric', 'brick', 'concrete', 'tile')
+CUSTOM_MAX_PARTS = 40
+EXTENT = (0.005, 5.0)
+DESCRIPTION_MAX = 200
+CUSTOM_DEFAULTS = {'color': '#8a8580', 'roughness': 0.45, 'metallic': 0.0, 'style': 'modern'}
+
 
 class SpecError(ValueError):
     """A spec the builders refuse, with every reason."""
@@ -97,6 +111,7 @@ def validate_object(spec):
     if not isinstance(spec, dict): raise SpecError(['the spec must be an object'])
     bad = []
     fam = spec.get('family')
+    if fam == 'custom': return validate_custom(spec)
     if fam not in FAMILIES:
         raise SpecError([f"family {fam!r} is not built; CHE builds only: {', '.join(FAMILIES)} (not free-form text-to-3D)"])
     d = OBJECT_DEFAULTS[fam]
@@ -109,6 +124,78 @@ def validate_object(spec):
     if extra: bad.append(f"unknown keys: {', '.join(extra)}")
     if bad: raise SpecError(bad)
     return out
+
+
+def _vec(v, lo, hi):
+    return isinstance(v, list) and len(v) == 3 and all(isinstance(x, (int, float)) and not isinstance(x, bool) and lo <= x <= hi for x in v)
+
+
+def validate_custom(spec):
+    """A described object composed of primitives (the Worker's creation_freeform.js customErrors, the same limits)."""
+    bad = []
+    d = CUSTOM_DEFAULTS
+    desc = spec.get('description', '')
+    if not isinstance(desc, str) or len(desc) > DESCRIPTION_MAX: bad.append(f'description must be text up to {DESCRIPTION_MAX} characters'); desc = ''
+    out = {'family': 'custom', 'description': desc, 'size': _num(spec, 'size', *SIZE, 1.0, bad), 'color': _colour(spec, 'color', d['color'], bad),
+           'roughness': _num(spec, 'roughness', 0.0, 1.0, d['roughness'], bad), 'metallic': _num(spec, 'metallic', 0.0, 1.0, d['metallic'], bad),
+           'style': _choice(spec, 'style', STYLES, d['style'], bad)}
+    parts = spec.get('parts')
+    if not isinstance(parts, list) or not parts: raise SpecError(bad + ['parts must be a non-empty list'])
+    if len(parts) > CUSTOM_MAX_PARTS: raise SpecError(bad + [f'{len(parts)} parts, more than the {CUSTOM_MAX_PARTS} CHE builds'])
+    clean = []
+    for i, p in enumerate(parts):
+        if not isinstance(p, dict): bad.append(f'part {i} is not an object'); continue
+        name = str(p.get('name', ''))
+        if not re.fullmatch(r'[a-z0-9_]{1,40}', name): bad.append(f'part {i} needs a short lower-case name'); name = f'part_{i}'
+        if p.get('shape') not in SHAPES: bad.append(f"part {name}: shape must be one of {', '.join(SHAPES)}"); continue
+        if not _vec(p.get('c'), -5, 5): bad.append(f'part {name}: c must be three numbers within 5 m'); continue
+        if not _vec(p.get('s'), *EXTENT): bad.append(f'part {name}: s must be three sizes from {EXTENT[0]} to {EXTENT[1]:g} m'); continue
+        q = {'name': name, 'shape': p['shape'], 'c': [round(float(x), 4) for x in p['c']], 's': [round(float(x), 4) for x in p['s']]}
+        if 'axis' in p:
+            if p['axis'] not in AXES: bad.append(f'part {name}: axis must be x, y or z')
+            else: q['axis'] = p['axis']
+        if 'sides' in p:
+            if not (isinstance(p['sides'], int) and not isinstance(p['sides'], bool) and 3 <= p['sides'] <= 64): bad.append(f'part {name}: sides must be 3 to 64')
+            else: q['sides'] = p['sides']
+        if 'flip' in p:
+            if not isinstance(p['flip'], bool): bad.append(f'part {name}: flip must be true or false')
+            else: q['flip'] = p['flip']
+        if 'color' in p:
+            v = str(p['color']).lower()
+            if not HEX.match(v): bad.append(f'part {name}: color must be #rrggbb')
+            else: q['color'] = v
+        for k in ('metallic', 'roughness'):
+            if k in p:
+                v = p[k]
+                if not (isinstance(v, (int, float)) and not isinstance(v, bool) and 0 <= v <= 1): bad.append(f'part {name}: {k} must be 0 to 1')
+                else: q[k] = round(float(v), 3)
+        if 'texture' in p:
+            if p['texture'] not in TEXTURES: bad.append(f"part {name}: texture must be one of {', '.join(TEXTURES)}")
+            else: q['texture'] = p['texture']
+        extra = sorted(set(p) - {'name', 'shape', 'c', 's', 'axis', 'sides', 'flip', 'color', 'metallic', 'roughness', 'texture'})
+        if extra: bad.append(f"part {name}: unknown keys {', '.join(extra)}")
+        clean.append(q)
+    extra = sorted(set(spec) - set(out) - {'parts'})
+    if extra: bad.append(f"unknown keys: {', '.join(extra)}")
+    if bad: raise SpecError(bad)
+    out['parts'] = clean
+    return out
+
+
+def custom_bbox(spec):
+    """(x, y, z) extents in metres of a validated custom spec at size 1 (the parts' boxes)."""
+    lo = [min(p['c'][k] - p['s'][k] / 2 for p in spec['parts']) for k in range(3)]
+    hi = [max(p['c'][k] + p['s'][k] / 2 for p in spec['parts']) for k in range(3)]
+    return tuple(h - l for l, h in zip(lo, hi))
+
+
+def textures_wanted(kind, spec):
+    """The CC0 texture materials a validated spec asks for (cc0_textures.py fetches them at job time)."""
+    if kind in ('object', 'object_model') and spec.get('family') == 'custom':
+        return sorted({p['texture'] for p in spec['parts'] if p.get('texture')})
+    if kind in ('room', 'room_model'):
+        return [{'oak': 'wood', 'walnut': 'wood', 'tile': 'tile', 'concrete': 'concrete', 'carpet': 'fabric'}[spec['floor']]]
+    return []
 
 
 def validate_room(spec):
@@ -206,6 +293,9 @@ def expected_bbox(kind, spec):
     """(x width, y height, z depth) in metres the exported GLB must measure, and the tolerance as a fraction."""
     if kind in ('object', 'object_model'):
         s = validate_object(spec)
+        if s['family'] == 'custom':
+            w, h, d = custom_bbox(s)
+            return (round(w * s['size'], 3), round(h * s['size'], 3), round(d * s['size'], 3)), OBJECT_TOLERANCE
         w, h, d = NOMINAL[(s['family'], s.get('form'))]
         return (round(w * s['size'], 3), round(h * s['size'], 3), round(d * s['size'], 3)), OBJECT_TOLERANCE
     if kind in ('invention', 'invention_model'):
@@ -224,6 +314,12 @@ def hex_rgb(h):
 
 def describe(kind, spec):
     """One plain sentence of what the spec builds (receipt 'contents')."""
+    if kind in ('object', 'object_model') and spec.get('family') == 'custom':
+        s = validate_custom(spec)
+        shapes = sorted({p['shape'] for p in s['parts']})
+        tex = sorted({p['texture'] for p in s['parts'] if p.get('texture')})
+        return (f"described object \"{s['description'][:80]}\" composed of {len(s['parts'])} primitives ({', '.join(shapes)}) at size {s['size']:g}, "
+                f"main colour {s['color']}" + (f", CC0 textures: {', '.join(tex)}" if tex else ''))
     if kind in ('object', 'object_model'):
         s = validate_object(spec)
         form = f" {s['form']}" if s.get('form') else ''

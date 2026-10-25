@@ -18,6 +18,9 @@
 // - Markets (owner, 2026-10-24): any crypto pair or CME future from the Worker's market universe on public data
 //   (Coinbase, Kraken fallback, Yahoo delayed futures), research only, with indicators (lib/rooms/che_chart_indicators.dart)
 //   and a long-press crosshair. The ticker, timeframe and indicators stay on this phone (CheTickerPrefs).
+// - BTC and ETH live (owner, 2026-10-25): on the Markets chart, coinbase:/kraken: BTC-USD and ETH-USD stream real trades
+//   from the exchange's public WebSocket to this phone (lib/trading/che_crypto_stream.dart) and update the last candle
+//   tick by tick over the Worker's REST candles. A visible LIVE / STALE / DELAYED / DISCONNECTED line says which.
 // The chart is silent on open; "Read chart" reads its summary only when asked.
 import 'dart:async';
 import 'dart:convert';
@@ -32,6 +35,8 @@ import '../che_ui/che_hud.dart';
 import '../che_ui/che_ui_preferences.dart';
 import '../rithmic/rithmic_candles.dart';
 import '../rithmic/rithmic_live.dart';
+import '../trading/che_crypto_candles.dart';
+import '../trading/che_crypto_stream.dart';
 import '../trading/che_trade_replay.dart';
 import '../che_ui/che_theme.dart';
 import 'che_chart_indicators.dart';
@@ -95,6 +100,7 @@ class ChartBar {
 }
 
 const kBarRithmic = 'rithmic';
+const kBarStream = 'stream'; // built on this phone from streamed BTC/ETH exchange trades
 const kBarHistory = 'history';
 
 class ChartMarker {
@@ -359,6 +365,7 @@ class CheTradingChart extends StatefulWidget {
     this.height = 340,
     this.signalMarkers,
     this.live,
+    this.cryptoStreams,
     this.compact = false,
     this.onExpand,
     this.onMarkers,
@@ -401,6 +408,9 @@ class CheTradingChart extends StatefulWidget {
 
   /// The shared Rithmic session (lib/rithmic/rithmic_live.dart); tests pass their own.
   final CheRithmicLive? live;
+
+  /// The BTC/ETH live trade streams (lib/trading/che_crypto_stream.dart); null uses the app-wide hub. Tests pass their own.
+  final CheCryptoStreamHub? cryptoStreams;
 
   @override
   State<CheTradingChart> createState() => CheTradingChartState();
@@ -466,6 +476,7 @@ class CheTradingChartState extends State<CheTradingChart> {
     _timer?.cancel();
     _liveRebuild?.cancel();
     _live.removeListener(_onLive);
+    _releaseCrypto();
     CheLiveChart.indicators.removeListener(_onVoiceIndicators);
     widget.controller?.removeListener(_onController);
     widget.signalMarkers?.removeListener(_onSignals);
@@ -583,6 +594,12 @@ class CheTradingChartState extends State<CheTradingChart> {
   /// timeframe (the Worker answers 5m for a 1m request) is never stretched into this one.
   List<ChartBar> _merged() {
     final history = _historyTf == _tf ? _history : const <ChartBar>[];
+    final crypto = _crypto, cryptoMinutes = cryptoTimeframeMinutes(_tf);
+    if (crypto != null && cryptoMinutes != null) {
+      // REST history of another ticker (a failed load after switching) is never drawn under this one's trades.
+      final merged = mergeCryptoHistory([if (_historySymbol == _symbol) for (final b in history) CryptoBar(b.t, b.o, b.h, b.l, b.c, b.v)], crypto.candles(cryptoMinutes));
+      return [for (final b in merged) ChartBar(b.t, b.o, b.h, b.l, b.c, v: b.v, source: b.streamed ? kBarStream : kBarHistory)];
+    }
     final minutes = _tf == '1m' ? 1 : _tf == '5m' ? 5 : 0;
     if (!_rithmicChart || minutes == 0) return history;
     final live = [
@@ -592,6 +609,64 @@ class CheTradingChartState extends State<CheTradingChart> {
     final from = live.first.t;
     return [...history.where((b) => b.t.isBefore(from)), ...live];
   }
+
+  // ─── BTC / ETH live trades (Markets chart) ───────────────────────────
+
+  CheCryptoStream? _crypto;
+  CheCryptoStreamHub? _cryptoHub;
+  String _historySymbol = '';
+  Timer? _cryptoRebuild;
+
+  /// Opens the live trade stream when the Markets chart shows BTC-USD or ETH-USD, and closes it for anything else.
+  void _syncCrypto() {
+    final product = _account == 'market' ? cryptoStreamProduct(_symbol) : null;
+    if (product == _crypto?.product) return;
+    _releaseCrypto();
+    final hub = widget.cryptoStreams ?? CheCryptoStreamHub.appWide;
+    if (product == null || hub == null) return;
+    _cryptoHub = hub;
+    _crypto = hub.acquire(product, first: cryptoStreamVenue(_symbol))..addListener(_onCrypto);
+  }
+
+  void _releaseCrypto() {
+    _cryptoRebuild?.cancel();
+    _cryptoRebuild = null;
+    final c = _crypto;
+    if (c == null) return;
+    _crypto = null;
+    c.removeListener(_onCrypto);
+    _cryptoHub?.release(c);
+  }
+
+  /// Streamed ticks redraw at most four times a second, and never speak.
+  void _onCrypto() {
+    if (!mounted || _cryptoRebuild != null) return;
+    _cryptoRebuild = Timer(const Duration(milliseconds: 250), () {
+      _cryptoRebuild = null;
+      if (mounted) setState(() => _bars = _merged());
+    });
+  }
+
+  /// The live stream's state for the header, VoiceOver and Read chart; null when this chart is not streaming.
+  CryptoFeedView? get cryptoFeed => _crypto?.describe(restAvailable: _history.isNotEmpty && _historySymbol == _symbol, restProvider: '${_feed['provider'] ?? 'Worker REST'}${_fallback ? ' (fallback)' : ''}');
+
+  Widget _cryptoLine(CryptoFeedView v, {double fontSize = 13}) => SizedBox(
+        height: MediaQuery.textScalerOf(context).scale(fontSize) * 1.45,
+        child: Semantics(
+          label: v.spoken,
+          liveRegion: false,
+          excludeSemantics: true,
+          child: Text(v.label,
+              key: const ValueKey('chart-crypto-stream'),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                  color: switch (v.state) { CryptoFeedState.live => _up, CryptoFeedState.disconnected => _down, _ => _gold },
+                  fontSize: fontSize,
+                  fontWeight: FontWeight.w700,
+                  fontFeatures: const [FontFeature.tabularFigures()])),
+        ),
+      );
 
   /// "Rithmic live — MNQZ6", or what the history really is: never "live" for delayed bars.
   String get sourceLabel {
@@ -648,6 +723,7 @@ class CheTradingChartState extends State<CheTradingChart> {
         _entriesAllowed = false;
         _marketAllowed = false;
         _blocked = 'Feed freshness could not be verified: $_error';
+        _syncCrypto();
       });
     }
   }
@@ -671,6 +747,7 @@ class CheTradingChartState extends State<CheTradingChart> {
     _timeframes = [for (final t in (j['timeframes'] is List ? j['timeframes'] as List : _timeframes)) '$t'];
     _offerOneMinute();
     _historyTf = served;
+    _historySymbol = _symbol;
     _history = [
       for (final b in (j['bars'] is List ? j['bars'] as List : const []))
         if (b is Map && _time(b['t']) != null && _num(b['o']) != null && _num(b['h']) != null && _num(b['l']) != null && _num(b['c']) != null)
@@ -690,6 +767,8 @@ class CheTradingChartState extends State<CheTradingChart> {
     _entriesAllowed = j['entries_allowed'] == true;
     _marketAllowed = j['market_orders_allowed'] == true;
     _blocked = '${j['entries_blocked_reason'] ?? ''}';
+    _syncCrypto();
+    _bars = _merged();
     _endOffset = _endOffset.clamp(0, math.max(0, _bars.length - 10));
   }
 
@@ -1035,7 +1114,7 @@ class CheTradingChartState extends State<CheTradingChart> {
     final feed = _account == 'futures_paper'
         ? '$sourceLabel. $rithmicLine.'
         : '${_feed['provider'] ?? 'Feed'} is ${_feed['status'] ?? 'unknown'}${_feed['age_s'] is num ? ', last bar ${_age(_feed['age_s'] as num)} old' : ''}${_fallback ? ', Kraken fallback because Coinbase did not answer' : ''}${_builtFrom.isNotEmpty ? ', built from $_builtFrom bars' : ''}.';
-    final market = _ticker['market'] != null ? ' ${_ticker['market']}.' : '';
+    final market = '${_ticker['market'] != null ? ' ${_ticker['market']}.' : ''}${cryptoFeed == null ? '' : ' ${cryptoFeed!.spoken}'}';
     final ind = indicatorSummary(_indicatorBars, _indicators, futures: _futures, fmt: _fmt);
     return '$accountLabel, $symbolLabel, $_tf candles.$market Last close ${_fmt(last.c)} at ${_clock(last.t)}. $marks $feed ${ind.isEmpty ? '' : '$ind '}'
         '${_drawings.isEmpty ? '' : '${_drawings.length} drawing${_drawings.length == 1 ? '' : 's'}: ${_drawings.map((d) => d.spoken).join('; ')}. '}'
@@ -1206,7 +1285,9 @@ class CheTradingChartState extends State<CheTradingChart> {
             if (widget.onExpand != null) _iconButton(Icons.open_in_full_rounded, 'Expand the chart', widget.onExpand),
           ]),
         ),
-        SizedBox(
+        if (cryptoFeed != null)
+          _cryptoLine(cryptoFeed!, fontSize: 11)
+        else SizedBox(
           height: MediaQuery.textScalerOf(context).scale(11) * 1.45,
           child: Semantics(
             liveRegion: false,
@@ -1308,6 +1389,8 @@ class CheTradingChartState extends State<CheTradingChart> {
           ),
           const SizedBox(height: 2),
         ],
+        // BTC/ETH live stream state: visible, labelled for VoiceOver, never spoken unless asked.
+        if (cryptoFeed != null) _cryptoLine(cryptoFeed!),
         // Feed health: always visible, never spoken unless asked.
         Semantics(
           liveRegion: false,

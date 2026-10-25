@@ -12,10 +12,10 @@ import { loadDataset, tfOf } from './trading_research.js';
 import { readRithmicCandles } from './rithmic_dataset.js';
 import { RETIRED_FEEDS, minuteFeedFor } from './strategy_sim.js';
 import {
-  DAILY_TARGET, EVIDENCE_LABELS, EXECUTION_TYPES, auditTrades, compareWindows, currentLeader, dailyEvidence, dailyPnl, filterTrades, historyChart, journalView,
+  DAILY_TARGET, EVIDENCE_LABELS, assignTradeIds, fromEvidence, EXECUTION_TYPES, auditTrades, compareWindows, currentLeader, dailyEvidence, dailyPnl, filterTrades, historyChart, journalView,
   lastForwardBar, metricsOf, openPositions, rankStrategies, readSkips, readVisualTrades, replayFrame, speakAudit, speakLeader, speakPnl,
 } from './trading_visual.js';
-import { tradeDayOf } from './trading_evidence.js';
+import { readTrades, tradeDayOf } from './trading_evidence.js';
 
 export const TRADE_EVIDENCE_SOURCE = 'che_trade_evidence';
 export const NO_DATA = 'No recorded market data for this trade.';
@@ -50,12 +50,17 @@ async function rithmicContracts(storage, root) {
 }
 
 const iso = (ms) => new Date(ms).toISOString();
-/** Coinbase Exchange public 1-minute candles for [from, to], oldest first; throws on an HTTP or shape error. */
-async function coinbaseMinutes(product, from, to, fetcher) {
+// Candle sizes both public exchanges serve: the 1-minute simulation and the 5-minute crypto forward paper journal.
+const COINBASE_GRANULARITY = new Set([60, 300, 900, 3600, 21600, 86400]);
+const KRAKEN_INTERVAL = new Set([1, 5, 15, 30, 60, 240, 1440]);
+/** Coinbase Exchange public candles of [ms] for [from, to], oldest first; throws on an HTTP or shape error. */
+async function coinbaseMinutes(product, from, to, fetcher, ms = 60_000) {
+  const g = ms / 1000;
+  if (!COINBASE_GRANULARITY.has(g)) throw new Error(`Coinbase has no ${g}-second candles`);
   const out = new Map();
-  for (let start = from, page = 0; start < to && page < MAX_PAGES; start += COINBASE_PAGE * 60_000, page++) {
-    const end = Math.min(to, start + COINBASE_PAGE * 60_000);
-    const res = await fetcher(`https://api.exchange.coinbase.com/products/${product}/candles?granularity=60&start=${iso(start)}&end=${iso(end)}`, { headers: HEADERS });
+  for (let start = from, page = 0; start < to && page < MAX_PAGES; start += COINBASE_PAGE * ms, page++) {
+    const end = Math.min(to, start + COINBASE_PAGE * ms);
+    const res = await fetcher(`https://api.exchange.coinbase.com/products/${product}/candles?granularity=${g}&start=${iso(start)}&end=${iso(end)}`, { headers: HEADERS });
     if (!res.ok) throw new Error(`Coinbase answered HTTP ${res.status}`);
     const rows = await res.json();
     if (!Array.isArray(rows)) throw new Error(`Coinbase answered ${String(rows?.message || 'an unexpected shape').slice(0, 80)}`);
@@ -64,9 +69,11 @@ async function coinbaseMinutes(product, from, to, fetcher) {
   return [...out.entries()].sort((a, b) => a[0] - b[0]).map(([, b]) => b);
 }
 const KRAKEN_SPELL = Object.freeze({ BTC: 'XBT', DOGE: 'XDG' });
-/** Kraken public 1-minute OHLC since [from]; Kraken keeps only about the newest 12 hours of minutes. */
-async function krakenMinutes(base, from, fetcher) {
-  const res = await fetcher(`https://api.kraken.com/0/public/OHLC?pair=${KRAKEN_SPELL[base] || base}USD&interval=1&since=${Math.floor(from / 1000)}`, { headers: HEADERS });
+/** Kraken public OHLC of [ms] since [from]; Kraken keeps only the newest 720 candles of each size. */
+async function krakenMinutes(base, from, fetcher, ms = 60_000) {
+  const m = ms / 60_000;
+  if (!KRAKEN_INTERVAL.has(m)) throw new Error(`Kraken has no ${m}-minute candles`);
+  const res = await fetcher(`https://api.kraken.com/0/public/OHLC?pair=${KRAKEN_SPELL[base] || base}USD&interval=${m}&since=${Math.floor(from / 1000)}`, { headers: HEADERS });
   if (!res.ok) throw new Error(`Kraken answered HTTP ${res.status}`);
   const body = await res.json();
   if (body?.error?.length) throw new Error(`Kraken answered ${String(body.error[0]).slice(0, 80)}`);
@@ -76,7 +83,7 @@ async function krakenMinutes(base, from, fetcher) {
   return rows.map((r) => ({ t: iso(Number(r[0]) * 1000), o: Number(r[1]), h: Number(r[2]), l: Number(r[3]), c: Number(r[4]), v: Number(r[6]) }));
 }
 
-/** A crypto simulation trade's own minutes from the same public exchange the simulation read (Coinbase, Kraken fallback). */
+/** A crypto trade's own candles (its timeframe) from the public exchange its record read (Coinbase, Kraken fallback). */
 async function cryptoTradeBars(storage, trade, feed, ms, fetcher, now) {
   if (!trade.exit_time) return { bars: [], reason: 'The trade is still open, so its chart is drawn only after it closes.' };
   const cached = await storage.get(`${TRADE_BARS}${trade.id}`).catch(() => null);
@@ -84,14 +91,15 @@ async function cryptoTradeBars(storage, trade, feed, ms, fetcher, now) {
   const from = Date.parse(trade.signal_time || trade.entry_time) - BEFORE * ms;
   const to = Math.min(now, Date.parse(trade.exit_time) + (AFTER + 1) * ms);
   const product = `${feed.base}-USD`;
+  const size = ms === 60_000 ? '1-minute' : `${ms / 60_000}-minute`;
   const tried = [];
   for (const [name, load, label] of [
-    ['Coinbase', () => coinbaseMinutes(product, from, to, fetcher), `Coinbase Exchange ${product} 1-minute candles (public history, no account)`],
-    ['Kraken', () => krakenMinutes(feed.base, from, fetcher), `Kraken ${feed.base}/USD 1-minute candles (public, no account)`],
+    ['Coinbase', () => coinbaseMinutes(product, from, to, fetcher, ms), `Coinbase Exchange ${product} ${size} candles (public history, no account)`],
+    ['Kraken', () => krakenMinutes(feed.base, from, fetcher, ms), `Kraken ${feed.base}/USD ${size} candles (public, no account)`],
   ]) {
     let bars = [];
     try { bars = windowAround((await load()).filter((b) => Date.parse(b.t) + ms <= now), trade, ms); } catch (e) { tried.push(`${name}: ${String(e?.message || e).slice(0, 100)}`); continue; }
-    if (!bars.length) { tried.push(`${name} returned no 1-minute candles covering the entry`); continue; }
+    if (!bars.length) { tried.push(`${name} returned no ${size} candles covering the entry`); continue; }
     const source = { kind: 'exchange_history', label, data_type: 'historical' };
     await storage.put(`${TRADE_BARS}${trade.id}`, { bars, source, fetched_at: iso(now) }).catch(() => {});
     return { bars, source };
@@ -104,7 +112,9 @@ export async function tradeBars(storage, trade, { fetcher = fetch, now = Date.no
   const tf = trade.timeframe;
   const ms = msOf(tf);
   const market = String(trade.symbol || '').toUpperCase();
-  const crypto = trade.execution_type === 'simulation' ? minuteFeedFor(market) : null;
+  // The simulation's crypto minutes and the crypto forward paper journal (market 'crypto', BTC-USD / ETH-USD) both
+  // replay from the same public exchange history the record itself was made from.
+  const crypto = trade.execution_type === 'simulation' || trade.market === 'crypto' ? minuteFeedFor(market) : null;
   if (crypto?.kind === 'coinbase') return cryptoTradeBars(storage, trade, crypto, ms, fetcher, now);
   if (RETIRED_FEEDS.has(market)) return { bars: [], source: null, reason: `${market} was a Binance market, and Binance's public API refuses CHE's Worker region, so its minutes cannot be read. A different market's candles are never substituted.` };
   const ds = ['NQ', 'MNQ'].includes(market) ? await loadDataset(storage, market, tf).catch(() => null) : null;
@@ -197,11 +207,26 @@ export function findTrade(trades, id) {
   }) || null;
 }
 
+/**
+ * The crypto forward paper journal (market 'crypto', 5-minute BTC-USD / ETH-USD) with the same stable IDs the
+ * calendar shows. readVisualTrades reads the futures journal only, so a crypto card is looked up here.
+ */
+export async function readCryptoPaperTrades(storage) {
+  const list = (await readTrades(storage, (t) => t.environment === 'paper', { market: 'crypto' }).catch(() => [])).map((t) => fromEvidence(t, 'forward_paper'));
+  const { trades, duplicates } = assignTradeIds(list);
+  return { trades: trades.map((t) => ({ ...t, market: 'crypto' })), duplicates };
+}
+
+/** A trade by ID across every replayable record set: the visual sets first, then the crypto forward paper journal. */
+async function findAnyTrade(storage, trades, id) {
+  return findTrade(trades, id) || findTrade((await readCryptoPaperTrades(storage)).trades, id);
+}
+
 /** One trade's full evidence, read from storage. */
 export async function readTradeEvidence(storage, id, opts = {}) {
   const { trades } = await readVisualTrades(storage);
   const want = String(id || '').trim().toUpperCase();
-  const trade = findTrade(trades, id);
+  const trade = await findAnyTrade(storage, trades, id);
   if (!trade) return { ok: false, error: `No CHE trade has the ID ${want || '(none)'}.`, id: want };
   return tradeEvidenceOf(trade, await tradeBars(storage, trade, opts));
 }
@@ -259,7 +284,7 @@ export async function tradingVisualViewOf(storage, q) {
   // Trade evidence (Priority 5): one trade by its stable ID, with its own stored bars; or the list of IDs.
   if (view === 'trade') {
     const want = (q.get('id') || '').trim().toUpperCase();
-    const trade = want === 'LAST' ? lastTrade(trades) : findTrade(trades, q.get('id'));
+    const trade = want === 'LAST' ? lastTrade(trades) : await findAnyTrade(storage, trades, q.get('id'));
     if (!trade) return { ...base, ok: false, error: want === 'LAST' ? 'CHE has no closed forward paper or simulation trade yet.' : `No CHE trade has the ID ${want || '(none)'}.` };
     return { ...base, trade: tradeEvidenceOf(trade, await tradeBars(storage, trade)) };
   }

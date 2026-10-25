@@ -209,5 +209,83 @@ void main() {
       expect(await voice('build a budget tracker'), startsWith('Coding job started'));
       expect(posts.where((p) => p.$1 == '/api/chat').map((p) => p.$2['message']), contains('Start a coding job: a budget tracker'));
     });
+
+    testWidgets('Stop: a running creation build is cancelled through the queue, by button and by "stop the job", with the Worker\'s answer', (tester) async {
+      await _phone(tester);
+      final said = <String>[];
+      final cancels = <String>[];
+      var gpu = <Map<String, dynamic>>[
+        {'id': 'gpu_aaaaaaaaaaaa', 'title': 'Snowman v1: 3D model and previews', 'state': 'rendering', 'display_state': 'Creating',
+          'status_line': 'Creating on a free GitHub cloud CPU worker, stage 1 of 6 (model).', 'worker_name': 'free GitHub cloud CPU runner gha-77-1 (GitHub Actions run 77)'},
+        {'id': 'gpu_bbbbbbbbbbbb', 'title': 'Old chair', 'state': 'completed', 'display_state': 'Completed'},
+      ];
+      final codingOnlyRunning = [
+        {'id': 'j2', 'kind': 'self_development', 'title': 'Fix login', 'status': 'running', 'created_at': '2026-10-24T18:00:00Z'},
+      ];
+      final c = MockClient((req) async {
+        if (req.method == 'GET' && req.url.path == '/api/gpu') return http.Response(jsonEncode({'jobs': gpu}), 200);
+        final body = Map<String, dynamic>.from(jsonDecode(req.body) as Map);
+        if (req.url.path == '/api/chat') return http.Response('${jsonEncode({'type': 'delta', 'delta': 'Coding job: running.'})}\n', 200);
+        if (req.url.path == '/api/gpu/jobs/cancel') {
+          cancels.add('${body['id']}');
+          final j = gpu.firstWhere((x) => x['id'] == body['id']);
+          if (j['state'] == 'cancelled') return http.Response(jsonEncode({'ok': false, 'detail': 'That job is already cancelled.'}), 409);
+          gpu = [for (final x in gpu) x['id'] == body['id'] ? {...x, 'state': 'cancelled', 'display_state': 'Cancelled', 'cancelled_worker': x['worker_name']} : x];
+          return http.Response(jsonEncode({'ok': true, 'job': {'id': body['id'], 'state': 'cancelled'}}), 200);
+        }
+        return http.Response('{}', 404);
+      });
+      await tester.pumpWidget(MaterialApp(
+        home: CheCodeWorkspace(baseUrl: 'https://che.test', headers: () => const {}, client: c, onSpeak: said.add, loadJobs: () async => codingOnlyRunning),
+      ));
+      await tester.pumpAndSettle();
+      expect(said, isEmpty, reason: 'nothing is spoken on open');
+      expect(find.text('CREATION JOBS (1)'), findsOneWidget, reason: 'only waiting or running builds');
+      expect(find.byWidgetPredicate((w) => w is Semantics && (w.properties.label ?? '').startsWith('Stop creation job 1, Snowman v1')), findsOneWidget, reason: 'a VoiceOver label on Stop');
+      final voice = CheCodeWorkspace.voiceHandler!;
+      expect(await voice('read'), contains('Creation jobs: 1. Snowman v1: 3D model and previews, Creating'));
+      await _tap(tester, 'code-stop-the-job');
+      expect(cancels, ['gpu_aaaaaaaaaaaa']);
+      expect(said.last, startsWith('Stopped Snowman v1: 3D model and previews. The queue now reads cancelled, and the free GitHub cloud CPU runner gha-77-1'));
+      expect(said.last, contains('next heartbeat'));
+      expect(await voice('read'), contains('No creation jobs waiting or running.'), reason: 'refreshed from the Worker after the stop');
+      expect(await voice('read'), contains('the worker has not confirmed the stop yet'));
+      // Nothing left to stop: the running coding job is named, never claimed stopped.
+      expect(await voice('stop the job'), 'No job can be stopped from here. Coding job Fix login is running, and CHE cannot cancel a coding job once it has started.');
+      expect(cancels, hasLength(1));
+      // The worker heard the stop: Refresh reports the confirmation.
+      gpu = [for (final x in gpu) x['id'] == 'gpu_aaaaaaaaaaaa' ? {...x, 'stop_confirmed_at': '2026-10-25T01:30:10Z'} : x];
+      await voice('refresh');
+      await tester.pumpAndSettle();
+      expect(await voice('read'), contains('Snowman v1: 3D model and previews: the worker confirmed the stop'));
+    });
+
+    testWidgets('"stop the job" with two active builds reads a numbered list and stops nothing; a refused cancel is said as refused', (tester) async {
+      await _phone(tester);
+      final cancels = <String>[];
+      final gpu = [
+        {'id': 'gpu_aaaaaaaaaaaa', 'title': 'Snowman', 'state': 'rendering', 'display_state': 'Creating'},
+        {'id': 'gpu_cccccccccccc', 'title': 'Rocket', 'state': 'queued', 'display_state': 'Waiting for Resources'},
+      ];
+      final c = MockClient((req) async {
+        if (req.method == 'GET' && req.url.path == '/api/gpu') return http.Response(jsonEncode({'jobs': gpu}), 200);
+        final body = Map<String, dynamic>.from(jsonDecode(req.body) as Map);
+        if (req.url.path == '/api/chat') return http.Response('${jsonEncode({'type': 'delta', 'delta': 'No coding job.'})}\n', 200);
+        if (req.url.path == '/api/gpu/jobs/cancel') { cancels.add('${body['id']}'); return http.Response(jsonEncode({'ok': false, 'detail': 'That job is already completed.'}), 409); }
+        return http.Response('{}', 404);
+      });
+      await tester.pumpWidget(MaterialApp(
+        home: CheCodeWorkspace(baseUrl: 'https://che.test', headers: () => const {}, client: c, loadJobs: () async => const []),
+      ));
+      await tester.pumpAndSettle();
+      final voice = CheCodeWorkspace.voiceHandler!;
+      final list = await voice('stop the job');
+      expect(list, startsWith('2 jobs can be stopped, so I will not guess. 1. creation job Snowman, Creating; 2. creation job Rocket, Waiting for Resources.'));
+      expect(list, endsWith('Nothing was stopped yet.'));
+      expect(cancels, isEmpty);
+      expect(await voice('stop creation job 2'), 'CHE did not stop Rocket: That job is already completed..');
+      expect(cancels, ['gpu_cccccccccccc']);
+      expect(await voice('stop creation job 5'), 'There is no creation job 5.');
+    });
   });
 }

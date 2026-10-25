@@ -37,10 +37,11 @@ sys.path.insert(0, os.path.join(ROOT, 'scripts')); sys.path.insert(0, os.path.jo
 from che_gpu_face_preview import (FACE, device_ok, finished_model, now, probe_gpu, run, sha256, view_line,  # noqa: E402
                                   views_todo, write_json)
 import creation_params as P  # noqa: E402
+import cc0_textures  # noqa: E402
 
 BODY = os.path.join(ROOT, 'tools', 'avatar_body')
 BUILDER = {'object_model': 'objects.py', 'room_model': 'rooms.py', 'invention_model': 'inventions.py'}
-CODE = ('creation_params.py', 'objects.py', 'rooms.py', 'inventions.py', 'render_creation.py', 'render_profiles.py', 'verify_glb.py')
+CODE = ('creation_params.py', 'objects.py', 'rooms.py', 'inventions.py', 'render_creation.py', 'render_profiles.py', 'verify_glb.py', 'cc0_textures.py')
 
 
 def code_sha256():
@@ -143,6 +144,15 @@ def main():
     receipt['last_run'] = {'at': now(), 'model': 'exported' if build else ('resumed' if resumed else 'reused')}
     if build:
         print('STAGE model', flush=True)
+        # CC0 textures at job time (cc0_textures.py: Poly Haven, CC0 1.0), verified by the API's md5 and cached by
+        # SHA-256; a material that could not be fetched is recorded with its reason and built in plain colour.
+        wanted = P.textures_wanted(a.kind, spec)
+        tex = cc0_textures.fetch(wanted) if wanted else {}
+        if tex:
+            receipt['textures'] = cc0_textures.receipt_view(tex)
+            for m, r in tex.items():
+                print(f"TEXTURE {m} {'ok ' + r['asset_id'] + ' ' + r['maps']['diffuse']['sha256'][:16] + (' cached' if r.get('cached') else ' fetched') if r['status'] == 'ok' else 'unavailable: ' + r['reason'][:120]}", flush=True)
+        env['TEXTURES_JSON'] = json.dumps({m: {k: v['path'] for k, v in r['maps'].items()} for m, r in tex.items() if r['status'] == 'ok'})
         t0 = time.monotonic()
         code_, lines = run(blender + [os.path.join(BODY, BUILDER[a.kind])], dict(env, EXPORT_GLB=os.path.join(tmp, 'model.glb')), log, a.timeout)
         timings['model'] = round(time.monotonic() - t0, 1)

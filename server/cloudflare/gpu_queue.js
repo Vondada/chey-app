@@ -224,7 +224,10 @@ export class GpuQueue {
     const t = this.now();
     if (action === 'cancel') {
       if (['completed', 'failed', 'cancelled'].includes(j.state)) return { ok: false, detail: `That job is already ${j.state}.` };
-      note(j, t, 'cancelled', 'Cancelled by the owner.'); j.lease = null;
+      // A running job: its worker reads the cancel at its next heartbeat and stops Blender (che_gpu_worker.py stop_group).
+      const was = j.state === 'rendering' && j.lease ? workerName(j) : '';
+      note(j, t, 'cancelled', was ? `Cancelled by the owner while the ${was} was building it; that worker is told to stop at its next heartbeat.` : 'Cancelled by the owner.');
+      j.cancelled_worker = was || null; j.lease = null;
     } else if (action === 'retry') {
       if (!['failed', 'cancelled'].includes(j.state)) return { ok: false, detail: `Only a failed or cancelled job can be retried; this one is ${j.state}.` };
       j.failures = 0; note(j, t, 'queued', 'Queued again by the owner. Finished views in Drive are reused.');
@@ -340,6 +343,15 @@ export class GpuQueue {
     await this.touchWorker(workerId, info);
     if (!info.job_id) return { ok: true };
     const { jobs, j, gone, paused } = await this.held(workerId, info.job_id);
+    if (!j && gone) {
+      // The worker heard the cancel: recorded once, so "stop the job" can report that the worker really stopped.
+      const c = jobs.find((x) => x.id === info.job_id);
+      if (c && !c.stop_confirmed_at) {
+        c.stop_confirmed_at = iso(this.now());
+        c.history = [...(c.history || []), { at: c.stop_confirmed_at, state: 'cancelled', note: `Worker ${String(workerId).slice(0, 64)} received the stop and is ending its Blender process.` }].slice(-20);
+        await this.save(jobs);
+      }
+    }
     if (!j) return { ok: true, stop: true, reason: gone ? 'cancelled by the owner' : paused ? 'paused by the owner' : 'this worker no longer holds the job' };
     j.lease.expires_ms = this.now() + LEASE_MS; await this.save(jobs);
     return { ok: true, stop: false };
@@ -505,11 +517,17 @@ export class GpuQueue {
         if (v?.ok && THING_KINDS.includes(j.kind)) {
           j.history = [...(j.history || []), { at: iso(t), state: j.state, note: `Model verified: ${verifyLine(v)}.` }].slice(-20);
         }
+        const tex = texturesLine(j.receipt?.textures);
+        if (tex) j.history = [...(j.history || []), { at: iso(t), state: j.state, note: tex }].slice(-20);
+        const suit = j.receipt?.model?.suit;
+        if (suit?.garment_vertices_after) {
+          j.history = [...(j.history || []), { at: iso(t), state: j.state, note: `Suit smoothed: ${suit.garment_vertices_before} to ${suit.garment_vertices_after} garment vertices (${suit.method}).` }].slice(-20);
+        }
         j.progress = { views_done: [...j.views], message: `All views rendered on the ${cpu ? 'CPU' : 'GPU'}.`, pct: 100, stage: 'save' };
         j.rendered_on = { class: cpu ? 'github_cpu' : 'colab', device: cpu ? 'CPU' : String(r.nvidia_smi || r.cycles_gpus || lease?.device || 'GPU').slice(0, 80), worker_id: lease?.worker_id || null };
         note(j, t, 'completed', cpu
-          ? `Rendered on the CPU of a GitHub cloud runner${r.cores ? ` (${Number(r.cores)} cores)` : ''} with ${String(r.blender_version || 'Blender').slice(0, 40)}.`
-          : `Rendered on ${String(r.nvidia_smi || r.cycles_gpus || 'the GPU').slice(0, 80)} with ${String(r.blender_version || 'Blender').slice(0, 40)}.`);
+          ? `Rendered on the CPU of a GitHub cloud runner${r.cores ? ` (${Number(r.cores)} cores)` : ''} with ${String(r.blender_version || 'Blender').slice(0, 40)}; worker: ${workerName(j)}.`
+          : `Rendered on ${String(r.nvidia_smi || r.cycles_gpus || 'the GPU').slice(0, 80)} with ${String(r.blender_version || 'Blender').slice(0, 40)}; worker: ${workerName(j)}.`);
       }
     } else {
       // A failed run (not a failed check, not an owner cancel) re-queues the job with its checkpoints and finished
@@ -534,6 +552,12 @@ function trimReceipt(r) {
       mode: ['bust', 'full_body', 'object', 'room', 'invention'].includes(m.mode) ? m.mode : '' };
     if (m.rig && typeof m.rig === 'object') out.model.rig = trimRig(m.rig);
     if (m.verify && typeof m.verify === 'object') out.model.verify = trimVerify(m.verify);
+    // The suit's measured smoothing (mpfb_body.py SUIT line): garment vertices before and after, never a description.
+    if (m.suit && typeof m.suit === 'object') {
+      const n = (x) => (Number.isFinite(Number(x)) ? Number(x) : 0);
+      out.model.suit = { garment_vertices_before: n(m.suit.garment_vertices_before), garment_vertices_after: n(m.suit.garment_vertices_after),
+        garment_faces_before: n(m.suit.garment_faces_before), garment_faces_after: n(m.suit.garment_faces_after), method: String(m.suit.method || '').slice(0, 160) };
+    }
     if (m.layout && typeof m.layout === 'object') {
       const item = (x) => ({ item: String(x?.item || '').slice(0, 20), ...(x?.on ? { on: String(x.on).slice(0, 20) } : {}), ...(x?.reason ? { reason: String(x.reason).slice(0, 120) } : {}) });
       out.model.layout = { placed: (Array.isArray(m.layout.placed) ? m.layout.placed : []).slice(0, 12).map(item),
@@ -550,12 +574,41 @@ function trimReceipt(r) {
       triangles_total: Number(x.triangles_total) || 0, failures: list(x.failures, 8, 200), marketplace_missing: list(x.marketplace_missing, 6, 160),
       not_exported: list(x.not_exported, 6, 160) };
   }
+  if (r.textures && typeof r.textures === 'object') out.textures = trimTextures(r.textures);
   out.views = {};
   for (const [v, info] of Object.entries(r.views || {}).slice(0, 8)) {
     out.views[v] = { status: String(info?.status || ''), name: String(info?.name || ''), device: String(info?.device || '').slice(0, 200),
       render_seconds: Number(info?.render_seconds) || 0, sha256: String(info?.sha256 || '').slice(0, 64), rendered_at: String(info?.rendered_at || '') };
   }
   return out;
+}
+
+/**
+ * The CC0 textures a job fetched (tools/avatar_body/cc0_textures.py): per material, where it came from, its license and
+ * each map's SHA-256 and size, or why none was used. Kept small and typed; the bytes are inside the GLB.
+ */
+export function trimTextures(t) {
+  const out = {};
+  for (const [k, v] of Object.entries(t || {}).slice(0, 8)) {
+    if (!/^[a-z]{2,12}$/.test(k) || !v || typeof v !== 'object') continue;
+    const maps = {};
+    for (const [mk, mv] of Object.entries(v.maps || {}).slice(0, 4)) {
+      if (/^[a-z]{2,12}$/.test(mk) && mv && typeof mv === 'object') maps[mk] = { sha256: String(mv.sha256 || '').slice(0, 64), bytes: Number(mv.bytes) || 0, url: String(mv.url || '').slice(0, 300) };
+    }
+    out[k] = { status: v.status === 'ok' ? 'ok' : 'unavailable', source: String(v.source || '').slice(0, 60), license: String(v.license || '').slice(0, 60),
+      license_url: String(v.license_url || '').slice(0, 200), asset_id: String(v.asset_id || '').slice(0, 80), asset_page: String(v.asset_page || '').slice(0, 200),
+      cached: v.cached === true, maps, reason: String(v.reason || '').slice(0, 200) };
+  }
+  return out;
+}
+
+/** "Textures: Poly Haven wood_planks (CC0 1.0)" for the completion note, or '' when the job used none. */
+export function texturesLine(t) {
+  const ok = Object.entries(t || {}).filter(([, v]) => v?.status === 'ok');
+  const off = Object.entries(t || {}).filter(([, v]) => v?.status !== 'ok');
+  if (!ok.length && !off.length) return '';
+  return [ok.length ? `Textures: ${ok.map(([k, v]) => `${k} from ${v.source || 'unknown source'} ${v.asset_id} (${v.license || 'license not recorded'})`).join('; ')}.` : '',
+    off.length ? `No ${off.map(([k]) => k).join(', ')} texture: ${off[0][1]?.reason || 'unavailable'}; plain colour used.` : ''].filter(Boolean).join(' ');
 }
 
 /** The static model check as the runner reported it (verify_glb.py --static), kept small and typed. */
@@ -603,6 +656,25 @@ export function rigLine(rig) {
     + `${rig.morphs?.length ? `, ${rig.morphs.length} face shape${rig.morphs.length === 1 ? '' : 's'}` : ''}`;
 }
 
+/**
+ * The worker that holds or held a job, in words, for every notice and receipt (creation-gaps, 2026-10-25: the live
+ * creation check named it "?"). A finished job has no lease, so completion's rendered_on is read too; a job no worker
+ * ever held, or one recorded before workers were named, says "unknown worker", never a question mark.
+ *   github_cpu gha-<run>-<attempt>  -> "free GitHub cloud CPU runner gha-123-1 (GitHub Actions run 123)"
+ *   colab colab-<hash> on a T4      -> "Colab GPU worker colab-ab12 (Tesla T4)"
+ */
+export function workerName(j) {
+  const id = String(j?.lease?.worker_id || j?.rendered_on?.worker_id || '').slice(0, 64);
+  const cls = j?.lease?.class || j?.rendered_on?.class || (/^gha-/.test(id) ? 'github_cpu' : /^colab-/.test(id) ? 'colab' : '');
+  if (!id && !cls) return 'unknown worker';
+  if (cls === 'github_cpu') {
+    const run = /^gha-(\d+)-/.exec(id)?.[1];
+    return `free GitHub cloud CPU runner ${id || '(id not recorded)'}${run ? ` (GitHub Actions run ${run})` : ''}`;
+  }
+  const dev = String(j?.lease?.device || (j?.rendered_on?.device !== 'GPU' ? j?.rendered_on?.device : '') || '').split(',')[0].trim();
+  return `Colab GPU worker ${id || '(id not recorded)'}${dev && !/^cpu$/i.test(dev) ? ` (${dev.slice(0, 60)})` : ''}`;
+}
+
 export function publicJob(j) {
   const { lease, ...rest } = j;
   const model = j.model ? { bytes: j.model.bytes, sha256: j.model.sha256, uploaded_at: j.model.uploaded_at, url: `/api/gpu/jobs/${j.id}/model.glb` } : null;
@@ -615,7 +687,7 @@ export function publicJob(j) {
   // The measured model (objects and rooms): counted as verified only once the job completed with it.
   const mv = j.receipt?.model?.verify;
   const measured = mv ? { ok: mv.ok === true && j.state === 'completed', line: verifyLine(mv), size_m: mv.bbox_m?.size || [], triangles: mv.triangles, materials: (mv.materials || []).length } : null;
-  return { ...rest, kind: j.kind || 'face_preview', model, rig, exports, quick_previews: { ...(j.quick_previews || {}) }, worker_id: lease?.worker_id || null, worker_class: lease?.class || null,
+  return { ...rest, kind: j.kind || 'face_preview', model, rig, exports, quick_previews: { ...(j.quick_previews || {}) }, worker_id: lease?.worker_id || j.rendered_on?.worker_id || null, worker_class: lease?.class || j.rendered_on?.class || null, worker_name: workerName(j),
     lease_expires: lease ? iso(lease.expires_ms) : null, priority: j.priority || 'normal', requires: { gpu: needOf(j) }, measured,
     checkpoints: { ...(j.checkpoints || {}) }, ...displayOf(j) };
 }
@@ -648,7 +720,7 @@ export function displayOf(j) {
     return { display_state: 'Waiting for Resources', status_line: `Waiting since ${hhmm(j.created_at)} UTC. ${why}${kept}${attempt}` };
   }
   if (j.state === 'completed') {
-    const on = j.rendered_on?.class === 'github_cpu' ? 'on a GitHub cloud CPU' : j.rendered_on ? `on ${j.rendered_on.device}` : 'on the GPU';
+    const on = j.rendered_on ? `on the ${workerName(j)}` : 'on an unknown worker';
     return { display_state: 'Completed', status_line: `Completed at ${hhmm(last?.at)} UTC ${on}: ${views} view${views === 1 ? '' : 's'}${j.model ? `, a ${Math.round(j.model.bytes / 1024)} KB 3D model` : ''}.` };
   }
   if (j.state === 'failed') return { display_state: 'Failed', status_line: `Failed after ${j.failures || 0} attempt${j.failures === 1 ? '' : 's'}: ${String(last?.note || j.error || 'no reason recorded').slice(0, 200)}` };

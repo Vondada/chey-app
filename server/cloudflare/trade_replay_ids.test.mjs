@@ -7,7 +7,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { chartMarkers } from './trading_chart.js';
 import { STATE_KEY } from './strategy_sim.js';
-import { NO_DATA, readTradeEvidence } from './trade_evidence.js';
+import { NO_DATA, readCryptoPaperTrades, readTradeEvidence } from './trade_evidence.js';
+import { tradingCalendar } from './che_calendars.js';
 import { readVisualTrades } from './trading_visual.js';
 
 function memStorage() {
@@ -107,4 +108,38 @@ test('a forward paper marker carries the ledger ID too; an open simulation trade
   const ms = chartMarkers({ journal, symbol: 'MNQ' });
   assert.equal(ms.length, 2);
   assert.ok(ms.every((m) => /^T[0-9A-Z]{13}$/.test(m.trade_id) && m.trade_id === ms[0].trade_id));
+});
+
+// A closed BTC-USD crypto forward paper trade as crypto_markets.js journals it (market 'crypto', 5-minute bars).
+const BTC_PAPER = {
+  environment: 'paper', market: 'crypto', symbol: 'BTC-USD', contract: 'BTC', portfolio: 'crypto|orb|BTC', strategy: 'orb', side: 'long', qty: 0.01,
+  data: { resolution: '5m', label: 'Coinbase Exchange BTC-USD 5-minute' },
+  signal: { time: '2026-10-24T14:25:00.000Z', why: 'range break', ref: 67000 },
+  entry: { time: '2026-10-24T14:30:00.000Z', raw: 67010, fill: 67020 }, exit: { time: '2026-10-24T15:10:00.000Z', raw: 67400, fill: 67390, reason: 'target' },
+  stop: 66800, target: 67400, net_pnl: 2.9, r_net: 1.6, result: 'win',
+};
+
+test('a crypto forward paper trade opens by its ledger ID and draws Coinbase 5-minute candles with its markers', async () => {
+  const storage = memStorage();
+  await storage.put(`evr:paper:${BTC_PAPER.portfolio}:${BTC_PAPER.entry.time}`, BTC_PAPER);
+  const { trades } = await readCryptoPaperTrades(storage);
+  assert.equal(trades.length, 1);
+  const urls = [];
+  const fetcher = async (u) => {
+    urls.push(String(u));
+    const t0 = Date.parse('2026-10-24T11:00:00Z') / 1000;
+    return new Response(JSON.stringify(Array.from({ length: 60 }, (_, i) => [t0 + i * 300, 66900 + i, 67100 + i, 67000 + i, 67050 + i, 5]).reverse()));
+  };
+  const e = await readTradeEvidence(storage, trades[0].id, { fetcher, now: Date.parse('2026-10-24T18:00:00Z') });
+  assert.equal(e.ok, true, e.error);
+  assert.equal(e.label, 'FORWARD PAPER');
+  assert.deepEqual([e.symbol, e.timeframe, e.entry.price, e.exit.price, e.stop, e.target], ['BTC-USD', '5m', 67020, 67390, 66800, 67400]);
+  assert.ok(e.bars.length > 0, e.no_data_reason);
+  assert.match(urls[0], /BTC-USD\/candles\?granularity=300/, 'the record\'s own 5-minute size, never 1-minute bars relabelled');
+  assert.match(e.bars_source.label, /Coinbase Exchange BTC-USD 5-minute candles/);
+  // The calendar's day page offers it for replay.
+  const day = await tradingCalendar(storage, { day: '2026-10-24', source: 'paper', env: { CHE_OWNER_TIMEZONE: 'UTC' } });
+  const row = JSON.stringify(day).includes(trades[0].id) ? (day.trades || day.day?.trades || []).find((t) => t.id === trades[0].id) : null;
+  assert.ok(row, JSON.stringify(day).slice(0, 400));
+  assert.equal(row.replay, true);
 });

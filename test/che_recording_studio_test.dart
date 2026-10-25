@@ -67,6 +67,43 @@ class FakeAudio implements CheStudioAudio {
 
   @override
   Future<Map<String, dynamic>> route() async => {'route': routeKind};
+
+  /// Null: this build has no encoder (like an installed app from before the native code shipped).
+  Uint8List Function(Uint8List wav)? m4a;
+  Uint8List Function(Uint8List bytes, String ext)? decoder;
+  final monitorCalls = <String>[];
+  Map<String, Object>? monitorFx;
+
+  @override
+  Future<Uint8List> encodeM4a(Uint8List wav) async {
+    if (m4a == null) throw CheAudioUnavailable('M4A export needs the next CHE app build.');
+    return m4a!(wav);
+  }
+
+  @override
+  Future<Uint8List> decodeToWav(Uint8List bytes, String ext) async {
+    if (decoder == null) throw CheAudioUnavailable('Importing ${ext.toUpperCase()} needs the next CHE app build.');
+    return decoder!(bytes, ext);
+  }
+
+  @override
+  Future<Map<String, dynamic>> startMonitor(Map<String, Object> effects, {bool allowSpeaker = false}) async {
+    monitorCalls.add('start');
+    monitorFx = effects;
+    if (routeKind == 'speaker' && !allowSpeaker) {
+      return {'monitoring': false, 'reason': 'speaker', 'message': 'Live monitoring is off because sound is coming from the iPhone speaker.'};
+    }
+    return {'monitoring': true};
+  }
+
+  @override
+  Future<void> updateMonitor(Map<String, Object> effects) async {
+    monitorCalls.add('update');
+    monitorFx = effects;
+  }
+
+  @override
+  Future<void> stopMonitor() async => monitorCalls.add('stop');
 }
 
 Future<CheStudioController> studio(Directory dir, FakeAudio audio) async {
@@ -378,13 +415,75 @@ void main() {
       expect(again.songs.map((s) => s.title), contains('Late night idea'));
     });
 
+    test('M4A export uses the iPhone encoder; without it CHE says so and saves a WAV; MP3 export is refused honestly', () async {
+      final audio = FakeAudio();
+      final c = await studio(dir, audio);
+      c.rename('Demo');
+      await c.importWav(cheEncodeWav([sine(220, 1)], sr), name: 'Beat');
+      final old = await c.export(format: 'm4a');
+      expect(old, contains('M4A export needs the next CHE app build'));
+      expect(old, contains('saved a WAV instead'));
+      expect(File('${dir.path}/Exports/Demo.wav').existsSync(), isTrue);
+      Uint8List? sent;
+      audio.m4a = (wav) {
+        sent = wav;
+        return Uint8List.fromList([0, 0, 0, 0x20, 0x66, 0x74, 0x79, 0x70, 0x4d, 0x34, 0x41, 0x20]); // an "ftypM4A " box
+      };
+      final now = await c.export(format: 'm4a');
+      expect(now, contains('as an M4A (AAC, 256 kbps)'));
+      expect(cheDecodeWav(sent!).length, sr, reason: 'the encoder is given the rendered song as a WAV');
+      expect(File('${dir.path}/Exports/Demo.m4a').readAsBytesSync().sublist(4, 8), [0x66, 0x74, 0x79, 0x70]);
+      final mp3 = await cheStudioVoice(c, 'export it as an mp3');
+      expect(mp3, contains('MP3 export is not available'));
+      expect(File('${dir.path}/Exports/Demo.mp3').existsSync(), isFalse);
+      expect(await cheStudioVoice(c, 'export as m4a'), contains('as an M4A'));
+    });
+
+    test('MP3 and M4A imports go through the iPhone decoder; an older build says so; unknown types are refused', () async {
+      final audio = FakeAudio();
+      final c = await studio(dir, audio);
+      expect(await c.importAudio(Uint8List(10), name: 'Song', ext: 'mp3'), contains('Importing MP3 needs the next CHE app build'));
+      String? askedExt;
+      audio.decoder = (bytes, ext) {
+        askedExt = ext;
+        return cheEncodeWav([sine(330, 1.5)], 48000);
+      };
+      final said = await c.importAudio(Uint8List(10), name: 'Song', ext: 'MP3');
+      expect(askedExt, 'mp3');
+      expect(said, contains('Imported "Song"'));
+      expect(said, contains('mono 48000 Hz'));
+      expect(await c.importAudio(Uint8List(10), name: 'Doc', ext: 'pdf'), contains('not .pdf'));
+    });
+
+    test('live monitoring: refused on the iPhone speaker (feedback), started with headphones during a take, stopped with it', () async {
+      final audio = FakeAudio(routeKind: 'speaker', take: cheEncodeWav([sine(300, 2)], sr));
+      final c = await studio(dir, audio);
+      expect(await cheStudioVoice(c, 'turn on live monitoring'), contains('iPhone speaker, which would howl'));
+      final refused = await c.record();
+      expect(refused, contains('Live monitoring is off because sound is coming from the iPhone speaker'));
+      expect(c.monitoring, isFalse);
+      await c.stopRecording();
+      audio.routeKind = 'headphones';
+      c.setEffect('reverb', 0.4);
+      final started = await c.record();
+      expect(started, contains('Live monitoring on through'));
+      expect(c.monitoring, isTrue);
+      expect(audio.monitorFx!['reverb'], 0.4);
+      c.setEffect('delay', 0.2);
+      expect(audio.monitorCalls.last, 'update', reason: 'changing an effect while monitoring updates what he hears');
+      expect(audio.monitorFx!['delay'], 0.2);
+      await c.stopRecording();
+      expect(audio.monitorCalls.last, 'stop');
+      expect(c.monitoring, isFalse);
+      expect(await cheStudioVoice(c, 'stop monitoring'), 'Live monitoring off.');
+    });
+
     test('export writes a real WAV of the whole song to Exports', () async {
       final c = await studio(dir, FakeAudio());
       c.rename('Demo');
       await c.importWav(cheEncodeWav([sine(220, 2)], sr), name: 'Beat');
       final said = await c.export();
       expect(said, contains('Exported "Demo" as a WAV'));
-      expect(said, contains('MP3 and M4A export are not available yet'));
       final f = File('${dir.path}/Exports/Demo.wav');
       final back = cheDecodeWav(f.readAsBytesSync());
       expect(back.channels.length, 2);

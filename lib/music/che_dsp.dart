@@ -212,11 +212,54 @@ double cheReduceNoise(Float32List x, {double depthDb = 18, int rate = cheStudioR
   return floor;
 }
 
-/// YIN fundamental frequency of one window, or 0 when nothing pitched is there.
-double cheDetectPitch(Float32List x, int from, int size, {int rate = cheStudioRate, double minHz = 70, double maxHz = 1000, double threshold = 0.15}) {
-  final maxLag = (rate / minHz).floor(), minLag = (rate / maxHz).floor();
-  final w = math.min(size, x.length - from) - maxLag;
-  if (w < 64) return 0;
+/// YIN's difference function d(tau) = sum over j < [w] of (x[from+j] - x[from+j+tau])^2, for tau 1..[maxLag].
+///
+/// Computed exactly as E0 + E(tau) - 2 r(tau): the two energies from a running sum, the cross-correlation r from one
+/// FFT of both real windows packed as one complex signal and one inverse FFT. The direct double loop
+/// ([cheYinDifferenceDirect]) was 96% of the Recording Studio's effect time: about 26 s to pitch-correct a 3-minute take
+/// on this machine, against under 2 s this way (2026-10-25 benchmark). Results match the direct form to float rounding.
+Float64List cheYinDifference(Float32List x, int from, int w, int maxLag) {
+  final len = w + maxLag; // samples read: x[from .. from + len)
+  var n = 1;
+  while (n < len) {
+    n <<= 1;
+  }
+  // a = the first w samples (zero-padded), b = all len samples. No wrap-around: j + tau < len <= n.
+  final re = Float64List(n), im = Float64List(n);
+  for (var j = 0; j < len; j++) {
+    final v = x[from + j].toDouble();
+    if (j < w) re[j] = v;
+    im[j] = v;
+  }
+  _cheFft(re, im, false);
+  // Unpack the spectra A and B of the two real signals, form conj(A) * B, and transform back.
+  final pr = Float64List(n), pi = Float64List(n);
+  for (var k = 0; k < n; k++) {
+    final k2 = (n - k) & (n - 1);
+    final ar = 0.5 * (re[k] + re[k2]), ai = 0.5 * (im[k] - im[k2]);
+    final br = 0.5 * (im[k] + im[k2]), bi = -0.5 * (re[k] - re[k2]);
+    pr[k] = ar * br + ai * bi;
+    pi[k] = ar * bi - ai * br;
+  }
+  _cheFft(pr, pi, true);
+  var e0 = 0.0;
+  for (var j = 0; j < w; j++) {
+    final v = x[from + j];
+    e0 += v * v;
+  }
+  final d = Float64List(maxLag + 1);
+  var et = e0; // energy of x[from+tau .. from+tau+w)
+  for (var tau = 1; tau <= maxLag; tau++) {
+    final out = x[from + tau - 1], inn = x[from + tau + w - 1];
+    et += inn * inn - out * out;
+    final v = e0 + et - 2 * pr[tau] / n;
+    d[tau] = v > 0 ? v : 0; // rounding can dip a true zero just below it
+  }
+  return d;
+}
+
+/// The direct O(w * maxLag) form of [cheYinDifference], kept as its reference in tests.
+Float64List cheYinDifferenceDirect(Float32List x, int from, int w, int maxLag) {
   final d = Float64List(maxLag + 1);
   for (var tau = 1; tau <= maxLag; tau++) {
     var s = 0.0;
@@ -226,6 +269,59 @@ double cheDetectPitch(Float32List x, int from, int size, {int rate = cheStudioRa
     }
     d[tau] = s;
   }
+  return d;
+}
+
+final _cheTwiddles = <int, (Float64List, Float64List)>{};
+
+/// In-place iterative radix-2 complex FFT (length a power of two); [inverse] leaves the 1/n scale to the caller.
+void _cheFft(Float64List re, Float64List im, bool inverse) {
+  final n = re.length;
+  for (var i = 1, j = 0; i < n; i++) {
+    var bit = n >> 1;
+    for (; (j & bit) != 0; bit >>= 1) {
+      j ^= bit;
+    }
+    j ^= bit;
+    if (i < j) {
+      final tr = re[i], ti = im[i];
+      re[i] = re[j];
+      im[i] = im[j];
+      re[j] = tr;
+      im[j] = ti;
+    }
+  }
+  final (cosT, sinT) = _cheTwiddles.putIfAbsent(n, () {
+    final c = Float64List(n ~/ 2), s = Float64List(n ~/ 2);
+    for (var k = 0; k < n ~/ 2; k++) {
+      c[k] = math.cos(2 * math.pi * k / n);
+      s[k] = -math.sin(2 * math.pi * k / n);
+    }
+    return (c, s);
+  });
+  final sign = inverse ? -1.0 : 1.0;
+  for (var size = 2; size <= n; size <<= 1) {
+    final half = size >> 1, step = n ~/ size;
+    for (var start = 0; start < n; start += size) {
+      for (var k = 0; k < half; k++) {
+        final wr = cosT[k * step], wi = sign * sinT[k * step];
+        final a = start + k, b = a + half;
+        final xr = re[b] * wr - im[b] * wi, xi = re[b] * wi + im[b] * wr;
+        re[b] = re[a] - xr;
+        im[b] = im[a] - xi;
+        re[a] += xr;
+        im[a] += xi;
+      }
+    }
+  }
+}
+
+/// YIN fundamental frequency of one window, or 0 when nothing pitched is there.
+double cheDetectPitch(Float32List x, int from, int size, {int rate = cheStudioRate, double minHz = 70, double maxHz = 1000, double threshold = 0.15}) {
+  final maxLag = (rate / minHz).floor(), minLag = (rate / maxHz).floor();
+  final w = math.min(size, x.length - from) - maxLag;
+  if (w < 64) return 0;
+  final d = cheYinDifference(x, from, w, maxLag);
   var running = 0.0;
   final cmnd = Float64List(maxLag + 1)..[0] = 1;
   for (var tau = 1; tau <= maxLag; tau++) {
@@ -281,6 +377,10 @@ double cheNearestNoteHz(double hz, {int key = 0, String scale = 'chromatic'}) {
   return cheHzOf(best);
 }
 
+/// How far past the midpoint between two notes (in semitones) the voice must go before the correction changes note
+/// at once; nearer than that, it changes only if the voice stays there.
+const cheNoteSwitchSemitones = 0.3;
+
 /// What pitch correction did to one take.
 class ChePitchReport {
   const ChePitchReport(this.frames, this.pitched, this.meanCorrectionCents);
@@ -293,19 +393,50 @@ class ChePitchReport {
 /// toward the nearest note of the scale by [strength] (1 = hard snap, 0.5 = natural), and TD-PSOLA re-pitches it:
 /// two-period grains taken one input period apart are laid down one corrected period apart, so the pitch moves and
 /// the timing does not. Unpitched frames (breaths, consonants) are copied through unchanged.
+///
+/// Note hysteresis keeps a held note on one target: a sung vibrato that swings past the midpoint between two notes
+/// would otherwise flip the correction between them inside one note. The target moves to another note only when the
+/// voice is clearly nearer it ([cheNoteSwitchSemitones] beyond the midpoint) or stays nearer it for about 70 ms.
 ChePitchReport chePitchCorrect(Float32List x, {double strength = 1, int key = 0, String scale = 'chromatic', int rate = cheStudioRate}) {
-  const win = 2048, hop = 512, flat = 256;
+  const win = 2048, hop = 512, flat = 256, holdFrames = 6;
   if (x.length < win * 2 || strength <= 0) return const ChePitchReport(0, 0, 0);
   // Pitch and correction ratio per frame.
   final frames = (x.length / hop).ceil();
   final hzAt = Float64List(frames), ratioAt = Float64List(frames)..fillRange(0, frames, 1);
   var pitched = 0;
   var cents = 0.0;
+  double? held; // the note (MIDI) the current sung note is being corrected to
+  double? pending;
+  var pendingFrames = 0;
   for (var f = 0; f < frames; f++) {
-    final start = math.min(f * hop, math.max(0, x.length - win));
+    // The analysis window is centred on the frame it corrects. Starting it at the frame measured the pitch about
+    // 20 ms late, which on a sung vibrato (5 to 6 Hz) left most of the wobble uncorrected.
+    final start = (f * hop + hop ~/ 2 - win ~/ 2).clamp(0, math.max(0, x.length - win)).toInt();
     final hz = cheDetectPitch(x, start, win, rate: rate);
-    if (hz <= 0) continue;
-    final target = cheNearestNoteHz(hz, key: key, scale: scale);
+    if (hz <= 0) {
+      held = null; // a breath or consonant ends the note
+      pending = null;
+      pendingFrames = 0;
+      continue;
+    }
+    final m = cheMidiOf(hz);
+    final nearest = cheMidiOf(cheNearestNoteHz(hz, key: key, scale: scale));
+    if (held == null) {
+      held = nearest;
+    } else if (nearest != held) {
+      final clearly = (m - held).abs() - (m - nearest).abs() > 2 * cheNoteSwitchSemitones;
+      pendingFrames = pending == nearest ? pendingFrames + 1 : 1;
+      pending = nearest;
+      if (clearly || pendingFrames >= holdFrames) {
+        held = nearest;
+        pending = null;
+        pendingFrames = 0;
+      }
+    } else {
+      pending = null;
+      pendingFrames = 0;
+    }
+    final target = cheHzOf(held);
     final r = math.pow(target / hz, strength.clamp(0, 1)).toDouble();
     hzAt[f] = hz;
     ratioAt[f] = r;
@@ -349,6 +480,58 @@ ChePitchReport chePitchCorrect(Float32List x, {double strength = 1, int key = 0,
   return ChePitchReport(frames, pitched, pitched == 0 ? 0 : cents / pitched);
 }
 
+/// What the de-esser did: the share of the take it turned down and the deepest cut.
+class CheDeEssReport {
+  const CheDeEssReport(this.reducedFraction, this.maxReductionDb);
+  final double reducedFraction;
+  final double maxReductionDb;
+}
+
+/// Split-band de-esser. The take is split at [splitHz] by a Linkwitz-Riley crossover (two Butterworth sections per
+/// band, whose low and high bands add back to the original level at every frequency; subtracting a single high-pass
+/// from the original would not, because of its phase shift). A detector band-pass at [freqHz] (the "s" and "sh"
+/// region) is compared with the whole signal: when the sibilant band rises to within [amount]-dependent dB of the
+/// full level, and the signal is louder than [minLevelDb] (so room hiss is left alone), only the high band is turned
+/// down (at most 14 dB times [amount]). Vowels, whose energy sits far below the sibilant band, keep their level.
+/// [amount] 0 leaves the take alone, sample for sample.
+CheDeEssReport cheDeEss(Float32List x,
+    {double amount = 0.5, double freqHz = 6500, double splitHz = 4500, double minLevelDb = -45, int rate = cheStudioRate}) {
+  final a = amount.clamp(0, 1).toDouble();
+  if (a <= 0 || x.isEmpty) return const CheDeEssReport(0, 0);
+  final high = Float32List.fromList(x), low = Float32List.fromList(x);
+  CheBiquad.highPass(splitHz, rate: rate).run(high);
+  CheBiquad.highPass(splitHz, rate: rate).run(high);
+  CheBiquad.lowPass(splitHz, rate: rate).run(low);
+  CheBiquad.lowPass(splitHz, rate: rate).run(low);
+  final gate = cheGain(minLevelDb);
+  final det = Float32List.fromList(x);
+  CheBiquad.bandPass(freqHz, q: 0.8, rate: rate).run(det);
+  final att = math.exp(-1 / (rate * 0.001)), rel = math.exp(-1 / (rate * 0.04));
+  // Sibilant when the detector band is within this many dB of the whole signal's level.
+  final relThreshold = -14 + 8 * (1 - a);
+  final maxCut = 14 * a;
+  var envS = 0.0, envF = 0.0, g = 1.0;
+  var reduced = 0, deepest = 0.0;
+  final gAtt = math.exp(-1 / (rate * 0.0005)), gRel = math.exp(-1 / (rate * 0.03));
+  for (var i = 0; i < x.length; i++) {
+    final s = det[i].abs(), f = x[i].abs();
+    envS = s > envS ? att * envS + (1 - att) * s : rel * envS + (1 - rel) * s;
+    envF = f > envF ? att * envF + (1 - att) * f : rel * envF + (1 - rel) * f;
+    var cutDb = 0.0;
+    if (envF > gate) {
+      final over = cheDb(envS) - cheDb(envF) - relThreshold;
+      if (over > 0) cutDb = math.min(maxCut, over * 0.75 + 3 * a);
+    }
+    final target = cheGain(-cutDb);
+    g = target < g ? gAtt * g + (1 - gAtt) * target : gRel * g + (1 - gRel) * target;
+    if (g < 0.97) reduced++;
+    final d = -cheDb(g);
+    if (d > deepest) deepest = d;
+    x[i] = low[i] + high[i] * g;
+  }
+  return CheDeEssReport(reduced / x.length, deepest);
+}
+
 /// Equal-power pan of a mono plane into left/right, [pan] -1 (left) .. 1 (right).
 (double, double) chePanGains(double pan) {
   final a = (pan.clamp(-1, 1) + 1) * math.pi / 4;
@@ -359,10 +542,15 @@ ChePitchReport chePitchCorrect(Float32List x, {double strength = 1, int key = 0,
 
 final _rng = math.Random(7);
 
-Float32List _noise(int n) => Float32List.fromList([for (var i = 0; i < n; i++) _rng.nextDouble() * 2 - 1]);
+Float32List _noise(int n, [math.Random? rng]) {
+  final r = rng ?? _rng;
+  return Float32List.fromList([for (var i = 0; i < n; i++) r.nextDouble() * 2 - 1]);
+}
 
-/// One drum hit. Instruments: kick, snare, clap, hat, open_hat, perc, bass (an 808-style tone at [hz]).
-Float32List cheDrum(String instrument, {int rate = cheStudioRate, double hz = 55}) {
+/// One drum hit. Instruments: kick, snare, clap, hat, open_hat, perc, bass (an 808-style tone at [hz]). With [rng],
+/// the noise in snares, claps and hats comes from it, so a seeded render is identical every time.
+Float32List cheDrum(String instrument, {int rate = cheStudioRate, double hz = 55, math.Random? rng}) {
+  Float32List makeNoise(int n) => _noise(n, rng);
   switch (instrument) {
     case 'kick':
       final n = (rate * 0.45).round();
@@ -377,7 +565,7 @@ Float32List cheDrum(String instrument, {int rate = cheStudioRate, double hz = 55
       return out;
     case 'snare':
       final n = (rate * 0.22).round();
-      final noise = _noise(n);
+      final noise = makeNoise(n);
       CheBiquad.highPass(1200).run(noise);
       return Float32List.fromList([
         for (var i = 0; i < n; i++)
@@ -385,7 +573,7 @@ Float32List cheDrum(String instrument, {int rate = cheStudioRate, double hz = 55
       ]);
     case 'clap':
       final n = (rate * 0.25).round();
-      final noise = _noise(n);
+      final noise = makeNoise(n);
       CheBiquad.bandPass(1300, q: 1.2).run(noise);
       return Float32List.fromList([
         for (var i = 0; i < n; i++)
@@ -395,7 +583,7 @@ Float32List cheDrum(String instrument, {int rate = cheStudioRate, double hz = 55
     case 'open_hat':
       final decay = instrument == 'hat' ? 60.0 : 9.0;
       final n = (rate * (instrument == 'hat' ? 0.06 : 0.35)).round();
-      final noise = _noise(n);
+      final noise = makeNoise(n);
       CheBiquad.highPass(7000).run(noise);
       return Float32List.fromList([for (var i = 0; i < n; i++) noise[i] * 0.5 * math.exp(-i / rate * decay)]);
     case 'perc':

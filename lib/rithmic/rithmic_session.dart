@@ -192,3 +192,86 @@ Future<RithmicResume> cheRithmicResume({
 }
 
 bool _resuming = false;
+
+/// One step of "Diagnose Rithmic": what was checked, whether it passed, and the plain reason.
+class RithmicCheck {
+  const RithmicCheck(this.step, this.ok, this.detail);
+  final String step;
+  final bool? ok; // null: not run, because an earlier step decides it
+  final String detail;
+}
+
+/// "Diagnose Rithmic": the four things that decide whether the session comes back, in order, each with its real
+/// result: a saved login, the automatic reconnect setting, the socket to Rithmic's gateway, and Rithmic's answer to
+/// the login. Uses the same route finder and client as Connect. Never shows or sends the password; the username is
+/// masked. A test session opened here is closed again, so nothing changes; a live session is left untouched.
+Future<List<RithmicCheck>> cheRithmicDiagnose({
+  CheRithmicLive? live,
+  RithmicCredentialStore store = const CheVaultCredentialStore(),
+  Future<SharedPreferences> Function()? preferences,
+  RithmicRouteFinder? routeFinder,
+  RithmicFeedFactory? feedFactory,
+  DateTime Function()? now,
+}) async {
+  final session = live ?? CheRithmicLive.instance;
+  final prefs = await (preferences?.call() ?? SharedPreferences.getInstance());
+  final saved = await store.find(kRithmicVaultSite);
+  final hasLogin = saved != null && saved.username.isNotEmpty && saved.password.isNotEmpty;
+  final masked = hasLogin ? '${saved.username.substring(0, saved.username.length < 2 ? saved.username.length : 2)}••••' : '';
+  final auto = prefs.getBool(kRithmicAutoConnectKey) == true;
+  final out = <RithmicCheck>[
+    RithmicCheck('Saved login', hasLogin, hasLogin ? 'A Rithmic login ($masked) is saved in the vault on this phone.' : 'No Rithmic login is saved on this phone. Open Rithmic and sign in once.'),
+    RithmicCheck('Automatic reconnect', auto, auto ? 'On: CHE reconnects by itself when it opens.' : 'Off: Disconnect was pressed, a login was refused, or no session was started yet. Press Connect to turn it on.'),
+  ];
+  if (session.attached) {
+    return [
+      ...out,
+      RithmicCheck('Socket to Rithmic', true, 'A session is live now (${session.symbol} on ${session.exchange}); it was not touched.'),
+      const RithmicCheck('Login response', true, 'Rithmic accepted the login for the live session.'),
+    ];
+  }
+  if (!hasLogin) {
+    return [...out, const RithmicCheck('Socket to Rithmic', null, 'Not tried: there is no saved login to test.'), const RithmicCheck('Login response', null, 'Not tried.')];
+  }
+  try {
+    final opened = await cheRithmicOpen(
+      user: saved.username,
+      password: saved.password,
+      settings: RithmicSettings.fromPrefs(prefs),
+      routeFinder: routeFinder,
+      feedFactory: feedFactory,
+      now: now,
+    );
+    await opened.feed.close();
+    return [
+      ...out,
+      RithmicCheck('Socket to Rithmic', true, 'Reached ${opened.route.system} through ${opened.route.gatewayName}.'),
+      RithmicCheck('Login response', true, 'Rithmic accepted the saved login.${auto ? '' : ' The automatic reconnect is off, so press Connect once to stay connected.'}'),
+    ];
+  } on RithmicException catch (e) {
+    final socket = e.kind == RithmicFailure.connection || e.kind == RithmicFailure.gatewayDiscovery || e.kind == RithmicFailure.systemUnavailable;
+    return [
+      ...out,
+      RithmicCheck('Socket to Rithmic', !socket, socket ? e.message : 'The gateway answered.'),
+      RithmicCheck('Login response', socket ? null : false, socket ? 'Not reached: the socket did not open.' : e.message),
+    ];
+  } catch (_) {
+    return [...out, const RithmicCheck('Socket to Rithmic', false, 'Could not reach Rithmic (offline, or the gateway is down).'), const RithmicCheck('Login response', null, 'Not reached.')];
+  }
+}
+
+/// "Diagnose Rithmic", "check my Rithmic connection", "why isn't Rithmic connecting".
+bool cheRithmicDiagnoseCommand(String message) => RegExp(
+      r"\b(?:diagnose|troubleshoot|test|check)\s+(?:my\s+|the\s+)?rithmic\b|\bwhy\s+(?:is(?:n'?t| not)|won'?t|doesn'?t|does not)\s+rithmic\s+(?:connect|work)",
+      caseSensitive: false,
+    ).hasMatch(message.replaceAll('’', "'"));
+
+/// The spoken and shown summary: the first failing step, then each step in order.
+String cheRithmicDiagnosisText(List<RithmicCheck> checks) {
+  final bad = checks.where((c) => c.ok == false).toList();
+  final head = bad.isEmpty ? 'Rithmic diagnosis: every check passed.' : 'Rithmic diagnosis: ${bad.first.step} failed.';
+  final lines = [
+    for (var i = 0; i < checks.length; i++) '${i + 1}. ${checks[i].step}: ${checks[i].ok == null ? 'not tried' : checks[i].ok! ? 'OK' : 'failed'}. ${checks[i].detail}',
+  ];
+  return '$head ${lines.join(' ')}';
+}

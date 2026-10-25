@@ -138,11 +138,11 @@ Future<void> openCenter(
 void main() {
   setUp(() => SharedPreferences.setMockInitialValues({}));
 
-  test('the fixture is the whole catalog: 130 commands in 9 categories', () {
+  test('the fixture is the whole catalog: 131 commands in 9 categories', () {
     final catalog = CheCommandCatalog.fromJson(fixture);
-    expect(catalog.commands.length, 130);
+    expect(catalog.commands.length, 131);
     expect(catalog.categories.length, 9);
-    expect(catalog.commands.map((c) => c.id).toSet().length, 130);
+    expect(catalog.commands.map((c) => c.id).toSet().length, 131);
     expect(catalog.byId('/trade-chart')?.title, isNotEmpty);
     expect(catalog.search('find website clients').take(3).map((c) => c.id), contains('lead-scout'));
     expect(catalog.search('how much should I charge').take(3).map((c) => c.id), contains('pricing'));
@@ -153,9 +153,9 @@ void main() {
     final che = FakeChe();
     await openCenter(tester, che: che);
     expect(find.text('Commands'), findsOneWidget);
-    expect(find.text('All 130'), findsOneWidget);
+    expect(find.text('All 131'), findsOneWidget);
     for (final label in [_intelligenceLabel, 'YouTube 11', 'Trading 25', 'Websites, Apps & AI 20', 'Money Management 8',
-      'Client Scouting & Delivery 9', 'Marketing & Sales 7', 'Office & Automation 21', 'Creator Studio 8']) {
+      'Client Scouting & Delivery 9', 'Marketing & Sales 7', 'Office & Automation 21', 'Creator Studio 9']) {
       expect(find.text(label), findsOneWidget, reason: label);
     }
     await tester.ensureVisible(find.text('Trading 25'));
@@ -257,7 +257,7 @@ void main() {
     final reloaded = CheCommandStore();
     await reloaded.load();
     expect(reloaded.favorites, ['che']);
-    expect(reloaded.cachedCatalog?.commands.length, 130, reason: 'the catalog is cached for offline use');
+    expect(reloaded.cachedCatalog?.commands.length, 131, reason: 'the catalog is cached for offline use');
   });
 
   testWidgets('offline: the cached library still opens and says it may be out of date', (tester) async {
@@ -267,7 +267,7 @@ void main() {
     final offline = FakeChe(offline: true);
     await openCenter(tester, che: offline);
     expect(find.textContaining('Showing the last list CHE sent; statuses may be out of date'), findsOneWidget);
-    expect(find.text('All 130'), findsOneWidget);
+    expect(find.text('All 131'), findsOneWidget);
   });
 
   testWidgets('offline with nothing cached says so instead of showing an empty success', (tester) async {
@@ -360,6 +360,40 @@ void main() {
     expect(spoken, isNotEmpty, reason: 'owner actions report their real result aloud');
   });
 
+  testWidgets('reopening Commands shows a finished run\'s verified result quietly, with a VoiceOver label', (tester) async {
+    final sha = 'ab12cd34ef56${'0' * 52}';
+    final che = FakeChe()
+      ..missions = [
+        {
+          'id': 'm9', 'name': 'Notes report', 'status': 'complete', 'paused': false,
+          'spoken': 'Workflow: Notes report: 2 of 2 steps done, 0 running, 0 failed, 0 waiting on a failed step.',
+          'steps': [
+            {'id': 's1', 'command': 'che-memory', 'title': '/che-memory my business', 'status': 'complete', 'depends_on': [], 'output': 'Joe\'s Barbershop in Phoenix.', 'evidence': [], 'verified_by': 'che_memory_provenance'},
+            {'id': 's2', 'command': 'che-plan', 'title': '/che-plan summary', 'status': 'complete', 'depends_on': ['s1'], 'output': 'Summary report.', 'evidence': [], 'verified_by': 'model'},
+          ],
+          'artifact': {'sha256': sha, 'bytes': 412, 'verified': true, 'receipt': 'mission_artifact:m9', 'spoken': 'Result saved and verified: 412 bytes, SHA-256 ab12cd34ef56.'},
+        },
+      ];
+    final spoken = <String>[];
+    final semantics = tester.ensureSemantics();
+    await openCenter(tester, che: che, spoken: spoken);
+    await tester.tap(find.text('Activity'));
+    await tester.pumpAndSettle();
+    expect(find.text('Result saved and verified: 412 bytes, SHA-256 ab12cd34ef56.'), findsOneWidget);
+    await tester.ensureVisible(find.text('Result saved and verified: 412 bytes, SHA-256 ab12cd34ef56.'));
+    await tester.pumpAndSettle();
+    expect(find.bySemanticsLabel('Result saved and verified. 412 bytes. SHA-256 starts ab12cd34ef56.'), findsOneWidget);
+    expect(find.text('Cancel run'), findsNothing, reason: 'a finished run has no run controls');
+    expect(spoken, isEmpty, reason: 'a passive result is shown, never spoken on its own');
+    semantics.dispose();
+  });
+
+  test('a mission without a sealed result has no artifact; a malformed one is ignored', () {
+    expect(CheMission.fromJson({'id': 'a', 'steps': []}).artifact, isNull);
+    expect(CheMission.fromJson({'id': 'a', 'artifact': 'x'}).artifact, isNull);
+    expect(CheMission.fromJson({'id': 'a', 'artifact': {'sha256': 'ff', 'bytes': 3, 'verified': true}}).artifact?.bytes, 3);
+  });
+
   testWidgets('a dropped connection is reported and leaves the controls usable', (tester) async {
     final che = FakeChe()
       ..missions = [
@@ -418,7 +452,7 @@ void main() {
     expect(spoken, isEmpty);
     await tester.tap(find.byTooltip('Read this page aloud'));
     await tester.pumpAndSettle();
-    expect(spoken.single, startsWith('Commands. 130 commands in 9 categories.'));
+    expect(spoken.single, startsWith('Commands. 131 commands in 9 categories.'));
   });
 
   testWidgets('VoiceOver labels and large Dynamic Type', (tester) async {
@@ -662,7 +696,7 @@ void main() {
     }
 
     final screen = (await say("what's on screen"))!;
-    expect(screen, contains('130 commands in 9 categories'));
+    expect(screen, contains('131 commands in 9 categories'));
     expect(screen, contains('Tabs: 1. Library, 2. Workflows, 3. Activity.'));
     final found = (await say('search for trade chart'))!;
     expect(found, contains('1. /trade-chart: '));

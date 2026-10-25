@@ -28,7 +28,7 @@ String cheCalendarAmount(Object? v, Object? unit, {bool short = false}) {
 }
 
 class CheTradingCalendarPage extends StatefulWidget {
-  const CheTradingCalendarPage({super.key, required this.baseUrl, required this.headers, this.client, this.onRead, this.initialMonth = '', this.initialSource = 'paper', this.initialDay = ''});
+  const CheTradingCalendarPage({super.key, required this.baseUrl, required this.headers, this.client, this.onRead, this.initialMonth = '', this.initialSource = 'paper', this.initialDay = '', this.basis = 'owner'});
 
   final String Function() baseUrl;
   final Map<String, String> Function() headers;
@@ -37,9 +37,11 @@ class CheTradingCalendarPage extends StatefulWidget {
   final String initialMonth;
   final String initialSource;
   final String initialDay;
+  /// 'owner' (calendar day by exit time) or 'cme' (6 PM New York rollover); the same basis the spoken answer used.
+  final String basis;
 
-  static Route<void> route({required String Function() baseUrl, required Map<String, String> Function() headers, void Function(String words)? onRead, String month = '', String source = 'paper', String day = ''}) =>
-      MaterialPageRoute(builder: (_) => CheTradingCalendarPage(baseUrl: baseUrl, headers: headers, onRead: onRead, initialMonth: month, initialSource: source, initialDay: day));
+  static Route<void> route({required String Function() baseUrl, required Map<String, String> Function() headers, void Function(String words)? onRead, String month = '', String source = 'paper', String day = '', String basis = 'owner'}) =>
+      MaterialPageRoute(builder: (_) => CheTradingCalendarPage(baseUrl: baseUrl, headers: headers, onRead: onRead, initialMonth: month, initialSource: source, initialDay: day, basis: basis));
 
   @override
   State<CheTradingCalendarPage> createState() => _CheTradingCalendarPageState();
@@ -75,7 +77,7 @@ class _CheTradingCalendarPageState extends State<CheTradingCalendarPage> {
   Future<void> _load() async {
     setState(() { _loading = true; _error = ''; });
     try {
-      final v = await _get('/api/trading/calendar?source=$_source${_month.isEmpty ? '' : '&month=$_month'}');
+      final v = await _get('/api/trading/calendar?source=$_source${_month.isEmpty ? '' : '&month=$_month'}${widget.basis == 'cme' ? '&basis=cme' : ''}');
       if (!mounted) return;
       setState(() { _view = v; _month = '${v['month'] ?? _month}'; _loading = false; });
     } catch (e) {
@@ -105,7 +107,12 @@ class _CheTradingCalendarPageState extends State<CheTradingCalendarPage> {
     final v = _view;
     if (v == null) return _error.isEmpty ? 'The calendar is loading.' : _error;
     final t = _map(v['totals']);
-    if (v['source'] == 'broker') return '${v['source_label']}, ${cheMonthLabel('${v['month']}')}: ${v['note']} ${t['orders'] ?? 0} broker paper orders recorded.';
+    if (v['source'] == 'broker') {
+      final pnl = (t['trades'] ?? 0) == 0
+          ? 'no closing fill'
+          : '${t['trades']} closed trades, ${t['wins']} wins, ${t['losses']} losses, realized net ${cheCalendarAmount(t['net'], v['unit'])}';
+      return '${v['source_label']}, ${cheMonthLabel('${v['month']}')}: $pnl. ${t['orders'] ?? 0} broker paper orders recorded. ${v['note']}';
+    }
     if (v['empty'] == true) return '${v['source_label']}: no trade closed in ${cheMonthLabel('${v['month']}')}.';
     return '${v['source_label']}, ${cheMonthLabel('${v['month']}')}: ${t['trades']} closed trades, ${t['wins']} wins, ${t['losses']} losses, win rate ${t['win_rate']} percent, '
         'net ${cheCalendarAmount(t['net'], v['unit'])}. ${t['green_days']} green days, ${t['red_days']} red, ${t['yellow_days']} near break-even.';
@@ -113,7 +120,7 @@ class _CheTradingCalendarPageState extends State<CheTradingCalendarPage> {
 
   void _openDay(String date) {
     unawaited(Navigator.of(context).push(MaterialPageRoute(builder: (_) => CheTradingDayPage(
-          baseUrl: widget.baseUrl, headers: widget.headers, client: widget.client, onRead: widget.onRead, date: date, source: _source,
+          baseUrl: widget.baseUrl, headers: widget.headers, client: widget.client, onRead: widget.onRead, date: date, source: _source, basis: widget.basis,
         ))));
   }
 
@@ -154,11 +161,11 @@ class _CheTradingCalendarPageState extends State<CheTradingCalendarPage> {
           const SizedBox(height: 8),
           CheCalendarGrid(
             weeks: weeks,
-            cellText: (d) => v['source'] == 'broker'
+            cellText: (d) => v['source'] == 'broker' && (d['trades'] ?? 0) == 0
                 ? ((d['orders'] ?? 0) == 0 ? '' : '${d['orders']} ord')
                 : ((d['trades'] ?? 0) == 0 ? '' : '${cheCalendarAmount(d['net'], unit, short: true)}\n${d['trades']}t'),
-            cellLabel: (d) => v['source'] == 'broker'
-                ? '${cheDayLabel('${d['date']}')}: ${d['orders'] ?? 0} broker paper orders, no P&L stored.'
+            cellLabel: (d) => v['source'] == 'broker' && (d['trades'] ?? 0) == 0
+                ? '${cheDayLabel('${d['date']}')}: ${d['orders'] ?? 0} broker paper orders, no closing fill.'
                 : (d['trades'] ?? 0) == 0
                     ? '${cheDayLabel('${d['date']}')}: no closed trades.'
                     : '${cheDayLabel('${d['date']}')}: net ${cheCalendarAmount(d['net'], unit)}, ${d['trades']} trades, ${d['wins']} wins, ${d['losses']} losses.',
@@ -195,11 +202,12 @@ class _CheTradingCalendarPageState extends State<CheTradingCalendarPage> {
 
 /// One day: its trades (each opening its replay), journal skips and strategy results, with the audit line.
 class CheTradingDayPage extends StatefulWidget {
-  const CheTradingDayPage({super.key, required this.baseUrl, required this.headers, required this.date, required this.source, this.client, this.onRead});
+  const CheTradingDayPage({super.key, required this.baseUrl, required this.headers, required this.date, required this.source, this.client, this.onRead, this.basis = 'owner'});
   final String Function() baseUrl;
   final Map<String, String> Function() headers;
   final String date;
   final String source;
+  final String basis;
   final http.Client? client;
   final void Function(String words)? onRead;
 
@@ -219,7 +227,7 @@ class _CheTradingDayPageState extends State<CheTradingDayPage> {
 
   Future<void> _load() async {
     try {
-      final res = await (widget.client ?? http.Client()).get(Uri.parse('${widget.baseUrl()}/api/trading/calendar?source=${widget.source}&day=${widget.date}'), headers: widget.headers()).timeout(const Duration(seconds: 25));
+      final res = await (widget.client ?? http.Client()).get(Uri.parse('${widget.baseUrl()}/api/trading/calendar?source=${widget.source}&day=${widget.date}${widget.basis == 'cme' ? '&basis=cme' : ''}'), headers: widget.headers()).timeout(const Duration(seconds: 25));
       final body = _map(jsonDecode(res.body));
       if (res.statusCode != 200 || body['ok'] != true) throw Exception('${body['detail'] ?? 'The Worker answered ${res.statusCode}.'}');
       if (mounted) setState(() => _view = body);
@@ -232,7 +240,13 @@ class _CheTradingDayPageState extends State<CheTradingDayPage> {
     final v = _view;
     if (v == null) return _error.isEmpty ? 'Loading.' : _error;
     final t = _map(v['totals']);
-    if (v['source'] == 'broker') return '${cheDayLabel(widget.date)}: ${(v['orders'] as List? ?? []).length} broker paper orders. ${v['note']}';
+    if (v['source'] == 'broker') {
+      final orders = (v['orders'] as List? ?? []).length;
+      final pnl = (t['trades'] ?? 0) == 0
+          ? 'no closing fill'
+          : '${t['trades']} closed trades, ${t['wins']} wins, ${t['losses']} losses, realized net ${cheCalendarAmount(t['net'], v['unit'])}';
+      return '${cheDayLabel(widget.date)}, ${v['source_label']}: $pnl. $orders broker paper orders. ${v['note']}';
+    }
     if ((t['trades'] ?? 0) == 0) return '${cheDayLabel(widget.date)}: no trade closed.';
     return '${cheDayLabel(widget.date)}, ${v['source_label']}: ${t['trades']} trades, ${t['wins']} wins, ${t['losses']} losses, net ${cheCalendarAmount(t['net'], v['unit'])}.';
   }

@@ -91,7 +91,7 @@ import { readTrades } from './trading_evidence.js';
 import { tradingCapabilities } from './trading_capabilities.js';
 import { TRADE_EVIDENCE_SOURCE, lastTrade, readTradeEvidence, speakTradeReplay, tradeBars, tradeEvidenceOf, tradeReplayIntent, tradingVisualViewOf } from './trade_evidence.js';
 import { VISUAL_SOURCE, readVisualTrades, speakEvidence, speakCard, tradingVisualIntent } from './trading_visual.js';
-import { CALENDAR_SOURCE, calendarIntent, learningWindows, officeCalendar, speakOfficeCalendar, speakTradingCalendar, tradingCalendar } from './che_calendars.js';
+import { CALENDAR_SOURCE, calendarIntent, learningWindows, officeCalendar, officeItems, rollupOfficeDays, speakOfficeCalendar, speakTradingCalendar, tradingCalendar } from './che_calendars.js';
 import { cancelCandidates, cancelConfirmation, cancelOrderIntent, chartIntent, chartOpenReply, chartView, drawIntent, futuresOrderIntent, marketOrderFeedProblem, paperAccountIntent, readDrawings, saveDrawings, speakOrder } from './trading_chart.js';
 import { marketUniverse, searchUniverse } from './market_universe.js';
 import { readRithmicCandles, storeRithmicCandles } from './rithmic_dataset.js';
@@ -251,6 +251,7 @@ import {
   writeResearchMemoryNote,
 } from './research_memory.js';
 import { APP_BUILD_KEY, appBuildIntent, appBuildRun, dispatchAppBuild, speakAppBuild } from './app_builds.js';
+import { readMissionArtifact, sealFinishedMissions, speakMissionArtifact } from './mission_artifact.js';
 import { advanceObjectives, applyMissionEvent, approvalReached, approveNode, awaitingApproval, cancelObjective, createObjective, mutateObjective, replanNode, resolveKnownNodes, retryNode, setObjectivePaused, speakObjective } from './objective_graph.js';
 import { CHE_TENANT, CHE_SECURITY, access as coreAccess, coreEvents, coreIncidents, coreKnowledge, coreView, findAnyIncident, findKnowledge, loadCore, recordInLedger, openIncidentsForEvents, recordCheck as recordCoreCheck, runDrill, saveCore, speakCore, syncLegacyEvents } from './security_core_che.js';
 import { securityVisibility, speakVisibility } from './security_visibility.js';
@@ -258,7 +259,7 @@ import { securityChief, securityChiefIntent, speakChiefReport } from './security
 import { acquire as acquireCapability, applyPolicy as applyCapabilityPolicy, capabilityIntent, engineSummary as capabilityEngineSummary, learnFromOutcome, loadPolicy as loadCapabilityPolicy, populate as populateKnowledge, retrieve as retrieveKnowledge, rollbackTool, savePolicy as saveCapabilityPolicy, projectBlocked, speakCapabilities, speakLearned as speakLearnedKnowledge, useTool, LAST_USED_KEY as KNOWLEDGE_USED_KEY } from './capability_engine.js';
 import { EGRESS_KEY, SNAPSHOT_KEY, holdEgress, installEgressGuard, setEgressOwner, setEgressPolicy, storeEgressPolicy, SESSION_SCOPES, bump as securityBump, checkSession, createSession, dependencyAdvisories, detectThreats, issueNonce, loadSecurity, recordFindings, redact as redactSecretText, redactDeep, respondToIncident, restoreTrustedState, revokeSessions, saveSecurity, securityIntent, snapshotTrustedState, speakStatus as speakSecurityStatus } from './security_intelligence.js';
 import { loadRegistry as loadCapabilityRegistry } from './capability_registry.js';
-import { BrainLedger, answerLedger, decidePending as decideBrainPending, installBrainLedger, ledgerApi, ledgerIntent as brainLedgerIntent, DEFAULT_ZONE as LEDGER_DEFAULT_ZONE } from './brain_ledger.js';
+import { BrainLedger, answerLedger, decidePending as decideBrainPending, installBrainLedger, ledgerApi, recordGraphConnections, ledgerIntent as brainLedgerIntent, DEFAULT_ZONE as LEDGER_DEFAULT_ZONE } from './brain_ledger.js';
 import { FilmStore, filmIntent, filmProgress, farmProviders, loadRates, loadUsage, speakFarm, speakPlan, speakStatus as speakFilmStatus } from './film_studio.js';
 import { GpuQueue, gpuWorkerRoute, speakGpuSummary } from './gpu_queue.js';
 import { CreationStudio, studioOwnerRoute } from './creation_studio.js';
@@ -383,6 +384,11 @@ function commandMissions(data) {
         output: String(n.output || '').slice(0, 600), evidence: (n.evidence || []).slice(-2), recovery: n.recovery || '',
         verified_by: n.verification?.by || '',
       })),
+      // The sealed result (mission_artifact.js): shown quietly on the phone, never spoken on its own.
+      artifact: o.artifact?.sha256 ? {
+        sha256: o.artifact.sha256, bytes: o.artifact.bytes, created_at: o.artifact.created_at, verified: o.artifact.verified === true,
+        receipt: o.artifact.receipt || '', spoken: speakMissionArtifact(o.artifact),
+      } : null,
     }));
 }
 
@@ -2659,7 +2665,9 @@ export function selfUpdateChatIntent(message) {
     return { kind: 'merge' };
   }
   // "Is live trading on?" asks about the trading mode, not a deployment (comprehension audit).
-  if (/\b(?:is|did|was|has)\b[\s\S]{0,30}\b(?:deploy(?:ed|ment)?|live(?!\s+(?:trading|trades?|account|orders?|mode|feed|data|chart|prices?|stream|market|money|broker))|in production)\b|\b(?:deploy(?:ment)?|production)\s+(?:status|check|health)\b|\bverify\s+(?:the\s+)?deploy(?:ment)?\b/i.test(text)) {
+  // "Is the MNQ data live?" / "Is the crypto feed live?" ask about market-data freshness in the other word order.
+  const marketLive = /\b(?:data|feed|chart|prices?|quotes?|candles?|stream|ticker|market)\s+(?:still\s+)?live\b/i.test(text);
+  if (!marketLive && /\b(?:is|did|was|has)\b[\s\S]{0,30}\b(?:deploy(?:ed|ment)?|live(?!\s+(?:trading|trades?|account|orders?|mode|feed|data|chart|prices?|stream|market|money|broker))|in production)\b|\b(?:deploy(?:ment)?|production)\s+(?:status|check|health)\b|\bverify\s+(?:the\s+)?deploy(?:ment)?\b/i.test(text)) {
     return { kind: 'deploy-status' };
   }
   return null;
@@ -5906,6 +5914,8 @@ export class CheState extends DurableObject {
       if (!ask) return ndjsonReply('Say the length and the subject, for example "/film-make 10-minute movie about a lighthouse keeper".', { source: 'che_film_studio', ok: false, command: command.id, model_calls: 0 });
       return withDoneFields(await this.filmChat(request, ask), { command: command.id });
     }
+    // Recording Studio: an app screen; the Worker only says so and asks the app to open it.
+    if (command.local === 'recording_studio') return ndjsonReply('Opening the Recording Studio, sir.', { source: 'che_recording_studio', ok: true, command: command.id, model_calls: 0, open_screen: 'recording_studio' });
     // Owner Improvements: the command's words go through the same intent the owner's chat uses.
     if (command.local === 'owner_improvement') {
       if (!OWNER_CHAT_REQUESTS.has(request)) return ndjsonReply('Only the CHE owner can change CHE. Nothing was changed.', { source: 'che_owner_improvement', ok: false, command: command.id, model_calls: 0 });
@@ -7883,6 +7893,15 @@ export class CheState extends DurableObject {
         if (!ownerDevice) return json({ detail: 'Not found.' }, 404);
         return json(await performanceReport(this.ctx.storage));
       }
+      // Brain room neural map — unlimited memory_notes nodes + related links, plus live Office agent tasks (real
+      // queued/running/reviewing work only). It sat after the POST-only gate, so a GET never reached it; the phone
+      // reads the same graph from /api/state. A link that is new since the last read is one CONNECTION_CREATED event.
+      const brainGraphRead = request.method === 'GET' && (path === '/api/brain/graph' || path === '/api/state')
+        ? buildBrainGraph(data, { liveNodes: buildAgentTaskNodes(data) }) : null;
+      if (brainGraphRead) {
+        try { recordGraphConnections(this.ctx.storage, brainGraphRead); } catch (_) { /* a ledger failure never blocks the map */ }
+        if (path === '/api/brain/graph') return json(brainGraphRead);
+      }
       if (request.method === 'GET' && path === '/api/state') {
         const capabilityRegistry = runtimeCapabilityRegistry(this.env, data);
         return json({
@@ -7894,7 +7913,7 @@ export class CheState extends DurableObject {
           memory_notes: listMemoryNotes(data),
           conversation_memories: ownerDevice ? await listConversationMemories(this.ctx.storage).catch(() => []) : [],
           conversation_memory_total: ownerDevice ? await conversationMemoryCount(this.ctx.storage).catch(() => 0) : 0,
-          brain_graph: buildBrainGraph(data, { liveNodes: buildAgentTaskNodes(data) }),
+          brain_graph: brainGraphRead,
           preference_memory: data.preference_memory,
           owner_context: data.owner_context.map(ownerContextPreview),
           personal_sources: {
@@ -8524,7 +8543,7 @@ export class CheState extends DurableObject {
       if (path === '/api/trading/alpaca/dashboard' && request.method === 'GET') {
         if (!ownerDevice) return tradingOwnerOnly();
         const symbol = (new URL(request.url).searchParams.get('symbol') || '').trim().toUpperCase().slice(0, 8);
-        return json(await alpacaPaperDashboard(this.keyEnv || this.env, { symbol }));
+        return json(await alpacaPaperDashboard(this.keyEnv || this.env, { symbol, storage: this.ctx.storage }));
       }
       // The Trading Room chart (owner, 2026-10-20, Build 1): bars, feed health, the entry gate and
       // markers by source for one account, symbol and timeframe; the owner's drawings; paper ticket preview and cancel.
@@ -9527,6 +9546,24 @@ export class CheState extends DurableObject {
           missions: ownerDevice ? commandMissions(data) : [],
         });
       }
+      // A finished workflow run's saved result, re-hashed on every read, so "verified" is true only when the bytes in
+      // storage still match the SHA-256 recorded when the run finished.
+      if (path === '/api/commands/missions/artifact' && ['GET', 'POST'].includes(request.method)) {
+        if (!ownerDevice) return json({ detail: 'Only the CHE owner can read workflow results.' }, 403);
+        const id = String(body?.id || new URL(request.url).searchParams.get('id') || '');
+        const objective = (data.objectives || []).find((o) => o.id === id && o.source === 'command_workflow');
+        if (!objective) return json({ detail: 'Workflow run not found.' }, 404);
+        const read = await readMissionArtifact(this.ctx.storage, objective);
+        if (!read.ok) return json({ detail: read.error, status: objective.status }, 404);
+        const receipts = await loadReceipts(this.ctx.storage, { sinceMs: Infinity }).catch(() => []);
+        const receipt = (Array.isArray(receipts) ? receipts : []).find((r) => r.key === objective.artifact.receipt) || null;
+        return json({
+          id: objective.id, name: objective.workflow_name || objective.objective, status: objective.status,
+          verified: read.verified, sha256: read.sha256, recorded_sha256: read.recorded_sha256, bytes: read.bytes,
+          content_type: read.content_type, text: read.text, receipt,
+          spoken: read.verified ? speakMissionArtifact(objective.artifact) : 'The saved result no longer matches its recorded SHA-256, sir, so I cannot call it verified.',
+        });
+      }
       if (request.method !== 'POST') return json({ detail: 'Not found.' }, 404);
       if (path === '/api/fine-tune/status' && request.method === 'POST') {
         return json(fineTuneReadiness(this.env));
@@ -9981,6 +10018,9 @@ export class CheState extends DurableObject {
         return json({ objective, started, duplicate: out.duplicate === true, spoken: speakObjective(objective) });
       }
       if (path === '/api/objectives') {
+        // Family and guest devices share this store. The general profile gate already refuses them here;
+        // this keeps the owner's objectives owner-only even if that gate's allowlist changes.
+        if (!ownerDevice) return json({ detail: 'Only the CHE owner can read objectives.' }, 403);
         const list = Array.isArray(data.objectives) ? data.objectives : [];
         return json({ objectives: list, spoken: list.map(speakObjective) });
       }
@@ -10177,12 +10217,6 @@ export class CheState extends DurableObject {
 
       if (path === '/api/ml/readiness' && request.method === 'GET') {
         return json(mlReadiness(this.env));
-      }
-
-      // Brain room neural map — unlimited memory_notes nodes + related links,
-      // plus live Office agent tasks (real queued/running/reviewing work only).
-      if (path === '/api/brain/graph' && request.method === 'GET') {
-        return json(buildBrainGraph(data, { liveNodes: buildAgentTaskNodes(data) }));
       }
 
       if (path === '/api/translate' && request.method === 'POST') {
@@ -12448,8 +12482,11 @@ export class CheState extends DurableObject {
         // "mission status": the durable objective graphs, spoken.
         if (/^\s*(?:che[,:]?\s*)?(?:(?:what(?:'s| is)\s+)?(?:the|my)\s+)?(?:mission|objective)s?\s+status\??\s*$|^\s*how(?:'s| is| are) (?:the|my) (?:mission|objective)s?(?: going)?\??\s*$/i.test(message)) {
           if (!ownerDevice) return ndjsonReply('Only the CHE owner can read mission status.', { source: 'che_mission_status', ok: false });
-          const active = ((await this.loadData()).objectives || []).filter((o) => o.status !== 'complete').slice(0, 3);
-          return ndjsonReply(active.length ? `${active.map(speakObjective).join(' ')} Sir.` : 'No mission is in progress, sir.', { source: 'che_mission_status', model_calls: 0 });
+          const objectives = (await this.loadData()).objectives || [];
+          const active = objectives.filter((o) => o.status !== 'complete').slice(0, 3);
+          // Nothing running: the newest finished run, with its verified result, so a reopened CHE can say how it ended.
+          const finished = active.length ? null : objectives.find((o) => o.status === 'complete' && o.artifact?.sha256);
+          return ndjsonReply(active.length ? `${active.map(speakObjective).join(' ')} Sir.` : `No mission is in progress, sir.${finished ? ` The last one finished: ${speakObjective(finished)}` : ''}`, { source: 'che_mission_status', model_calls: 0 });
         }
         // "coding status" and every other question about a coding record: the stored job and
         // runtime records answer, with their evidence. Asking never runs an investigation, never
@@ -12774,10 +12811,10 @@ export class CheState extends DurableObject {
         if (tradeVisualAsk) {
           if (!ownerDevice) return ndjsonReply('Only the CHE owner can read the trading records.', { source: VISUAL_SOURCE, ok: false, model_calls: 0 });
           if (tradeVisualAsk.kind === 'card') return ndjsonReply(speakCard(tradeVisualAsk), { source: VISUAL_SOURCE, ok: true, model_calls: 0, open_view: 'trading_visual', visual: { card: tradeVisualAsk.card, size: tradeVisualAsk.size } });
-          const params = new URLSearchParams({ view: tradeVisualAsk.kind });
+          const params = new URLSearchParams({ view: tradeVisualAsk.kind, ...(tradeVisualAsk.day ? { day: tradeVisualAsk.day } : {}) });
           const v = await this.tradingVisualView(params);
           const text = tradeVisualAsk.kind === 'evidence' ? speakEvidence(v.rows, v.today) : v.spoken;
-          return ndjsonReply(text, { source: VISUAL_SOURCE, ok: true, model_calls: 0, open_view: 'trading_visual', visual: { view: tradeVisualAsk.kind } });
+          return ndjsonReply(text, { source: VISUAL_SOURCE, ok: true, model_calls: 0, open_view: 'trading_visual', visual: { view: tradeVisualAsk.kind, ...(tradeVisualAsk.day ? { day: tradeVisualAsk.day } : {}) } });
         }
         const ledger = body.attachment ? null : ledgerIntent(message);
         if (ledger) {
@@ -13138,7 +13175,7 @@ export class CheState extends DurableObject {
           if (desk.kind === 'alpaca_dashboard') {
             // The Alpaca PAPER dashboard (owner, 2026-10-20): a short summary from Alpaca's own records, and the
             // app opens the visual view (chart, order and fill markers, positions, history).
-            const dash = await alpacaPaperDashboard(this.keyEnv || this.env);
+            const dash = await alpacaPaperDashboard(this.keyEnv || this.env, { storage: this.ctx.storage });
             const latest = dash.state === 'verified' && dash.orders.length
               ? ` Latest orders: ${dash.orders.slice(0, 3).map((o, i) => `${i + 1}, ${speakStockReceipt(o, { brief: true }).replace(/^Alpaca's receipt: /, '')}`).join(' ')}` : '';
             return ndjsonReply(`${speakAlpacaDashboard(dash)}${latest}`, {
@@ -14564,6 +14601,8 @@ export class CheState extends DurableObject {
     });
     // Paper trading keeps learning even when autonomy is off (no money moves).
     await this.tradingTick().catch(() => null);
+    // Finished and failed jobs are kept per day before the 120-row job list drops them (Office calendar).
+    await officeItems(this.ctx.storage, {}, this.env).then((items) => rollupOfficeDays(this.ctx.storage, items)).catch(() => null);
     // Room events reach the Brain on the alarm too, so the phone's next sync sees them without a chat turn.
     {
       const alarmBrain = new CheBrainStore(this.ctx.storage);
@@ -15481,7 +15520,11 @@ export class CheState extends DurableObject {
       if (research?.answer && !research.articles?.length && !newsQuestion(question)) return { answer: research.answer, source: research.source || 'research_cache', verified_at: research.verified_at };
       return knownAnswer(this.ctx.storage, question, { memories: data.memories || [] });
     }).catch(() => 0);
-    return advanceObjectives(data, (fields) => enqueueJob(data, fields));
+    const started = advanceObjectives(data, (fields) => enqueueJob(data, fields));
+    // A finished workflow run gets its verified result: one report from the steps' recorded outputs, stored in
+    // CHE's own storage with its SHA-256 and a receipt (mission_artifact.js). The caller saves `data`.
+    await sealFinishedMissions(this.ctx.storage, data).catch((error) => console.error('Mission artifact failed:', error?.message || error));
+    return started;
   }
 
   // Drives a pending resume one step, decided by the pure policy in coding_failover.mjs:

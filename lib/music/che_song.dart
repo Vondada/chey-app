@@ -32,7 +32,8 @@ class CheClip {
       length: (j['length'] as num).toInt(), gain: (j['gain'] as num? ?? 1).toDouble());
 }
 
-/// A track's effects, applied in this order: noise reduction, pitch correction, EQ, compression, delay, reverb.
+/// A track's effects, applied in this order: noise reduction, pitch correction, high-pass and EQ, compression,
+/// de-esser, delay, reverb.
 class CheEffects {
   CheEffects({
     this.preset = 'None',
@@ -48,6 +49,9 @@ class CheEffects {
     this.delayMs = 350,
     this.reverb = 0,
     this.room = 0.6,
+    this.highPass = 0,
+    this.midHz = 1500,
+    this.deEss = 0,
   });
   String preset;
   bool noise;
@@ -67,14 +71,27 @@ class CheEffects {
   double reverb;
   double room;
 
-  bool get any => noise || pitch > 0 || eqLow != 0 || eqMid != 0 || eqHigh != 0 || compress > 0 || delay > 0 || reverb > 0;
+  /// High-pass filter corner in Hz (0 = off): rumble and plosives out from under the voice.
+  double highPass;
+
+  /// Centre of the mid EQ bell in Hz (1500 by default; a presence boost sits around 3 to 5 kHz).
+  double midHz;
+
+  /// De-esser amount 0 (off) .. 1.
+  double deEss;
+
+  bool get any =>
+      noise || pitch > 0 || eqLow != 0 || eqMid != 0 || eqHigh != 0 || compress > 0 || delay > 0 || reverb > 0 || highPass > 0 || deEss > 0;
 
   /// What is on, in words ("pitch correction 80%, reverb 30%").
   String describe() {
     final on = <String>[
       if (noise) 'noise reduction',
+      if (highPass > 0) 'high-pass ${highPass.round()} Hz',
       if (pitch > 0) 'pitch correction ${(pitch * 100).round()}% in ${cheNoteNames[key]} $scale',
-      if (eqLow != 0 || eqMid != 0 || eqHigh != 0) 'EQ low ${eqLow.round()}, mid ${eqMid.round()}, high ${eqHigh.round()} dB',
+      if (eqLow != 0 || eqMid != 0 || eqHigh != 0)
+        'EQ low ${eqLow.round()}, mid ${eqMid.round()}${midHz.round() == 1500 ? '' : ' at ${midHz.round()} Hz'}, high ${eqHigh.round()} dB',
+      if (deEss > 0) 'de-esser ${(deEss * 100).round()}%',
       if (compress > 0) 'compression ${(compress * 100).round()}%',
       if (delay > 0) 'delay ${(delay * 100).round()}% at ${delayMs.round()} ms',
       if (reverb > 0) 'reverb ${(reverb * 100).round()}%',
@@ -87,6 +104,7 @@ class CheEffects {
   Map<String, dynamic> toJson() => {
         'preset': preset, 'noise': noise, 'pitch': pitch, 'key': key, 'scale': scale, 'eq_low': eqLow, 'eq_mid': eqMid,
         'eq_high': eqHigh, 'compress': compress, 'delay': delay, 'delay_ms': delayMs, 'reverb': reverb, 'room': room,
+        'high_pass': highPass, 'mid_hz': midHz, 'de_ess': deEss,
       };
   factory CheEffects.fromJson(Map j) => CheEffects(
         preset: '${j['preset'] ?? 'None'}', noise: j['noise'] == true, pitch: (j['pitch'] as num? ?? 0).toDouble(),
@@ -95,6 +113,9 @@ class CheEffects {
         compress: (j['compress'] as num? ?? 0).toDouble(), delay: (j['delay'] as num? ?? 0).toDouble(),
         delayMs: (j['delay_ms'] as num? ?? 350).toDouble(), reverb: (j['reverb'] as num? ?? 0).toDouble(),
         room: (j['room'] as num? ?? 0.6).toDouble(),
+        highPass: (j['high_pass'] as num? ?? 0).toDouble(),
+        midHz: (j['mid_hz'] as num? ?? 1500).toDouble(),
+        deEss: (j['de_ess'] as num? ?? 0).toDouble(),
       );
 
   /// Vocal presets: starting points the owner can adjust.
@@ -233,7 +254,7 @@ class CheMaster {
 }
 
 class CheSong {
-  CheSong({String? id, required this.title, this.bpm = 90, List<CheTrack>? tracks, CheBeat? beat, CheMaster? master, int? created, int? updated, this.latencyMs = 0, this.loopStart, this.loopEnd, this.punchIn, this.punchOut})
+  CheSong({String? id, required this.title, this.bpm = 90, List<CheTrack>? tracks, CheBeat? beat, CheMaster? master, int? created, int? updated, this.latencyMs = 0, this.loopStart, this.loopEnd, this.punchIn, this.punchOut, this.producer})
       : id = id ?? _id('song_'),
         tracks = tracks ?? [],
         beat = beat ?? CheBeat(),
@@ -253,6 +274,9 @@ class CheSong {
   double latencyMs;
   int? loopStart, loopEnd, punchIn, punchOut;
 
+  /// The Beat Producer settings behind the produced beat track (genre, tempo, key, seed), so it can be rebuilt.
+  Map<String, dynamic>? producer;
+
   int get end => tracks.fold(0, (m, t) => math.max(m, t.end));
   int get barSamples => (cheStudioRate * 60 / bpm * 4).round();
   int get beatSamples => (cheStudioRate * 60 / bpm).round();
@@ -263,6 +287,7 @@ class CheSong {
         'id': id, 'title': title, 'bpm': bpm, 'created': created, 'updated': updated, 'latency_ms': latencyMs,
         'loop': [loopStart, loopEnd], 'punch': [punchIn, punchOut], 'beat': beat.toJson(), 'master': master.toJson(),
         'tracks': [for (final t in tracks) t.toJson()],
+        if (producer != null) 'producer': producer,
       };
   factory CheSong.fromJson(Map j) {
     int? at(List? l, int i) => (l?.elementAtOrNull(i) as num?)?.toInt();
@@ -274,6 +299,7 @@ class CheSong {
       punchIn: at(j['punch'] as List?, 0), punchOut: at(j['punch'] as List?, 1),
       beat: CheBeat.fromJson((j['beat'] as Map?) ?? const {}), master: CheMaster.fromJson((j['master'] as Map?) ?? const {}),
       tracks: [for (final t in (j['tracks'] as List? ?? const [])) CheTrack.fromJson(t as Map)],
+      producer: j['producer'] is Map ? Map<String, dynamic>.from(j['producer'] as Map) : null,
     );
   }
 }
@@ -338,10 +364,14 @@ Float32List cheRenderTrack(CheTrack t, Map<String, Float32List> sources) {
   final fx = t.fx;
   if (fx.noise) cheReduceNoise(x);
   if (fx.pitch > 0) chePitchCorrect(x, strength: fx.pitch, key: fx.key, scale: fx.scale);
-  if (fx.eqLow != 0 || fx.eqMid != 0 || fx.eqHigh != 0) cheEq(x, lowDb: fx.eqLow, midDb: fx.eqMid, highDb: fx.eqHigh);
+  if (fx.eqLow != 0 || fx.eqMid != 0 || fx.eqHigh != 0 || fx.highPass > 0) {
+    cheEq(x, lowDb: fx.eqLow, midDb: fx.eqMid, midHz: fx.midHz, highDb: fx.eqHigh, highPassHz: fx.highPass);
+  }
   if (fx.compress > 0) {
     cheCompress(x, thresholdDb: -10 - 20 * fx.compress, ratio: 1.5 + 4.5 * fx.compress, makeupDb: 6 * fx.compress);
   }
+  // After the compressor: compression turns the vowels down more than the quieter "s" sounds, raising sibilance.
+  if (fx.deEss > 0) cheDeEss(x, amount: fx.deEss);
   if (fx.delay > 0) x = cheDelay(x, ms: fx.delayMs, mix: fx.delay * 0.6);
   if (fx.reverb > 0) x = cheReverb(x, room: fx.room, mix: fx.reverb * 0.6);
   return x;
@@ -453,6 +483,33 @@ class CheSongStore {
     await File('${dir.path}/$audioId.wav').writeAsBytes(cheEncodeWav([samples], cheStudioRate), flush: true);
   }
 
+  /// Reads one saved source (a take that is no longer on the timeline, for a snapshot restore), or null.
+  Future<Float32List?> loadSource(String songId, String audioId) async {
+    final w = File('${_dir(songId).path}/$audioId.wav');
+    if (!await w.exists()) return null;
+    final a = cheDecodeWav(await w.readAsBytes());
+    return cheResample(a.mono(), a.sampleRate, cheStudioRate);
+  }
+
+  /// Engineer Mode snapshots live beside song.json (snapshots.json), so they survive closing and reopening.
+  Future<List<Map<String, dynamic>>> loadSnapshots(String songId) async {
+    final f = File('${_dir(songId).path}/snapshots.json');
+    if (!await f.exists()) return [];
+    try {
+      return [for (final e in jsonDecode(await f.readAsString()) as List) Map<String, dynamic>.from(e as Map)];
+    } catch (_) {
+      return []; // a damaged snapshot file is ignored, never deleted
+    }
+  }
+
+  Future<void> saveSnapshots(String songId, List<Map<String, dynamic>> snapshots) async {
+    final dir = _dir(songId);
+    await dir.create(recursive: true);
+    final tmp = File('${dir.path}/snapshots.json.tmp');
+    await tmp.writeAsString(jsonEncode(snapshots), flush: true);
+    await tmp.rename('${dir.path}/snapshots.json');
+  }
+
   Future<List<CheSong>> list() async {
     if (!await root.exists()) return [];
     final out = <CheSong>[];
@@ -493,13 +550,13 @@ class CheSongStore {
     return (song, sources);
   }
 
-  /// Exports [wav] as "<title>.wav" next to the songs, where the Files app shows it. Returns the file.
-  Future<File> export(CheSong song, Uint8List wav) async {
+  /// Exports [bytes] as `<title>.<ext>` (wav or m4a) next to the songs, where the Files app shows it. Returns the file.
+  Future<File> export(CheSong song, Uint8List bytes, {String ext = 'wav'}) async {
     final safe = song.title.replaceAll(RegExp(r'[^A-Za-z0-9 _-]'), '').trim();
     final dir = Directory('${root.path}/Exports');
     await dir.create(recursive: true);
-    final f = File('${dir.path}/${safe.isEmpty ? song.id : safe}.wav');
-    await f.writeAsBytes(wav, flush: true);
+    final f = File('${dir.path}/${safe.isEmpty ? song.id : safe}.$ext');
+    await f.writeAsBytes(bytes, flush: true);
     return f;
   }
 }

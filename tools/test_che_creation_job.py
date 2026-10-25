@@ -84,6 +84,14 @@ class CreationJobTest(unittest.TestCase):
     def calls_made(self):
         return open(self.calls).read().split() if os.path.exists(self.calls) else []
 
+    def test_a_room_records_its_cc0_floor_texture_or_why_it_has_none(self):
+        # CHE_TEXTURES=0 stands in for "no network": the receipt says so and the room is still built in plain colour.
+        code, out, r = self.run_job('room_model', {'type': 'office'}, '--device', 'cpu', CHE_TEXTURES='0', CHE_TEXTURE_CACHE=os.path.join(self.tmp, 'tex'))
+        self.assertEqual(code, 0, out)
+        self.assertEqual(r['textures']['concrete']['status'], 'unavailable')
+        self.assertIn('CHE_TEXTURES=0', r['textures']['concrete']['reason'])
+        self.assertIn('TEXTURE concrete unavailable', out)
+
     def test_an_object_is_built_measured_then_rendered_from_the_glb_on_the_cpu(self):
         code, out, r = self.run_job('object_model', {'family': 'chair', 'style': 'classic'}, '--device', 'cpu')
         self.assertEqual(code, 0, out)
