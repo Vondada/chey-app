@@ -251,6 +251,7 @@ import {
   writeResearchMemoryNote,
 } from './research_memory.js';
 import { APP_BUILD_KEY, appBuildIntent, appBuildRun, dispatchAppBuild, speakAppBuild } from './app_builds.js';
+import { readMissionArtifact, sealFinishedMissions, speakMissionArtifact } from './mission_artifact.js';
 import { advanceObjectives, applyMissionEvent, approvalReached, approveNode, awaitingApproval, cancelObjective, createObjective, mutateObjective, replanNode, resolveKnownNodes, retryNode, setObjectivePaused, speakObjective } from './objective_graph.js';
 import { CHE_TENANT, CHE_SECURITY, access as coreAccess, coreEvents, coreIncidents, coreKnowledge, coreView, findAnyIncident, findKnowledge, loadCore, recordInLedger, openIncidentsForEvents, recordCheck as recordCoreCheck, runDrill, saveCore, speakCore, syncLegacyEvents } from './security_core_che.js';
 import { securityVisibility, speakVisibility } from './security_visibility.js';
@@ -383,6 +384,11 @@ function commandMissions(data) {
         output: String(n.output || '').slice(0, 600), evidence: (n.evidence || []).slice(-2), recovery: n.recovery || '',
         verified_by: n.verification?.by || '',
       })),
+      // The sealed result (mission_artifact.js): shown quietly on the phone, never spoken on its own.
+      artifact: o.artifact?.sha256 ? {
+        sha256: o.artifact.sha256, bytes: o.artifact.bytes, created_at: o.artifact.created_at, verified: o.artifact.verified === true,
+        receipt: o.artifact.receipt || '', spoken: speakMissionArtifact(o.artifact),
+      } : null,
     }));
 }
 
@@ -9527,6 +9533,24 @@ export class CheState extends DurableObject {
           missions: ownerDevice ? commandMissions(data) : [],
         });
       }
+      // A finished workflow run's saved result, re-hashed on every read, so "verified" is true only when the bytes in
+      // storage still match the SHA-256 recorded when the run finished.
+      if (path === '/api/commands/missions/artifact' && ['GET', 'POST'].includes(request.method)) {
+        if (!ownerDevice) return json({ detail: 'Only the CHE owner can read workflow results.' }, 403);
+        const id = String(body?.id || new URL(request.url).searchParams.get('id') || '');
+        const objective = (data.objectives || []).find((o) => o.id === id && o.source === 'command_workflow');
+        if (!objective) return json({ detail: 'Workflow run not found.' }, 404);
+        const read = await readMissionArtifact(this.ctx.storage, objective);
+        if (!read.ok) return json({ detail: read.error, status: objective.status }, 404);
+        const receipts = await loadReceipts(this.ctx.storage, { sinceMs: Infinity }).catch(() => []);
+        const receipt = (Array.isArray(receipts) ? receipts : []).find((r) => r.key === objective.artifact.receipt) || null;
+        return json({
+          id: objective.id, name: objective.workflow_name || objective.objective, status: objective.status,
+          verified: read.verified, sha256: read.sha256, recorded_sha256: read.recorded_sha256, bytes: read.bytes,
+          content_type: read.content_type, text: read.text, receipt,
+          spoken: read.verified ? speakMissionArtifact(objective.artifact) : 'The saved result no longer matches its recorded SHA-256, sir, so I cannot call it verified.',
+        });
+      }
       if (request.method !== 'POST') return json({ detail: 'Not found.' }, 404);
       if (path === '/api/fine-tune/status' && request.method === 'POST') {
         return json(fineTuneReadiness(this.env));
@@ -12448,8 +12472,11 @@ export class CheState extends DurableObject {
         // "mission status": the durable objective graphs, spoken.
         if (/^\s*(?:che[,:]?\s*)?(?:(?:what(?:'s| is)\s+)?(?:the|my)\s+)?(?:mission|objective)s?\s+status\??\s*$|^\s*how(?:'s| is| are) (?:the|my) (?:mission|objective)s?(?: going)?\??\s*$/i.test(message)) {
           if (!ownerDevice) return ndjsonReply('Only the CHE owner can read mission status.', { source: 'che_mission_status', ok: false });
-          const active = ((await this.loadData()).objectives || []).filter((o) => o.status !== 'complete').slice(0, 3);
-          return ndjsonReply(active.length ? `${active.map(speakObjective).join(' ')} Sir.` : 'No mission is in progress, sir.', { source: 'che_mission_status', model_calls: 0 });
+          const objectives = (await this.loadData()).objectives || [];
+          const active = objectives.filter((o) => o.status !== 'complete').slice(0, 3);
+          // Nothing running: the newest finished run, with its verified result, so a reopened CHE can say how it ended.
+          const finished = active.length ? null : objectives.find((o) => o.status === 'complete' && o.artifact?.sha256);
+          return ndjsonReply(active.length ? `${active.map(speakObjective).join(' ')} Sir.` : `No mission is in progress, sir.${finished ? ` The last one finished: ${speakObjective(finished)}` : ''}`, { source: 'che_mission_status', model_calls: 0 });
         }
         // "coding status" and every other question about a coding record: the stored job and
         // runtime records answer, with their evidence. Asking never runs an investigation, never
@@ -15481,7 +15508,11 @@ export class CheState extends DurableObject {
       if (research?.answer && !research.articles?.length && !newsQuestion(question)) return { answer: research.answer, source: research.source || 'research_cache', verified_at: research.verified_at };
       return knownAnswer(this.ctx.storage, question, { memories: data.memories || [] });
     }).catch(() => 0);
-    return advanceObjectives(data, (fields) => enqueueJob(data, fields));
+    const started = advanceObjectives(data, (fields) => enqueueJob(data, fields));
+    // A finished workflow run gets its verified result: one report from the steps' recorded outputs, stored in
+    // CHE's own storage with its SHA-256 and a receipt (mission_artifact.js). The caller saves `data`.
+    await sealFinishedMissions(this.ctx.storage, data).catch((error) => console.error('Mission artifact failed:', error?.message || error));
+    return started;
   }
 
   // Drives a pending resume one step, decided by the pure policy in coding_failover.mjs:
