@@ -8,7 +8,7 @@
     "SEX": "0",
     "MATURE": "0.05",
     "RACE": "african=0.45,asian=0.15,caucasian=0.4",
-    "TARGET_SRGB": "150,98,70",
+    "TARGET_SRGB": "110,66,44",
     "IRIS_SRGB": "86,92,52",
     "HAIR_SRGB": "38,24,18",
     "OUTFIT_SRGB": "184,84,58",
@@ -22,6 +22,6 @@
     "hair_copper": {"STYLE": "photoreal", "HAIR_SRGB": "150,62,30"},
     "outfit_navy": {"STYLE": "photoreal", "OUTFIT_SRGB": "40,62,112", "TROUSERS_SRGB": "122,110,92", "SHOES_SRGB": "92,58,36"},
     "body_tall_strong": {"STYLE": "photoreal",
-      "FACE": "lr:cheek/cheek-volume-incr=0.3,mouth/mouth-lowerlip-volume-incr=0.3,nose/nose-point-width-incr=0.2,head/head-round=0.2,macrodetails/height/female-young-averagemuscle-averageweight-maxheight=0.8,macrodetails/universal-female-young-maxmuscle-maxweight=0.5,macrodetails/universal-female-young-averagemuscle-averageweight=-0.5"}
+      "FACE": "lr:cheek/cheek-volume-incr=0.3,mouth/mouth-lowerlip-volume-incr=0.3,nose/nose-point-width-incr=0.2,head/head-round=0.2,macrodetails/height/female-young-averagemuscle-averageweight-maxheight=0.3,macrodetails/universal-female-young-maxmuscle-maxweight=0.4,macrodetails/universal-female-young-averagemuscle-averageweight=-0.4"}
   }
 }
