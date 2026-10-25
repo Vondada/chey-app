@@ -625,6 +625,23 @@ export async function watchSymbol(storage, input) {
   return { ok: true, symbol: sym.label };
 }
 
+const INTERVAL_MS = { '15m': 15 * 60_000, '1h': 3_600_000, '4h': 4 * 3_600_000, '1d': 86_400_000 };
+
+/// Only bars that have closed by `now` (open time + interval <= now). Binance's newest kline and a
+/// daily row for today are still forming: learning or opening a paper trade on one would use a
+/// price that has not settled (look-ahead). A bar with an unreadable time is kept as it was.
+export function closedCandles(candles, interval = '1d', now = Date.now()) {
+  const ms = INTERVAL_MS[interval] || INTERVAL_MS['1d'];
+  const list = Array.isArray(candles) ? candles : [];
+  let end = list.length;
+  while (end > 0) {
+    const t = Date.parse(list[end - 1]?.t);
+    if (!Number.isFinite(t) || t + ms <= now) break;
+    end -= 1;
+  }
+  return end === list.length ? list : list.slice(0, end);
+}
+
 function closeTrade(t, exit, closedAt) {
   const r = exit === t.stop ? -1 : round((t.target - t.entry) / (t.entry - t.stop));
   const dollars = futuresDollars(t.symbol, exit - t.entry);
@@ -641,8 +658,10 @@ export async function paperTick(storage, { fetcher = fetch, force = false, now =
   book.last_tick = new Date(now).toISOString();
   for (const symbol of book.watch) {
     const data = await loadCandles(symbol, { fetcher });
-    if (data.error || data.candles.length < 120) continue;
-    const candles = data.candles;
+    if (data.error) continue;
+    // Decisions use closed bars only; the bar still forming is left for the next tick.
+    const candles = closedCandles(data.candles, '1d', now);
+    if (candles.length < 120) continue;
     const last = candles[candles.length - 1];
     for (const t of book.open.filter((x) => x.symbol === symbol)) {
       for (const k of candles.filter((bar) => bar.t > t.opened_bar)) {

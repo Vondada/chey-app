@@ -222,6 +222,16 @@ async function releases(env, fetcher = fetch) {
     : [];
 }
 
+/** The newest verified IPA release as /api/update/latest describes it, or null when GitHub cannot be read (never a guess). */
+export async function latestVerifiedRelease(env = {}, fetcher = fetch, origin = 'https://che.invalid') {
+  try {
+    const release = (await releases(env, fetcher))[0];
+    return release ? releaseToUpdate(release, origin) : null;
+  } catch (_) {
+    return null;
+  }
+}
+
 async function latestMobileBuildAttempt(env, fetcher = fetch) {
   try {
     const status = await githubJson('/commits/main/status', env, fetcher);

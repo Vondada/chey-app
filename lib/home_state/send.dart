@@ -506,6 +506,9 @@ extension _CheHomeSend on _CHEHomeState {
         await vault.save(CheVaultEntry(site: command.site, password: command.password, username: command.username));
         spoken = 'Saved your ${command.site} password in CHE\'s vault on this iPhone, sir.';
         shown = spoken;
+      case 'ask_password':
+        spoken = 'Say: save my ${command.site} password as, then the password, all in one sentence, sir. It stays in CHE\'s vault on this iPhone and is never sent anywhere.';
+        shown = spoken;
       case 'read':
         // Face ID before speaking/showing a vault password (TTL skips re-prompt).
         final unlocked = await CheVaultAuth.instance.ensureUnlocked(

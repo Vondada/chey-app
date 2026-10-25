@@ -77,7 +77,8 @@ test('the exact reply the owner saw on his iPhone is not produced: the question 
 test('pizza: a stored statement is recalled with its subject, value and genuine date', async () => {
   const che = await openChe();
   const saved = await che.say('Remember that my favorite food is pizza');
-  assert.equal(saved.reply, 'I’ll remember that, sir.');
+  // The acknowledgement carries the write receipt read back from storage: the record id and the stored time.
+  assert.match(saved.reply, /^I’ll remember that, sir\. Saved \"[^\"]+\" as record [\w-]+ on \d{4}-\d{2}-\d{2} at \d{2}:\d{2} UTC, and read it back from storage\.$/);
   const out = await che.say('What is my favorite food?');
   assert.equal(out.modelCalls, 0);
   assert.match(out.reply, /^Your favorite food is pizza[.,]/);

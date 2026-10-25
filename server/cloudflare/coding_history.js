@@ -171,7 +171,8 @@ export function completedWorkProof(jobs = [], repo = '') {
 // The other AIs whose coding work CHE's job records never hold. Named in a question about who did coding work, the answer
 // says so, then gives CHE's own record. Handoffs, mailbox messages and consultations are routed before this (worker.js).
 const OTHER_AGENT = /\b(claude|codex|chatgpt|gpt|gemini|cursor|copilot|grok)\b|\b(?:another|other|which|what)\s+(?:agent|ai)\b/i;
-const AGENT_WORK = /\b(?:finish\w*|complet\w*|wrote|written|write|made|merged?|did|done|built|build|changed|change|changes|commit\w*|pull requests?|PRs?|coding|code|job|task|work|far\s+(?:did|has|have)|progress|get|got)\b/i;
+// "What is Claude currently working on?" (owner live test, 2026-10-25) is a question about that AI's work too.
+const AGENT_WORK = /\b(?:finish\w*|complet\w*|wrote|written|write|made|merged?|did|done|built|build|changed|change|changes|commit\w*|pull requests?|PRs?|coding|code|job|task|work|working|far\s+(?:did|has|have)|progress|get|got)\b/i;
 const AGENT_SPEECH = /\b(?:say|said|tell|told|ask|asked|message|mailbox|hand\s*off|handed|pass|send|sent|forward|consult|work\s+with|compare|coordinate|collaborate|check\s+with|repl(?:y|ies|ied)|respon(?:d|ds|ded|se|ses)|answer(?:s|ed)?)\b/i;
 // A question, not an instruction to another AI: it opens like one, or ends with one.
 const ASKS = /^(?:(?:che|chay|chey)[,:]?\s+)?(?:did|does|do|has|have|is|was|were|who|which|what|how|where|when|why|tell\s+me\s+(?:who|which|what|how|whether))\b/i;
@@ -185,8 +186,78 @@ export function otherAgentWorkAsk(message) {
 }
 
 /** The reply to a question about another AI's coding work: CHE does not own it, and CHE's own record is given instead. */
-export function otherAgentWorkReply(agent, jobs = [], repo = '') {
+// `correspondence`: what that AI itself wrote in the Flagstaff mailbox, read from the Brain's imported correspondence
+// (brain_office.answerCorrespondenceQuestion), quoted with file and message id. It is that AI's own report, not CHE's
+// verification, and it is said so.
+export function otherAgentWorkReply(agent, jobs = [], repo = '', { correspondence = '' } = {}) {
   const named = /^(?:another|other|which|what)\b/.test(agent) ? 'another agent' : agent[0].toUpperCase() + agent.slice(1);
   const own = completedWorkProof(jobs, repo).text;
-  return `I can't see ${named}'s work in my own records, sir, so I can't say who wrote it, how far it got, or whether it reached a verified result. ${own}`;
+  const said = correspondence ? ` ${correspondence}` : '';
+  return `I can't see ${named}'s live session in my own records, sir, so I can't confirm what it is doing right now or whether it reached a verified result.${said} ${own}`;
+}
+
+// ─── What another AI says it is working on: the live che-mailbox ────────────────────────────────────────────────────
+// Owner live test (2026-10-25): "What is Claude currently working on?" answered "Nothing is running right now" from
+// CHE's own job list, while Claude's mailbox thread and the live handoff on the che-mailbox branch said what it was
+// doing. The answer now quotes that AI's newest mailbox message and its handoff entry, with message id, time and
+// branch commit, as that AI's own report, never CHE's verification. A mailbox CHE has no credentials for is a missing
+// tool, and a GitHub read that fails is a failed read: each is said as such, never as "nothing".
+const clipLine = (text, n) => { const t = String(text || '').replace(/\s+/g, ' ').trim(); return t.length > n ? `${t.slice(0, n - 1)}…` : t; };
+const minute = (iso) => { const t = Date.parse(String(iso || '')); return Number.isFinite(t) ? new Date(t).toISOString().slice(0, 16).replace('T', ' ') + ' UTC' : 'no recorded time'; };
+
+/**
+ * { text, records, outcome } from a live mailbox thread ({ messages } or { error }) and the live handoff
+ * (mailbox.readLiveHandoff's result). outcome: retrieved | no_match | tool_unavailable | storage_failed.
+ */
+export function agentMailboxReport(agent, thread = {}, handoff = null) {
+  const peer = String(agent || '').toLowerCase() === 'gpt' ? 'chatgpt' : String(agent || '').toLowerCase();
+  const named = peer ? peer[0].toUpperCase() + peer.slice(1) : 'That AI';
+  if (thread?.error) {
+    const missing = /needs CHE_GITHUB_TOKEN|credentials|unavailable/i.test(thread.error);
+    return missing
+      ? { outcome: 'tool_unavailable', records: [], text: `My live mailbox reader isn't connected (no GitHub mailbox credentials), so I can't read what ${named} reported.` }
+      : { outcome: 'storage_failed', records: [], text: `I couldn't read ${named}'s mailbox thread on GitHub just now (${clipLine(thread.error, 80)}), so I won't guess what it reported.` };
+  }
+  const theirs = (Array.isArray(thread?.messages) ? thread.messages : []).filter((m) => m?.from === peer && String(m.text || '').trim());
+  const newest = theirs.map((m, i) => ({ m, i, t: Date.parse(String(m.at || '')) }))
+    .sort((a, b) => ((Number.isFinite(b.t) ? b.t : -Infinity) - (Number.isFinite(a.t) ? a.t : -Infinity)) || (b.i - a.i))[0]?.m || null;
+  const parts = [];
+  const records = [];
+  if (newest) {
+    parts.push(`${named}'s newest mailbox message (mailbox/${peer}.jsonl, message ${newest.id || 'with no id'}, written ${minute(newest.at)}): "${clipLine(newest.text, 260)}"`);
+    if (newest.id) records.push(`mailbox:${peer}:${newest.id}`);
+  }
+  // The handoff's "Current position" holds one entry per AI, newest first; the first one headed by this AI is its own.
+  if (handoff?.status === 200 && handoff.checkpoint) {
+    const entry = String(handoff.checkpoint).split(/\n(?=\*\*)/).find((block) => new RegExp(`^\\*\\*${named}\\b`, 'i').test(block.trim()));
+    if (entry) {
+      const head = /^\*\*([^*]+)\*\*/.exec(entry.trim());
+      parts.push(`Its entry in the live handoff (che-mailbox ${String(handoff.head_sha || '').slice(0, 7)}): "${clipLine(head ? head[1] : entry, 260)}"`);
+      records.push(`handoff:${String(handoff.head_sha || '').slice(0, 12)}`);
+    }
+  }
+  if (!parts.length) return { outcome: 'no_match', records: [], text: `I read ${named}'s mailbox thread and the live handoff just now and found no message or handoff entry from ${named}, so I have no report of what it is doing.` };
+  return { outcome: 'retrieved', records, text: `${parts.join(' ')} That is ${named}'s own report, not something I verified.` };
+}
+
+/**
+ * The report part of "what is Claude working on?": { text, records, outcome }. `live(peer)` resolves to
+ * [thread, handoff] from the che-mailbox branch (null when the mailbox has no credentials); `brain(peer)` reads the copy
+ * imported into the Brain ({ text, records }). The Brain is read only when the live mailbox is missing or failed.
+ */
+export async function agentReportTurn(agent, { live = null, brain = null } = {}) {
+  if (/^(?:another|other|which|what)\b/.test(String(agent || ''))) return { text: '', records: [], outcome: 'no_match' };
+  const peer = agent === 'gpt' ? 'chatgpt' : agent;
+  let report = agentMailboxReport(peer, { error: 'Mailbox needs CHE_GITHUB_TOKEN and CHE_GITHUB_REPO.' });
+  if (live) {
+    try { const [thread, handoff] = await live(peer); report = agentMailboxReport(peer, thread, handoff); } catch (error) { report = agentMailboxReport(peer, { error: String(error?.message || error) }); }
+  }
+  if (report.outcome === 'retrieved' || report.outcome === 'no_match' || !brain) return report;
+  try {
+    const told = brain(peer);
+    const records = told?.records || [];
+    return { text: `${report.text} ${told?.text || ''}`.trim(), records, outcome: records.length ? 'retrieved' : report.outcome };
+  } catch (_) {
+    return { text: `${report.text} I could not read the imported mailbox in my Brain just now either, so I won't guess what it reported.`, records: [], outcome: 'storage_failed' };
+  }
 }

@@ -123,6 +123,7 @@ class _CheRithmicScreenState extends State<CheRithmicScreen> {
     setState(() {
       _busy = true;
       _error = '';
+      _diagnosis = const [];
       _details = const [];
       _status = 'Connecting to Rithmic…';
     });
@@ -237,7 +238,11 @@ class _CheRithmicScreenState extends State<CheRithmicScreen> {
 
   /// "Diagnose Rithmic": the four checks in order, shown, announced and felt. Changes nothing.
   Future<void> _diagnose() async {
-    setState(() => _busy = true);
+    setState(() {
+      _busy = true;
+      _error = '';
+      _diagnosis = const [];
+    });
     try {
       final checks = await cheRithmicDiagnose(
         live: _live,

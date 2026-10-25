@@ -13,9 +13,9 @@ import 'rithmic_wire.dart';
 
 typedef RithmicLog = void Function(String message);
 
-/// Rithmic's bootstrap endpoint, from the owner's R | Protocol API kit. It answers system and gateway questions
-/// before any login.
-final kRithmicBootstrap = Uri.parse('wss://rituz00100.rithmic.com:443');
+/// Production discovery; the UAT endpoint serves developer test accounts, not prop accounts.
+final kRithmicBootstrap = Uri.parse('wss://rprotocol.rithmic.com:443');
+final kRithmicTestBootstrap = Uri.parse('wss://rituz00100.rithmic.com:443');
 
 /// The app identity CHE logs in with. Internal defaults; the owner never has to type them.
 const kRithmicAppName = 'CHE';
@@ -53,7 +53,8 @@ RithmicException rithmicLoginFailure(List<String> rpCodes, {String system = ''})
   if (RegExp(r'password|username|user name|invalid user|bad login').hasMatch(text)) {
     return RithmicException(RithmicFailure.badLogin, 'Rithmic rejected the username or password ($codes). Nothing was saved.');
   }
-  return RithmicException(RithmicFailure.loginRejected, 'Rithmic rejected the login ($codes). The cause is not confirmed as a password problem. Nothing was saved.');
+  return RithmicException(RithmicFailure.loginRejected,
+      'Rithmic rejected the login${system.isEmpty ? '' : ' on "$system"'} ($codes). This does not identify a password problem. Check the firm-assigned system and the account/application API authorization. Your saved login was not changed.');
 }
 
 /// A refused market-data subscription: a missing permission, or a symbol Rithmic would not subscribe to.
@@ -82,9 +83,9 @@ class _WebSocketChannel implements RithmicChannel {
   @override
   Stream<Uint8List> get frames => _socket
       .where((d) => d is List<int>)
-      .map((d) => d is Uint8List ? d : Uint8List.fromList(d as List<int>));
+      .map((d) => decodeRithmicPacket(d is Uint8List ? d : Uint8List.fromList(d as List<int>)));
   @override
-  void send(Uint8List frame) => _socket.add(frame);
+  void send(Uint8List frame) => _socket.add(encodeRithmicPacket(frame));
   @override
   Future<void> close() => _socket.close();
 }
@@ -102,26 +103,27 @@ class RithmicRoute {
 
 abstract class RithmicRouteFinder {
   /// [preferPaper]: the account is a prop-firm evaluation (FundYourEdge), which runs on Rithmic Paper Trading.
-  Future<RithmicRoute> find({required bool preferPaper});
+  Future<RithmicRoute> find({required bool preferPaper, String? systemName});
 }
 
 /// Asks Rithmic's bootstrap endpoint for the systems, picks the right one, then asks for its gateways.
 class RithmicBootstrapDiscovery implements RithmicRouteFinder {
   RithmicBootstrapDiscovery({Uri? bootstrap, RithmicChannelOpener? open, this.timeout = const Duration(seconds: 12)})
-      : bootstrap = bootstrap ?? kRithmicBootstrap,
+      : _bootstrapOverride = bootstrap,
         _open = open ?? openRithmicWebSocket;
 
-  final Uri bootstrap;
+  final Uri? _bootstrapOverride;
   final RithmicChannelOpener _open;
   final Duration timeout;
 
   /// One question per connection, as the kit's samples do: connect, ask, read the answer, close.
-  Future<RithmicFrame> _ask(Uint8List request, int answerTemplate) async {
+  Future<RithmicFrame> _ask(Uri endpoint, Uint8List request, int answerTemplate) async {
     final RithmicChannel channel;
     try {
-      channel = await _open(bootstrap, timeout);
+      channel = await _open(endpoint, timeout);
     } catch (e) {
-      throw RithmicException(RithmicFailure.gatewayDiscovery, 'Could not reach Rithmic to find your gateway ($e). Nothing was saved.');
+      throw RithmicException(RithmicFailure.gatewayDiscovery,
+          'Could not reach Rithmic discovery at ${endpoint.host}:443 ($e). Login was not attempted. Your saved login was not changed.');
     }
     try {
       final answer = channel.frames.map(_parseOrNull).firstWhere((f) => f?.templateId() == answerTemplate);
@@ -145,13 +147,20 @@ class RithmicBootstrapDiscovery implements RithmicRouteFinder {
   }
 
   @override
-  Future<RithmicRoute> find({required bool preferPaper}) async {
-    final info = (await _ask(encodeSystemInfoRequest(), RithmicTemplate.systemInfoResponse)).toSystemInfo();
+  Future<RithmicRoute> find({required bool preferPaper, String? systemName}) async {
+    final requested = systemName?.trim() ?? '';
+    final endpoint = _bootstrapOverride ?? (requested.toLowerCase() == 'rithmic test' ? kRithmicTestBootstrap : kRithmicBootstrap);
+    final info = (await _ask(endpoint, encodeSystemInfoRequest(), RithmicTemplate.systemInfoResponse)).toSystemInfo();
     if (!info.accepted || info.systems.isEmpty) {
       throw RithmicException(RithmicFailure.gatewayDiscovery, 'Rithmic listed no systems (${_codes(info.rpCodes)}). Nothing was saved.');
     }
-    final system = pickRithmicSystem(info.systems, preferPaper: preferPaper);
-    final gateways = (await _ask(encodeGatewayInfoRequest(systemName: system), RithmicTemplate.gatewayInfoResponse)).toGatewayInfo();
+    final matches = info.systems.where((s) => s.toLowerCase() == requested.toLowerCase());
+    if (requested.isNotEmpty && matches.isEmpty) {
+      throw RithmicException(RithmicFailure.systemUnavailable,
+          'Rithmic discovery at ${endpoint.host} does not offer "$requested". Check the firm-assigned system under Advanced. Login was not attempted.');
+    }
+    final system = requested.isEmpty ? pickRithmicSystem(info.systems, preferPaper: preferPaper) : matches.first;
+    final gateways = (await _ask(endpoint, encodeGatewayInfoRequest(systemName: system), RithmicTemplate.gatewayInfoResponse)).toGatewayInfo();
     if (!gateways.accepted) throw rithmicLoginFailure(gateways.rpCodes, system: system);
     final usable = <int>[
       for (var i = 0; i < gateways.uris.length; i++)

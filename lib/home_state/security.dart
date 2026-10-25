@@ -943,6 +943,15 @@ extension _CheHomeSecurity on _CHEHomeState {
     await _beginRealtimeConversation(fromWake: true);
   }
 
+  /// A Porcupine listener died while CHE showed wake listening. Porcupine is
+  /// in its error cooldown now, so restarting the wake stack gives the
+  /// microphone to the native listener instead of leaving CHE deaf.
+  Future<void> _recoverFromPorcupineError(CheWakeWordEngine failed) async {
+    if (!mounted || !identical(_porcupineWake, failed)) return;
+    await _stopPorcupineWake(disposeEngine: true);
+    await _restartWakeListener();
+  }
+
   Future<bool> _startPorcupineWake() async {
     if (kIsWeb ||
         defaultTargetPlatform != TargetPlatform.iOS ||
@@ -960,10 +969,12 @@ extension _CheHomeSecurity on _CHEHomeState {
       await current.dispose();
     }
 
-    final wake = CheWakeWordEngine(
+    late final CheWakeWordEngine wake;
+    wake = CheWakeWordEngine(
       baseUrl: cheAgentBaseUrl,
       deviceToken: _deviceToken!,
       onWake: _handlePorcupineWake,
+      onListenerError: (_) => _recoverFromPorcupineError(wake),
     );
     _porcupineWake = wake;
 

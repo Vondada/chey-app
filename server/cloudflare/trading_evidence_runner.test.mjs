@@ -63,6 +63,8 @@ function walk(n, seed) {
 
 const HOUR = 60 * 60_000;
 const T0 = Date.UTC(2026, 9, 15, 15, 0, 0);
+// The 1,500-day walks run to 2030; their ticks happen after the last bar has closed (only closed bars are used).
+const LATE = Date.UTC(2031, 0, 1, 15, 0, 0);
 
 test('a tick records its run, journals a forward trade, and a repeat in the hour is skipped', async () => {
   const store = memStore();
@@ -154,7 +156,7 @@ test('every trade the engine produces over a long walk passes validation, so non
   const candles = walk(1500, 11);
   let written = 0;
   for (let end = 300; end <= candles.length; end += 300) {
-    const run = await evidenceTick(store, { now: T0 + (end / 300) * HOUR, force: true, load: feed(candles.slice(0, end)) });
+    const run = await evidenceTick(store, { now: LATE + (end / 300) * HOUR, force: true, load: feed(candles.slice(0, end)) });
     assert.equal(run.ok, true, run.error);
     assert.equal(run.rejected, 0, JSON.stringify(run.rejections));
     written += run.journal.written;
@@ -182,9 +184,9 @@ test('the report answers from records: today, total, win rate with range, best s
 test('with enough recorded trades the report names a best strategy and its measured range', async () => {
   const store = memStore();
   const candles = walk(1500, 11);
-  for (let end = 300; end <= candles.length; end += 300) await evidenceTick(store, { now: T0 + (end / 300) * HOUR, force: true, load: feed(candles.slice(0, end)) });
+  for (let end = 300; end <= candles.length; end += 300) await evidenceTick(store, { now: LATE + (end / 300) * HOUR, force: true, load: feed(candles.slice(0, end)) });
   const trades = await readTrades(store);
-  const text = await evidenceReport(store, { now: T0 + 10 * HOUR });
+  const text = await evidenceReport(store, { now: LATE + 10 * HOUR });
   assert.match(text, new RegExp(`Recorded in total: ${trades.length} `));
   if (trades.length >= 30) assert.match(text, /Best strategy so far: .*trades, .* R per trade \(95% range/);
   else assert.match(text, /No strategy has 30 trades yet/);
@@ -209,4 +211,20 @@ test('portfolios are isolated per candidate and filter, and every one is present
   assert.equal(new Set(portfolios.map((pf) => pf.key)).size, 10);
   assert.ok(portfolios.every((pf) => pf.source === 'paper' && pf.resolution === 'daily' && pf.contract === 'MNQ'));
   assert.equal(EVIDENCE_PORTFOLIOS, 'evidence_portfolios');
+});
+
+test("today's unfinished daily bar is not consumed: the trade is decided on the bar once it has closed", async () => {
+  const store = memStore();
+  const at = (i, hours) => Date.parse(`${day(i)}T00:00:00Z`) + hours * HOUR;
+  await evidenceTick(store, { now: at(1, 1), load: feed(bars(SETUP.slice(0, 1))) });
+  // Midday on day 4 the feed already has a partial row for it that has not reached the target yet.
+  const partial = [101.8, 102.5, 101.7, 102.2];
+  const mid = await evidenceTick(store, { now: at(4, 12), load: feed(bars([...SETUP, partial])) });
+  assert.equal(mid.ok, true);
+  assert.equal(mid.last_bar, day(3), 'the forming bar is left for a later tick');
+  // After day 4 closes, the final row reaches the target: the win is recorded on that bar.
+  const done = await evidenceTick(store, { now: at(5, 1), load: feed(bars([...SETUP, WIN_BAR])) });
+  assert.equal(done.closed, 1, 'the closed bar was read with its final prices');
+  const trades = await readTrades(store);
+  assert.equal(trades.length, 1);
 });

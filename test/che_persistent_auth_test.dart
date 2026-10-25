@@ -255,6 +255,6 @@ class FakeFeed implements RithmicMarketFeed {
 
 class FakeFinder implements RithmicRouteFinder {
   @override
-  Future<RithmicRoute> find({required bool preferPaper}) async =>
+  Future<RithmicRoute> find({required bool preferPaper, String? systemName}) async =>
       RithmicRoute(system: 'Rithmic Paper Trading', gatewayName: 'Chicago Area', gatewayUri: Uri.parse('wss://chicago.example:443'));
 }
