@@ -740,7 +740,26 @@ extension _CheHomeVoice on _CHEHomeState {
       return;
     }
 
+    if (type == 'partial') {
+      // Quiet live text in the composer while he speaks: no speech, no send, no home-screen rebuild.
+      final shown = cheComposerForPartial(
+        partial: event['text']?.toString() ?? '',
+        composer: controller.text,
+        lastShown: _nativePartialShown,
+        sending: _isSending,
+        asleepForWake: wakePhraseMode && cheSleeping,
+      );
+      if (shown == null) return;
+      _nativePartialShown = shown;
+      controller.value = TextEditingValue(text: shown, selection: TextSelection.collapsed(offset: shown.length));
+      return;
+    }
+
     if (type == 'utterance') {
+      // The final words replace the live ones; paths below that send nothing (sleep phrase, held while sending) must
+      // not leave a stale partial in the composer. Typed text is never touched.
+      if (_nativePartialShown.isNotEmpty && controller.text == _nativePartialShown) controller.clear();
+      _nativePartialShown = '';
       var words = event['text']?.toString().trim() ?? '';
       if (words.isEmpty) return;
 

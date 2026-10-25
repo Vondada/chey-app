@@ -25,6 +25,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:speech_to_text/speech_to_text.dart' as stt;
 import 'package:url_launcher/url_launcher.dart';
 import 'che_job_activity_banner.dart';
+import 'che_live_partial.dart';
 import 'che_mic_supervisor.dart';
 import 'che_ui/che_performance_note.dart';
 import 'che_ui/che_latency.dart';
@@ -500,6 +501,8 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
   bool _autoSentCurrentTurn = false;
   // Words held open while the owner pauses mid-thought (see microphone.dart).
   String _heldSpeech = '';
+  /// The text the last native partial transcript put in the composer (che_live_partial.dart).
+  String _nativePartialShown = '';
   // Words the owner spoke while CHE was still answering; sent as the next turn
   // when the current one finishes (voice.dart, send.dart).
   final CheHeldUtterance _pendingSpokenText = CheHeldUtterance();

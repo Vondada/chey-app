@@ -1142,6 +1142,16 @@ struct CHEAppShortcuts: AppShortcutsProvider {
       return
     }
 
+    // Live words (handoff 8f): the owner sees what he is saying while he says it. Sent only after the speaking guard,
+    // so CHE's own voice heard by the microphone is never shown; only changed text reaches here (latestTranscript).
+    if !result.isFinal {
+      voiceStreamHandler.emit([
+        "type": "partial",
+        "text": transcript,
+        "final": false,
+      ])
+    }
+
     utteranceTimer?.invalidate()
 
     if result.isFinal {
