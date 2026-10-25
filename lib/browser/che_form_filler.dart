@@ -201,6 +201,12 @@ class CheFormFiller {
     final personal = p.approvedCount(CheProfileKind.personal) > 0;
     final office = p.approvedCount(CheProfileKind.office) > 0;
     if (!personal && !office) return CheProfileKind.personal; // nothing approved: the report says so
+    // A sign-in page (only username/password/extra questions) needs no profile, so no question.
+    final needsProfile = _fields.any((f) {
+      final k = '${f['key']}';
+      return cheProfileFieldLabels.containsKey(k) || k == 'name' || k.startsWith('bday-');
+    });
+    if (!needsProfile) return CheProfileKind.personal;
     // 1. The signed-in account's email domain (domains only, read on the page).
     final domains = {for (final d in (_scan['emailDomains'] as List? ?? const [])) '$d'.toLowerCase()};
     final pd = p.emailDomain(CheProfileKind.personal), od = p.emailDomain(CheProfileKind.office);

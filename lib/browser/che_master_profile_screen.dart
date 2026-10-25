@@ -179,7 +179,9 @@ class _CheMasterProfileScreenState extends State<CheMasterProfileScreen> {
           ),
           const SizedBox(width: 8),
           Semantics(
+            container: true,
             label: approved ? 'Approved: $label. Double tap to stop CHE using it.' : 'Approve $label for CHE to use',
+            onTap: () => _toggle(key, !approved),
             toggled: approved,
             button: true,
             excludeSemantics: true,

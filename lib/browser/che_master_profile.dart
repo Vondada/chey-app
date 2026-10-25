@@ -328,7 +328,7 @@ const _monthNames = ['january', 'february', 'march', 'april', 'may', 'june', 'ju
 
 /// "1990-05-14", "05/14/1990" (US order), "May 14 1990", "14 May 1990" → "1990-05-14".
 String? cheParseDate(String raw) {
-  final s = raw.trim().toLowerCase().replaceAll(',', ' ').replaceAll(RegExp(r'(\d)(st|nd|rd|th)\b'), r'$1').replaceAll(RegExp(r'\s+'), ' ');
+  final s = raw.trim().toLowerCase().replaceAll(',', ' ').replaceAllMapped(RegExp(r'(\d)(st|nd|rd|th)\b'), (m) => m[1]!).replaceAll(RegExp(r'\s+'), ' ').trim();
   String? iso(int y, int m, int d) {
     if (y < 1900 || y > DateTime.now().year || m < 1 || m > 12 || d < 1 || d > 31) return null;
     final dt = DateTime(y, m, d);
