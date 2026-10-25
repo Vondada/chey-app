@@ -143,8 +143,9 @@ export function personalFactQuestion(message) {
   const question = { subject, learn, words: words(subject) };
   if (question.words.every((w) => ALL_FAVORITES.has(w)) && question.words.some((w) => w.startsWith('favorite'))) question.all_favorites = true;
   // "my favorite food, drink and color": the rest of the sentence after the first subject, split into its items.
-  const full = PERSONAL.exec(asked.trim().replace(/\s+where\b.*$/i, ''));
-  const items = full ? full[1].split(/\s*,\s*(?:and\s+)?|\s+and\s+/i).map((x) => x.trim().replace(/^(?:my|your)\s+/i, '')).filter(Boolean) : [];
+  // A trailing clause ("…, and where did you learn that", "and how do you know") is about the answer, never an item.
+  const full = PERSONAL.exec(asked.trim().replace(/\s*,?\s*(?:and\s+)?(?:where|how|when|why|who)\b.*$/i, ''));
+  const items = full ? full[1].split(/\s*,\s*(?:and\b\s*)?|\s+and\s+/i).map((x) => x.trim().replace(/^(?:and|my|your)\s+/i, '').replace(/^and$/i, '')).filter(Boolean) : [];
   if (items.length > 1 && items.length <= 6) {
     // The qualifier of the first item ("favorite") belongs to bare items after it ("drink" → "favorite drink").
     const lead = items[0].split(/\s+/);
@@ -177,11 +178,13 @@ export function explicitMemorySave(message) {
   if (!text || text.length > 600) return null;
   const m = new RegExp(String.raw`^(${SAVE_VERB})\b\s*(?:this|that|the following)?\s*(.+)$`, 'i').exec(text);
   if (!m) return null;
-  let body = m[2].replace(/[.!]+$/, '').replace(/\s*please$/i, '').trim();
-  const place = new RegExp(String.raw`\s*,?\s*${MEMORY_PLACE}$`, 'i');
+  // A short phrase loses its full stop ("Silver Falcon 27."); a sentence keeps it, as the owner wrote it.
+  let body = m[2].replace(/[,.!]*\s*please[.!]*$/i, '').trim();
+  const place = new RegExp(String.raw`\s*,?\s*${MEMORY_PLACE}[.!]*$`, 'i');
   const placeLead = new RegExp(String.raw`^${MEMORY_PLACE}\s*[:,-]?\s*`, 'i');
   const hasPlace = place.test(body) || placeLead.test(body);
   body = body.replace(place, '').replace(placeLead, '').trim();
+  if (body.split(/\s+/).length <= 6) body = body.replace(/[.!]+$/, '');
   const colon = /^:/.test(body);
   body = body.replace(/^:\s*/, '').replace(/^that\s+/i, '').trim();
   const named = NAMED_ITEM.exec(body);
@@ -191,7 +194,8 @@ export function explicitMemorySave(message) {
     const value = body.slice(named[0].length).replace(/^\s*(?:is|:|-|=)\s*/i, '').replace(/^["“']|["”']$/g, '').trim();
     if (value) {
       const label = named[0].replace(/^(?:the|this|a|my)\s+/i, '').trim();
-      body = `${label[0].toUpperCase()}${label.slice(1)}: ${value}`;
+      // "the code phrase X" keeps its label (the words alone say nothing); "this test fact: X" is just X.
+      body = /\b(?:fact|note|detail)$/i.test(label) ? value : `${label[0].toUpperCase()}${label.slice(1)}: ${value}`;
     }
   }
   if (!body || isQuestionLike(body)) return null;
@@ -293,7 +297,7 @@ export function recordMetadata(r = {}) {
   const when = Number.isFinite(at) ? `stored ${new Date(at).toISOString().slice(0, 16).replace('T', ' ')} UTC` : 'no stored time';
   const source = SOURCE_NAME[r.source] || SOURCE_NAME[r.origin] || (r.legacy ? 'saved from our chat (inferred)' : r.phone ? 'a phone note with no author' : r.source ? String(r.source) : 'unknown source');
   const confirmed = r.verification_status === 'owner_attested' || r.brain ? ', owner-confirmed' : '';
-  return `${r.id ? `Record ${String(r.id).slice(0, 8)}` : 'No record ID'} in ${STORE_NAME(r)}, ${when}, source: ${source}${confirmed}.`;
+  return `${r.id ? `Record ${String(r.id).slice(0, 40)}` : 'No record ID'} in ${STORE_NAME(r)}, ${when}, source: ${source}${confirmed}.`;
 }
 
 /**
@@ -336,12 +340,15 @@ export function answerPersonalFact(data = {}, question = {}, brainRecords = [], 
     });
     const found = several.filter((x) => x.record).map((x) => x.record);
     const first = lines[0][0].toUpperCase() + lines[0].slice(1);
+    // Where each answer came from (owner live test, 2026-10-25: recalled facts came with no source at all).
+    const sources = [...new Set(found.map((r) => `${SOURCE_NAME[r.source] || SOURCE_NAME[r.origin] || (r.legacy ? 'saved from our chat (inferred)' : r.phone ? 'a phone note' : 'your own words')}, stored in ${STORE_NAME(r)}`))];
+    const sourceLine = question.learn ? '' : ` Source: ${sources.join('; ')}.`;
     return {
       kind: found.every((r) => !r.legacy && !r.phone) ? 'owner_attested' : 'mixed',
       records: found.map((r) => r.id).filter(Boolean),
       record: found[0],
       found,
-      answer: `From what you told me, sir: ${[first, ...lines.slice(1)].join('; ')}.`,
+      answer: `From what you told me, sir: ${[first, ...lines.slice(1)].join('; ')}.${sourceLine}`,
     };
   }
   const record = recallPersonalFact(data, question, brainRecords, phoneNotes);
