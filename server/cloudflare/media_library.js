@@ -35,14 +35,16 @@ function isVideoRecord(item) {
 }
 
 async function checkFile(env, storage, item, fetcher) {
-  if (item.blob === 'r2' && item.blob_key) {
-    const object = env.CHE_DATA_BUCKET ? await env.CHE_DATA_BUCKET.head(item.blob_key).catch(() => null) : null;
-    if (object && Number(object.size) > 0) return { status: 'playable', storage: 'r2', bytes: Number(object.size) };
-    return { status: 'missing', storage: 'r2', reason: 'The R2 file is not there.' };
-  }
-  if (item.blob === 'do') {
-    const data = await storage.get(`media:${item.id}`).catch(() => null);
-    return data ? { status: 'playable', storage: 'storage' } : { status: 'missing', storage: 'storage', reason: 'The stored file is not there.' };
+  // A file CHE stores herself (R2, CHE's own store, a storage blob) is read back and must really be an MP4: the same
+  // check as the media inventory (media.js verifyMediaFile), never a bare "the key exists".
+  if (item.blob === 'r2' || item.blob === 'che_store' || item.blob === 'do') {
+    const where = item.blob === 'r2' && env.CHE_DATA_BUCKET ? 'r2' : 'storage';
+    const check = await verifyMediaFile(env, storage, item);
+    if (check.ok) return check.mime_type === 'video/mp4' || check.mime_type === 'video/quicktime'
+      ? { status: 'playable', storage: where, ...(check.size ? { bytes: check.size } : {}) }
+      : { status: 'missing', storage: where, reason: `The stored file is ${check.mime_type}, not a video.` };
+    if (check.status === 'unverified') return { status: 'unverified', storage: where, reason: 'The file could not be read just now.' };
+    return { status: 'missing', storage: where, reason: item.blob === 'r2' && env.CHE_DATA_BUCKET ? 'The R2 file is not there or is not an MP4.' : 'The stored file is not there or is not an MP4.' };
   }
   if (item.blob === 'github-artifact' || item.github_artifact_id) {
     const bytes = await githubVideoFile(env, item.github_artifact_id, item.github_filename || 'video.mp4', fetcher).catch(() => null);

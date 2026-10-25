@@ -72,6 +72,12 @@ async function storeBlob(env, storage, id, base64, mimeType = 'image/jpeg', kind
   return { blob: 'do' };
 }
 
+// CHE's own store holds the bytes: blob 'che_store', or an older Film Studio record that said 'r2' while no bucket was
+// bound (saveFilmVideo always wrote 'r2' until 2026-10-25, but mediaStore had put the film in CHE's own store).
+function inOwnStore(env, item) {
+  return item.blob === 'che_store' || (item.blob === 'r2' && !env.CHE_DATA_BUCKET && Boolean(item.blob_key));
+}
+
 export async function readBlob(env, storage, item) {
   if (item.blob === 'github-artifact') {
     try {
@@ -87,7 +93,7 @@ export async function readBlob(env, storage, item) {
       return null; // Expired artifact or unavailable GitHub download.
     }
   }
-  if (item.blob === 'che_store') {
+  if (inOwnStore(env, item)) {
     const object = await mediaStore(env, storage).get(item.blob_key || `media/${item.id}.mp4`);
     return object ? object.body : null;
   }
@@ -113,7 +119,12 @@ export async function verifyMediaFile(env, storage, item) {
   let head;
   let size;
   try {
-    if (item.blob === 'r2') {
+    if (inOwnStore(env, item)) {
+      const object = await mediaStore(env, storage).get(item.blob_key || `media/${item.id}.mp4`, { length: 32 });
+      if (!object) return { ok: false, status: 'missing', reason: 'its file is not in my storage' };
+      head = bytesToBase64(object.body.slice(0, 32));
+      size = Number(object.size) || object.body.length;
+    } else if (item.blob === 'r2') {
       if (!env.CHE_DATA_BUCKET || !item.blob_key) return { ok: false, status: 'missing', reason: 'its file is not in the R2 bucket' };
       const object = await env.CHE_DATA_BUCKET.get(item.blob_key, { range: { offset: 0, length: 32 } });
       if (!object) return { ok: false, status: 'missing', reason: 'its file is not in the R2 bucket' };
@@ -316,9 +327,10 @@ export async function saveRenderedImage(env, storage, { bytes, title = 'Scene', 
 }
 
 /** A Film Studio film already stored in R2 and verified from the file (film_render.verifyFilmObject). */
-export async function saveFilmVideo(storage, { key, title = 'Film', prompt = '', seconds = 0, width = 0, height = 0, bytes = 0, film_id = '' } = {}) {
+// [blob] is the store that holds the bytes: mediaStore(env).provider ('r2' with a bucket bound, else 'che_store').
+export async function saveFilmVideo(storage, { key, title = 'Film', prompt = '', seconds = 0, width = 0, height = 0, bytes = 0, film_id = '', blob = 'r2' } = {}) {
   const id = crypto.randomUUID();
-  const item = { id, root_id: id, parent_id: null, kind: 'video', mode: 'film', mime_type: 'video/mp4', title: String(title).slice(0, 120), prompt: String(prompt).slice(0, 500), width, height, seconds, bytes, film_id, blob: 'r2', blob_key: key, durable: true, verified: true, duration_verified: true, created_at: now(), source: 'che_film_studio' };
+  const item = { id, root_id: id, parent_id: null, kind: 'video', mode: 'film', mime_type: 'video/mp4', title: String(title).slice(0, 120), prompt: String(prompt).slice(0, 500), width, height, seconds, bytes, film_id, blob: blob === 'che_store' ? 'che_store' : 'r2', blob_key: key, durable: true, verified: true, duration_verified: true, created_at: now(), source: 'che_film_studio' };
   await saveIndex(storage, [item, ...(await listMedia(storage))]);
   return item;
 }
