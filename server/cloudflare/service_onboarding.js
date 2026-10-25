@@ -26,6 +26,8 @@
 import { KEY_PROVIDERS, STORED_KEY_WINS, fileLetter, storedKeyWins, storedKeys, testKey } from './resilience.js';
 import { redactSecrets } from './privacy_policy.js';
 import { putRepositorySecret } from './github_secrets.js';
+import { durationSeconds, kaggleAuth, kaggleCall } from './film_farm.js';
+import { ADAPTERS as GPU_ADAPTERS } from './gpu_providers.js';
 
 export const STATES = Object.freeze(['check_existing', 'account', 'token_requested', 'token_created', 'secret_configured', 'verified', 'paused', 'failed']);
 export const PAUSE_REASONS = Object.freeze(['owner_auth', 'captcha', 'missing_info', 'spending']);
@@ -195,9 +197,56 @@ function guided(id) {
   };
 }
 
+// ─── GPU providers for the compute pool: guided, with a free read that proves the key (balance or quota) ───
+// The owner creates the account, verifies his phone, loads prepaid credit and creates the key himself; CHE opens the
+// page and its secure field. A saved key never starts a paid GPU by itself: the owner's GPU budget does
+// (compute_budget.js, "allow up to $20 for GPUs").
+const NEVER_CHAT = 'Paste it only into my secure field on this screen; it goes straight to my server. Never paste a key into chat.';
+const GPU_ONCE = {
+  kaggle: ['Sign in at kaggle.com (create the account yourself if you have none).', 'Verify your phone number in Kaggle settings: GPU sessions with internet need it.', 'In Settings, API, create a new token and copy it as username:token.', NEVER_CHAT],
+  runpod: ['Sign in at runpod.io (create the account yourself if you have none).', 'Add prepaid credit yourself on the Billing page, for example 10 or 20 dollars. I never pay or add a card. RunPod needs one hour of credit to start a GPU.', 'In Settings, API Keys, create a key and copy it.', NEVER_CHAT, 'Then set a GPU budget: say "allow up to 20 dollars for GPUs". Until then I spend nothing.'],
+  vast: ['Sign in at vast.ai (create the account yourself if you have none).', 'Add prepaid credit yourself on the Billing page. I never pay or add a card.', 'On the Keys page, create an API key and copy it.', NEVER_CHAT, 'Then set a GPU budget: say "allow up to 20 dollars for GPUs". Until then I spend nothing.'],
+  modal: ['Sign in at modal.com (create the account yourself if you have none).', 'In Settings, API Tokens, create a token and copy it as token_id:token_secret.', NEVER_CHAT, 'Modal is not wired into my GPU pool yet, so the key is kept for later; I cannot verify it for free.'],
+};
+
+function gpuGuided(id) {
+  const base = guided(id);
+  const p = KEY_PROVIDERS[id];
+  const plain = p.name.replace(/\s*\(.*\)$/, '');
+  return {
+    ...base,
+    capabilities: { default: { title: 'GPU', uses: `CHE's compute pool (character builds on a ${id === 'kaggle' ? 'free' : 'prepaid'} GPU)`, permissions: [], works: id === 'kaggle' ? 'use your free weekly Kaggle GPU quota for GPU jobs, before any paid GPU' : `use ${plain} GPUs for GPU jobs no free GPU can take, only within the GPU budget you set`, destinations: ['worker'] } },
+    validToken: id === 'modal' ? (t) => /^ak-[A-Za-z0-9]{8,}:as-[A-Za-z0-9]{8,}$/.test(String(t || '').trim()) : base.validToken,
+    plan: () => ({ kind: 'guided', url: p.page, steps: GPU_ONCE[id] }),
+    async verify(token, _capability, { fetcher = fetch } = {}) {
+      const works = this.capabilities.default.works;
+      if (id === 'kaggle') {
+        const auth = kaggleAuth(String(token).trim());
+        if (!auth?.username) return { ok: false, auth: 'missing_info', checks: [{ id: 'auth', ok: false, detail: 'Paste the Kaggle token as username:token; CHE needs the username to start a GPU kernel' }] };
+        let r;
+        try { r = await kaggleCall(auth, 'GetAcceleratorQuotaStatistics', {}, fetcher); } catch (_) { r = { status: 0, ok: false }; }
+        if (!r.ok) return { ok: false, auth: r.status === 401 || r.status === 403 ? 'invalid' : r.status === 429 ? 'rate_limited' : r.status ? 'refused' : 'network', checks: [{ id: 'auth', ok: false, detail: `Kaggle ${r.status === 401 || r.status === 403 ? 'refused the token' : r.status ? `answered HTTP ${r.status}` : 'could not be reached'}` }] };
+        const g = r.data?.gpuQuota || r.data?.gpu_quota || {};
+        const left = Math.max(0, durationSeconds(g.totalTimeAllowed ?? g.total_time_allowed) - durationSeconds(g.timeUsed ?? g.time_used));
+        const pay = Boolean(g.isPayToScaleEnabled ?? g.is_pay_to_scale_enabled);
+        return { ok: true, auth: 'ok', account: auth.username, checks: [{ id: 'auth', ok: true, detail: `Kaggle account ${clip(auth.username, 40)}` },
+          { id: 'quota', ok: true, detail: `Kaggle read your free GPU quota: ${(left / 3600).toFixed(1)} GPU hours left this week (read only, nothing spent)${pay ? '; pay-to-scale is on, so CHE will not start Kaggle sessions until you turn it off' : ''}` }], works };
+      }
+      if (id === 'modal') {
+        return { ok: true, provisional: true, auth: 'ok', checks: [{ id: 'auth', ok: true, detail: 'The key has the Modal token format (ak-…:as-…). Modal has no plain HTTP check CHE can call for free, so it is not verified; it is proven only by a first Modal job, which is not wired yet' }], works };
+      }
+      const b = await GPU_ADAPTERS[id].balance(String(token).trim(), fetcher);
+      if (!b.ok) return { ok: false, auth: b.status === 'unauthorized' ? 'invalid' : b.status, checks: [{ id: 'auth', ok: false, detail: `${plain} ${b.status === 'unauthorized' ? 'refused the key' : b.status === 'network' ? 'could not be reached' : `answered ${b.status}${b.http ? ` (HTTP ${b.http})` : ''}`}` }] };
+      return { ok: true, auth: 'ok', checks: [{ id: 'auth', ok: true, detail: `${plain} accepted the key` },
+        { id: 'balance', ok: true, detail: `prepaid balance $${Number(b.usd).toFixed(2)} (a read-only balance check; nothing was started or spent)` }], works };
+    },
+  };
+}
+const GPU_GUIDED = new Set(['kaggle', 'runpod', 'vast', 'modal']);
+
 // YouTube is Google sign-in (Connect YouTube), never a pasted key.
 export const PROVIDERS = Object.freeze(Object.fromEntries(Object.keys(KEY_PROVIDERS).filter((id) => id !== 'youtube')
-  .map((id) => [id, id === 'huggingface' ? huggingface : guided(id)])));
+  .map((id) => [id, id === 'huggingface' ? huggingface : GPU_GUIDED.has(id) ? gpuGuided(id) : guided(id)])));
 
 // ─── Persisted records ───────────────────────────────────────────────────
 const keyOf = (provider, capability) => `${PREFIX}${provider}:${capability}`;
@@ -241,8 +290,11 @@ export function outcomeLines(rec, adapter) {
   const v = rec.verification;
   const verifiedLine = rec.state === 'verified' && v?.ok
     ? `Connection verified: ${v.checks.filter((c) => c.ok).map((c) => c.detail).join('; ')}.`
-    : v && !v.ok ? `Connection verified: no. ${v.checks.filter((c) => !c.ok).map((c) => c.detail).join('; ')}.` : 'Connection verified: not yet.';
-  return [tokenLine, secretLine, verifiedLine].map((l) => clip(l, 600));
+    : v && !v.ok ? `Connection verified: no. ${v.checks.filter((c) => !c.ok).map((c) => c.detail).join('; ')}.`
+      : v?.provisional ? `Connection verified: not yet. ${v.checks.map((c) => c.detail).join('; ')}.` : 'Connection verified: not yet.';
+  // A guided key was created by the owner, not by CHE: say "saved", never "created".
+  const first = adapter?.mode === 'guided' && t && !rec.preserved ? `Token saved: yes, ending ${clip(t.last4, 4)} (you created it; I keep only its fingerprint ${clip(t.fingerprint, 20)}).` : tokenLine;
+  return [first, secretLine, verifiedLine].map((l) => clip(l, 600));
 }
 
 export function speakOutcome(rec, adapter) {
@@ -255,6 +307,7 @@ export function speakOutcome(rec, adapter) {
   }
   if (rec.state === 'paused') return clip(`${name} setup is paused: ${rec.pause?.detail || rec.pause?.reason}.${rec.pause?.step === 'confirm_account' ? '' : ` Say "connect ${name}" when you're ready and I'll continue from here.`}`, 400);
   if (rec.state === 'failed') return clip(`${name} is not connected: ${rec.failure?.detail || rec.failure?.reason}.`, 400);
+  if (rec.state === 'secret_configured' && v?.provisional) return clip(`${name}: the key is saved in my server's key store, but it is not verified: ${v.checks[0]?.detail || 'there is no free check'}.`, 400);
   if (rec.state === 'secret_configured') return clip(`${name}: the token is stored but the connection is not verified yet.`, 300);
   if (rec.state === 'token_created') return clip(`${name}: a token was created and I am waiting for it to reach my server; it is not connected yet.`, 300);
   return clip(`${name} is not connected yet (step: ${rec.state.replace('_', ' ')}).`, 300);
@@ -319,7 +372,7 @@ export async function startOnboarding(ctx, provider, { capability = '', account 
   if (current && rec.state !== 'paused') {
     await save(ctx.storage, rec, 'check_existing', 'checking the token CHE already uses', now);
     const v = await runVerify(ctx, adapter, rec, current);
-    if (v.ok) {
+    if (v.ok && !v.provisional) {
       rec.verification = v; rec.preserved = true; rec.failure = null; rec.pause = null;
       rec.account = { ...rec.account, seen: v.account || rec.account.seen };
       await save(ctx.storage, rec, 'verified', 'existing connection works; nothing created', now);
@@ -348,7 +401,8 @@ export async function startOnboarding(ctx, provider, { capability = '', account 
   return { ok: true, action: adapter.mode === 'device' ? 'create_token' : 'guided', plan, ...publicView(rec, adapter),
     speech: adapter.mode === 'device'
       ? `Setting up ${adapter.name} for ${adapter.capabilities[rec.capability].uses}. I'm opening your ${adapter.name} token page in my browser to create "${plan.token_name}" with only ${plan.permissions.map((p) => `"${p}"`).join(' and ')}. I'll stop if ${adapter.name} needs you to sign in or solve a check.`
-      : `Setting up ${adapter.name}. ${adapter.name} keys are created on their own page with your sign-in, so I open it and you paste the key into my secure field; it goes straight to my server, never into chat.` };
+      : `Setting up ${adapter.name}. ${adapter.name} keys are created on their own page with your sign-in, so I open it and you paste the key into my secure field; it goes straight to my server, never into chat.`
+        + (GPU_GUIDED.has(provider) ? ` What you do once: ${plan.steps.map((s, i) => `${i + 1}. ${s}`).join(' ')}` : '') };
 }
 
 // Device reports: account seen, pause, token created (fingerprint only).
@@ -489,6 +543,12 @@ export async function verifyOnboarding(ctx, provider, capability) {
   }
   const v = await runVerify(ctx, adapter, rec, token);
   rec.verification = v;
+  if (v.ok && v.provisional) {
+    // Stored, but no free check exists: never "Connected".
+    rec.failure = null; rec.pause = null;
+    await save(ctx.storage, rec, 'secret_configured', 'stored; no free verification exists', now);
+    return { ok: true, ...publicView(rec, adapter) };
+  }
   if (v.ok) {
     rec.failure = null; rec.pause = null;
     await save(ctx.storage, rec, 'verified', 'auth and capability checks passed', now);
@@ -518,7 +578,7 @@ export async function onboardingRoute(ctx, path, method, body, { owner = false, 
 const NAMES = [
   ['huggingface', /\bhugging ?face\b|\bhf\b/], ['groq', /\bgroq\b/], ['gemini', /\bgemini\b|\bgoogle ai studio\b/],
   ['cerebras', /\bcerebras\b/], ['mistral', /\bmistral\b/], ['openrouter', /\bopen ?router\b/], ['github', /\bgithub models\b/],
-  ['sambanova', /\bsamba ?nova\b/], ['kaggle', /\bkaggle\b/], ['openai', /\bopen ?ai\b|\bcodex\b/], ['xai', /\bx\.?ai\b|\bgrok\b/],
+  ['sambanova', /\bsamba ?nova\b/], ['kaggle', /\bkaggle\b/], ['runpod', /\brun ?pod\b/], ['vast', /\bvast(?:\.ai| ai)?\b/], ['modal', /\bmodal\b/], ['openai', /\bopen ?ai\b|\bcodex\b/], ['xai', /\bx\.?ai\b|\bgrok\b/],
 ];
 
 export function onboardingProvider(text) {
@@ -549,7 +609,7 @@ export function onboardingIntent(message) {
 }
 
 // ─── Chat replies (worker.js turns these into the ndjson reply) ──────────
-export const CONNECT_HELP = 'I can connect Hugging Face automatically (I create the token in my browser with your sign-in), and guide you through Groq, Gemini, Cerebras, Mistral, OpenRouter, GitHub Models, SambaNova, Kaggle, OpenAI and xAI. Say "connect" and one of those names.';
+export const CONNECT_HELP = 'I can connect Hugging Face automatically (I create the token in my browser with your sign-in), and guide you through Groq, Gemini, Cerebras, Mistral, OpenRouter, GitHub Models, SambaNova, OpenAI and xAI, plus the GPU providers for my compute pool: Kaggle (free weekly GPU), RunPod and Vast.ai (prepaid; used only within the GPU budget you set) and Modal (key kept; not wired yet). Say "connect" and one of those names. Never paste a key into chat: I open my secure field for it.';
 
 // /connect-service <input>: the input may be a name or a whole sentence.
 export function connectServiceIntent(input) {

@@ -21,6 +21,9 @@ import { durationSeconds, kaggleAuth, kaggleCall } from './film_farm.js';
 import { storedKeys } from './resilience.js';
 import { loadPolicy } from './capability_engine.js';
 import { ONLINE_MS, engineRecord, engineSettingsOf, isGpuName, needOf } from './gpu_queue.js';
+import { MIN_PAID_SESSION_S, PAID_GPU_PRICES, PAID_PROVIDERS, approveSpend, budgetOf, budgetView, canStartPaid, cheapestGpu, closeSession, marginUsd, maxUsdHr, mustEnd,
+  budgetIntent, openSession, openSessions, reconcileSession, remainingUsd, revokeSpend, setMonthlyCap, speakRunway } from './compute_budget.js';
+import { ADAPTERS } from './gpu_providers.js';
 
 export const POOL_KEY = 'pool:state';
 export const MAX_PROVIDER_ATTEMPTS = 3;            // provider failures per job before it waits with a reason
@@ -68,6 +71,21 @@ export const POOL_PROVIDERS = Object.freeze([
     evidence: 'Only through the character kernel this module generates (Blender 5.0.1 + scripts/che_gpu_worker.py). The Film Studio farm on Kaggle runs a video model, which does not prove Blender works there.',
     credential: 'KAGGLE_API_TOKEN (username:token) already saved in the owner\'s Keys',
     needs: 'A Kaggle account with a saved API token and a phone-verified account (internet in GPU kernels). If no token is saved, this provider cannot meet "no new keys or manual setup".' },
+  // Paid, prepaid GPUs (owner, 2026-10-25: "split the money up across different GPUs ... using the free ones first").
+  // Used only after the owner set a GPU budget above $0 (compute_budget.js), only for jobs that need a GPU (or when he
+  // asked for speed), cheapest GPU first, and each machine is deleted after its job. Unverified until a real GLB.
+  { id: 'runpod', label: 'RunPod Community Cloud GPU (prepaid)', gpu: true, compatible: true, paid: true,
+    evidence: 'Expected: a Linux container with an NVIDIA GPU runs Blender Cycles (CUDA/OptiX) like Colab does. Unverified until a character is built there; the pod runs the same character kernel (Blender 5.0.1 SHA-256 checked + scripts/che_gpu_worker.py).',
+    credential: 'RUNPOD_API_KEY, saved through "CHE, connect RunPod" (secure field, never chat)',
+    needs: 'Once: create a RunPod account, add prepaid credit yourself (RunPod needs one hour of credit to start a GPU), create an API key, say "CHE, connect RunPod", then "allow up to 20 dollars for GPUs".' },
+  { id: 'vast', label: 'Vast.ai GPU marketplace (prepaid)', gpu: true, compatible: true, paid: true,
+    evidence: 'Expected, as for RunPod: an NVIDIA GPU container runs Blender Cycles. Unverified until a character is built there; the rental body follows the official vast-cli and is itself unverified until a real rental.',
+    credential: 'VAST_API_KEY, saved through "CHE, connect Vast" (secure field, never chat)',
+    needs: 'Once: create a Vast.ai account, add prepaid credit yourself, create an API key, say "CHE, connect Vast", then set a GPU budget.' },
+  { id: 'modal', label: 'Modal GPU functions', gpu: true, compatible: true, paid: true,
+    evidence: 'Modal containers can run any Linux binary on a GPU, so Blender should work, but Modal is started only through its Python SDK and CLI: it publishes no plain HTTP API CHE\'s Worker can call to start or stop a GPU. Not wired yet.',
+    credential: 'MODAL_TOKEN (token id:token secret), saved through "CHE, connect Modal"',
+    needs: 'A GitHub workflow that runs the Modal SDK would be needed (not built). Modal\'s Starter plan is reported to include $30 of compute a month (not confirmed on modal.com from here).' },
   { id: 'hf_zerogpu', label: 'Hugging Face ZeroGPU Space', gpu: true, compatible: false,
     evidence: 'Hugging Face docs (hub-docs docs/hub/spaces-zerogpu.md, read 2026-10-25): "ZeroGPU Spaces are exclusively compatible with the Gradio SDK"; "a real GPU is only available inside @spaces.GPU functions" with "a PyTorch CUDA emulation mode" outside them; designed for "PyTorch-based GPU Spaces"; free accounts get 5 minutes of GPU a day and a 60 s default per call. Blender Cycles is not PyTorch and runs as its own process; nothing documents that a subprocess sees the GPU.',
     credential: 'HF_TOKEN (write access) saved in Keys or on the Worker', needs: 'Not usable for Blender even with a token.' },
@@ -291,6 +309,14 @@ export async function kaggleCredential(env = {}, storage) {
   return { raw, exists: Boolean(raw), username: Boolean(auth?.username), auth };
 }
 
+/** A paid provider's key from the owner's saved Keys (service onboarding stores it there), else the Worker env. */
+export const PAID_ENV = Object.freeze({ runpod: 'RUNPOD_API_KEY', vast: 'VAST_API_KEY', modal: 'MODAL_TOKEN' });
+export async function paidCredential(id, env = {}, storage) {
+  let keys = {};
+  try { keys = await storedKeys(storage); } catch (_) { keys = {}; }
+  return String(keys[PAID_ENV[id]] || env[PAID_ENV[id]] || '').trim();
+}
+
 /** The real weekly Kaggle GPU quota (GetAcceleratorQuotaStatistics), cached hourly in the pool. Never throws. */
 export async function kaggleQuota(cred, pool, t, fetcher = fetch, storage = null) {
   const cached = pool.quota?.kaggle;
@@ -347,7 +373,7 @@ export async function providerStatuses(env = {}, { storage, now, fetcher = fetch
   const add = (id, o) => {
     const c = cooling(pool, id, t);
     const status = o.status === 'ready' || o.status === 'unverified' ? (c ? 'cooling_down' : o.status) : o.status;
-    out.push({ id, label: byId[id].label, gpu: byId[id].gpu, compatible: byId[id].compatible, evidence: byId[id].evidence, needs: byId[id].needs,
+    out.push({ id, label: byId[id].label, gpu: byId[id].gpu, compatible: byId[id].compatible, paid: Boolean(byId[id].paid), evidence: byId[id].evidence, needs: byId[id].needs,
       credential: { source: byId[id].credential, exists: Boolean(o.credential) }, quota: o.quota || null, status,
       cooling_until: status === 'cooling_down' && c ? c.until : null,
       reason: status === 'cooling_down' && c ? `Cooling down until ${hhmm(c.until_ms)} UTC after ${c.kind.replace('_', ' ')}${c.reason ? ` (${c.reason})` : ''}.` : o.reason,
@@ -406,6 +432,34 @@ export async function providerStatuses(env = {}, { storage, now, fetcher = fetch
     quota: q ? { ok: q.ok === true, source: q.source || null, allowed_s: q.allowed_s ?? null, used_s: q.used_s ?? null, reserved_s: q.reserved_s ?? null, left_s: q.ok ? left : null, margin_s: KAGGLE_MARGIN_S, refresh: q.refresh || null, checked_at: q.checked_at || (q.checked_ms ? iso(q.checked_ms) : null) } : null,
     status: kStatus, reason: kReason });
 
+  // Paid prepaid GPUs: only with a saved key, egress allowed, the owner's GPU budget above $0 with money left, and
+  // the prepaid balance (a free read, cached hourly) covering a start. Unverified until a character is built there.
+  const budget = budgetOf(pool);
+  for (const id of PAID_PROVIDERS) {
+    const key = await paidCredential(id, env, storage);
+    const cheap = cheapestGpu(id);
+    let bal = budget.balances?.[id] || null;
+    if (key && !block && refreshQuota && (!bal || t - (bal.checked_ms || 0) >= QUOTA_TTL_MS)) {
+      const r = await ADAPTERS[id].balance(key, fetcher);
+      bal = r.ok ? { usd: Math.round(r.usd * 100) / 100, checked_ms: t, checked_at: iso(t), ok: true } : { usd: null, checked_ms: t, checked_at: iso(t), ok: false, status: r.status };
+      budget.balances[id] = bal;
+    }
+    const verifiedPaid = Boolean(pool.verified?.[id]?.sha256);
+    const gate = canStartPaid(pool, id, cheap.usd_hr, t);
+    const live = openSessions(pool).find((s) => s.provider === id);
+    let st; let why;
+    if (!key) { st = 'no_credential'; why = `No ${ADAPTERS[id].name} key is saved. Say "CHE, connect ${ADAPTERS[id].name}" and I open my secure field; never paste a key into chat.`; }
+    else if (block) { st = 'offline'; why = `Not used: ${block}.`; }
+    else if (bal && bal.ok === false) { st = 'offline'; why = `${ADAPTERS[id].name} did not accept the saved key for a balance read (${bal.status}). Nothing was started.`; }
+    else if (live) { st = verifiedPaid ? 'ready' : 'unverified'; why = `A ${live.gpu || 'GPU'} is running now at $${live.usd_hr}/h (started ${hhmm(live.started_ms)} UTC, stops by ${hhmm(live.deadline_ms)} UTC at the latest).`; }
+    else if (!gate.ok) { st = 'offline'; why = gate.reason; }
+    else { st = verifiedPaid ? 'ready' : 'unverified'; why = `${verifiedPaid ? 'Verified' : 'Key saved, not yet verified with a character'}: from $${cheap.usd_hr}/h (${cheap.label}). Balance ${bal?.usd != null ? `$${bal.usd.toFixed(2)}` : 'unknown'}; budget left $${gate.left_usd.toFixed(2)}. Used only for GPU jobs no free GPU can take.`; }
+    add(id, { credential: Boolean(key), online: online(id).length, status: st, reason: why,
+      quota: { kind: 'prepaid balance', balance_usd: bal?.usd ?? null, checked_at: bal?.checked_at || null, from_usd_hr: cheap.usd_hr, max_usd_hr: maxUsdHr(id), budget_left_usd: remainingUsd(pool, t, id) } });
+  }
+  add('modal', { credential: Boolean(await paidCredential('modal', env, storage)), status: 'offline',
+    reason: 'Not wired: Modal starts GPUs only through its Python SDK, and CHE\'s Worker has no Modal route yet. A saved Modal key is kept for when it is.' });
+
   add('hf_zerogpu', { credential: Boolean(env.HF_TOKEN), status: 'incompatible',
     reason: 'Incompatible: ZeroGPU gives a GPU only inside @spaces.GPU Python calls in a Gradio Space (PyTorch-oriented, 5 free minutes a day); Blender as its own process is not documented to see it.' });
   add('workers_ai', { credential: Boolean(env.AI), status: 'incompatible', reason: 'Incompatible: Workers AI runs hosted models, not Blender.' });
@@ -423,18 +477,27 @@ export async function providerStatuses(env = {}, { storage, now, fetcher = fetch
  * A GPU-only job never gets a CPU; an unverified Kaggle is chosen only for a GPU-only job, or when the owner allowed
  * unverified GPUs. Returns { provider, why } or { provider: null, why }.
  */
-export function selectProvider(statuses, job, { pool = null, t = Date.now(), allowUnverified = false } = {}) {
+export function selectProvider(statuses, job, { pool = null, t = Date.now(), allowUnverified = false, paidForSpeed = false } = {}) {
   const s = Object.fromEntries(statuses.map((p) => [p.id, p]));
   const need = needOf(job);
   const ok = (id) => s[id] && s[id].compatible === true && (!pool || poolAllows(pool, job, id, t));
   const ready = (id) => ok(id) && s[id].status === 'ready';
+  // Paid GPUs come last, cheapest first, and only for work that needs a GPU, or GPU-preferred work when the owner
+  // asked for speed; CPU-only work never goes to a paid GPU. Their status is ready/unverified only while the owner's
+  // GPU budget allows a start (compute_budget.js), so a paid id here already has his spending approval.
+  const paidOrder = statuses.filter((p) => p.paid && ok(p.id) && (p.status === 'ready' || p.status === 'unverified'))
+    .sort((a, b) => (a.quota?.from_usd_hr ?? 99) - (b.quota?.from_usd_hr ?? 99) || (a.status === 'ready' ? -1 : 1)).map((p) => p.id);
+  const paidOk = need === 'required' || (need === 'preferred' && paidForSpeed);
   const order = need === 'none' ? ['github_actions_cpu', 'colab_gpu', 'kaggle'] : ['colab_gpu', 'kaggle', 'github_actions_cpu'];
   for (const id of order) {
     if (need === 'required' && !s[id]?.gpu) continue;
+    if (id === 'github_actions_cpu' && paidOk && paidOrder.length && !ready('colab_gpu') && !ready('kaggle')) break;   // speed: paid GPU before the CPU
     if (ready(id)) return { provider: id, why: s[id].reason };
     if (id === 'kaggle' && allowUnverified && ok(id) && s[id].status === 'unverified') return { provider: id, why: s[id].reason, unverified: true };
   }
   if (need === 'required' && ok('kaggle') && s.kaggle.status === 'unverified') return { provider: 'kaggle', why: s.kaggle.reason, unverified: true };
+  if (paidOk && paidOrder.length) { const id = paidOrder[0]; return { provider: id, why: s[id].reason, paid: true, unverified: s[id].status !== 'ready' }; }
+  if (need === 'preferred' && ready('github_actions_cpu')) return { provider: 'github_actions_cpu', why: s.github_actions_cpu.reason };
   const gpuish = statuses.filter((p) => p.compatible === true && (need !== 'required' || p.gpu));
   const why = gpuish.map((p) => `${p.label}: ${p.reason}`).join(' ');
   return { provider: null, why: need === 'required' ? `This job needs a GPU and none is ready. ${why}` : `No computer can take it now. ${why}` };
@@ -459,7 +522,8 @@ MPFB_COMMIT = "__MPFB__"
 BLENDER = "__BLENDER__"
 DEADLINE_S = int("__DEADLINE_S__")
 STARTED = time.time()
-WORK = "/kaggle/working/che"
+WORK = "__WORK__"
+SELF_STOP = "__SELF_STOP__"
 UA = {"User-Agent": "CHE-creation-worker/1.0 (+https://github.com/Vondada/chey-app)"}
 
 
@@ -488,7 +552,28 @@ def untar(path, dest, strip=1):
             t.extract(m, dest)
 
 
+def stop_self():
+    # A paid RunPod machine deletes itself when the worker is done (CHE's Worker also deletes it; this is the second
+    # guard). RunPod gives every Pod RUNPOD_POD_ID and a Pod-scoped RUNPOD_API_KEY; only the HTTP result is printed.
+    if SELF_STOP != "runpod" or not os.environ.get("RUNPOD_POD_ID") or not os.environ.get("RUNPOD_API_KEY"):
+        return
+    req = urllib.request.Request("https://rest.runpod.io/v1/pods/" + os.environ["RUNPOD_POD_ID"], method="DELETE",
+                                 headers=dict(UA, Authorization="Bearer " + os.environ["RUNPOD_API_KEY"]))
+    try:
+        with urllib.request.urlopen(req, timeout=30) as res:
+            print(f"SELF STOP {res.status}", flush=True)
+    except Exception as e:
+        print(f"SELF STOP FAILED {type(e).__name__}", flush=True)
+
+
 def main():
+    try:
+        run()
+    finally:
+        stop_self()
+
+
+def run():
     os.makedirs(WORK, exist_ok=True)
     name = f"blender-{BLENDER}-linux-x64"
     base = f"https://download.blender.org/release/Blender{BLENDER.rsplit('.', 1)[0]}"
@@ -514,7 +599,8 @@ def main():
     except subprocess.TimeoutExpired:
         code = 124
     print(f"WORKER EXIT {code}", flush=True)
-    sys.exit(0 if code in (0, 3) else code)
+    if code not in (0, 3):
+        raise SystemExit(code)
 
 
 if __name__ == "__main__":
@@ -522,11 +608,12 @@ if __name__ == "__main__":
 `;
 
 /** The kernel text with its values filled in. The token appears only here (sent to the owner's private kernel). */
-export function characterKernelScript({ base, token, deadlineS, commit = POOL_COMMIT, assets = POOL_ASSETS_COMMIT, mpfb = POOL_MPFB_COMMIT, blender = POOL_BLENDER_VERSION, repo = POOL_REPO }) {
+export function characterKernelScript({ base, token, deadlineS, commit = POOL_COMMIT, assets = POOL_ASSETS_COMMIT, mpfb = POOL_MPFB_COMMIT, blender = POOL_BLENDER_VERSION, repo = POOL_REPO, work = '/kaggle/working/che', selfStop = '' }) {
   const safe = (v, re) => { if (!re.test(String(v))) throw new Error('unsafe kernel value'); return String(v); };
   return KAGGLE_CHARACTER_PY.replace('__CHE_BASE__', safe(base, /^https:\/\/[\w.-]+(?::\d+)?$/)).replace('__TOKEN__', safe(token, /^[a-f0-9]{64}$/))
     .replace('__REPO__', safe(repo, /^[\w.-]+\/[\w.-]+$/)).replace('__COMMIT__', safe(commit, /^[a-f0-9]{40}$/)).replace('__ASSETS__', safe(assets, /^[a-f0-9]{40}$/))
-    .replace('__MPFB__', safe(mpfb, /^[a-f0-9]{40}$/)).replaceAll('__BLENDER__', safe(blender, /^\d+\.\d+\.\d+$/)).replace('"__DEADLINE_S__"', `"${Math.floor(deadlineS)}"`);
+    .replace('__MPFB__', safe(mpfb, /^[a-f0-9]{40}$/)).replaceAll('__BLENDER__', safe(blender, /^\d+\.\d+\.\d+$/)).replace('"__DEADLINE_S__"', `"${Math.floor(deadlineS)}"`)
+    .replace('__WORK__', safe(work, /^\/[\w/.-]{1,80}$/)).replace('__SELF_STOP__', safe(selfStop, /^(?:|runpod)$/));
 }
 
 /** Pushes and runs the character kernel (private, GPU, internet, Kaggle stops it at sessionTimeoutSeconds). */
@@ -553,8 +640,13 @@ export async function startKaggleCharacterSession(cred, { base, token, seconds, 
 export async function poolSchedule(env = {}, { storage, now, fetcher = fetch, jobs, workers, pool = null, base = '' } = {}) {
   const t = clock(now)();
   pool = pool || await loadPool(storage);
+  // No paid machine is left running after its job, its deadline or the owner's stop.
+  const reaped = await reapPaid(env, { storage, now: () => t, fetcher, pool, jobs, workers });
   const waitingJobs = jobs.filter((j) => (j.state === 'queued' || j.state === 'paused') && !j.owner_paused && needOf(j) !== 'none');
-  if (!waitingJobs.length) return { started: null, reason: '', statuses: null };
+  if (!waitingJobs.length) {
+    if (reaped.ended.length || reaped.failed.length) await savePool(storage, pool);
+    return { started: null, reason: '', statuses: null, reaped };
+  }
   const statuses = await providerStatuses(env, { storage, now: () => t, fetcher, pool, workers, jobs });
   const st = Object.fromEntries(statuses.map((p) => [p.id, p]));
   let started = null; let reason = '';
@@ -579,8 +671,140 @@ export async function poolSchedule(env = {}, { storage, now, fetcher = fetch, jo
       reason = res.error;
     }
   }
+  // Paid prepaid GPU: only when selection picked one (free GPUs could not take the job and the owner's budget allows),
+  // one machine at a time, with a hard deadline from the money left. It is deleted after its job (reapPaid).
+  if (!started) {
+    const paidWant = waitingJobs.map((j) => ({ j, sel: selectProvider(statuses, j, { pool, t, allowUnverified: pool.settings.allow_unverified_gpu, paidForSpeed: budgetOf(pool).speed_opt_in }) }))
+      .filter((x) => x.sel.paid);
+    if (paidWant.length && !openSessions(pool).length) {
+      const provider = paidWant[0].sel.provider;
+      const chosen = paidWant.filter((x) => x.sel.provider === provider).slice(0, 3).map((x) => x.j);
+      const res = await startPaidSession(env, { storage, pool, provider, jobs: chosen, t, fetcher, base });
+      if (res.ok) started = { provider, jobs: chosen.map((j) => j.id), ref: res.ref, usd_hr: res.usd_hr, deadline: iso(res.deadline_ms) };
+      else reason = res.error;
+    }
+  }
   await savePool(storage, pool);   // quota reads, cooldowns, the session and its token hash
-  return { started, reason, statuses };
+  return { started, reason, statuses, reaped };
+}
+
+// ─── Paid GPU sessions (RunPod, Vast.ai): start, then delete after the job ──────────────────────────────────────
+export const PAID_RESERVE_MS = 20 * 60_000;   // a paid machine must claim within 20 min (image pull + Blender download)
+
+/** Starts one paid machine for `jobs` on `provider` if the budget allows; records the session in the ledger. */
+export async function startPaidSession(env, { storage, pool, provider, jobs, t, fetcher = fetch, base = '' }) {
+  const key = await paidCredential(provider, env, storage);
+  if (!key) return { ok: false, error: `No ${ADAPTERS[provider].name} key is saved.` };
+  const prices = PAID_GPU_PRICES[provider].gpus;
+  const cap = maxUsdHr(provider);
+  const gate = canStartPaid(pool, provider, cheapestGpu(provider).usd_hr, t);
+  if (!gate.ok) return { ok: false, error: gate.reason };
+  // The token lives as long as the longest session the budget allows at the dearest accepted price.
+  const plan = canStartPaid(pool, provider, cap, t);
+  const seconds = plan.ok ? plan.max_s : MIN_PAID_SESSION_S;
+  const token = await issuePoolToken(pool, provider, jobs.map((j) => j.id), seconds * 1000, t);
+  const script = characterKernelScript({ base: base || env.CHE_URL || 'https://chey-app.henryjavoni.workers.dev', token, deadlineS: seconds - 120,
+    commit: env.CHE_POOL_COMMIT && /^[a-f0-9]{40}$/.test(env.CHE_POOL_COMMIT) ? env.CHE_POOL_COMMIT : POOL_COMMIT, work: '/workspace/che', selfStop: provider === 'runpod' ? 'runpod' : '' });
+  const res = provider === 'runpod'
+    ? await ADAPTERS.runpod.start(key, { script, gpuTypeIds: prices.map((g) => g.id), maxUsdHr: cap }, fetcher)
+    : await ADAPTERS.vast.start(key, { script, gpuNames: prices.map((g) => g.id), maxUsdHr: cap }, fetcher);
+  if (!res.ok) {
+    pool.tokens[provider].revoked = true;
+    coolDown(pool, provider, { kind: res.quota ? 'quota' : 'provider_error', reason: res.error, blockClaims: Boolean(res.quota) }, t);
+    pool.handoffs = [...pool.handoffs, { at: iso(t), job_id: jobs[0].id, from: provider, outcome: res.quota ? 'quota' : 'provider_error', reason: String(res.error).slice(0, 160) }].slice(-MAX_HANDOFFS);
+    return { ok: false, error: res.error };
+  }
+  // The real price decides the deadline: the session ends when the money left (after the margin) would run out.
+  const usdHr = res.usd_hr || prices.find((g) => g.id === res.gpu)?.usd_hr || cap;
+  const real = canStartPaid(pool, provider, usdHr, t);
+  const maxS = real.ok ? real.max_s : MIN_PAID_SESSION_S;
+  const s = openSession(pool, { provider, ref: res.ref, gpu: res.gpu, usdHr, jobIds: jobs.map((j) => j.id), maxS }, t);
+  pool.tokens[provider].expires_ms = Math.min(pool.tokens[provider].expires_ms, s.deadline_ms);
+  pool.sessions[provider] = { started_at: iso(t), ref: res.ref, job_ids: jobs.map((j) => j.id), unverified: !pool.verified?.[provider]?.sha256, paid: true };
+  for (const j of jobs) poolOf(j).reserved = { provider, at: iso(t), until_ms: t + PAID_RESERVE_MS };
+  // Arm the Durable Object alarm for the start window's end, so the machine is checked even if nothing calls in
+  // (the Worker's alarm runs reapPaid; wakeTimes keeps it armed for the deadline).
+  try {
+    const wake = t + PAID_RESERVE_MS + 1000;
+    const cur = await storage.getAlarm?.();
+    if (typeof storage.setAlarm === 'function' && (!cur || cur > wake)) await storage.setAlarm(wake);
+  } catch (_) { /* no alarm support (tests): worker calls and app polls still reap */ }
+  if (!real.ok) await reapPaid(env, { storage, pool, now: () => t, fetcher, force: real.reason });
+  return { ok: true, ref: res.ref, usd_hr: usdHr, deadline_ms: s.deadline_ms };
+}
+
+/**
+ * Ends every paid session that must end: the owner stopped paid GPUs, its deadline or the budget is reached, its jobs
+ * are finished (or handed elsewhere), or it never picked a job up. The machine is deleted through the provider's API,
+ * the session is closed in the ledger (with the provider's billed amount when it has one) and its token revoked.
+ * A delete that fails keeps the session open (it keeps counting against the budget) and is retried on the next call.
+ * Returns { ended: [...], failed: [...] }. Mutates and (unless a pool was passed) saves the pool.
+ */
+export async function reapPaid(env = {}, { storage, now, fetcher = fetch, pool = null, jobs = null, workers = null, force = '' } = {}) {
+  const t = clock(now)();
+  const own = !pool; pool = pool || await loadPool(storage);
+  const open = openSessions(pool);
+  if (!open.length) return { ended: [], failed: [] };
+  jobs = jobs || (await storage.get('gpu:jobs')) || [];
+  workers = workers || (await storage.get('gpu:workers')) || {};
+  const ended = []; const failed = [];
+  for (const s of open) {
+    const mine = jobs.filter((j) => s.job_ids.includes(j.id));
+    const working = mine.some((j) => j.state === 'rendering' && providerOf(j.lease) === s.provider);
+    const waitingForIt = mine.some((j) => (j.state === 'queued' || j.state === 'paused') && j.pool?.reserved?.provider === s.provider && j.pool.reserved.until_ms > t);
+    const seen = Object.values(workers).some((w) => w.provider === s.provider && t - (w.last_seen_ms || 0) < ONLINE_MS);
+    let why = force || mustEnd(pool, s, t);
+    if (!why && !working && !waitingForIt && !mine.some((j) => j.state === 'queued' || j.state === 'paused')) why = 'its job is finished';
+    if (!why && !working && !waitingForIt && !seen && t - s.started_ms >= PAID_RESERVE_MS) why = 'it did not pick up a job in time';
+    if (!why) continue;
+    const key = await paidCredential(s.provider, env, storage);
+    const res = key ? await ADAPTERS[s.provider].stop(key, s.ref, fetcher) : { ok: false, error: 'the key is no longer saved, so CHE cannot delete the machine' };
+    s.terminate = { ok: res.ok, at: iso(t), error: res.ok ? '' : String(res.error || '').slice(0, 160) };
+    if (pool.tokens?.[s.provider]) pool.tokens[s.provider].revoked = true;
+    if (!res.ok) { failed.push({ id: s.id, provider: s.provider, reason: why, error: s.terminate.error }); continue; }
+    const billed = key ? await ADAPTERS[s.provider].billing(key, s.ref, s.started_ms, fetcher).catch(() => null) : null;
+    closeSession(pool, s.id, { reason: why, usdBilled: billed }, t);
+    if (pool.sessions?.[s.provider]?.ref === s.ref) delete pool.sessions[s.provider];
+    ended.push({ id: s.id, provider: s.provider, reason: why, usd: Math.round((billed ?? (s.usd_hr * (t - s.started_ms) / 3600_000)) * 10000) / 10000 });
+  }
+  if (own) await savePool(storage, pool);
+  return { ended, failed };
+}
+
+/** Provider billing for recently ended sessions that still carry only the wall-time estimate (RunPod). */
+export async function reconcilePaid(env, { storage, pool, now, fetcher = fetch }) {
+  const t = clock(now)();
+  for (const s of budgetOf(pool).sessions) {
+    if (!s.ended_ms || Number.isFinite(s.usd_billed) || t - s.ended_ms > 2 * 86400_000 || s.provider !== 'runpod') continue;
+    const key = await paidCredential(s.provider, env, storage);
+    if (!key) continue;
+    const billed = await ADAPTERS[s.provider].billing(key, s.ref, s.started_ms, fetcher).catch(() => null);
+    if (billed != null) reconcileSession(pool, s.id, billed);
+  }
+}
+
+/**
+ * When open paid sessions must be checked (each deadline and start-window end, never in the past), for the Worker's
+ * alarm, so a paid machine is deleted on time even when no app or worker calls in. Never throws; costs no AI call.
+ */
+export async function paidWakes(storage, t = Date.now()) {
+  try {
+    const pool = await loadPool(storage);
+    return openSessions(pool).flatMap((s) => [s.deadline_ms, s.started_ms + PAID_RESERVE_MS + 1000]).map((w) => Math.max(t + 250, w));
+  } catch (_) { return []; }
+}
+
+/**
+ * The /cloud-gpu "pool" and "budget" inputs as [spoken text, reply fields] for worker.js cloudCommand:
+ * "pool" reads the compute pool; "budget <words>" runs budgetCommand on the owner's words.
+ */
+export async function poolSay(env, { storage, now, fetcher = fetch }, input = '') {
+  const words = String(input || '').replace(/^budget\s*/i, '').trim();
+  if (/^pool\b/i.test(String(input || ''))) return [speakPool(await poolView(env, { storage, now, fetcher }))];
+  const intent = budgetIntent(words) || (/^runway$/i.test(words) ? { action: 'runway' } : /^stop paid\b/i.test(words) ? { action: 'stop' } : {});
+  const out = await budgetCommand(env, { storage, now, fetcher }, intent, words);
+  const b = out.budget;
+  return [out.spoken, { ok: out.ok, gpu_budget: b ? { total_cap_usd: b.total_cap_usd, monthly_cap_usd: b.monthly_cap_usd, remaining_usd: b.remaining_usd, approved_at: b.approved_at } : null }];
 }
 
 /** A GitHub dispatch answer that means a rate limit or quota (cooldown instead of hammering GitHub). */
@@ -592,18 +816,20 @@ export async function poolView(env = {}, { storage, now, fetcher = fetch, refres
   const pool = await loadPool(storage);
   const jobs = (await storage.get('gpu:jobs')) || [];
   const workers = (await storage.get('gpu:workers')) || {};
+  const reaped = await reapPaid(env, { storage, now: () => t, fetcher, pool, jobs, workers });
+  if (refreshQuota) await reconcilePaid(env, { storage, pool, now: () => t, fetcher });
   const providers = await providerStatuses(env, { storage, now: () => t, fetcher, pool, workers, jobs, refreshQuota });
-  if (refreshQuota) await savePool(storage, pool);   // a fresh quota read and any quota cooldown are kept
+  if (refreshQuota || reaped.ended.length || reaped.failed.length) await savePool(storage, pool);   // a fresh quota read and any quota cooldown are kept
   const counts = {}; for (const j of jobs) counts[j.state] = (counts[j.state] || 0) + 1;
   const waiting = jobs.filter((j) => (j.state === 'queued' || j.state === 'paused') && !j.owner_paused).map((j) => {
-    const sel = selectProvider(providers, j, { pool, t, allowUnverified: pool.settings.allow_unverified_gpu });
+    const sel = selectProvider(providers, j, { pool, t, allowUnverified: pool.settings.allow_unverified_gpu, paidForSpeed: budgetOf(pool).speed_opt_in });
     return { id: j.id, kind: j.kind, title: String(j.title || '').slice(0, 80), state: j.state, needs_gpu: needOf(j), attempts: j.pool?.total || 0,
       next_provider: sel.provider, waiting_reason: heldReason(pool, j, t) || j.cloud?.reason || (sel.provider ? `Next: ${providerLabel(sel.provider)}.` : sel.why),
       checkpoints: Object.keys(j.checkpoints || {}) };
   });
   const cooldowns = Object.fromEntries(Object.entries(pool.cooldowns || {}).filter(([, c]) => c.until_ms > t).map(([id, c]) => [id, { until: c.until, kind: c.kind, reason: c.reason, strikes: c.strikes }]));
   const view = {
-    workload: 'person_model (Blender)', spend_limit_usd: 0, providers, cooldowns, counts, waiting,
+    workload: 'person_model (Blender)', spend_limit_usd: budgetOf(pool).total_cap_usd, budget: budgetView(pool, t), reaped, providers, cooldowns, counts, waiting,
     handoffs: [...(pool.handoffs || [])].reverse(), verified: pool.verified || {}, settings: pool.settings,
     kaggle_session: pool.sessions?.kaggle ? { started_at: pool.sessions.kaggle.started_at, jobs: pool.sessions.kaggle.job_ids, active: (pool.tokens?.kaggle?.expires_ms || 0) > t && !pool.tokens?.kaggle?.revoked } : null,
     limits: { max_provider_attempts: MAX_PROVIDER_ATTEMPTS, backoff_base_s: BACKOFF_BASE_MS / 1000, backoff_max_s: BACKOFF_MAX_MS / 1000, kaggle_margin_s: KAGGLE_MARGIN_S },
@@ -626,7 +852,11 @@ export function speakPool(view) {
   const w = view.waiting.filter((j) => j.kind === 'person_model');
   if (w.length) lines.push(`${w.length} character${w.length === 1 ? ' is' : 's are'} waiting. ${w.slice(0, 3).map((j) => `${j.title || j.id}: ${j.waiting_reason}`).join(' ')}`);
   else lines.push('No character is waiting.');
-  lines.push('Spending limit: zero dollars.');
+  const b = view.budget;
+  if (!b || !(b.total_cap_usd > 0)) lines.push('Paid GPUs are off. Spending limit: zero dollars.');
+  else lines.push(`Paid GPU budget: $${b.total_cap_usd.toFixed(2)}${b.monthly_cap_usd < b.total_cap_usd ? `, at most $${b.monthly_cap_usd.toFixed(2)} a month` : ''}; spent $${b.spent_usd.toFixed(2)}; $${b.remaining_usd.toFixed(2)} left after the safety margin.${b.open_sessions.length ? ` Running now: ${b.open_sessions.map((s) => `${s.gpu} at $${s.usd_hr}/h`).join(', ')}.` : ''}`);
+  const stuck = (view.reaped?.failed || []);
+  if (stuck.length) lines.push(`Warning: I could not delete ${stuck.map((f) => `the ${providerLabel(f.provider)} machine (${f.error})`).join(' and ')}. It may still be charging; I will try again, and you can delete it in that provider's console.`);
   return lines.join(' ');
 }
 
@@ -638,10 +868,71 @@ export async function poolRoute(ctx, path, request, body = null) {
   }
   if (path === '/api/creations/pool/settings') {
     if (request.method !== 'POST') return json({ detail: 'Use POST.' }, 405);
+    // A GPU budget from the pool screen: explicit numbers and confirm: true (the owner's spending approval).
+    if (body?.gpu_budget !== undefined || body?.stop_paid === true || body?.paid_for_speed !== undefined) {
+      const out = await budgetCommand(ctx.env || {}, ctx, body.stop_paid === true ? { action: 'stop' }
+        : body.paid_for_speed !== undefined ? { action: 'speed', on: body.paid_for_speed === true }
+          : { action: 'allow', total_usd: body.gpu_budget?.total_usd, monthly_usd: body.gpu_budget?.monthly_usd ?? null, confirm: body.confirm === true }, 'pool screen');
+      return json(out, out.ok ? 200 : 422);
+    }
     const pool = await loadPool(ctx.storage);
     if (body?.allow_unverified_gpu !== undefined) pool.settings.allow_unverified_gpu = body.allow_unverified_gpu === true;
     await savePool(ctx.storage, pool);
-    return json({ ok: true, settings: pool.settings, spoken: `Unverified GPU computers are ${pool.settings.allow_unverified_gpu ? 'allowed for any GPU job' : 'used only for GPU-only jobs'}. Spending stays at zero dollars.` });
+    const paid = budgetOf(pool).total_cap_usd > 0;
+    return json({ ok: true, settings: pool.settings, spoken: `Unverified GPU computers are ${pool.settings.allow_unverified_gpu ? 'allowed for any GPU job' : 'used only for GPU-only jobs'}. ${paid ? 'Your paid GPU budget is unchanged.' : 'Paid GPUs stay off.'}` });
   }
   return null;
+}
+
+// ─── GPU budget commands (voice, typing and the pool screen) ─────────────────────────────────────────────────────
+const usd = (n) => `$${(Math.round(Number(n || 0) * 100) / 100).toFixed(2)}`;
+
+/**
+ * "allow up to $20 for GPUs" / "limit GPUs to $5 a month" / "stop paid GPUs" / "use paid GPUs for speed" /
+ * "how long will my GPU money last" / "what GPUs can CHE use". Returns { ok, spoken, budget }. Setting a cap is the
+ * owner's spending approval, recorded with its time and words; CHE itself never pays or adds credit.
+ */
+export async function budgetCommand(env = {}, { storage, now, fetcher = fetch } = {}, intent = {}, text = '') {
+  const t = clock(now)();
+  const pool = await loadPool(storage);
+  let spoken = ''; let ok = true;
+  if (intent.action === 'allow') {
+    if (intent.confirm === false) return { ok: false, spoken: 'A GPU budget from the screen needs confirm: true. Nothing changed.' };
+    const r = approveSpend(pool, { totalUsd: intent.total_usd, monthlyUsd: intent.monthly_usd, text, via: text === 'pool screen' ? 'screen' : 'command' }, t);
+    if (!r.ok) return { ok: false, spoken: r.detail };
+    const b = r.budget;
+    if (!(b.total_cap_usd > 0)) {
+      const stopped = await reapPaid(env, { storage, now: () => t, fetcher, pool, force: 'paid GPUs were stopped' });
+      spoken = `Paid GPUs are off. CHE spends nothing on GPUs.${stopped.ended.length ? ` I deleted ${stopped.ended.length} running paid machine${stopped.ended.length === 1 ? '' : 's'}.` : ''}`;
+    } else {
+      const keys = (await Promise.all(PAID_PROVIDERS.map(async (id) => [id, Boolean(await paidCredential(id, env, storage))]))).filter(([, has]) => has).map(([id]) => ADAPTERS[id].name);
+      spoken = `Recorded at ${new Date(t).toISOString().slice(11, 16)} UTC: you allowed up to ${usd(b.total_cap_usd)} in total for paid GPUs${b.monthly_cap_usd < b.total_cap_usd ? `, at most ${usd(b.monthly_cap_usd)} a month` : ''}. I keep ${usd(marginUsd(b.total_cap_usd))} back as a safety margin and stop before the limit. Free GPUs still go first; a paid GPU starts only for a job that needs a GPU when no free one can take it, cheapest first, and I delete it after the job. I never pay or add credit myself: the money is the prepaid credit you loaded.`
+        + (keys.length ? ` Connected paid providers: ${keys.join(', ')}.` : ' No paid GPU provider is connected yet: say "CHE, connect RunPod" (or Vast) and I open my secure field for the key.')
+        + ' Say "stop paid GPUs" any time.';
+    }
+  } else if (intent.action === 'monthly') {
+    const r = setMonthlyCap(pool, intent.monthly_usd, text, t);
+    if (!r.ok) return { ok: false, spoken: r.detail };
+    spoken = `Recorded: paid GPUs may use at most ${usd(r.budget.monthly_cap_usd)} a month, within your ${usd(r.budget.total_cap_usd)} total.`;
+  } else if (intent.action === 'stop') {
+    revokeSpend(pool, text || 'stop paid GPUs', t);
+    const stopped = await reapPaid(env, { storage, now: () => t, fetcher, pool, force: 'paid GPUs were stopped' });
+    spoken = `Paid GPUs are off and the GPU budget is zero dollars.${stopped.ended.length ? ` I deleted ${stopped.ended.map((e) => `the ${providerLabel(e.provider)} machine`).join(' and ')}.` : ' Nothing paid was running.'}`
+      + (stopped.failed.length ? ` Warning: I could not delete ${stopped.failed.map((f) => `the ${providerLabel(f.provider)} machine (${f.error})`).join(' and ')}. Please delete it in that provider's console; I will keep trying.` : '');
+    ok = !stopped.failed.length;
+  } else if (intent.action === 'speed') {
+    const b = budgetOf(pool);
+    b.speed_opt_in = intent.on === true;
+    spoken = b.speed_opt_in ? `Paid GPUs may now also speed up GPU-preferred jobs when no free GPU is ready, within your budget${b.total_cap_usd > 0 ? '' : ', which is zero dollars right now, so nothing paid will run until you set one'}. CPU-only work never goes to a paid GPU.` : 'Paid GPUs are back to GPU-only jobs; GPU-preferred jobs wait for a free GPU or use the free CPU worker.';
+  } else if (intent.action === 'runway' || intent.action === 'gpus') {
+    const view = await poolView(env, { storage, now: () => t, fetcher });
+    const k = view.providers.find((p) => p.id === 'kaggle');
+    const kLeft = k?.quota?.left_s ?? null;
+    if (intent.action === 'runway') return { ok: true, spoken: speakRunway(view.budget.runway, { kaggleLeftS: kLeft }), budget: view.budget };
+    const can = view.providers.filter((p) => p.compatible === true);
+    const listed = can.map((p, i) => `${i + 1}. ${p.label}${p.paid ? ' (paid)' : ' (free)'}: ${p.status.replace('_', ' ')}. ${p.reason}`).join(' ');
+    return { ok: true, spoken: `CHE can use these computers for characters, free ones first: ${listed} Order: free CPU for CPU work; free GPUs (Colab, then Kaggle) for GPU work; paid GPUs last, cheapest first, only within your budget.`, budget: view.budget };
+  } else return { ok: false, spoken: 'I can set a GPU budget ("allow up to 20 dollars for GPUs"), limit it per month, stop paid GPUs, or say how long the money lasts.' };
+  await savePool(storage, pool);
+  return { ok, spoken, budget: budgetView(pool, t) };
 }

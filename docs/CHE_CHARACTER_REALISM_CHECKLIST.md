@@ -72,6 +72,12 @@ Branch: `claude/che-character-realism` (from main `afb8de1`). Lanes push to `lan
     verified. Idempotent retries (no duplicate tokens); preserve working connections; $0. Lane I
     `lane/service-onboarding`; doc `docs/CHE_SERVICE_ONBOARDING.md`. Live run with the owner's account: iPhone only.
 
+21. GPU budget (2026-10-25): "I may put $20 toward GPUs; split it across GPUs, free ones first; I tell CHE to connect
+    and she's connected." CHE never pays or adds payment methods; the owner loads prepaid credit; paid GPUs only after
+    an explicit cap ("allow up to $20 for GPUs") recorded with time; never past the cap (margin, deadline); paid
+    machine deleted after its job; real runway, never "forever". Guided connect for Kaggle, RunPod, Vast.ai and Modal
+    with a free verification read. Lane J `lane/gpu-budget`; doc `docs/CHE_GPU_BUDGET.md`. Live accounts: not used.
+
 ## Infrastructure facts (inspected, not assumed)
 - Cloudflare Worker: queue, storage, routing only. No GPU, no Blender.
 - Free GitHub Actions CPU worker (ubuntu, 4 cores, Blender 5.0.1, MPFB2): verified live. Run 40153146586 built a

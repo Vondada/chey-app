@@ -267,7 +267,7 @@ import { GpuQueue, gpuWorkerRoute, speakGpuConnect, speakGpuSummary } from './gp
 import { CreationStudio, studioOwnerRoute } from './creation_studio.js';
 import { populationAnswer, worldPopulationIntent, worldRoute } from './world_population.js';
 import { creationProbeRoute } from './creation_probe.js';
-import { poolRoute, poolView, speakPool } from './compute_pool.js';
+import { paidWakes, poolRoute, poolSay, reapPaid } from './compute_pool.js';
 import { projectAudit, projectLibraryRoute } from './project_library.js';
 import { FILM_ACTIVE_STATES, filmPlan, filmTick, filmTokenRoute, refreshValidation as refreshFilmValidation, remakeShot, setFilmState, startFilm } from './film_pipeline.js';
 import { performanceBanner, performanceIntent, performanceReport, recordTiming, routeKey as perfRouteKey, speakPerformance } from './perf_watch.js';
@@ -4347,6 +4347,7 @@ export class CheState extends DurableObject {
     // Film Studio: an active film asks for its next pass.
     const filmWake = Number(await this.ctx.storage.get('film:wake')) || 0;
     if (filmWake) times.push(Math.max(Date.now() + 250, filmWake));
+    times.push(...await paidWakes(this.ctx.storage));
     // While Flagstaff is open, do one cheap GitHub-head check every 30 seconds.
     // The AI only runs when a genuinely new message addressed to CHE appears.
     const flagstaffInitialized = Boolean(await this.ctx.storage.get('web_mailbox_code'));
@@ -6078,8 +6079,7 @@ export class CheState extends DurableObject {
       const view = await cloudView(this.ctx.storage, env);
       return reply(`Opening my cloud computer, sir. ${speakCloudSummary(view)}`, { open_screen: 'cloud_computer' });
     }
-    // "Which computers can build characters" / "why is my character waiting": the compute pool (compute_pool.js).
-    if (command.local === 'cloud_gpu' && /^pool\b/.test(String(input || ''))) return reply(speakPool(await poolView(env, { storage: this.ctx.storage })));
+    if (command.local === 'cloud_gpu' && /^(?:pool|budget)\b/.test(String(input || ''))) return reply(...await poolSay(env, { storage: this.ctx.storage }, input));
     // "Connect GPU": the app's Connect GPU flow opens the notebook and verifies the heartbeat; the Worker states the truth now.
     if (command.local === 'cloud_gpu' && /^connect\b/.test(String(input || ''))) {
       const view = await new GpuQueue(this.ctx.storage).view();
@@ -14658,6 +14658,7 @@ export class CheState extends DurableObject {
       return;
     }
     await this.filmPass().catch((error) => console.error('Film Studio pass failed:', error?.message || error));
+    await reapPaid(this.env, { storage: this.ctx.storage }).catch(() => null);
     // Flagstaff stays responsive even when Office autonomy is paused. Incoming
     // AI messages are advice only and cannot authorize consequential actions.
     await this.processFlagstaffInbox().catch((error) => {

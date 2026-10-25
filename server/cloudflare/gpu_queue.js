@@ -29,7 +29,7 @@ import { verifyGithubOidc } from './gpu_oidc.js';
 import { ensureCapacity } from './creation_orchestrator.js';
 import { verifyLine } from './creation_objects.js';
 // Compute pool hooks (compute_pool.js): provider stamps, cooldowns, bounded provider attempts and handoffs.
-import { applyPending, classifyFailure, loadPool, poolAllows, poolNote, poolOnClaim, poolTokenAuth, providerLabel, providerOf, providerOfAuth, stampReceipt, workerUsable } from './compute_pool.js';
+import { applyPending, classifyFailure, loadPool, poolAllows, poolNote, poolOnClaim, poolTokenAuth, providerLabel, providerOf, providerOfAuth, reapPaid, stampReceipt, workerUsable } from './compute_pool.js';
 
 const RATE_KEY = 'gpu:rate';            // per-tenant token buckets for new jobs (job_quota.js rateLimit)
 export const LEASE_MS = 3 * 60_000;           // a claimed job pauses after 3 minutes without a heartbeat
@@ -913,6 +913,8 @@ export async function gpuWorkerRoute(ctx, path, request) {
   const m = /^\/api\/gpu\/worker\/(heartbeat|claim|progress|preview|model|export|complete|reference)$/.exec(path);
   if (!m) return null;
   const out = await workerRouteInner(ctx, m[1], request);
+  // A paid GPU machine whose job just finished (or whose budget or deadline ran out) is deleted now (compute_pool.js).
+  if (m[1] === 'complete' || m[1] === 'heartbeat') await reapPaid(ctx.env || {}, { storage: ctx.storage, now: ctx.now, fetcher: ctx.fetcher || fetch }).catch(() => null);
   // A lease that lapsed while this request read the queue paused a job: find it a worker now (creation_orchestrator.js).
   if (out.paused) await ensureCapacity(ctx.env || {}, { storage: ctx.storage, now: ctx.now, fetcher: ctx.fetcher }).catch(() => null);
   return out.res;

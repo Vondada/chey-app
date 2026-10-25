@@ -4921,7 +4921,7 @@
    "category": "office",
    "title": "GPU jobs",
    "summary": "Read my GPU render jobs.",
-   "does": "Says how many GPU jobs are queued, rendering, paused, completed or failed, and whether your Colab T4 worker is online. With \"pool\" (or \"which computers can build characters\", \"why is my character waiting\") it reads the compute pool: each computer that can build characters, its status, cooldown and quota, and why a waiting character waits. The pictures are in the Creation Room. With \"connect\" (\"Connect GPU\", \"start my GPU\") the app opens your notebook in CHE's browser, hands you any Google sign-in or confirmation, and says GPU connected only when the Worker has a fresh heartbeat from the Colab GPU, then runs a small test job. It costs nothing; Colab works only while your notebook is open.",
+   "does": "Says how many GPU jobs are queued, rendering, paused, completed or failed, and whether your Colab T4 worker is online. With \"pool\" (or \"which computers can build characters\", \"why is my character waiting\") it reads the compute pool: each computer that can build characters, its status, cooldown and quota, and why a waiting character waits. The pictures are in the Creation Room. With \"connect\" (\"Connect GPU\", \"start my GPU\") the app opens your notebook in CHE's browser, hands you any Google sign-in or confirmation, and says GPU connected only when the Worker has a fresh heartbeat from the Colab GPU, then runs a small test job. It costs nothing; Colab works only while your notebook is open. With \"budget\" (\"allow up to 20 dollars for GPUs\", \"limit GPUs to 5 dollars a month\", \"stop paid GPUs\", \"how long will my GPU money last\", \"what GPUs can CHE use\") it sets or stops your paid-GPU cap, which is your spending approval, recorded with its time; paid prepaid GPUs (RunPod, Vast.ai) then run only for GPU jobs no free GPU can take, cheapest first, deleted after the job, never past the cap. CHE never pays or adds credit.",
    "mode": "EXPLORE",
    "approval": {
     "required": false,
@@ -4932,15 +4932,18 @@
     "What are my GPU jobs?",
     "Which computers can build characters?",
     "Why is my character waiting?",
-    "Connect GPU"
+    "Connect GPU",
+    "How long will my GPU money last?",
+    "Allow up to 20 dollars for GPUs",
+    "Stop paid GPUs"
    ],
    "needs": [],
    "optional": [],
-   "handler": "gpu_queue.GpuQueue.view + speakGpuSummary; compute_pool.poolView + speakPool",
+   "handler": "gpu_queue.GpuQueue.view + speakGpuSummary; compute_pool.poolView + speakPool; compute_pool.budgetCommand",
    "route": "che_cloud_computer",
    "produces": "GPU queue status",
    "evidence": "The queue and worker heartbeats stored in the Worker.",
-   "cost": "Free: no AI engine is used.",
+   "cost": "Free: no AI engine is used. Paid GPUs only within the GPU budget you set (default $0).",
    "keywords": [
     "gpu",
     "colab",
@@ -4948,7 +4951,10 @@
     "face preview",
     "compute pool",
     "character waiting",
-    "connect gpu"
+    "connect gpu",
+    "gpu budget",
+    "runpod",
+    "paid gpu"
    ],
    "status": "available",
    "missing": [],

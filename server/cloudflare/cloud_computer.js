@@ -25,6 +25,7 @@ import { mp4Facts } from './github_video_renderer.js';
 import { sha256Hex } from './che_media_store.js';
 import { CREATION_PROVIDERS } from './creation_orchestrator.js';
 import { GpuQueue } from './gpu_queue.js';
+import { budgetIntent } from './compute_budget.js';
 
 export const CLOUD_SOURCE = 'che_cloud_computer';
 export const CLOUD_JOB_KIND = 'cloud_task';
@@ -846,6 +847,8 @@ export function cloudIntent(message) {
   const t = plain(message);
   if (t && t.length <= 160 && GPU_JOBS.test(t)) return { command: 'cloud-gpu', input: '' };   // asked as a question too
   if (t && t.length <= 160 && POOL.test(t.replace(/\?+$/, ''))) return { command: 'cloud-gpu', input: 'pool' };
+  // The GPU budget (compute_budget.js): "allow up to $20 for GPUs", "stop paid GPUs", "how long will my GPU money last?"
+  if (t && t.length <= 160 && budgetIntent(t.replace(/\?+$/, ''))) return { command: 'cloud-gpu', input: `budget ${t.replace(/\?+$/, '')}` };
   if (!t || t.length > 160 || /\?\s*$/.test(String(message || ''))) return null;
   if (CONNECT_GPU.test(t)) return { command: 'cloud-gpu', input: 'connect' };
   if (OPEN.test(t)) return { command: 'cloud-open', input: '' };

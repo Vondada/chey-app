@@ -63,7 +63,39 @@ class CheHttpOnboardingServer implements CheOnboardingServer {
   }
 }
 
-enum CheOnboardingStatus { connected, paused, needsAccountApproval, failed, guided }
+enum CheOnboardingStatus { connected, paused, needsAccountApproval, failed, guided, savedNotVerified }
+
+/// The provider's name for the title, labels and speech.
+String cheOnboardingProviderName(String id) => const {
+      'huggingface': 'Hugging Face',
+      'runpod': 'RunPod',
+      'vast': 'Vast.ai',
+      'modal': 'Modal',
+      'kaggle': 'Kaggle',
+      'openrouter': 'OpenRouter',
+      'github': 'GitHub Models',
+      'sambanova': 'SambaNova',
+      'openai': 'OpenAI',
+      'xai': 'xAI',
+    }[id] ??
+    (id.isEmpty ? id : '${id[0].toUpperCase()}${id.substring(1)}');
+
+/// What a guided /secret reply means. "Connected" only when the Worker verified the connection; a key the Worker
+/// stored without a free check (Modal) is "saved, not verified"; anything else failed and nothing is claimed.
+CheOnboardingStatus cheGuidedStatus(Map<String, dynamic> body) {
+  final outcomes = body['outcomes'];
+  if (outcomes is Map && outcomes['connection_verified'] == true) return CheOnboardingStatus.connected;
+  final stored = outcomes is Map && outcomes['secret_configured'] is List && (outcomes['secret_configured'] as List).isNotEmpty;
+  if (stored && body['state'] == 'secret_configured') return CheOnboardingStatus.savedNotVerified;
+  return CheOnboardingStatus.failed;
+}
+
+/// The guided plan's once-only steps as a numbered list (shown in large text and read aloud on request).
+List<String> cheGuidedSteps(Map<String, dynamic> startReply) {
+  final plan = startReply['plan'];
+  final steps = plan is Map && plan['steps'] is List ? (plan['steps'] as List).map((e) => '$e').toList() : const <String>[];
+  return [for (var i = 0; i < steps.length; i++) '${i + 1}. ${steps[i]}'];
+}
 
 /// What the owner hears and reads. Built only from the Worker's redacted replies.
 class CheOnboardingResult {
@@ -405,26 +437,37 @@ class _CheServiceOnboardingScreenState extends State<CheServiceOnboardingScreen>
     }
   }
 
-  Future<void> _saveGuided() async {
-    final key = _secure.text.trim();
+  Future<void> _saveGuided([String? fromClipboard]) async {
+    final key = (fromClipboard ?? _secure.text).trim();
     _secure.clear();
-    if (key.isEmpty) return;
+    if (key.isEmpty) {
+      if (fromClipboard != null) _report(const CheOnboardingResult(status: CheOnboardingStatus.failed, speech: 'The clipboard is empty. Copy the key on the provider page first. Nothing was sent.'));
+      return;
+    }
     setState(() => _busy = true);
     try {
       final reply = await _server.post('/api/onboarding/${widget.provider}/secret', {'capability': widget.capability, 'token': key});
-      final verified = reply.body['outcomes'] is Map && (reply.body['outcomes'] as Map)['connection_verified'] == true;
       final lines = reply.body['lines'] is List ? (reply.body['lines'] as List).map((e) => '$e').toList() : const <String>[];
-      _report(CheOnboardingResult(status: verified ? CheOnboardingStatus.connected : CheOnboardingStatus.failed, speech: '${reply.body['speech'] ?? reply.body['detail'] ?? 'That key did not work.'}', lines: lines));
+      _report(CheOnboardingResult(status: cheGuidedStatus(reply.body), speech: '${reply.body['speech'] ?? reply.body['detail'] ?? 'That key did not work.'}', lines: lines));
     } catch (_) {
       _report(const CheOnboardingResult(status: CheOnboardingStatus.failed, speech: 'I could not reach my server, so nothing was stored.'));
     }
+  }
+
+  // A blind owner copies the key on the provider page, then uses this one control: the key goes from the clipboard
+  // straight to the Worker, is never shown or spoken, and the clipboard is cleared afterwards.
+  Future<void> _pasteGuided() async {
+    final data = await Clipboard.getData(Clipboard.kTextPlain);
+    final key = data?.text ?? '';
+    await _saveGuided(key);
+    if (key.isNotEmpty) await Clipboard.setData(const ClipboardData(text: ''));
   }
 
   @override
   Widget build(BuildContext context) {
     final big = Theme.of(context).textTheme.titleLarge;
     return Scaffold(
-      appBar: AppBar(title: Semantics(header: true, child: Text('Connect ${widget.provider == 'huggingface' ? 'Hugging Face' : widget.provider}'))),
+      appBar: AppBar(title: Semantics(header: true, child: Text('Connect ${cheOnboardingProviderName(widget.provider)}'))),
       body: SafeArea(
         child: Column(
           children: [
@@ -436,7 +479,16 @@ class _CheServiceOnboardingScreenState extends State<CheServiceOnboardingScreen>
                   Semantics(liveRegion: true, label: 'Status: $_status', excludeSemantics: true, child: Text(_status, style: big)),
                   for (final line in _lines)
                     Padding(padding: const EdgeInsets.only(top: 6), child: Text(line, style: Theme.of(context).textTheme.titleMedium)),
+                  if (_guided && _lines.isEmpty)
+                    for (final step in cheGuidedSteps(widget.startReply))
+                      Padding(padding: const EdgeInsets.only(top: 6), child: Text(step, style: Theme.of(context).textTheme.titleMedium)),
                   const SizedBox(height: 12),
+                  if (_guided)
+                    Wrap(spacing: 12, runSpacing: 8, children: [
+                      Semantics(button: true, label: 'Paste the copied key from the clipboard and verify it. It goes straight to CHE\'s server, never into chat.', child: FilledButton(onPressed: _busy ? null : _pasteGuided, child: const Text('Paste copied key'))),
+                      Semantics(button: true, label: 'Read the steps and status aloud', child: OutlinedButton(onPressed: () => widget.onSpeak([_status, ...(_lines.isEmpty ? cheGuidedSteps(widget.startReply) : _lines)].join(' ')), child: const Text('Read aloud'))),
+                    ]),
+                  if (_guided) const SizedBox(height: 8),
                   if (_guided)
                     Row(children: [
                       Expanded(
