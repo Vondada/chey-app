@@ -230,10 +230,89 @@ test('a saved picture whose bytes are missing is not opened in the Creation Room
 });
 
 test('intents: opening a picture in the Creation Room is recognised; the bare room name and other questions are not', () => {
-  assert.deepEqual(mediaOpenIntent('open this same picture in my Creation Room'), { id: '', latest: false });
-  assert.deepEqual(mediaOpenIntent('CHE, open f9e8d7c6-0000-4000-8000-000000000002 in Creation Room'), { id: 'f9e8d7c6-0000-4000-8000-000000000002', latest: false });
-  assert.deepEqual(mediaOpenIntent('open my latest picture in my Creation Room'), { id: '', latest: true });
+  assert.deepEqual(mediaOpenIntent('open this same picture in my Creation Room'), { id: '', latest: false, room: true });
+  assert.deepEqual(mediaOpenIntent('CHE, open f9e8d7c6-0000-4000-8000-000000000002 in Creation Room'), { id: 'f9e8d7c6-0000-4000-8000-000000000002', latest: false, room: true });
+  assert.deepEqual(mediaOpenIntent('open my latest picture in my Creation Room'), { id: '', latest: true, room: true });
   assert.equal(mediaOpenIntent('open the Creation Room'), null, 'the room itself is navigation, not a picture');
   assert.equal(mediaOpenIntent('what is in my Creation Room?'), null);
   assert.equal(mediaOpenIntent('open this same picture'), null, 'no room named: the existing routes answer');
+});
+
+// Owner, 2026-10-25 (reproduced): "Open and display saved image <id>" went to the model, and "Show saved image <id>"
+// matched the store question and listed all 26 records. One named item opens that item in the chat, never the list.
+const OWNER_OPEN = 'Open and display saved image 6e0912e2-1aa2-438b-8a6e-0602de2218b1.';
+function seedTwentySix(saved, { missingBytes = '' } = {}) {
+  const items = [];
+  for (let i = 0; i < 26; i++) {
+    const id = i === 7 ? '6e0912e2-1aa2-438b-8a6e-0602de2218b1' : `00000000-0000-4000-8000-${String(i).padStart(12, '0')}`;
+    items.push({ id, kind: 'upload', mime_type: 'image/png', title: `picture ${i}.png`, created_at: `2026-10-${String(1 + (i % 28)).padStart(2, '0')}T10:00:00.000Z`, source: 'owner', blob: 'do' });
+    if (id !== missingBytes) saved.set(`media:${id}`, PNG);
+  }
+  saved.set('media_index', items);
+  return items;
+}
+
+test('the owner\'s exact "open and display saved image <id>" returns that one image, verified, never the 26-item list', async () => {
+  const che = await app();
+  seedTwentySix(che.saved);
+  const id = '6e0912e2-1aa2-438b-8a6e-0602de2218b1';
+  for (const message of [OWNER_OPEN, `Show saved image ${id}`, `open image ${id}`, `CHE, can I see picture ${id}?`]) {
+    const out = await che.say(message);
+    assert.equal(out.meta.source, 'che_media_store', message);
+    assert.equal(out.modelCalls, 0, `${message}: the store answers, the model is never asked`);
+    assert.equal(out.meta.ok, true, message);
+    assert.equal(out.meta.media_id, id, message);
+    assert.equal(out.meta.media_type, 'image', message);
+    assert.equal(out.meta.media_url, `https://che.example/api/media/${id}/image`, message);
+    assert.equal(out.meta.media_retrieval, 'verified', message);
+    assert.equal(out.meta.open_creation, undefined, `${message}: no room named, it shows in the chat`);
+    assert.equal(out.reply, `I retrieved "picture 7.png" (ID ${id}), sir: its stored bytes were read back and verified. Showing it here now.`);
+    assert.doesNotMatch(out.reply, /26|I hold|\n/, `${message}: no inventory`);
+    assert.doesNotMatch(out.reply, /\bdisplayed\b/, 'display is the phone\'s result, never claimed by the Worker');
+  }
+  const served = await che.get(`/api/media/${id}/image`);
+  assert.equal(served.status, 200);
+  assert.equal(Buffer.from(await served.arrayBuffer()).toString('base64'), PNG, 'the exact stored bytes are served, nothing regenerated');
+});
+
+test('listing still lists: "list every saved image" returns all 26 records', async () => {
+  const che = await app();
+  seedTwentySix(che.saved);
+  const out = await che.say('list every saved image by its ID');
+  assert.equal(out.meta.source, 'che_media_store');
+  assert.equal(out.meta.media_total, 26);
+  assert.match(out.reply, /^I hold 26 saved media records/);
+  assert.equal(out.reply.split('\n').length, 27);
+  assert.equal(out.meta.media_url, undefined);
+});
+
+test('open one image: an unknown ID and an image whose bytes are missing each fail honestly, with no image URL', async () => {
+  const che = await app();
+  const id = '6e0912e2-1aa2-438b-8a6e-0602de2218b1';
+  seedTwentySix(che.saved, { missingBytes: id });
+  const missing = await che.say(OWNER_OPEN);
+  assert.equal(missing.meta.ok, false);
+  assert.equal(missing.meta.media_retrieval, 'failed');
+  assert.equal(missing.meta.media_url, undefined);
+  assert.match(missing.reply, new RegExp(`^I could not open ID ${id}, sir: `));
+  const unknown = await che.say('open and display saved image 00000000-0000-4000-8000-00000000dead');
+  assert.equal(unknown.meta.ok, false);
+  assert.equal(unknown.meta.media_retrieval, 'not_found');
+  assert.equal(unknown.meta.media_url, undefined);
+  assert.equal(unknown.reply, 'I hold no saved picture or video with ID 00000000-0000-4000-8000-00000000dead, sir, so there is nothing to open.');
+});
+
+test('opening one saved image stays owner-only: a guest gets no image', async () => {
+  const che = await app();
+  seedTwentySix(che.saved);
+  const raw = await (await che.send('POST', '/api/chat', { message: OWNER_OPEN, history: [] })).text();
+  assert.doesNotMatch(raw, /media_url|che_media_store.*"ok":true/);
+  assert.equal((await che.get('/api/media/6e0912e2-1aa2-438b-8a6e-0602de2218b1/image', '')).status, 401);
+});
+
+test('intents: a named media ID with an open verb is one item; list and store questions without an open verb are not', () => {
+  assert.deepEqual(mediaOpenIntent(OWNER_OPEN), { id: '6e0912e2-1aa2-438b-8a6e-0602de2218b1', latest: false, room: false });
+  assert.equal(mediaOpenIntent('list every saved image by its ID'), null);
+  assert.equal(mediaOpenIntent('how many images do you hold?'), null);
+  assert.equal(mediaOpenIntent('show me my saved pictures'), null, 'no ID: the store list answers');
 });

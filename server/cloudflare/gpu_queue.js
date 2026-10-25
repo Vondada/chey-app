@@ -339,6 +339,11 @@ export class GpuQueue {
     const job = publicJob(next);
     job.checkpoints = { ...(next.checkpoints || {}) };
     job.model_url = next.model ? `/api/gpu/worker/model?worker=${encodeURIComponent(workerId)}&job=${next.id}` : null;
+    // The job's reference photo (creation_studio.js): its URL names this worker and this job, so the worker fetches it
+    // with its own worker credential and only while it holds the job. Owner device tokens never open this route.
+    const ref = referenceOf(next);
+    job.reference_url = ref ? referenceUrl(workerId, next.id) : null;
+    if (ref) job.settings = { ...job.settings, REFERENCE: JSON.stringify({ ...ref, url: job.reference_url }) };
     return { ok: true, job, resumed };
   }
 
@@ -477,6 +482,19 @@ export class GpuQueue {
     return got?.body?.length ? got.body : null;
   }
 
+  /**
+   * Worker: the reference photo of the job it holds (settings.REFERENCE), checked against its SHA-256, or null. Any
+   * other job's photo, a job this worker does not hold, or a photo the owner deleted gives null.
+   */
+  async workerReference(env, workerId, id) {
+    const { j } = await this.held(workerId, id);
+    const ref = j && referenceOf(j);
+    if (!ref) return null;
+    const got = await mediaStore(env, this.storage).get(referenceKey(ref.sha256));
+    if (!got?.body?.length || (await sha256Hex(got.body)) !== ref.sha256) return null;
+    return { bytes: got.body, contentType: got.contentType || 'application/octet-stream' };
+  }
+
   /** Owner: the stored GLB bytes of a job, or null. */
   async modelBytes(env, id) {
     const j = (await this.jobs()).find((x) => x.id === id);
@@ -492,7 +510,13 @@ export class GpuQueue {
     const t = this.now(); const r = body.receipt && typeof body.receipt === 'object' ? body.receipt : null;
     const cpu = j.lease?.class === 'github_cpu'; const lease = j.lease;
     j.lease = null; j.drive_path = String(body.drive_path || '').slice(0, 300) || j.drive_path || null;
-    if (r) j.receipt = trimReceipt(r);
+    if (r) {
+      j.receipt = trimReceipt(r);
+      // The device that built it, as the worker that held the job really is: a CPU worker's summary is always CPU, and
+      // a GPU claim needs a real GPU name (never an error text or "CPU").
+      const d = j.receipt.device_summary;
+      if (d && (cpu || (d.kind === 'GPU' && !isGpuName(d.name)))) d.kind = 'CPU';
+    }
     const status = String(body.status || '');
     const providerFail = status === 'complete' || status === 'checks_failed' ? null : classifyFailure(status, body.error);
     if (status === 'gpu_unavailable') {
@@ -596,6 +620,8 @@ function trimReceipt(r) {
       not_exported: list(x.not_exported, 6, 160) };
   }
   if (r.textures && typeof r.textures === 'object') out.textures = trimTextures(r.textures);
+  if (r.reference_fit && typeof r.reference_fit === 'object') out.reference_fit = trimReferenceFit(r.reference_fit);
+  if (r.device_summary && typeof r.device_summary === 'object') out.device_summary = trimDeviceSummary(r.device_summary);
   out.views = {};
   for (const [v, info] of Object.entries(r.views || {}).slice(0, 8)) {
     out.views[v] = { status: String(info?.status || ''), name: String(info?.name || ''), device: String(info?.device || '').slice(0, 200),
@@ -696,6 +722,92 @@ export function workerName(j) {
   return `Colab GPU worker ${id || '(id not recorded)'}${dev && !/^cpu$/i.test(dev) ? ` (${dev.slice(0, 60)})` : ''}`;
 }
 
+// ── Reference photos and device receipts (character realism contract, docs/CHE_CHARACTER_REALISM_CHECKLIST.md) ────
+/** Where a reference photo's bytes live in CHE's media store, by SHA-256 (creation_studio.js writes them). */
+export const referenceKey = (sha) => `creations/references/${sha}`;
+/** The URL a worker fetches a held job's reference photo from, relative to CHE's base URL like model_url. */
+export const referenceUrl = (workerId, jobId) => `/api/gpu/worker/reference?worker=${encodeURIComponent(workerId)}&job=${jobId}`;
+
+/** A job's REFERENCE setting ({url, sha256, bytes, consent}), or null when it has none or it is malformed. */
+export function referenceOf(j) {
+  const raw = j?.settings?.REFERENCE;
+  if (!raw) return null;
+  try {
+    const r = JSON.parse(raw);
+    if (!/^[a-f0-9]{64}$/.test(String(r?.sha256 || '')) || !['self', 'fictional'].includes(r.consent)) return null;
+    return { url: String(r.url || ''), sha256: r.sha256, bytes: Number(r.bytes) || 0, consent: r.consent };
+  } catch (_) { return null; }
+}
+
+const num0 = (x) => (Number.isFinite(Number(x)) ? Number(x) : 0);
+const textList = (x, n = 6, len = 200) => (Array.isArray(x) ? x : x ? [x] : []).slice(0, n).map((v) => String(v).slice(0, len)).filter(Boolean);
+
+/** receipt.reference_fit as the runner reported it, kept small and typed. */
+export function trimReferenceFit(f) {
+  const sliders = {};
+  for (const [k, v] of Object.entries(f.sliders && typeof f.sliders === 'object' ? f.sliders : {}).slice(0, 40)) {
+    if (/^[a-z0-9_]{1,40}$/.test(k) && Number.isFinite(Number(v))) sliders[k] = Math.round(Number(v) * 1000) / 1000;
+  }
+  const colors = {};
+  for (const k of ['skin', 'hair', 'eyes']) if (/^#[0-9a-f]{6}$/i.test(String(f.colors?.[k] || ''))) colors[k] = String(f.colors[k]).toLowerCase();
+  return {
+    sha256: /^[a-f0-9]{64}$/.test(String(f.sha256 || '')) ? String(f.sha256) : '', method: String(f.method || '').slice(0, 80),
+    landmarks: Array.isArray(f.landmarks) ? f.landmarks.length : num0(f.landmarks), sliders, colors,
+    fit_error: f.fit_error === null || f.fit_error === undefined || !Number.isFinite(Number(f.fit_error)) ? null : Number(f.fit_error),
+    limits: textList(f.limits),
+  };
+}
+
+/** receipt.device_summary: {kind: GPU|CPU, name, threads, limits}. complete() forces CPU for a CPU worker. */
+export function trimDeviceSummary(d) {
+  return { kind: d.kind === 'GPU' ? 'GPU' : 'CPU', name: String(d.name || '').slice(0, 120), threads: Math.max(0, Math.round(num0(d.threads))), limits: textList(d.limits) };
+}
+
+/** The measured minutes of a finished job: the runner's process_seconds, else the sum of its stage seconds; null if neither. */
+export function measuredMinutes(r) {
+  let s = num0(r?.process_seconds);
+  if (!s && r?.stage_seconds && typeof r.stage_seconds === 'object') s = Object.values(r.stage_seconds).reduce((a, b) => a + num0(b), 0);
+  return s > 0 ? Math.round((s / 60) * 10) / 10 : null;
+}
+
+/**
+ * One plain sentence on the device that built a finished job, from its receipt: "Built on the free GitHub cloud CPU
+ * worker, a CPU, not a GPU, 4 threads, Standard quality: 64 samples, measured 23.4 min." A CPU is never called a GPU;
+ * a GPU-preferred job that ran on the CPU says why (no GPU worker was online). '' before the job finished.
+ */
+export function deviceLine(j) {
+  if (!j || !j.receipt || !['completed', 'failed'].includes(j.state)) return '';
+  const r = j.receipt; const d = r.device_summary;
+  const cpu = d ? d.kind === 'CPU' : (j.rendered_on?.class || j.lease?.class) === 'github_cpu';
+  const threads = Number(d?.threads || r.threads || r.cores) || 0;
+  const name = String(d?.name || (cpu ? '' : String(r.nvidia_smi || '').split(',')[0])).trim();
+  const on = cpu ? `the free GitHub cloud CPU worker${name && !/^cpu$/i.test(name) ? ` (${name})` : ''}, a CPU, not a GPU`
+    : `the GPU ${name || 'named in the receipt'}`;
+  const q = String(j.settings?.QUALITY || '').trim();
+  const quality = `${q ? `${q[0].toUpperCase()}${q.slice(1)} quality` : 'quality'}: ${j.samples} samples`;
+  const min = measuredMinutes(r);
+  const why = cpu && needOf(j) === 'preferred' ? ' No GPU worker was online when it started (only the CPU worker was connected), so the CPU built it.' : '';
+  const limits = d?.limits?.length ? ` Limits: ${d.limits.join('; ')}.` : '';
+  return `${j.state === 'failed' ? 'Ran' : 'Built'} on ${on}${threads ? `, ${threads} thread${threads === 1 ? '' : 's'}` : ''}, ${quality}, ${min !== null ? `measured ${min} min` : 'time not measured'}.${why}${limits}`;
+}
+
+/**
+ * The reference fit in words, or '' when the job has no fit: colours read from the photo, landmarks, fit error and the
+ * runner's own limits, always called an approximate likeness. A fit for a different photo is said to be one.
+ */
+export function referenceLine(j) {
+  const f = j?.receipt?.reference_fit; const ref = referenceOf(j);
+  if (!f) return '';
+  if (ref && f.sha256 && f.sha256 !== ref.sha256) return 'The reference fit in the receipt is for a different photo than this job\'s, so it is not used.';
+  const c = f.colors || {};
+  const colours = ['skin', 'hair', 'eyes'].filter((k) => c[k]).map((k) => `${k} ${c[k]}`);
+  const sliders = Object.entries(f.sliders || {}).sort((a, b) => Math.abs(b[1]) - Math.abs(a[1])).slice(0, 4).map(([k, v]) => `${k.replace(/_/g, ' ')} ${v > 0 ? '+' : ''}${v}`);
+  return `Reference fit, an approximate likeness, not an exact copy${f.method ? ` (${f.method})` : ''}: ${f.landmarks || 0} landmarks`
+    + `${f.fit_error !== null && f.fit_error !== undefined ? `, fit error ${f.fit_error}` : ''}.`
+    + `${colours.length ? ` Colours from the photo: ${colours.join(', ')}.` : ''}${sliders.length ? ` Strongest face settings: ${sliders.join(', ')}.` : ''}`
+    + `${f.limits?.length ? ` Limits: ${f.limits.join('; ')}.` : ''}`;
+}
+
 export function publicJob(j) {
   const { lease, ...rest } = j;
   const model = j.model ? { bytes: j.model.bytes, sha256: j.model.sha256, uploaded_at: j.model.uploaded_at, url: `/api/gpu/jobs/${j.id}/model.glb` } : null;
@@ -710,7 +822,8 @@ export function publicJob(j) {
   const measured = mv ? { ok: mv.ok === true && j.state === 'completed', line: verifyLine(mv), size_m: mv.bbox_m?.size || [], triangles: mv.triangles, materials: (mv.materials || []).length } : null;
   return { ...rest, kind: j.kind || 'face_preview', model, rig, exports, quick_previews: { ...(j.quick_previews || {}) }, worker_id: lease?.worker_id || j.rendered_on?.worker_id || null, worker_class: lease?.class || j.rendered_on?.class || null, worker_name: workerName(j),
     lease_expires: lease ? iso(lease.expires_ms) : null, priority: j.priority || 'normal', requires: { gpu: needOf(j) }, measured,
-    checkpoints: { ...(j.checkpoints || {}) }, ...displayOf(j) };
+    checkpoints: { ...(j.checkpoints || {}) }, reference_fit: j.receipt?.reference_fit || null, device_summary: j.receipt?.device_summary || null,
+    device_line: deviceLine(j), reference_line: referenceLine(j), ...displayOf(j) };
 }
 
 export const DISPLAY_STATES = ['Creating', 'Waiting for Resources', 'Waiting for GPU', 'Starting a cloud worker', 'Paused', 'Completed', 'Failed', 'Cancelled'];
@@ -790,7 +903,7 @@ export function workerIdOk(auth, id) {
 }
 
 export async function gpuWorkerRoute(ctx, path, request) {
-  const m = /^\/api\/gpu\/worker\/(heartbeat|claim|progress|preview|model|export|complete)$/.exec(path);
+  const m = /^\/api\/gpu\/worker\/(heartbeat|claim|progress|preview|model|export|complete|reference)$/.exec(path);
   if (!m) return null;
   const out = await workerRouteInner(ctx, m[1], request);
   // A lease that lapsed while this request read the queue paused a job: find it a worker now (creation_orchestrator.js).
@@ -822,6 +935,14 @@ async function workerRouteInner(ctx, route, request) {
     const bytes = new Uint8Array(await request.arrayBuffer());
     const out = await q.exportFile(env, wid, String(url.searchParams.get('job') || ''), String(url.searchParams.get('format') || ''), bytes);
     return done(json(out, out.ok ? 200 : 409));
+  }
+  if (route === 'reference') {
+    // The reference photo of the job this worker holds (claim's reference_url): worker credential, own job only.
+    if (request.method !== 'GET') return done(json({ detail: 'Use GET.' }, 405));
+    if (!workerIdOk(auth, wid)) return done(json({ detail: 'That worker id does not belong to this caller.' }, 403));
+    const got = await q.workerReference(env, wid, String(url.searchParams.get('job') || ''));
+    if (!got) return done(json({ detail: 'No reference photo for a job this worker holds.' }, 404));
+    return done(new Response(got.bytes, { status: 200, headers: { 'Content-Type': got.contentType, 'Content-Length': String(got.bytes.length), 'Cache-Control': 'no-store' } }));
   }
   if (route === 'model' && request.method === 'GET') {
     // A resuming worker downloads the GLB it (or an earlier worker) uploaded for the job it now holds.
