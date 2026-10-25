@@ -449,8 +449,12 @@ class CheLiveStudioState extends State<CheLiveStudio> with WidgetsBindingObserve
   }
 
   Future<void> _start() async {
-    await _showBundled(widget.base);
-    if (mounted && _personMode) await refresh(first: true);
+    if (_personMode) {
+      await refresh(first: true); // _showBest prefers the verified generated GLB
+    } else {
+      // Animation preview: only load bundled when no selected generated model was provided.
+      await _showBundled(widget.base);
+    }
   }
 
   @override
@@ -942,8 +946,6 @@ class CheLiveStudioState extends State<CheLiveStudio> with WidgetsBindingObserve
 
   @override
   Widget build(BuildContext context) {
-    final h = MediaQuery.sizeOf(context).height;
-    final title = _personMode ? '${project['title'] ?? 'Live Studio'}' : 'Animation preview';
     final title = _personMode ? '${project['title'] ?? 'Character Studio'}' : 'Animation preview';
     return Scaffold(
       backgroundColor: CheStudioColors.bg,
