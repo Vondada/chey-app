@@ -1,4 +1,5 @@
 // Security Core: secret scanning and redaction. Portable: no imports from any product module.
+import { findSsns } from './ssn.js';
 // A finding records the kind, position and length of a credential-shaped value, never the value itself.
 // Each kind names a credential format; `entropy` is a high-randomness token with no known prefix.
 const SECRET_PATTERNS = [
@@ -62,6 +63,10 @@ export function scanSecrets(value) {
   }
   for (const hit of entropyHits(text)) {
     if (!findings.some((f) => hit.index >= f.index && hit.index < f.index + f.length)) findings.push(hit);
+  }
+  // A Social Security number is never kept, logged or sent to a model (owner rule, Privacy Center).
+  for (const hit of findSsns(text)) {
+    if (!findings.some((f) => hit.index < f.index + f.length && f.index < hit.index + hit.length)) findings.push({ kind: 'ssn', ...hit });
   }
   return findings.sort((a, b) => a.index - b.index);
 }

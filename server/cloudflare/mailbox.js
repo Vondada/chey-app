@@ -10,6 +10,7 @@
 // advice, but owner permissions (money, deleting, app access) still apply.
 
 import { byMailTime, normalizeThreadTimes } from './mailbox_time.js';
+import { redactSsn } from './security_core/ssn.js';
 
 export const MAILBOX_BRANCH = 'che-mailbox';
 export const KNOWN_PEERS = ['claude', 'chatgpt', 'codex', 'gemini', 'cursor', 'copilot', 'grok'];
@@ -205,7 +206,8 @@ async function archiveMail(env, peer, overflow, fetcher) {
 export async function sendMail(env, { from = 'che', to, text, replyTo = '', id = '' }, fetcher = fetch) {
   const sender = normalizePeer(from) || 'che';
   const recipient = normalizePeer(to);
-  const body = String(text || '').trim().slice(0, 4000);
+  // A Social Security number never goes to GitHub (owner rule, Privacy Center): it is removed, not sent.
+  const body = redactSsn(String(text || '').trim().slice(0, 4000)).text;
   if (!repoOf(env)) return { status: 503, detail: 'Mailbox needs CHE_GITHUB_TOKEN and CHE_GITHUB_REPO.' };
   if (!recipient || !body) return { status: 400, detail: 'Say who the message is for and what it says.' };
   if (/\b(?:ghp_|github_pat_|sk-[A-Za-z0-9]{10,}|AKIA[0-9A-Z]{12,})|(?:password|passcode|pair code)\s*[:=]/i.test(body)) {

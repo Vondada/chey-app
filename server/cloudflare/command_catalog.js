@@ -1172,6 +1172,17 @@ export const COMMANDS = Object.freeze([
     prompt: 'Use my master profile {input}', produces: 'filled form', evidence: 'Each field\'s value read back from the page on the phone; the report names fields, never values.',
     cost: 'Free. Runs on the iPhone; nothing is sent to a model.', keywords: ['master profile', 'fill this form', 'fill out the form', 'autofill', 'business profile', 'personal profile'],
   }),
+  // Privacy Center (owner, 2026-10-25; docs/CHE_PRIVACY_CENTER.md): an opt-in iPhone room, separate from GPU work.
+  // The Worker only opens it (privacy_center.js); consent, inventory, broker actions and the password check stay on the phone.
+  C('privacy-center', 'intelligence', 'EXPLORE', 'Open the opt-in Privacy Center.', {
+    title: 'Privacy Center',
+    does: 'Opens the Privacy Center on the iPhone. It is off until you say "turn on Privacy Center", which records your words and the time on the phone. It lists the services you connected in CHE (names only), checks the passwords in your on-device vault against Have I Been Pwned without sending them (only the first five characters of each fingerprint leave the phone), and gives the official credit freeze links and people-search opt-out pages, with Monitor, Request removal, Ignore and Mark resolved for each. CHE never keeps a Social Security number, and nothing is submitted or removed without your yes.',
+    needs: [], route: 'che_privacy_center', local: 'privacy_center', handler: 'privacy_center.privacyCommand → app: ChePrivacyCenterRoom (lib/rooms/che_privacy_center_room.dart)',
+    input: { name: 'request', required: false, hint: 'turn on, turn off, passwords, brokers or credit' },
+    examples: ['Open Privacy Center', 'Turn on Privacy Center', 'Check my passwords for breaches', 'Show me the data brokers', 'Freeze my credit'],
+    prompt: 'Privacy Center {input}', produces: 'privacy center', evidence: 'The phone opens the room; each action reports its real result, and removals are only called done when the site confirms.',
+    cost: 'Free: no AI engine, no paid service. Have I Been Pwned email search by API needs a paid key, so it is not offered.', keywords: ['privacy center', 'privacy', 'data brokers', 'people search', 'opt out', 'credit freeze', 'breach', 'pwned', 'identity theft'],
+  }),
 ]);
 
 // Aliases are other names for one command (/rea-map is /rea-features), never a second command.

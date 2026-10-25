@@ -273,6 +273,8 @@ import { FILM_ACTIVE_STATES, filmPlan, filmTick, filmTokenRoute, refreshValidati
 import { performanceBanner, performanceIntent, performanceReport, recordTiming, routeKey as perfRouteKey, speakPerformance } from './perf_watch.js';
 import { engineView, exportWorkflows, feedbackOnLast, importWorkflows, library as workflowLibrary, loadEngine, matchLearned, noteVersion, promoteCandidate, dismissCandidate, rankWorkflows, recordRun as recordWorkflowRun, isDisabled as workflowDisabled, restoreVersion, saveEngine, setDisabled as setWorkflowDisabled, setPreferred as setWorkflowPreferred, speakEfficiency, speakLibrary, testCandidate, workflowForRun, workflowIntent } from './workflow_engine.js';
 import { CATEGORIES, COMMANDS, catalogView, commandById, commandStatus, connectorStatus, describeWorkflow, dispatchPrompt, findSavedWorkflow, normalizeSavedWorkflow, parseSlashCommand, readCommandSpeech, searchCommands, speakCommandList, speakUnavailable, suggestCommands, workflowNodes, workflowFromWords } from './command_catalog.js';
+import { bodyOf, ssnFree, ssnTurn, withDoneFields } from './http_io.js';
+import { SSN_DONE, SSN_REPLY, privacyCommand, privacyServices, privacyTurn } from './privacy_center.js';
 import { handleReaRequest, loadInvestigation, parseReaRequest, reaInvestigationDetail, reaInvestigations } from './rea_runner.js';
 import { browseIntent, runSearchRoute, subAgentPlan } from './browse_chat.js';
 import { forgetResearchPages, listResearchPages, storeLoopReads } from './agent_research_memory.js';
@@ -438,27 +440,7 @@ async function digest(value) {
   return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
 }
 
-async function bodyOf(request) {
-  if (Number(request.headers.get('content-length') || 0) > 20_000_000) throw new Error('too_large');
-  const raw = await request.text();
-  if (raw.length > 20_000_000) throw new Error('too_large');
-  // An empty body is an empty request (the phone's "clear all" sends none), not a malformed one.
-  const body = raw.trim() ? JSON.parse(raw) : {};
-  if (!body || typeof body !== 'object' || Array.isArray(body)) throw new Error('invalid_json');
-  return body;
-}
-
 // Says `text` before an existing streamed reply.
-// Adds fields to a chat answer's done event (or to a one-line JSON answer such as a hold), so the phone
-// gets them with the reply itself. Chat answers are built whole before they are returned.
-async function withDoneFields(response, fields) {
-  const raw = await response.text();
-  const lines = raw.split('\n');
-  const at = lines.map((line) => { try { return JSON.parse(line); } catch (_) { return null; } }).findLastIndex((e) => e && (e.type === 'done' || (lines.filter(Boolean).length === 1 && !e.type)));
-  if (at >= 0) lines[at] = JSON.stringify({ ...JSON.parse(lines[at]), ...fields });
-  return new Response(lines.join('\n'), { status: response.status, headers: response.headers });
-}
-
 // The library workflow that served this reply, on its done event. Plain-JSON held replies are left as they are.
 async function withWorkflowReceipt(response, message, data, engine, onDone = null) {
   const raw = await response.text();
@@ -5578,7 +5560,7 @@ export class CheState extends DurableObject {
     // The deploy's memory-truth check talks to its own isolated CHE; its test
     // conversation never grows the owner's shared vector memory.
     const probeRun = isChat && isMemoryProbeRequest(request, this.env);
-    const sent = isChat ? request.clone().json().catch(() => null) : null;
+    const sent = isChat ? request.clone().json().then(ssnFree).catch(() => null) : null;
     const startedAt = Date.now();
     let response = await this.handleRequest(request);
     const handlerMs = Date.now() - startedAt;
@@ -5939,6 +5921,7 @@ export class CheState extends DurableObject {
         { source: 'che_master_profile', ok: false, on_device_only: true, command: command.id, model_calls: 0 });
     }
     // Recording Studio: an app screen; the Worker only says so and asks the app to open it.
+    if (command.local === 'privacy_center') return ndjsonReply(...privacyCommand(input, { owner: OWNER_CHAT_REQUESTS.has(request), command: command.id }));
     if (command.local === 'recording_studio') return ndjsonReply('Opening the Recording Studio, sir.', { source: 'che_recording_studio', ok: true, command: command.id, model_calls: 0, open_screen: 'recording_studio' });
     // Owner Improvements: the command's words go through the same intent the owner's chat uses.
     if (command.local === 'owner_improvement') {
@@ -8756,6 +8739,7 @@ export class CheState extends DurableObject {
         const routed = await onboardingRoute(this.onboardingCtx(), path, request.method, body, { owner: ownerDevice, lockedDown: await isLockedDown(this.ctx.storage), query: new URL(request.url).search });
         if (routed) return json(routed.body, routed.status);
       }
+      if (path === '/api/privacy/services' && request.method === 'GET') return ownerDevice ? json(await privacyServices(await this.commandConnectors(data), this.ctx.storage)) : json({ detail: 'Owner only.' }, 403);
       if (path === '/api/letters' && request.method === 'GET') {
         return json({ letters: (await listLetters(this.ctx.storage)).slice(-200).reverse() });
       }
@@ -10617,6 +10601,7 @@ export class CheState extends DurableObject {
             category: 'message_too_long', retryable: false,
           }, 413);
         }
+        if (ssnTurn(body)) return ndjsonReply(SSN_REPLY, SSN_DONE);
         // A broker key said or typed in chat is never kept or sent on to a model (review of #348):
         // the memory filters refuse it by its shape, and CHE says what to do instead.
         if (BROKER_KEY_RE.test(rawMessage)) {
@@ -10654,6 +10639,8 @@ export class CheState extends DurableObject {
           const reply = await this.improvementChat(body, improveAsk);
           if (reply) return reply;
         }
+        const privacy = !body.attachment && privacyTurn(rawMessage);
+        if (privacy) return ndjsonReply(...privacy);
         const runtimeStatusAsk = !body.attachment && !body.workflow_step ? appStatusIntent(rawMessage) : null;
         if (runtimeStatusAsk) {
           if (!ownerDevice) return ownerOnly();

@@ -6,6 +6,7 @@
 // the existing /api/memory/add path.
 
 import { classifyItem } from './privacy_policy.js';
+import { containsSsn } from './security_core/ssn.js';
 
 const MAX_MEMORIES = 100;
 const MAX_NOTES = Number.POSITIVE_INFINITY; // Brain room: no artificial cap on learned nodes
@@ -230,7 +231,7 @@ function secretToken(raw) {
 }
 export function hasSecretShape(text) {
   const value = String(text ?? '');
-  if (PEM_RE.test(value) || JWT_PIECE_RE.test(value) || USER_PASS_RE.test(value) || BROKER_KEY_RE.test(value)) return true;
+  if (PEM_RE.test(value) || JWT_PIECE_RE.test(value) || USER_PASS_RE.test(value) || BROKER_KEY_RE.test(value) || containsSsn(value)) return true;
   return value.split(/[\s"“”,;(){}[\]<>]+/).some((piece) => piece && secretToken(piece));
 }
 
