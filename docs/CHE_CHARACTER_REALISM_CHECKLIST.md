@@ -105,11 +105,11 @@ Branch: `claude/che-character-realism` (from main `afb8de1`). Lanes push to `lan
 | G10 | Acceptance driver + publish job | me | pushed `6651850`; lane B accept routes merged |
 | G11 | Compute pool (providers, cooldowns, handoff) | C | merged (lane C `5de754f`); compute_pool 10/10, Worker 4001/0; live handoff with real files NOT yet proven; Kaggle token presence unknown |
 | G12 | World population + benchmarks | D | merged (lane D `8211d73`): records, 288 buckets, routes, /world-population, panel, crowd viewer; measured in docs/CHE_WORLD_POPULATION.md; iPhone not verified |
-| G13 | Create Room demo video + walkthrough | E | in progress |
+| G13 | Create Room demo video + walkthrough | E | merged (tools/demo, docs/CHE_CREATE_ROOM_DEMO.md); 122.6 s labelled prototype sent to owner; close-ups show described skin tone/gender/hair not honoured (sent to lane A) |
 | G14 | "Open and display saved image <id>" listed all 26 media items | me | fixed `dfd3f48`: Worker 19/19 media tests, full Worker 3990/0; Flutter che_chat_image 2/2; iPhone display unverified |
 | G15 | GPU Connect flow with 4 separate verifications | F | merged `5d47937`: Flutter gpu_connect 12/12, Worker 4016/0; all live Google/Colab steps iPhone-only; Google likely refuses WebView sign-in → Safari fallback (account check then 'not verified') |
 | G16 | Realism stack + 15–20 s CHE sample | G | in progress |
-| G17 | Master profile form filling | H | in progress |
+| G17 | Master profile form filling | H | merged `c851dc6`: Playwright fixtures 7/7, Flutter 15/15 + 16/16; no real site reachable from container; iPhone unverified; live voice sends spoken profile values to the realtime speech service (typing avoids it) |
 | G18 | Service/AI-provider connect adapters | I (moved from H) | in progress |
 | G19 | Hugging Face onboarding end to end + demo | I | in progress |
 | G9 | e2e server "k.startsWith" (research queue never ran in e2e) | me | done `4ad45c9`; e2e 2/2 |
