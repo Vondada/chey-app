@@ -353,7 +353,12 @@ void main() {
       expect(rows['Session'], 'Not signed in (login refused)');
       expect(rows['Error'], contains('market data permission'));
       expect(rows['Instrument entitlement'], startsWith('Not permitted'));
-      final words = {for (final c in CheFeedConnection.values) CheLiveStatus.fromFeed(CheMarketFeed(live: CheRithmicLive()).current, hasCandles: false, now: open).word};
+      CheMarketSnapshot snap(CheFeedConnection c) => CheMarketSnapshot(symbol: 'MNQZ6', exchange: 'CME', source: 'rithmic', sourceLabel: '', connection: c,
+          statusLabel: '', isLive: c == CheFeedConnection.connected, lastPrice: null, lastTradeAt: open, lastUpdate: open);
+      final words = {
+        for (final c in CheFeedConnection.values)
+          for (final at in [open, closed]) CheLiveStatus.fromFeed(snap(c), hasCandles: false, now: at).word,
+      };
       expect(words.difference({'LIVE', 'DELAYED', 'WAITING', 'STALE', 'DISCONNECTED'}), isEmpty);
       expect(CheLiveStatus.delayed(symbol: 'MNQ').kind, CheFeedKind.delayed);
     });
@@ -371,8 +376,7 @@ void main() {
 }
 
 class _Feed implements RithmicMarketFeed {
-  _Feed({this.confirmed = false});
-  bool confirmed;
+  bool confirmed = false;
   final _trades = StreamController<RithmicLastTrade>.broadcast();
   @override
   Stream<RithmicLastTrade> get trades => _trades.stream;
