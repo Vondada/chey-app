@@ -66,7 +66,7 @@ test('the studio lists real capabilities and an offline, unpaired Creation Engin
   // Objects and rooms say plainly what they are: a fixed family list, not free-form text-to-3D.
   for (const id of ['object', 'room']) {
     const c = body.capabilities.find((x) => x.id === id);
-    assert.match(c.detail, /Procedural parametric objects and rooms from a fixed family list; not free-form text-to-3D\./);
+    assert.match(c.detail, /Procedural parametric objects and rooms from a fixed family list, and objects composed from boxes, balls, cylinders, cones and rings from a description; not free-form text-to-3D\./);
   }
   assert.deepEqual(body.capabilities.find((x) => x.id === 'object').choices, ['lamp', 'chair', 'table', 'mug', 'vase', 'shelf']);
   assert.deepEqual(body.capabilities.find((x) => x.id === 'room').choices, ['living_room', 'bedroom', 'office', 'studio']);
@@ -343,7 +343,7 @@ test('Create Object: a chair from the fixed families, edited by words into versi
   assert.equal(r.project.params.color, '#b0302a', 'colour, finish, style and size are kept');
   const n = r.project.version;
   r = await say('make it a dragon');
-  assert.equal(r.changed, false); assert.match(r.unsupported[0], /only these object families: lamp, chair, table, mug, vase, shelf\. A dragon is not one of them, and free-form text-to-3D is not built/);
+  assert.equal(r.changed, false); assert.match(r.unsupported[0], /I can't build a dragon yet\. Create Object composes things from boxes.*not free-form text-to-3D, so nothing was made/);
   r = await say('rotate the model left');
   assert.equal(r.changed, false); assert.deepEqual(r.viewport, { action: 'rotate', deg: -45 }); assert.equal(r.project.version, n);
   r = await say('size 3'); assert.equal(r.changed, true); assert.equal(r.project.params.size, 2, 'clamped to the largest size built');

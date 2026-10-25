@@ -136,7 +136,8 @@ class CheStudioActions {
   final VoidCallback? onOpenProjectManager;
 
   /// Create Object / Create Room: asks the Worker to start a project of [kind] (object | room) from [base] (a family
-  /// such as chair, or a room type such as office), opens it in the Live Studio and returns the Worker's own answer
+  /// such as chair, or a room type such as office; or `describe:<words>` for an object described in the owner's own
+  /// words, which the Worker composes from primitives or refuses plainly), opens it in the Live Studio and returns the Worker's own answer
   /// (or the real failure). [viaVoice] is true when a voice route will speak the answer, so it is not spoken twice.
   final Future<String> Function(String kind, String base, bool viaVoice)? onCreateThing;
 }
@@ -159,6 +160,15 @@ const cheRoomChoices = [
   ('office', 'Office', 'Desk, chair, desk lamp, shelf, plant and mug'),
   ('studio', 'Studio', 'Work table, chair, lamp, shelf, rug and plant'),
 ];
+
+/// "create an object: a snowman", "describe an object, a red ball on a blue box", "make me an object like a rocket" ->
+/// the description; null for anything else (a bare "create an object" opens the choices instead).
+String? cheDescribedObjectFromWords(String words) {
+  final t = words.trim().replaceAll(RegExp(r'[.!?]+$'), '').replaceFirst(RegExp(r'^(?:che|chey|chay)[,:]?\s+', caseSensitive: false), '');
+  final m = RegExp(r'^(?:create|make|build|describe|design)(?: me)? (?:an? |my own |your own )?(?:object|thing|3d object)(?: of| like| that is| as)?[:,]?\s+(.{3,200})$', caseSensitive: false)
+      .firstMatch(t);
+  return m?.group(1)?.trim();
+}
 
 /// "create a chair", "make a coffee table", "new office", "build a living room" -> (kind, base); null for anything else.
 (String, String)? cheCreateThingFromWords(String words) {
@@ -378,12 +388,28 @@ class CheCreativeStudioState extends State<CheCreativeStudio> {
               kind == 'object' ? Icons.widgets_rounded : Icons.meeting_room_rounded,
               () => unawaited(createThing(kind, c.$1)),
             ),
+          if (kind == 'object')
+            (
+              'Describe your own',
+              'Say or type what it is: a snowman, a wooden crate, a red ball on top of a blue box. CHE builds it from simple shapes or says plainly what she cannot make.',
+              Icons.edit_rounded,
+              () => unawaited(describeObject()),
+            ),
         ],
       );
     } finally {
       _sheetKind = null;
       _sheetBases = const [];
     }
+  }
+
+  /// Create Object from the owner's own words: a text box (VoiceOver-labelled) with Create and Cancel. By voice, say
+  /// "create an object" then the description, anywhere in the studio.
+  Future<String> describeObject() async {
+    final words = await showDialog<String>(context: context, builder: (_) => const _DescribeObjectDialog());
+    final w = words?.trim() ?? '';
+    if (w.isEmpty) return 'Nothing was created.';
+    return createThing('object', 'describe:$w');
   }
 
   String _thingChoice(String kind) {
@@ -394,7 +420,8 @@ class CheCreativeStudioState extends State<CheCreativeStudio> {
     unawaited(showCreateThing(kind));
     final choices = kind == 'object' ? cheObjectChoices : cheRoomChoices;
     return '$title. Say a number: '
-        '${[for (var i = 0; i < choices.length; i++) '${i + 1} ${choices[i].$2}'].join(', ')}.';
+        '${[for (var i = 0; i < choices.length; i++) '${i + 1} ${choices[i].$2}'].join(', ')}'
+        '${kind == 'object' ? ', ${choices.length + 1} Describe your own. Or say: create an object, then what it is' : ''}.';
   }
 
   String _sheetSummary(List<(String, String, IconData, VoidCallback?)> items) =>
@@ -514,6 +541,12 @@ class CheCreativeStudioState extends State<CheCreativeStudio> {
       if (go == null) return 'Continue creating is not connected in this build.';
       if (sheet != null && _sheetContext != null) Navigator.of(_sheetContext!).pop();
       return go();
+    }
+    // "create an object: a snowman": the Worker composes it from primitives or says plainly what it cannot make.
+    final described = cheDescribedObjectFromWords(words);
+    if (described != null && capability('object').$1 != 'unavailable') {
+      if (sheet != null && _sheetContext != null) Navigator.of(_sheetContext!).pop();
+      return createThing('object', 'describe:$described', viaVoice: true);
     }
     // "create a chair", "new office": straight to the Worker, whose answer is spoken.
     final thing = cheCreateThingFromWords(t);
@@ -1761,4 +1794,43 @@ class _EngineRow extends StatelessWidget {
       ),
     );
   }
+}
+
+/// The Describe-an-object box: owns its text controller, so closing the dialog never touches a disposed one.
+class _DescribeObjectDialog extends StatefulWidget {
+  const _DescribeObjectDialog();
+  @override
+  State<_DescribeObjectDialog> createState() => _DescribeObjectDialogState();
+}
+
+class _DescribeObjectDialogState extends State<_DescribeObjectDialog> {
+  final _text = TextEditingController();
+
+  @override
+  void dispose() {
+    _text.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+    title: Semantics(header: true, child: const Text('Describe an object')),
+    content: Semantics(
+      textField: true,
+      label: 'What should the object be?',
+      child: TextField(
+        key: const ValueKey('describe-object-text'),
+        controller: _text,
+        autofocus: true,
+        maxLength: 200,
+        style: const TextStyle(fontSize: 18),
+        decoration: const InputDecoration(hintText: 'For example: a snowman, or a red ball on top of a blue box'),
+        onSubmitted: (v) => Navigator.of(context).pop(v),
+      ),
+    ),
+    actions: [
+      TextButton(key: const ValueKey('describe-object-cancel'), onPressed: () => Navigator.of(context).pop(), child: const Text('Cancel')),
+      FilledButton(key: const ValueKey('describe-object-create'), onPressed: () => Navigator.of(context).pop(_text.text), child: const Text('Create object')),
+    ],
+  );
 }

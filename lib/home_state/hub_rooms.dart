@@ -715,7 +715,8 @@ extension _CheHomeHubRooms on _CHEHomeState {
           .post(
             Uri.parse('$cheAgentBaseUrl/api/creations'),
             headers: {..._authHeaders, 'Content-Type': 'application/json'},
-            body: jsonEncode({'kind': kind, 'base': base}),
+            // `describe:<words>`: an object in the owner's own words (creation_freeform.js on the Worker).
+            body: jsonEncode(base.startsWith('describe:') ? {'kind': kind, 'description': base.substring(9)} : {'kind': kind, 'base': base}),
           )
           .timeout(const Duration(seconds: 15));
       final d = jsonDecode(r.body);

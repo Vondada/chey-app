@@ -140,6 +140,69 @@ class RealBlenderTest(unittest.TestCase):
         self.assertTrue(all('no free floor space' in s['reason'] for s in layout['skipped']))
 
 
+def worker_compose(descriptions):
+    """The Worker's creation_freeform.js composeFreeform for each description (node)."""
+    js = ("import { composeFreeform } from './server/cloudflare/creation_freeform.js';"
+          f"console.log(JSON.stringify({json.dumps(descriptions)}.map((d) => composeFreeform(d))));")
+    r = subprocess.run(['node', '--input-type=module', '-e', js], cwd=ROOT, capture_output=True, text=True, timeout=60)
+    if r.returncode: raise AssertionError(r.stderr[-400:])
+    return json.loads(r.stdout.strip().splitlines()[-1])
+
+
+DESCRIBED = ['a snowman', 'a red ball on top of a blue box', 'three blue cubes', 'a wooden crate', 'a rocket 2 metres tall', 'a trophy',
+             'a purple car', 'a house', 'a pyramid next to a green cylinder', 'a small gold ring', 'a planet', 'a tree', 'a robot', 'a sword']
+
+
+class CustomObjectSpec(unittest.TestCase):
+    """Create Object from a description: the Worker composes primitives; Blender validates and measures the same parts."""
+
+    @classmethod
+    def setUpClass(cls):
+        if not shutil.which('node'): raise unittest.SkipTest('node not installed')
+        cls.made = dict(zip(DESCRIBED, worker_compose(DESCRIBED)))
+
+    def test_every_worker_composition_is_a_valid_blender_spec_with_its_measured_size(self):
+        for d, r in self.made.items():
+            self.assertTrue(r['ok'], d)
+            s = P.validate_object(r['spec'])
+            self.assertEqual(s['family'], 'custom'); self.assertEqual(len(s['parts']), len(r['spec']['parts']), d)
+            size, tol = P.expected_bbox('object', r['spec'])
+            self.assertTrue(all(x > 0 for x in size), d); self.assertEqual(tol, P.OBJECT_TOLERANCE)
+            self.assertLess(len(json.dumps(r['spec'], separators=(',', ':'))), 12000, f'{d}: SPEC must fit the queue setting limit')
+        self.assertEqual(P.expected_bbox('object', self.made['a rocket 2 metres tall']['spec'])[0][1], 2.0)
+        self.assertEqual(P.textures_wanted('object', P.validate_object(self.made['a wooden crate']['spec'])), ['wood'])
+
+    def test_unknown_things_are_refused_plainly_and_bad_parts_are_refused(self):
+        r = worker_compose(['a dragon with wings'])[0]
+        self.assertFalse(r['ok']); self.assertIn("can't build a dragon wings", r['detail']); self.assertIn('not free-form text-to-3D', r['detail'])
+        good = self.made['a snowman']['spec']
+        for bad in ({**good, 'parts': []}, {**good, 'parts': [dict(good['parts'][0], shape='blob')]},
+                    {**good, 'parts': [dict(good['parts'][0], s=[0, 1, 1])]}, {**good, 'parts': [dict(good['parts'][0], texture='gold')]},
+                    {**good, 'parts': [good['parts'][0]] * (P.CUSTOM_MAX_PARTS + 1)}, {**good, 'extra': 1}):
+            with self.assertRaises(P.SpecError): P.validate_object(bad)
+
+    def test_room_floors_ask_for_their_cc0_material(self):
+        self.assertEqual(P.textures_wanted('room', P.validate_room({'type': 'office'})), ['concrete'])
+        self.assertEqual(P.textures_wanted('room', P.validate_room({'type': 'bedroom'})), ['wood'])
+        self.assertEqual(P.textures_wanted('object', P.validate_object({'family': 'lamp'})), [])
+
+
+@unittest.skipUnless(importlib.util.find_spec('bpy') and shutil.which('node'), 'needs the bpy module and node')
+class RealBlenderCustomTest(unittest.TestCase):
+    """Described objects built for real: the exported GLB measures the size the parts ask for."""
+
+    def test_described_objects_build_and_measure(self):
+        import verify_glb
+        for d, r in zip(DESCRIBED[:6], worker_compose(DESCRIBED[:6])):
+            tmp = tempfile.mkdtemp(); path = os.path.join(tmp, 'model.glb')
+            out = subprocess.run([sys.executable, os.path.join(BODY, 'objects.py')], env=dict(os.environ, SPEC_JSON=json.dumps(r['spec']), EXPORT_GLB=path, TEXTURES_JSON='{}'),
+                                 capture_output=True, text=True, timeout=300)
+            self.assertEqual(out.returncode, 0, out.stdout[-1500:] + out.stderr[-1500:])
+            rec = verify_glb.verify_static(path, *P.expected_bbox('object', r['spec']))
+            self.assertTrue(rec['ok'], (d, rec['failures']))
+            self.assertEqual(rec['meshes'], len(r['spec']['parts']), d)
+
+
 class InventionSpec(unittest.TestCase):
     """invention_model: the parts list the Worker's placeholder uses (invention_visuals.js), validated for Blender."""
     PAL = {'name': 'red', 'primary': '#9a1f1f', 'secondary': '#c8a040', 'glow': '#9fe8ff', 'joint': '#2a2d33'}

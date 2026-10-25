@@ -19,11 +19,18 @@ import sys
 
 import bpy
 import bmesh  # noqa: E402  (bmesh is importable once bpy is)
-from mathutils import Vector
+from mathutils import Matrix, Vector
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 from creation_params import SpecError, describe, hex_rgb, validate_object  # noqa: E402
+
+# CC0 textures the job fetched before Blender ran (cc0_textures.py via scripts/che_creation_job.py): TEXTURES_JSON is
+# {material: {"diffuse": path, "normal": path?}}. A material without a verified file stays a plain colour.
+try:
+    TEXTURE_FILES = json.loads(os.environ.get('TEXTURES_JSON') or '{}')
+except ValueError:
+    TEXTURE_FILES = {}
 
 # ── building blocks ───────────────────────────────────────────────────────────────────────────────────────────────
 
@@ -72,6 +79,40 @@ def lathe(mat_, profile, segments=48, loc=(0, 0, 0), name='Lathe'):
     me.materials.append(mat_)
     for p in me.polygons: p.use_smooth = True
     return o
+
+
+def textured(material, rgb=(0.5, 0.5, 0.5), rough=0.6, metal=0.0, metres=1.0):
+    """One shared material per CC0 texture: the Diffuse image as base colour (and the OpenGL normal map), repeating
+    every `metres` through a Mapping node (exported as KHR_texture_transform). None when no file was fetched."""
+    files = TEXTURE_FILES.get(material) or {}
+    if not files.get('diffuse') or not os.path.isfile(files['diffuse']): return None
+    name = f'CC0 {material}'
+    if name in bpy.data.materials: return bpy.data.materials[name]
+    m = mat(name, rgb, rough, metal); nt = m.node_tree; p = nt.nodes['Principled BSDF']
+    uv = nt.nodes.new('ShaderNodeTexCoord'); mp = nt.nodes.new('ShaderNodeMapping'); mp.inputs['Scale'].default_value = (1 / metres, 1 / metres, 1)
+    nt.links.new(uv.outputs['UV'], mp.inputs['Vector'])
+    img = nt.nodes.new('ShaderNodeTexImage'); img.image = bpy.data.images.load(files['diffuse']); nt.links.new(mp.outputs['Vector'], img.inputs['Vector'])
+    nt.links.new(img.outputs['Color'], p.inputs['Base Color'])
+    if files.get('normal') and os.path.isfile(files['normal']):
+        ni = nt.nodes.new('ShaderNodeTexImage'); ni.image = bpy.data.images.load(files['normal']); ni.image.colorspace_settings.name = 'Non-Color'
+        nm = nt.nodes.new('ShaderNodeNormalMap'); nt.links.new(mp.outputs['Vector'], ni.inputs['Vector'])
+        nt.links.new(ni.outputs['Color'], nm.inputs['Color']); nt.links.new(nm.outputs['Normal'], p.inputs['Normal'])
+    m['che_texture'] = material
+    return m
+
+
+def box_uv(o):
+    """UVs in metres by box projection (each face takes the two world axes across it), so a texture tiles at real scale
+    on any part, whatever its size, instead of stretching one image over it."""
+    me = o.data
+    uvl = me.uv_layers.get('UVMap') or me.uv_layers.new(name='UVMap'); me.uv_layers.active = uvl
+    mw = o.matrix_world
+    for poly in me.polygons:
+        n = (mw.to_3x3() @ poly.normal); ax = max(range(3), key=lambda k: abs(n[k]))
+        a, b = [(1, 2), (0, 2), (0, 1)][ax]
+        for li in poly.loop_indices:
+            w = mw @ me.vertices[me.loops[li].vertex_index].co
+            uvl.data[li].uv = (w[a], w[b])
 
 
 def camera(sc, loc, target, lens=50):
@@ -270,8 +311,75 @@ def shelf(spec, m):
     return parts
 
 
-BUILDERS = {'lamp': lamp, 'chair': chair, 'table': table, 'mug': mug, 'vase': vase, 'shelf': shelf}
-MAIN = {'lamp': 'Lamp shade', 'chair': 'Chair', 'table': 'Table', 'mug': 'Mug glaze', 'vase': 'Vase glaze', 'shelf': 'Shelf'}
+TEXTURE_TINT = {'wood': ((0.30, 0.17, 0.08), 0.5, 0.0), 'stone': ((0.4, 0.4, 0.38), 0.8, 0.0), 'metal': ((0.6, 0.6, 0.62), 0.35, 1.0),
+                'fabric': ((0.4, 0.38, 0.35), 0.95, 0.0), 'brick': ((0.45, 0.18, 0.12), 0.85, 0.0), 'concrete': ((0.35, 0.35, 0.34), 0.85, 0.0),
+                'tile': ((0.6, 0.6, 0.58), 0.25, 0.0)}
+
+
+def custom(spec, m):
+    """A described object (creation_freeform.js): each part is an exact primitive filling its box. c and s are glTF
+    axes (x right, y up, z front); Blender gets (x, -z, y). A cylinder, cone or torus runs along `axis` (glTF y by
+    default); a cone may point down (`flip`) or have few sides (a pyramid has 4, its faces square to the box). A part
+    without its own colour takes the object's material, so recolouring the object recolours its main parts. A part with
+    a texture gets the CC0 image when the job fetched it, else its plain colour."""
+    parts, mats = [], {}
+    for p in spec['parts']:
+        shape, (cx, cy, cz), (w, h, d) = p['shape'], p['c'], p['s']
+        axis = p.get('axis', 'y'); sides = p.get('sides')
+        if p.get('texture'):
+            rgb, r, mt = TEXTURE_TINT[p['texture']]
+            mm = textured(p['texture'], hex_rgb(p['color']) if p.get('color') else rgb, p.get('roughness', r), p.get('metallic', mt))
+        else: mm = None
+        if mm is None and (p.get('color') or 'metallic' in p or 'roughness' in p):
+            key = (p.get('color', spec['color']), p.get('roughness', spec['roughness']), p.get('metallic', spec['metallic']))
+            if key not in mats: mats[key] = mat(f'Part {len(mats) + 1}', hex_rgb(key[0]), key[1], key[2])
+            mm = mats[key]
+        mm = mm or m
+        bm = bmesh.new()
+        if shape == 'box': bmesh.ops.create_cube(bm, size=1.0)
+        elif shape == 'sphere': bmesh.ops.create_uvsphere(bm, u_segments=32, v_segments=16, radius=0.5)
+        elif shape == 'cylinder': bmesh.ops.create_cone(bm, cap_ends=True, segments=sides or 40, radius1=0.5, radius2=0.5, depth=1.0)
+        elif shape == 'cone': bmesh.ops.create_cone(bm, cap_ends=True, segments=sides or 40, radius1=0.5, radius2=0.0, depth=1.0)
+        else:
+            # A torus filling a unit box: outer diameter 1 across, thickness 1 along its axis; the tube's radius across
+            # the ring is the real thickness over the real outer diameter, so the scaled ring is round, not squashed.
+            t = (h if axis == 'y' else (w if axis == 'x' else d)); outer = max(w, d) if axis == 'y' else max(h, d if axis == 'x' else w)
+            minor = min(0.5, t / max(outer, 1e-6) / 2); major = 0.5 - minor
+            for i in range(48):
+                a = i / 48 * math.tau
+                for j in range(12):
+                    b = j / 12 * math.tau
+                    bm.verts.new(((major + minor * math.cos(b)) * math.cos(a), (major + minor * math.cos(b)) * math.sin(a), 0.5 * math.sin(b)))
+            bm.verts.ensure_lookup_table()
+            for i in range(48):
+                for j in range(12):
+                    bm.faces.new([bm.verts[((i + di) % 48) * 12 + (j + dj) % 12] for di, dj in ((0, 0), (1, 0), (1, 1), (0, 1))])
+            bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
+        if shape in ('cone',) and sides == 4:   # a pyramid: faces square to the box, corners filling it
+            bmesh.ops.rotate(bm, verts=bm.verts, cent=(0, 0, 0), matrix=Matrix.Rotation(math.pi / 4, 3, 'Z'))
+            bmesh.ops.scale(bm, vec=(math.sqrt(2), math.sqrt(2), 1), verts=bm.verts)
+        if shape == 'cone' and p.get('flip'): bmesh.ops.scale(bm, vec=(1, 1, -1), verts=bm.verts); bmesh.ops.reverse_faces(bm, faces=bm.faces)
+        # The shape's own axis (Blender Z) turned to the glTF axis asked for: glTF x = Blender X, glTF z = Blender -Y.
+        if shape != 'sphere' and shape != 'box' and axis != 'y':
+            bmesh.ops.rotate(bm, verts=bm.verts, cent=(0, 0, 0), matrix=Matrix.Rotation(math.pi / 2, 3, 'Y' if axis == 'x' else 'X'))
+        me = bpy.data.meshes.new(p['name']); bm.to_mesh(me); bm.free()
+        o = bpy.data.objects.new(p['name'], me); bpy.context.scene.collection.objects.link(o)
+        o.location = (cx, -cz, cy); o.scale = (w, d, h)
+        me.materials.append(mm)
+        smooth = shape in ('sphere', 'torus') or (shape in ('cylinder', 'cone') and not sides)
+        for poly in me.polygons: poly.use_smooth = smooth
+        if shape == 'box':
+            b = o.modifiers.new('Bevel', 'BEVEL'); b.width = min(0.01, min(w, h, d) * 0.08); b.segments = 2; b.affect = 'EDGES'
+            b.use_clamp_overlap = True
+        o['che_part'] = p['name']
+        if p.get('texture'):
+            bpy.context.view_layer.update(); box_uv(o)
+        parts.append(o)
+    return parts
+
+
+BUILDERS = {'lamp': lamp, 'chair': chair, 'table': table, 'mug': mug, 'vase': vase, 'shelf': shelf, 'custom': custom}
+MAIN = {'lamp': 'Lamp shade', 'chair': 'Chair', 'table': 'Table', 'mug': 'Mug glaze', 'vase': 'Vase glaze', 'shelf': 'Shelf', 'custom': 'Object'}
 
 
 def build_object(spec, at=(0, 0, 0), rot=0.0, name=None):

@@ -21,6 +21,8 @@ on:
     paths:
       - tools/creation_benchmark.py
       - tools/avatar_body/render_glb.py
+      - tools/avatar_body/mpfb_body.py
+      - tools/avatar_face/mpfb_base.py
       - tools/avatar_body/render_profiles.py
       - tools/avatar_body/roblox_export.py
       - tools/avatar_body/roblox_rig.py
