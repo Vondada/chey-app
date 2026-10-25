@@ -67,6 +67,7 @@ DEFAULTS = {
 }
 VIEW_NAMES = {0: 'front', 45: 'three-quarter', 90: 'side', 180: 'back'}
 BODY = os.path.join(ROOT, 'tools', 'avatar_body')
+JOB_T0 = time.monotonic()
 
 
 def sha256(path):
@@ -229,15 +230,16 @@ def cpu_model():
 
 
 def device_summary(kind, names, threads, a, settings):
-    """receipt.device_summary: what rendered this job and what that device limits (measured times are in stage_seconds)."""
+    """receipt.device_summary: what rendered this job and what that device limits (measured times are in stage_seconds
+    and process_seconds). limits is a list of sentences (gpu_queue.js trimDeviceSummary)."""
     if kind == 'CPU':
         return {'kind': 'CPU', 'name': cpu_model() or f'CPU ({threads} threads)', 'threads': threads,
-                'limits': f'Cycles on the CPU: at most {a.samples} samples per pixel (adaptive), {a.res} px long edge, '
-                          f'{threads} threads, no GPU; slower than a GPU, so views are small and samples low. '
-                          'Stage seconds in this receipt are measured on this machine.'}
+                'limits': [f'No GPU: Cycles renders on {threads} CPU threads, several times slower than a GPU.',
+                           f'At most {a.samples} samples per pixel (adaptive) and {a.res} px on the long edge, to keep CPU time short.',
+                           'Stage and process seconds in this receipt are measured on this machine.']}
     return {'kind': 'GPU', 'name': names or kind, 'threads': threads,
-            'limits': f'Cycles on {kind}: at most {a.samples} samples per pixel, {a.res} px long edge. '
-                      'Stage seconds in this receipt are measured on this machine.'}
+            'limits': [f'Cycles on {kind}: at most {a.samples} samples per pixel and {a.res} px on the long edge.',
+                       'Stage and process seconds in this receipt are measured on this machine.']}
 
 
 REFERENCE_KEYS = ('sha256', 'method', 'model', 'image', 'landmarks', 'sliders', 'not_measured', 'colors', 'color_notes',
@@ -295,8 +297,16 @@ def reference_stage(a, job, receipt, receipt_path, env, log, reference, ref_file
         c = (fit['reference_fit'].get('colors') or {}).get(name)
         if c and key not in raw: env[key] = c; applied[key] = c
     rf = fit['reference_fit']
-    receipt['reference_fit'] = dict(base, status='ok', cached=cached, applied=applied,
-                                    **{k: rf[k] for k in REFERENCE_KEYS if k in rf and k != 'sha256'})
+    # The contract CHE's Worker reads (gpu_queue.js trimReferenceFit): colours as #rrggbb, landmarks as a count,
+    # fit_error as one number (rms landmark error in eye gaps), limits as sentences; the detail stays beside them.
+    hexc = lambda c: '#' + ''.join(f'{int(x):02x}' for x in c.split(','))
+    detail = {k: rf[k] for k in REFERENCE_KEYS if k in rf and k not in ('sha256', 'colors', 'landmarks', 'fit_error', 'limits')}
+    receipt['reference_fit'] = dict(base, status='ok', cached=cached, applied=applied, **detail,
+                                    colors={k: hexc(v) for k, v in (rf.get('colors') or {}).items()},
+                                    colors_srgb=rf.get('colors') or {},
+                                    landmarks=int(rf['landmarks']['count']), landmark_ratios=rf['landmarks'],
+                                    fit_error=rf['fit_error']['landmark_rms_eye_gaps'], fit_error_detail=rf['fit_error'],
+                                    limits=[x.strip() + ('' if x.strip().endswith('.') else '.') for x in rf['limits'].split('. ') if x.strip()])
     receipt.setdefault('stage_seconds', {})['reference'] = round(time.monotonic() - t0, 2)
     write_json(receipt_path, receipt)
     print(f"REFERENCE OK: {len(fit['winner']['weights'])} face sliders, fit error {rf['fit_error']['landmark_rms_eye_gaps']} eye gaps", flush=True)
@@ -314,6 +324,8 @@ def main():
     ap.add_argument('--resume-sha', default='')
     ap.add_argument('--reference-file', help='the reference photo named by settings REFERENCE (its sha256 is checked)')
     a = ap.parse_args()
+    global JOB_T0
+    JOB_T0 = time.monotonic()
 
     raw = json.load(open(a.settings)) if a.settings else {}
     ref_file = a.reference_file or raw.pop('REFERENCE_FILE', None)   # a local copy (tests, or what the worker fetched)
@@ -609,6 +621,7 @@ def full_body(a, job, receipt, receipt_path, env, log, kind, views, threads):
             receipt['exit_code'] = code
             return fail('render_failed', f'RENDER FAILED (exit {code}); finished views are kept, rerun to resume', 4)
     print('STAGE save', flush=True)
+    receipt['process_seconds'] = round(time.monotonic() - JOB_T0, 1)   # this run, measured end to end
     if env.get('EXPORT_ROBLOX') == '1': roblox(a, job, receipt, receipt_path, env, log, blender, model_path)
     receipt.update(status='complete', finished_at=now()); write_json(receipt_path, receipt)
     print('RECEIPT', receipt_path, flush=True)

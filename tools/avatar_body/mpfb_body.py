@@ -118,7 +118,9 @@ def build():
         'style': os.environ.get('STYLE', 'photoreal'), 'race': os.environ.get('RACE', 'african=0.7,caucasian=0.3'),
         'body_macros': {k: round(x, 4) for k, x in body_values(os.environ, win.get('youth', 0.0) * fitw).items()},
         'body_macro_system': 'makehuman_full' if has_body_macros(os.environ) else 'legacy_macro_woman',
-        'hair_style': os.environ.get('HAIR_STYLE') or 'close_crop', 'reference_sha256': ref_sha})
+        'hair_style': os.environ.get('HAIR_STYLE') or 'close_crop', 'reference_sha256': ref_sha,
+        'outfit_top': os.environ.get('OUTFIT_TOP') or 'long_sleeved_top',
+        'outfit_top_built': 't_shirt' if os.environ.get('OUTFIT_TOP') == 't_shirt' else 'long_sleeved_top'})
     co = to_blender(v)
     co[:, 2] -= co[sorted(groups['body']), 2].min()   # feet on the floor (z = 0)
 
@@ -190,6 +192,11 @@ def build():
         if bones & {'neck_01', 'spine_03', 'clavicle_l', 'clavicle_r', 'head'}:
             collar = neck.z + 0.012 - 0.03 * min(1.0, max(0.0, (neck.y - c.y) / 0.08)) ** 2
             return 'top' if c.z < collar else 'skin'
+        if os.environ.get('OUTFIT_TOP') == 't_shirt':   # short sleeves ending half-way down the upper arm
+            for s in 'lr':
+                if bones & {f'upperarm_{s}', f'lowerarm_{s}', f'hand_{s}'}:
+                    h, t = B[f'upperarm_{s}']; d = t - h
+                    return 'top' if (c - h).dot(d) / d.length_squared < 0.45 and not bones & {f'lowerarm_{s}', f'hand_{s}'} else 'skin'
         for s in 'lr':
             if bones & {f'lowerarm_{s}', f'hand_{s}'}:
                 h, t = B[f'lowerarm_{s}']; d = t - h

@@ -24,6 +24,7 @@ permissions:
 env:
   BLENDER_VERSION: '5.0.1'
   MPFB_COMMIT: b1a2dc98776da9d1eea751b159d42cf61778fe2e
+  MEDIAPIPE_VERSION: '1.1.1'
   CHE_URL: ${{ vars.CHE_URL || 'https://chey-app.henryjavoni.workers.dev' }}
 jobs:
   work:
@@ -70,10 +71,22 @@ jobs:
           restore-keys: che-cc0-textures-
       - name: System libraries for headless Blender
         run: sudo apt-get -qq install -y libxi6 libxkbcommon0 libsm6 libxrender1 libgl1 libegl1 libxxf86vm1 libxfixes3 > /dev/null
+      # Reference photo fit (tools/avatar_face/photo_fit.py): MediaPipe Face Landmarker on the CPU. The pip package is
+      # Apache-2.0; the model file (Apache-2.0 per its model cards) is pinned by URL and SHA-256 in photo_fit.py, which
+      # downloads it on first use into CHE_FACE_MODEL_DIR and checks it on every use. Both are cached between runs.
+      - name: Cache the face landmark model
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/che-face-model
+          key: che-face-landmarker-float16-v1-64184e22
+      - name: Photo fit dependencies (mediapipe, pinned)
+        env:
+          PIP_BREAK_SYSTEM_PACKAGES: "1"   # the runner image's system Python is PEP 668 managed; --user keeps it apart
+        run: python3 -m pip install --user --quiet --disable-pip-version-check mediapipe==${MEDIAPIPE_VERSION} pillow numpy
       - name: Work CHE's creation queue on the CPU
         run: |
           set -euo pipefail
-          export MPFB="$HOME/mpfb2/src/mpfb/data"
+          export MPFB="$HOME/mpfb2/src/mpfb/data" CHE_FACE_MODEL_DIR="$HOME/.cache/che-face-model"
           mkdir -p "$RUNNER_TEMP/che/jobs"
           python3 scripts/che_gpu_worker.py --auth oidc --worker-class github_cpu --che-url "$CHE_URL" \
             --blender "$HOME/blender/blender" --project che-assets/project --out "$RUNNER_TEMP/che/jobs" \
