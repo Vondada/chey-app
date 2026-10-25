@@ -26,6 +26,7 @@ import { sha256Hex } from './che_media_store.js';
 import { CREATION_PROVIDERS } from './creation_orchestrator.js';
 import { GpuQueue } from './gpu_queue.js';
 import { budgetIntent } from './compute_budget.js';
+import { modalIntent } from './modal_gpu.js';
 
 export const CLOUD_SOURCE = 'che_cloud_computer';
 export const CLOUD_JOB_KIND = 'cloud_task';
@@ -847,6 +848,9 @@ export function cloudIntent(message) {
   const t = plain(message);
   if (t && t.length <= 160 && GPU_JOBS.test(t)) return { command: 'cloud-gpu', input: '' };   // asked as a question too
   if (t && t.length <= 160 && POOL.test(t.replace(/\?+$/, ''))) return { command: 'cloud-gpu', input: 'pool' };
+  // Modal's included credit (modal_gpu.js): "use Modal's free credit", "I set Modal's spend limit to zero", "my Modal
+  // credit is 30 dollars", "approve the next Modal job", "how much Modal credit have I used?". Same /cloud-gpu budget path.
+  if (t && t.length <= 200 && modalIntent(t.replace(/\?+$/, ''))) return { command: 'cloud-gpu', input: `budget modal ${t.replace(/\?+$/, '')}` };
   // The GPU budget (compute_budget.js): "allow up to $20 for GPUs", "stop paid GPUs", "how long will my GPU money last?"
   if (t && t.length <= 160 && budgetIntent(t.replace(/\?+$/, ''))) return { command: 'cloud-gpu', input: `budget ${t.replace(/\?+$/, '')}` };
   if (!t || t.length > 160 || /\?\s*$/.test(String(message || ''))) return null;

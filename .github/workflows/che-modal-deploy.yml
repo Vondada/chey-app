@@ -1,0 +1,66 @@
+# Deploys CHE's Modal app (tools/modal/che_modal_app.py): one proxy-auth endpoint with the allowlisted routes
+# /health and /blender_preview (+ /status, /cancel). Manual only: the owner runs it after adding the repository secrets
+# MODAL_TOKEN_ID and MODAL_TOKEN_SECRET (a Modal API token from modal.com/settings/tokens). Deploying costs nothing by
+# itself (containers scale to zero; the image build uses a little of Modal's included credit). Nothing here starts a
+# GPU. No secret is printed: the step output names only the endpoint URL. Spec: docs/CHE_MODAL_FREE_FIRST_USAGE_PRIVACY.md
+name: CHE Modal deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      che_base:
+        description: The CHE Worker URL GPU calls may work for (allowlist)
+        type: string
+        default: https://chey-app.henryjavoni.workers.dev
+
+permissions:
+  contents: read
+
+concurrency:
+  group: che-modal-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+      MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+      CHE_ALLOWED_BASES: ${{ inputs.che_base }}
+    steps:
+      - name: Check the Modal secrets
+        id: secrets
+        run: |
+          if [ -z "$MODAL_TOKEN_ID" ] || [ -z "$MODAL_TOKEN_SECRET" ]; then
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "::notice title=Modal not deployed::MODAL_TOKEN_ID and MODAL_TOKEN_SECRET are not set in this repository's Actions secrets. Add them (Settings > Secrets and variables > Actions) and run this workflow again. Nothing was deployed."
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/checkout@v4
+        if: steps.secrets.outputs.ready == 'true'
+      - uses: actions/setup-python@v5
+        if: steps.secrets.outputs.ready == 'true'
+        with:
+          python-version: '3.11'
+      - name: Validate the app logic (no Modal needed)
+        if: steps.secrets.outputs.ready == 'true'
+        run: python3 -m unittest discover -s tools -p test_che_modal_app.py
+      - name: Install the Modal CLI
+        if: steps.secrets.outputs.ready == 'true'
+        run: python3 -m pip install --quiet 'modal>=1.0,<2'
+      - name: Deploy
+        if: steps.secrets.outputs.ready == 'true'
+        working-directory: tools/modal
+        run: |
+          modal deploy che_modal_app.py 2>&1 | tee /tmp/deploy.log | grep -v -i -E 'token|secret' || true
+          grep -q -i -E 'deployed|created' /tmp/deploy.log || { echo "::error::modal deploy did not report a deployment"; exit 1; }
+      - name: Endpoint URL
+        if: steps.secrets.outputs.ready == 'true'
+        run: |
+          url=$(grep -o -E 'https://[A-Za-z0-9-]+--che-gpu[A-Za-z0-9-]*\.modal\.run' /tmp/deploy.log | head -1)
+          echo "Endpoint: ${url:-not found in the deploy log}"
+          echo "### CHE Modal app deployed" >> "$GITHUB_STEP_SUMMARY"
+          echo "Endpoint base URL: \`${url:-see the deploy log}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "Next: create a Proxy Auth Token in Modal (Settings > Proxy Auth Tokens), then say \"CHE, connect Modal\" and paste wk-ID:ws-SECRET@${url:-<endpoint URL>} into CHE's secure field." >> "$GITHUB_STEP_SUMMARY"

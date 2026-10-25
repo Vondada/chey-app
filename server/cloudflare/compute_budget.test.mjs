@@ -443,16 +443,35 @@ test('"CHE, connect RunPod" is guided through the existing onboarding: secure fi
   assert.equal(che.saved.get('provider_keys').RUNPOD_API_KEY, RUNPOD_KEY, 'stored where the pool reads it');
 });
 
-test('Modal is saved but never "Connected" (no free check exists); Kaggle needs username:token and reports its free quota', async () => {
+test('Modal is Connected only after its app answers an authenticated /health; a format-only key is refused; voice sets the credit policy with no model; Kaggle needs username:token', async () => {
   const che = await owner();
-  assert.equal((await che.say('connect modal')).done.onboarding.action, 'guided');
+  const said = await che.say('connect modal');
+  assert.equal(said.done.onboarding.action, 'guided');
+  assert.match(said.reply, /set the workspace spend limit to \$0/); assert.match(said.reply, /MODAL_TOKEN_ID and MODAL_TOKEN_SECRET/); assert.match(said.reply, /CHE Modal deploy/);
   const bad = await che.post('/api/onboarding/modal/secret', { token: 'not-a-modal-token-at-all' });
-  assert.match(bad.detail, /does not look like a Modal/);
-  const m = await che.post('/api/onboarding/modal/secret', { token: 'ak-AbCdEf123456:as-ZyXwVu987654' });
-  assert.equal(m.state, 'secret_configured');
-  assert.equal(m.outcomes.connection_verified, false);
-  assert.doesNotMatch(m.speech, /^Connected/); assert.match(m.speech, /not verified/);
-  assert.match(m.lines[2], /^Connection verified: not yet\./);
+  assert.match(bad.detail, /does not look like a Modal Proxy Auth Token/);
+  const deploy = await che.post('/api/onboarding/modal/secret', { token: 'ak-AbCdEf123456:as-ZyXwVu987654' });
+  assert.match(deploy.detail, /Modal API token, the deploy key/);
+  const cred = 'wk-AbCdEf123456:ws-ZyXwVu987654@https://ownerws--che-gpu.modal.run';
+  globalThis.fetch = async (url, init = {}) => (String(url) === 'https://ownerws--che-gpu.modal.run/health' && init.headers?.['Modal-Key'] === 'wk-AbCdEf123456'
+    ? new Response(JSON.stringify({ ok: true, app: 'che-gpu', version: 'che-modal-1', gpu: 'T4' }), { status: 200 }) : new Response('{}', { status: 404 }));
+  const m = await che.post('/api/onboarding/modal/secret', { token: cred });
+  globalThis.fetch = offline;
+  assert.equal(m.state, 'verified', JSON.stringify(m));
+  assert.equal(m.outcomes.connection_verified, true);
+  assert.match(m.speech, /^Connected: Modal accepted the Proxy Auth Token/);
+  assert.ok(!che.wire.join('\n').includes('ws-ZyXwVu987654'), 'the secret never comes back');
+  const on = await che.say("CHE, use Modal's free credit");
+  assert.equal(on.modelCalls, 0); assert.equal(on.done.command, 'cloud-gpu', JSON.stringify(on.done));
+  assert.match(on.reply, /Recorded at \d\d:\d\d UTC/); assert.match(on.reply, /spend limit is \$0/);
+  const lim = await che.say("I set Modal's spend limit to zero");
+  assert.equal(lim.modelCalls, 0); assert.match(lim.reply, /you said Modal's spend limit is \$0/);
+  const cr = await che.say('my Modal credit is 30 dollars');
+  assert.match(cr.reply, /I stop sending jobs when my estimate reaches \$25\.00/);
+  assert.equal(cr.done.modal.dispatch_allowed, true);
+  assert.equal(che.saved.get('pool:state').modal.opt_in.words, "use Modal's free credit");
+  const st = await che.say('How much Modal credit have I used?');
+  assert.equal(st.modelCalls, 0); assert.match(st.reply, /Modal is connected and verified/); assert.match(st.reply, /not available to CHE/);
   await che.say('connect kaggle');
   const k1 = await che.post('/api/onboarding/kaggle/secret', { token: 'KGAT_onlythetoken_1234567890' });
   assert.equal(k1.state, 'failed'); assert.match(k1.lines[2], /username:token/);

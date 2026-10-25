@@ -83,9 +83,9 @@ Prices change. CHE uses the price RunPod returns when the Pod starts.
 
 **Budget controls.** Modal has workspace budgets and a separate spend limit ([modal.com/docs/guide/budgets](https://modal.com/docs/guide/budgets), via search).
 
-**API.** Modal is driven by its Python SDK and CLI (`modal token`, `ak-…`/`as-…` tokens). No plain HTTP API was found that the Worker could call to start or stop a GPU, or even to verify a token.
+**API.** Deploying needs the Modal SDK/CLI (`ak-…`/`as-…` API token), so it runs from `.github/workflows/che-modal-deploy.yml` with repository secrets. Once deployed, CHE's app is a web endpoint protected by Modal proxy auth (`Modal-Key`/`Modal-Secret` headers of a `wk-…`/`ws-…` Proxy Auth Token; 401 without them, no container started), which the Worker calls over HTTPS.
 
-**Status:** onboarding stores the key ("saved, not verified"), and the pool lists Modal as **not wired**. Wiring it needs a GitHub workflow that runs the Modal SDK, with the token as a repository secret and a scoped pool token exchanged over GitHub OIDC. That is not built.
+**Status (2026-10-25, branch `lane/modal-gpu`):** wired as an included-credit provider, not a paid one. Connected only after an authenticated `/health`; used only for GPU-only jobs after Colab and Kaggle, only after the owner opts in, confirms a $0 Modal spend limit and states his credit; CHE stops at its own estimate (e.g. $25 of $30). Details and acceptance tests: `docs/CHE_MODAL_FREE_FIRST_USAGE_PRIVACY.md`. Modal beyond the credit (paid) is not used.
 
 ### Kaggle
 
@@ -187,7 +187,7 @@ CHE already splits the work across different GPUs: the free ones first, then the
 | Kaggle | Free (about 30 GPU hours a week, reported) | Create the account, **verify your phone** in settings, then Settings → API → create a token (`username:token`) | "CHE, connect Kaggle" |
 | RunPod | Paid, prepaid | Create the account, add prepaid credit on Billing (leave auto-pay off), then Settings → API Keys → create a key | "CHE, connect RunPod", then "allow up to 20 dollars for GPUs" |
 | Vast.ai | Paid, prepaid | Create the account, add prepaid credit, then create an API key on the Keys page | "CHE, connect Vast", plus a budget |
-| Modal | Monthly credit reported ($30, unconfirmed) | Create the account, then Settings → API Tokens (`token_id:token_secret`) | "CHE, connect Modal" (kept for later; not wired) |
+| Modal | Monthly credit reported ($30, unconfirmed) | Create the account, set the spend limit to $0, add `MODAL_TOKEN_ID`/`MODAL_TOKEN_SECRET` GitHub secrets, run "CHE Modal deploy", create a Proxy Auth Token | "CHE, connect Modal" (`wk-ID:ws-SECRET@endpoint`), then "use Modal's free credit" |
 | Colab | Free | Open the CHE GPU notebook when you want it (unchanged) | "Connect GPU" |
 
 ## Verified and unverified

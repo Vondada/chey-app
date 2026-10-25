@@ -24,6 +24,7 @@ import { ONLINE_MS, engineRecord, engineSettingsOf, isGpuName, needOf } from './
 import { MIN_PAID_SESSION_S, PAID_GPU_PRICES, PAID_PROVIDERS, approveSpend, budgetOf, budgetView, canStartPaid, cheapestGpu, closeSession, marginUsd, maxUsdHr, mustEnd,
   budgetIntent, openSession, openSessions, reconcileSession, remainingUsd, revokeSpend, setMonthlyCap, speakRunway } from './compute_budget.js';
 import { ADAPTERS } from './gpu_providers.js';
+import { MODAL_RESERVE_MS, MODAL_USD_HR, applyModalIntent, callReceipt, modalCancel, modalCredential, modalCreditGate, modalDispatch, modalIntent, modalStateOf, modalStatus, openCalls, speakModal } from './modal_gpu.js';
 
 export const POOL_KEY = 'pool:state';
 export const MAX_PROVIDER_ATTEMPTS = 3;            // provider failures per job before it waits with a reason
@@ -82,10 +83,13 @@ export const POOL_PROVIDERS = Object.freeze([
     evidence: 'Expected, as for RunPod: an NVIDIA GPU container runs Blender Cycles. Unverified until a character is built there; the rental body follows the official vast-cli and is itself unverified until a real rental.',
     credential: 'VAST_API_KEY, saved through "CHE, connect Vast" (secure field, never chat)',
     needs: 'Once: create a Vast.ai account, add prepaid credit yourself, create an API key, say "CHE, connect Vast", then set a GPU budget.' },
-  { id: 'modal', label: 'Modal GPU functions', gpu: true, compatible: true, paid: true,
-    evidence: 'Modal containers can run any Linux binary on a GPU, so Blender should work, but Modal is started only through its Python SDK and CLI: it publishes no plain HTTP API CHE\'s Worker can call to start or stop a GPU. Not wired yet.',
-    credential: 'MODAL_TOKEN (token id:token secret), saved through "CHE, connect Modal"',
-    needs: 'A GitHub workflow that runs the Modal SDK would be needed (not built). Modal\'s Starter plan is reported to include $30 of compute a month (not confirmed on modal.com from here).' },
+  // Modal (owner spec docs/CHE_MODAL_FREE_FIRST_USAGE_PRIVACY.md): CHE's own Modal app (tools/modal/che_modal_app.py)
+  // behind Modal proxy auth runs the same character worker on a T4. Used only for GPU-only jobs, after free GPUs, within
+  // Modal's included credit, and only after the owner opted in and confirmed a $0 Modal spend limit (modal_gpu.js).
+  { id: 'modal', label: 'Modal T4 GPU (included credit)', gpu: true, compatible: true, metered: true,
+    evidence: 'CHE\'s Modal app runs scripts/che_gpu_worker.py with Blender 5.0.1 (SHA-256 checked) and MPFB2 at the pinned commits on a T4, called over HTTPS through Modal proxy auth (modal.com/docs/guide/webhook-proxy-auth). Unverified until a character is built there.',
+    credential: 'A Modal Proxy Auth Token and the app endpoint (wk-ID:ws-SECRET@https://<workspace>--che-gpu.modal.run), saved through "CHE, connect Modal" (secure field, never chat)',
+    needs: 'Once: create a Modal account, set its spend limit to $0, add MODAL_TOKEN_ID and MODAL_TOKEN_SECRET as GitHub secrets, run the "CHE Modal deploy" workflow, create a Proxy Auth Token, say "CHE, connect Modal", then "use Modal\'s free credit" and "my Modal credit is 30 dollars" (your real figure).' },
   { id: 'hf_zerogpu', label: 'Hugging Face ZeroGPU Space', gpu: true, compatible: false,
     evidence: 'Hugging Face docs (hub-docs docs/hub/spaces-zerogpu.md, read 2026-10-25): "ZeroGPU Spaces are exclusively compatible with the Gradio SDK"; "a real GPU is only available inside @spaces.GPU functions" with "a PyTorch CUDA emulation mode" outside them; designed for "PyTorch-based GPU Spaces"; free accounts get 5 minutes of GPU a day and a 60 s default per call. Blender Cycles is not PyTorch and runs as its own process; nothing documents that a subprocess sees the GPU.',
     credential: 'HF_TOKEN (write access) saved in Keys or on the Worker', needs: 'Not usable for Blender even with a token.' },
@@ -310,7 +314,7 @@ export async function kaggleCredential(env = {}, storage) {
 }
 
 /** A paid provider's key from the owner's saved Keys (service onboarding stores it there), else the Worker env. */
-export const PAID_ENV = Object.freeze({ runpod: 'RUNPOD_API_KEY', vast: 'VAST_API_KEY', modal: 'MODAL_TOKEN' });
+export const PAID_ENV = Object.freeze({ runpod: 'RUNPOD_API_KEY', vast: 'VAST_API_KEY' });   // Modal: modal_gpu.modalCredential
 export async function paidCredential(id, env = {}, storage) {
   let keys = {};
   try { keys = await storedKeys(storage); } catch (_) { keys = {}; }
@@ -373,7 +377,7 @@ export async function providerStatuses(env = {}, { storage, now, fetcher = fetch
   const add = (id, o) => {
     const c = cooling(pool, id, t);
     const status = o.status === 'ready' || o.status === 'unverified' ? (c ? 'cooling_down' : o.status) : o.status;
-    out.push({ id, label: byId[id].label, gpu: byId[id].gpu, compatible: byId[id].compatible, paid: Boolean(byId[id].paid), evidence: byId[id].evidence, needs: byId[id].needs,
+    out.push({ id, label: byId[id].label, gpu: byId[id].gpu, compatible: byId[id].compatible, paid: Boolean(byId[id].paid), metered: Boolean(byId[id].metered), evidence: byId[id].evidence, needs: byId[id].needs,
       credential: { source: byId[id].credential, exists: Boolean(o.credential) }, quota: o.quota || null, status,
       cooling_until: status === 'cooling_down' && c ? c.until : null,
       reason: status === 'cooling_down' && c ? `Cooling down until ${hhmm(c.until_ms)} UTC after ${c.kind.replace('_', ' ')}${c.reason ? ` (${c.reason})` : ''}.` : o.reason,
@@ -457,8 +461,23 @@ export async function providerStatuses(env = {}, { storage, now, fetcher = fetch
     add(id, { credential: Boolean(key), online: online(id).length, status: st, reason: why,
       quota: { kind: 'prepaid balance', balance_usd: bal?.usd ?? null, checked_at: bal?.checked_at || null, from_usd_hr: cheap.usd_hr, max_usd_hr: maxUsdHr(id), budget_left_usd: remainingUsd(pool, t, id) } });
   }
-  add('modal', { credential: Boolean(await paidCredential('modal', env, storage)), status: 'offline',
-    reason: 'Not wired: Modal starts GPUs only through its Python SDK, and CHE\'s Worker has no Modal route yet. A saved Modal key is kept for when it is.' });
+  // Modal: a saved, parsed and VERIFIED connection (authenticated /health, service_onboarding.js), egress allowed and
+  // the owner's included-credit policy allowing a dispatch now (modal_gpu.modalCreditGate). No call is made here.
+  const mc = await modalCredential(env, storage);
+  const onb = mc.cred ? await storage.get('onboarding:modal:default').catch(() => null) : null;
+  const mConnected = onb?.state === 'verified' && onb?.verification?.ok === true;
+  const mGate = modalCreditGate(pool, t);
+  let mSt; let mWhy;
+  if (!mc.exists) { mSt = 'no_credential'; mWhy = 'Modal is not connected: no Modal Proxy Auth Token is saved. Say "CHE, connect Modal" for the steps; never paste a key into chat.'; }
+  else if (!mc.cred) { mSt = 'no_credential'; mWhy = mc.deploy_token ? 'The saved Modal key is an API (deploy) token. CHE needs a Proxy Auth Token and the app endpoint instead; the API token belongs in GitHub secrets. Say "CHE, connect Modal" again.' : 'The saved Modal key is not a Proxy Auth Token with an endpoint. Say "CHE, connect Modal" again.'; }
+  else if (!mConnected) { mSt = 'offline'; mWhy = `Modal is saved but not verified${onb?.failure?.detail ? `: ${onb.failure.detail}` : ''}. Say "CHE, connect Modal" again after the deploy workflow ran.`; }
+  else if (block) { mSt = 'offline'; mWhy = `Not used: ${block}.`; }
+  else if (!mGate.ok) { mSt = 'offline'; mWhy = mGate.reason; }
+  else { const v = Boolean(pool.verified?.modal?.sha256); mSt = v ? 'ready' : 'unverified'; mWhy = `${v ? 'Verified' : 'Connected, not yet proven with a character'}: Modal T4 at about $${MODAL_USD_HR}/h from your included credit${mGate.approved_once ? ' (one job you approved past my stop line)' : `; my estimate this month $${mGate.used_usd.toFixed(2)}, stop at $${(mGate.stop_usd ?? 0).toFixed(2)}`}. Used only for GPU-only jobs no free GPU can take.`; }
+  add('modal', { credential: mc.exists, online: online('modal').length, status: mSt, reason: mWhy,
+    quota: { kind: 'included credit (CHE estimate; Modal does not report the credit left)', connected: mConnected, gate: mGate.ok ? 'ok' : mGate.kind, used_estimate_usd: mGate.used_usd, used_estimate_provenance: 'ESTIMATED',
+      stated_credit_usd: mGate.credit_usd, stated_credit_provenance: mGate.credit_usd == null ? 'UNAVAILABLE' : 'USER-ENTERED', stop_usd: mGate.stop_usd, remaining_credit_usd: null, remaining_credit_provenance: 'UNAVAILABLE',
+      usd_hr: MODAL_USD_HR, open_calls: openCalls(pool).length } });
 
   add('hf_zerogpu', { credential: Boolean(env.HF_TOKEN), status: 'incompatible',
     reason: 'Incompatible: ZeroGPU gives a GPU only inside @spaces.GPU Python calls in a Gradio Space (PyTorch-oriented, 5 free minutes a day); Blender as its own process is not documented to see it.' });
@@ -496,6 +515,9 @@ export function selectProvider(statuses, job, { pool = null, t = Date.now(), all
     if (id === 'kaggle' && allowUnverified && ok(id) && s[id].status === 'unverified') return { provider: id, why: s[id].reason, unverified: true };
   }
   if (need === 'required' && ok('kaggle') && s.kaggle.status === 'unverified') return { provider: 'kaggle', why: s.kaggle.reason, unverified: true };
+  // Modal's included credit: after every free GPU, before paid ones, and only for GPU-only work (status ready/unverified
+  // only while the owner's credit policy allows a dispatch now). CPU-capable work never goes to a metered GPU.
+  if (need === 'required' && ok('modal') && (s.modal.status === 'ready' || s.modal.status === 'unverified')) return { provider: 'modal', why: s.modal.reason, credit: true, unverified: s.modal.status !== 'ready' };
   if (paidOk && paidOrder.length) { const id = paidOrder[0]; return { provider: id, why: s[id].reason, paid: true, unverified: s[id].status !== 'ready' }; }
   if (need === 'preferred' && ready('github_actions_cpu')) return { provider: 'github_actions_cpu', why: s.github_actions_cpu.reason };
   const gpuish = statuses.filter((p) => p.compatible === true && (need !== 'required' || p.gpu));
@@ -642,10 +664,14 @@ export async function poolSchedule(env = {}, { storage, now, fetcher = fetch, jo
   pool = pool || await loadPool(storage);
   // No paid machine is left running after its job, its deadline or the owner's stop.
   const reaped = await reapPaid(env, { storage, now: () => t, fetcher, pool, jobs, workers });
+  // Open Modal calls are settled by their idempotency key before anything else is dispatched (no double billing).
+  const modal = await reconcileModal(env, { storage, pool, jobs, t, fetcher });
+  let jobsChanged = modal.jobsChanged;
+  if (jobsChanged) await applyPending(storage, jobs, t, pool);   // a failed Modal call cools Modal down and logs the handoff now
   const waitingJobs = jobs.filter((j) => (j.state === 'queued' || j.state === 'paused') && !j.owner_paused && needOf(j) !== 'none');
   if (!waitingJobs.length) {
-    if (reaped.ended.length || reaped.failed.length) await savePool(storage, pool);
-    return { started: null, reason: '', statuses: null, reaped };
+    if (reaped.ended.length || reaped.failed.length || modal.poolChanged) await savePool(storage, pool);
+    return { started: null, reason: '', statuses: null, reaped, modal_closed: modal.closed.map((c) => c.key), jobs_changed: jobsChanged };
   }
   const statuses = await providerStatuses(env, { storage, now: () => t, fetcher, pool, workers, jobs });
   const st = Object.fromEntries(statuses.map((p) => [p.id, p]));
@@ -654,7 +680,11 @@ export async function poolSchedule(env = {}, { storage, now, fetcher = fetch, jo
   const kWorkerOnline = Object.values(workers || {}).some((w) => w.provider === 'kaggle' && t - (w.last_seen_ms || 0) < ONLINE_MS);
   const live = pool.sessions?.kaggle && (pool.tokens?.kaggle?.expires_ms || 0) > t && !pool.tokens.kaggle.revoked
     && (t - Date.parse(pool.sessions.kaggle.started_at) < KAGGLE_RESERVE_MS || kWorkerOnline);
-  const want = waitingJobs.filter((j) => selectProvider(statuses, j, { pool, t, allowUnverified: pool.settings.allow_unverified_gpu }).provider === 'kaggle');
+  let want = waitingJobs.filter((j) => selectProvider(statuses, j, { pool, t, allowUnverified: pool.settings.allow_unverified_gpu }).provider === 'kaggle');
+  if (want.length && !live) {
+    const held = await releaseModalFor(env, { storage, pool, jobIds: want.map((j) => j.id), t, fetcher });
+    want = want.filter((j) => !held.has(j.id));
+  }
   if (want.length && !live) {
     const cred = await kaggleCredential(env, storage);
     const chosen = want.slice(0, 3);
@@ -671,21 +701,109 @@ export async function poolSchedule(env = {}, { storage, now, fetcher = fetch, jo
       reason = res.error;
     }
   }
+  // Modal's included credit: one GPU-only job per call, only when selection picked Modal (no free GPU could take it and
+  // the owner's credit policy allows it) and no other Modal call is open. The gate is checked again right here.
+  if (!started) {
+    const mWant = waitingJobs.filter((j) => selectProvider(statuses, j, { pool, t, allowUnverified: pool.settings.allow_unverified_gpu }).provider === 'modal');
+    if (mWant.length && !openCalls(pool).length) {
+      const j = mWant[0];
+      const { cred } = await modalCredential(env, storage);
+      const gate = modalCreditGate(pool, t);
+      if (cred && gate.ok) {
+        const m = modalStateOf(pool);
+        const res = await modalDispatch({ cred, pool, job: j, base: base || env.CHE_URL || 'https://chey-app.henryjavoni.workers.dev', t, fetcher, issueToken: issuePoolToken,
+          approval: gate.approved_once ? m.approve_next : null });
+        if (res.ok || res.uncertain) {
+          poolOf(j).reserved = { provider: 'modal', at: iso(t), until_ms: t + MODAL_RESERVE_MS };
+          if (gate.approved_once) m.approve_next = null;
+          jobsChanged = true;
+        }
+        if (res.ok) {
+          pool.sessions.modal = { started_at: iso(t), ref: res.call.key, job_ids: [j.id], unverified: !pool.verified?.modal?.sha256 };
+          started = { provider: 'modal', jobs: [j.id], ref: res.call.key, dispatch: res.call.dispatch };
+        } else {
+          if (res.cooldown) {
+            coolDown(pool, 'modal', { kind: 'provider_error', reason: res.error }, t);
+            pool.handoffs = [...pool.handoffs, { at: iso(t), job_id: j.id, from: 'modal', outcome: 'provider_error', reason: String(res.error).slice(0, 160) }].slice(-MAX_HANDOFFS);
+          }
+          reason = res.error;
+        }
+      }
+    }
+  }
   // Paid prepaid GPU: only when selection picked one (free GPUs could not take the job and the owner's budget allows),
   // one machine at a time, with a hard deadline from the money left. It is deleted after its job (reapPaid).
   if (!started) {
     const paidWant = waitingJobs.map((j) => ({ j, sel: selectProvider(statuses, j, { pool, t, allowUnverified: pool.settings.allow_unverified_gpu, paidForSpeed: budgetOf(pool).speed_opt_in }) }))
       .filter((x) => x.sel.paid);
+    const held = paidWant.length ? await releaseModalFor(env, { storage, pool, jobIds: paidWant.map((x) => x.j.id), t, fetcher }) : new Set();
     if (paidWant.length && !openSessions(pool).length) {
       const provider = paidWant[0].sel.provider;
-      const chosen = paidWant.filter((x) => x.sel.provider === provider).slice(0, 3).map((x) => x.j);
-      const res = await startPaidSession(env, { storage, pool, provider, jobs: chosen, t, fetcher, base });
+      const chosen = paidWant.filter((x) => x.sel.provider === provider && !held.has(x.j.id)).slice(0, 3).map((x) => x.j);
+      const res = chosen.length ? await startPaidSession(env, { storage, pool, provider, jobs: chosen, t, fetcher, base }) : { ok: false, error: 'An earlier Modal call for this job could not be cancelled yet, so CHE does not start a second GPU for it.' };
       if (res.ok) started = { provider, jobs: chosen.map((j) => j.id), ref: res.ref, usd_hr: res.usd_hr, deadline: iso(res.deadline_ms) };
       else reason = res.error;
     }
   }
   await savePool(storage, pool);   // quota reads, cooldowns, the session and its token hash
-  return { started, reason, statuses, reaped };
+  return { started, reason, statuses, reaped, modal_closed: modal.closed.map((c) => c.key), jobs_changed: jobsChanged };
+}
+
+// ─── Modal calls on the existing queue (modal_gpu.js does the HTTP; this decides) ───────────────────────────────
+/**
+ * Settles every open Modal call by its idempotency key: a call whose job finished, was cancelled or went to another
+ * computer is cancelled now (no idle billing, no double work); any other is read with /status. A closed call stamps
+ * its compute receipt on the job (j.compute, and j.receipt.compute when Modal built it); a failed or lost call writes
+ * its error into the job's history and hands the job on. A call Modal never started costs nothing and frees the job.
+ * Mutates the pool and jobs (the caller saves). Never throws on a provider error.
+ */
+export async function reconcileModal(env, { storage, pool, jobs, t, fetcher = fetch }) {
+  const open = openCalls(pool);
+  if (!open.length) return { jobsChanged: false, poolChanged: false, closed: [] };
+  const { cred } = await modalCredential(env, storage);
+  let jobsChanged = false; const closed = [];
+  for (const c of open) {
+    const j = jobs.find((x) => x.id === c.job_ids[0]) || null;
+    const onModal = Boolean(j && j.state === 'rendering' && providerOf(j.lease) === 'modal');
+    const waitingForIt = Boolean(j && (j.state === 'queued' || j.state === 'paused') && j.pool?.reserved?.provider === 'modal' && j.pool.reserved.until_ms > t);
+    let res = { closed: false };
+    if (!cred) c.error = 'The Modal connection is no longer saved, so CHE cannot check or cancel this call.';
+    else if (['started', 'running'].includes(c.state) && !onModal && !waitingForIt) { const r = await modalCancel(cred, c, t, fetcher); res = { closed: r.ok }; }
+    else res = await modalStatus(cred, c, t, fetcher);
+    if (!res.closed) continue;
+    closed.push(c);
+    if (pool.tokens?.modal && !openCalls(pool).length) pool.tokens.modal.revoked = true;
+    if (pool.sessions?.modal?.ref === c.key) delete pool.sessions.modal;
+    if (!j) continue;
+    jobsChanged = true;
+    if (c.state === 'not_started') { if (j.pool?.reserved?.provider === 'modal') j.pool.reserved = null; continue; }
+    const receipt = callReceipt(c, t);
+    if (c.state === 'failed' || c.state === 'lost') {
+      j.history = [...(j.history || []), { at: iso(t), state: j.state, note: `Modal GPU call ${c.key} ${c.state}: ${c.error || 'no reason given'}.` }].slice(-20);
+      if (!onModal && j.state !== 'completed') {
+        const p = poolOf(j);
+        if (p.reserved?.provider === 'modal') p.reserved = null;
+        p.attempts = [...(p.attempts || []), { provider: 'modal', worker_id: '', started_at: c.dispatched_at, outcome: 'provider_error', ended_at: iso(t), reason: `Modal: ${c.error || c.state}`.slice(0, 160), applied: false }].slice(-MAX_ATTEMPTS_KEPT);
+        p.total = (p.total || 0) + 1;
+      }
+    }
+    j.compute = [...(Array.isArray(j.compute) ? j.compute : []), receipt].slice(-6);
+    if (j.state === 'completed' && j.receipt?.provider === 'modal') j.receipt.compute = receipt;
+  }
+  return { jobsChanged, poolChanged: true, closed };
+}
+
+/** Before a job goes to another metered GPU: cancel its open Modal call by key. Returns the job ids still held. */
+export async function releaseModalFor(env, { storage, pool, jobIds, t, fetcher = fetch }) {
+  const busy = openCalls(pool).filter((c) => c.job_ids.some((id) => jobIds.includes(id)));
+  const held = new Set();
+  if (!busy.length) return held;
+  const { cred } = await modalCredential(env, storage);
+  for (const c of busy) {
+    const r = cred ? await modalCancel(cred, c, t, fetcher) : { ok: false };
+    if (!r.ok) for (const id of c.job_ids) held.add(id);
+  }
+  return held;
 }
 
 // ─── Paid GPU sessions (RunPod, Vast.ai): start, then delete after the job ──────────────────────────────────────
@@ -801,10 +919,45 @@ export async function paidWakes(storage, t = Date.now()) {
 export async function poolSay(env, { storage, now, fetcher = fetch }, input = '') {
   const words = String(input || '').replace(/^budget\s*/i, '').trim();
   if (/^pool\b/i.test(String(input || ''))) return [speakPool(await poolView(env, { storage, now, fetcher }))];
+  if (/^modal\s/i.test(words)) {
+    const out = await modalCommand(env, { storage, now, fetcher }, words.replace(/^modal\s+/i, ''));
+    return [out.spoken, { ok: out.ok, modal: out.modal }];
+  }
   const intent = budgetIntent(words) || (/^runway$/i.test(words) ? { action: 'runway' } : /^stop paid\b/i.test(words) ? { action: 'stop' } : {});
   const out = await budgetCommand(env, { storage, now, fetcher }, intent, words);
   const b = out.budget;
   return [out.spoken, { ok: out.ok, gpu_budget: b ? { total_cap_usd: b.total_cap_usd, monthly_cap_usd: b.monthly_cap_usd, remaining_usd: b.remaining_usd, approved_at: b.approved_at } : null }];
+}
+
+/**
+ * The owner's Modal words (modal_gpu.modalIntent) applied to the pool: opt in or out of the included credit, his $0
+ * spend-limit confirmation, his monthly credit, a one-shot approval, or the status. Each is stored USER-ENTERED with its
+ * time and exact words. "Stop using Modal" also cancels any open Modal call. Returns { ok, spoken, modal }.
+ */
+export async function modalCommand(env = {}, { storage, now, fetcher = fetch } = {}, words = '') {
+  const t = clock(now)();
+  const intent = modalIntent(words);
+  if (!intent) return { ok: false, spoken: 'For Modal I can: use its free credit, stop using it, record that you set its spend limit to zero, record your monthly credit, approve the next Modal job, or say how much credit I estimate is used.' };
+  const pool = await loadPool(storage);
+  const out = applyModalIntent(pool, intent, words, t);
+  let spoken = out.spoken;
+  if (intent.action === 'disable') {
+    const open = openCalls(pool);
+    if (open.length) {
+      const { cred } = await modalCredential(env, storage);
+      const stuck = [];
+      for (const c of open) { const r = cred ? await modalCancel(cred, c, t, fetcher) : { ok: false }; if (!r.ok) stuck.push(c.key); }
+      spoken += stuck.length ? ` Warning: I could not cancel ${stuck.length} Modal call${stuck.length === 1 ? '' : 's'} yet; I keep trying, and Modal stops it at its time limit.` : ` I cancelled ${open.length} running Modal call${open.length === 1 ? '' : 's'}.`;
+    }
+  }
+  if (intent.action === 'status') {
+    const mc = await modalCredential(env, storage);
+    const onb = mc.cred ? await storage.get('onboarding:modal:default').catch(() => null) : null;
+    spoken = speakModal(pool, t, { connected: onb?.state === 'verified' && onb?.verification?.ok === true });
+  }
+  await savePool(storage, pool);
+  const g = modalCreditGate(pool, t); const m = modalStateOf(pool);
+  return { ok: out.ok, spoken, modal: { opt_in: m.opt_in, spend_limit_zero: m.spend_limit_zero, stated_credit_usd: m.stated_credit?.usd ?? null, used_estimate_usd: g.used_usd, stop_usd: g.stop_usd, dispatch_allowed: g.ok, reason: g.ok ? '' : g.reason } };
 }
 
 /** A GitHub dispatch answer that means a rate limit or quota (cooldown instead of hammering GitHub). */
@@ -930,8 +1083,8 @@ export async function budgetCommand(env = {}, { storage, now, fetcher = fetch } 
     const kLeft = k?.quota?.left_s ?? null;
     if (intent.action === 'runway') return { ok: true, spoken: speakRunway(view.budget.runway, { kaggleLeftS: kLeft }), budget: view.budget };
     const can = view.providers.filter((p) => p.compatible === true);
-    const listed = can.map((p, i) => `${i + 1}. ${p.label}${p.paid ? ' (paid)' : ' (free)'}: ${p.status.replace('_', ' ')}. ${p.reason}`).join(' ');
-    return { ok: true, spoken: `CHE can use these computers for characters, free ones first: ${listed} Order: free CPU for CPU work; free GPUs (Colab, then Kaggle) for GPU work; paid GPUs last, cheapest first, only within your budget.`, budget: view.budget };
+    const listed = can.map((p, i) => `${i + 1}. ${p.label}${p.paid ? ' (paid)' : p.metered ? ' (included credit)' : ' (free)'}: ${p.status.replace('_', ' ')}. ${p.reason}`).join(' ');
+    return { ok: true, spoken: `CHE can use these computers for characters, free ones first: ${listed} Order: free CPU for CPU work; free GPUs (Colab, then Kaggle) for GPU work; then Modal's included credit for GPU-only work if you allowed it; paid GPUs last, cheapest first, only within your budget.`, budget: view.budget };
   } else return { ok: false, spoken: 'I can set a GPU budget ("allow up to 20 dollars for GPUs"), limit it per month, stop paid GPUs, or say how long the money lasts.' };
   await savePool(storage, pool);
   return { ok, spoken, budget: budgetView(pool, t) };

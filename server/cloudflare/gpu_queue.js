@@ -504,7 +504,7 @@ export class GpuQueue {
   }
 
   /** Worker: the job's outcome. "completed" only with a complete GPU receipt and every preview uploaded. */
-  async complete(workerId, body = {}) {
+  async complete(workerId, body = {}, env = null) {
     const { jobs, j } = await this.held(workerId, String(body.job_id || ''));
     if (!j) return { ok: false, detail: 'This worker does not hold that job.' };
     const t = this.now(); const r = body.receipt && typeof body.receipt === 'object' ? body.receipt : null;
@@ -534,7 +534,12 @@ export class GpuQueue {
       const DEV = cpu ? CPU_DEVICE : GPU_DEVICE;
       const bad = j.views.filter((v) => views[v]?.status !== 'ok' || !DEV.test(String(views[v]?.device || '')) || !j.previews?.[v]);
       // A model job is complete only with its 3D model uploaded and named in the receipt with the same hash.
-      const modelBad = MODEL_KINDS.includes(j.kind) && !(j.model && r?.model?.status === 'ok' && r.model.sha256 === j.model.sha256);
+      let modelBad = MODEL_KINDS.includes(j.kind) && !(j.model && r?.model?.status === 'ok' && r.model.sha256 === j.model.sha256);
+      // A metered Modal GPU's model is fetched back from CHE's media store and its SHA-256 re-checked before COMPLETE.
+      if (!modelBad && j.model && providerOf(lease) === 'modal') {
+        const got = env ? await mediaStore(env, this.storage).get(j.model.key).catch(() => null) : null;
+        modelBad = !got?.body?.length || (await sha256Hex(got.body)) !== j.model.sha256;
+      }
       // An object or room is complete only once the runner re-read the GLB and measured it (verify_glb.py --static):
       // meshes, triangles, materials and a bounding box matching the size asked for, of this very file.
       const v = j.receipt?.model?.verify;
@@ -719,7 +724,7 @@ export function workerName(j) {
     return `free GitHub cloud CPU runner ${id || '(id not recorded)'}${run ? ` (GitHub Actions run ${run})` : ''}`;
   }
   const dev = String(j?.lease?.device || (j?.rendered_on?.device !== 'GPU' ? j?.rendered_on?.device : '') || '').split(',')[0].trim();
-  return `Colab GPU worker ${id || '(id not recorded)'}${dev && !/^cpu$/i.test(dev) ? ` (${dev.slice(0, 60)})` : ''}`;
+  return `${(j?.lease?.provider || j?.receipt?.provider) === 'modal' ? 'Modal' : 'Colab'} GPU worker ${id || '(id not recorded)'}${dev && !/^cpu$/i.test(dev) ? ` (${dev.slice(0, 60)})` : ''}`;
 }
 
 // ── Reference photos and device receipts (character realism contract, docs/CHE_CHARACTER_REALISM_CHECKLIST.md) ────
@@ -837,7 +842,7 @@ export function displayOf(j) {
   const attempt = j.failures ? ` Attempt ${Math.min(j.failures + 1, MAX_FAILURES)} of ${MAX_FAILURES}.` : '';
   const last = (j.history || []).at(-1);
   if (j.state === 'rendering') {
-    const on = j.lease?.class === 'github_cpu' ? 'a free GitHub cloud CPU worker (slower than a GPU)' : `the Colab GPU${j.lease?.device ? ` (${j.lease.device})` : ''}`;
+    const on = j.lease?.class === 'github_cpu' ? 'a free GitHub cloud CPU worker (slower than a GPU)' : `the ${j.lease?.provider === 'modal' ? 'Modal' : 'Colab'} GPU${j.lease?.device ? ` (${j.lease.device})` : ''}`;
     return { display_state: 'Creating', status_line: `Creating on ${on}${stage}: ${done} of ${views} view${views === 1 ? '' : 's'} rendered, ${j.progress?.pct ?? 0} percent.` };
   }
   if (j.state === 'queued' || j.state === 'paused') {
@@ -978,7 +983,7 @@ async function workerRouteInner(ctx, route, request) {
   const out = route === 'heartbeat' ? await q.heartbeat(worker, info)
     : route === 'claim' ? await q.claim(worker, info, auth)
       : route === 'progress' ? await q.progress(worker, body)
-        : await q.complete(worker, body);
+        : await q.complete(worker, body, env);
   return done(json(out, out.ok ? 200 : 409));
 }
 

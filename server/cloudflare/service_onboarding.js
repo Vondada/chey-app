@@ -28,6 +28,7 @@ import { redactSecrets } from './privacy_policy.js';
 import { putRepositorySecret } from './github_secrets.js';
 import { durationSeconds, kaggleAuth, kaggleCall } from './film_farm.js';
 import { ADAPTERS as GPU_ADAPTERS } from './gpu_providers.js';
+import { MODAL_FORMAT_HELP, isModalDeployToken, modalHealth, parseModalCredential } from './modal_gpu.js';
 
 export const STATES = Object.freeze(['check_existing', 'account', 'token_requested', 'token_created', 'secret_configured', 'verified', 'paused', 'failed']);
 export const PAUSE_REASONS = Object.freeze(['owner_auth', 'captcha', 'missing_info', 'spending']);
@@ -206,7 +207,14 @@ const GPU_ONCE = {
   kaggle: ['Sign in at kaggle.com (create the account yourself if you have none).', 'Verify your phone number in Kaggle settings: GPU sessions with internet need it.', 'In Settings, API, create a new token and copy it as username:token.', NEVER_CHAT],
   runpod: ['Sign in at runpod.io (create the account yourself if you have none).', 'Add prepaid credit yourself on the Billing page, for example 10 or 20 dollars. I never pay or add a card. RunPod needs one hour of credit to start a GPU.', 'In Settings, API Keys, create a key and copy it.', NEVER_CHAT, 'Then set a GPU budget: say "allow up to 20 dollars for GPUs". Until then I spend nothing.'],
   vast: ['Sign in at vast.ai (create the account yourself if you have none).', 'Add prepaid credit yourself on the Billing page. I never pay or add a card.', 'On the Keys page, create an API key and copy it.', NEVER_CHAT, 'Then set a GPU budget: say "allow up to 20 dollars for GPUs". Until then I spend nothing.'],
-  modal: ['Sign in at modal.com (create the account yourself if you have none).', 'In Settings, API Tokens, create a token and copy it as token_id:token_secret.', NEVER_CHAT, 'Modal is not wired into my GPU pool yet, so the key is kept for later; I cannot verify it for free.'],
+  // Modal (docs/CHE_MODAL_FREE_FIRST_USAGE_PRIVACY.md): the API token deploys CHE's app from GitHub Actions; the Worker
+  // itself only ever holds a Proxy Auth Token for that app's endpoint (modal_gpu.js), verified by an authenticated /health.
+  modal: ['Sign in at modal.com (create the account yourself if you have none; the Starter plan includes monthly compute credit).',
+    'On Modal\'s Usage and Billing page, set the workspace spend limit to $0, so Modal stops work at the included credit instead of charging. I cannot see that setting; you tell me.',
+    'In Modal Settings, API Tokens, create a token. Add its two parts as GitHub repository secrets MODAL_TOKEN_ID and MODAL_TOKEN_SECRET (GitHub, Settings, Secrets and variables, Actions). They never come to me.',
+    'Run the "CHE Modal deploy" workflow in GitHub Actions. It deploys my app and prints its endpoint, like https://your-workspace--che-gpu.modal.run.',
+    'In Modal Settings, Proxy Auth Tokens, create a token. Then say "CHE, connect Modal" and paste wk-ID:ws-SECRET@ and the endpoint into my secure field.', NEVER_CHAT,
+    'I call my app once to verify it; only then is Modal connected. To let me use the credit, say "use Modal\'s free credit", "I set Modal\'s spend limit to zero" and "my Modal credit is 30 dollars" with your real figure.'],
 };
 
 function gpuGuided(id) {
@@ -215,8 +223,9 @@ function gpuGuided(id) {
   const plain = p.name.replace(/\s*\(.*\)$/, '');
   return {
     ...base,
-    capabilities: { default: { title: 'GPU', uses: `CHE's compute pool (character builds on a ${id === 'kaggle' ? 'free' : 'prepaid'} GPU)`, permissions: [], works: id === 'kaggle' ? 'use your free weekly Kaggle GPU quota for GPU jobs, before any paid GPU' : `use ${plain} GPUs for GPU jobs no free GPU can take, only within the GPU budget you set`, destinations: ['worker'] } },
-    validToken: id === 'modal' ? (t) => /^ak-[A-Za-z0-9]{8,}:as-[A-Za-z0-9]{8,}$/.test(String(t || '').trim()) : base.validToken,
+    capabilities: { default: { title: 'GPU', uses: `CHE's compute pool (character builds on a ${id === 'kaggle' ? 'free' : id === 'modal' ? 'Modal' : 'prepaid'} GPU)`, permissions: [], works: id === 'kaggle' ? 'use your free weekly Kaggle GPU quota for GPU jobs, before any paid GPU' : id === 'modal' ? 'send GPU-only character jobs to my Modal app after free GPUs, once you allow Modal\'s included credit' : `use ${plain} GPUs for GPU jobs no free GPU can take, only within the GPU budget you set`, destinations: ['worker'] } },
+    validToken: id === 'modal' ? (t) => Boolean(parseModalCredential(t)) : base.validToken,
+    badTokenDetail: id === 'modal' ? (t) => `${isModalDeployToken(t) ? 'That is a Modal API token, the deploy key. ' : 'That does not look like a Modal Proxy Auth Token with an endpoint. '}${MODAL_FORMAT_HELP} Nothing was stored.` : null,
     plan: () => ({ kind: 'guided', url: p.page, steps: GPU_ONCE[id] }),
     async verify(token, _capability, { fetcher = fetch } = {}) {
       const works = this.capabilities.default.works;
@@ -233,7 +242,9 @@ function gpuGuided(id) {
           { id: 'quota', ok: true, detail: `Kaggle read your free GPU quota: ${(left / 3600).toFixed(1)} GPU hours left this week (read only, nothing spent)${pay ? '; pay-to-scale is on, so CHE will not start Kaggle sessions until you turn it off' : ''}` }], works };
       }
       if (id === 'modal') {
-        return { ok: true, provisional: true, auth: 'ok', checks: [{ id: 'auth', ok: true, detail: 'The key has the Modal token format (ak-…:as-…). Modal has no plain HTTP check CHE can call for free, so it is not verified; it is proven only by a first Modal job, which is not wired yet' }], works };
+        // Connected only when CHE's own app answers an authenticated /health with the expected version.
+        const h = await modalHealth(parseModalCredential(token), fetcher);
+        return { ok: h.ok, auth: h.ok ? 'ok' : h.auth, checks: [{ id: 'auth', ok: h.ok, detail: h.detail }], works: h.ok ? works : undefined };
       }
       const b = await GPU_ADAPTERS[id].balance(String(token).trim(), fetcher);
       if (!b.ok) return { ok: false, auth: b.status === 'unauthorized' ? 'invalid' : b.status, checks: [{ id: 'auth', ok: false, detail: `${plain} ${b.status === 'unauthorized' ? 'refused the key' : b.status === 'network' ? 'could not be reached' : `answered ${b.status}${b.http ? ` (HTTP ${b.http})` : ''}`}` }] };
@@ -458,7 +469,7 @@ export async function storeSecret(ctx, provider, body = {}) {
   const { adapter } = r;
   const now = ctx.now?.() || Date.now();
   const token = String(body.token || '').trim();
-  if (!adapter.validToken(token)) return { ok: false, status: 422, detail: `That does not look like a ${adapter.name} token. Nothing was stored.` };
+  if (!adapter.validToken(token)) return { ok: false, status: 422, detail: adapter.badTokenDetail?.(token) || `That does not look like a ${adapter.name} token. Nothing was stored.` };
   const fp = await fingerprint(token);
   const rec = (await load(ctx.storage, provider, r.capability)) || fresh(provider, r.capability, now);
 
@@ -609,7 +620,7 @@ export function onboardingIntent(message) {
 }
 
 // ─── Chat replies (worker.js turns these into the ndjson reply) ──────────
-export const CONNECT_HELP = 'I can connect Hugging Face automatically (I create the token in my browser with your sign-in), and guide you through Groq, Gemini, Cerebras, Mistral, OpenRouter, GitHub Models, SambaNova, OpenAI and xAI, plus the GPU providers for my compute pool: Kaggle (free weekly GPU), RunPod and Vast.ai (prepaid; used only within the GPU budget you set) and Modal (key kept; not wired yet). Say "connect" and one of those names. Never paste a key into chat: I open my secure field for it.';
+export const CONNECT_HELP = 'I can connect Hugging Face automatically (I create the token in my browser with your sign-in), and guide you through Groq, Gemini, Cerebras, Mistral, OpenRouter, GitHub Models, SambaNova, OpenAI and xAI, plus the GPU providers for my compute pool: Kaggle (free weekly GPU), RunPod and Vast.ai (prepaid; used only within the GPU budget you set) and Modal (its included GPU credit, after free GPUs and only once you allow it). Say "connect" and one of those names. Never paste a key into chat: I open my secure field for it.';
 
 // /connect-service <input>: the input may be a name or a whole sentence.
 export function connectServiceIntent(input) {
