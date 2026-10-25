@@ -32,6 +32,41 @@ List<CheMemoryDot> cheTestDots() => cheBuildMemoryDots(
       brainRecords: cheTestBrainRecords(),
     );
 
+/// A very large Brain (for "never overcrowded" and frame-cost checks): [n] records spread across every region.
+List<CheMemoryDot> cheLargeTestDots(int n) {
+  const regions = [
+    ('Personal Memory', 'memory'),
+    ('Conversations and Corrections', 'conversation'),
+    ('Learned Knowledge', 'knowledge'),
+    ('Trading and Market Research', 'strategy_decision'),
+    ('Coding and Development', 'coding_job'),
+    ('Active and Historical Tasks', 'task'),
+    ('YouTube and Media', 'video'),
+  ];
+  return cheBuildMemoryDots(
+    savedMemories: const [],
+    memoryNotes: const [],
+    learnedPersonality: const [],
+    learnedKnowledge: const [],
+    brainRecords: [
+      for (var i = 0; i < n; i++)
+        {
+          'id': 'big:$i',
+          'kind': regions[i % regions.length].$2,
+          'region': regions[i % regions.length].$1,
+          'path': 'Bulk',
+          'title': 'Sample record $i',
+          'excerpt': 'Sample record $i for the large-brain check.',
+          'verification': i % 4 == 0 ? 'verified_source' : 'unverified_reference',
+          'created_at': _at(Duration(minutes: i * 7)),
+          'source': {'kind': regions[i % regions.length].$2},
+          'links': const [],
+          'places': const [],
+        },
+    ],
+  );
+}
+
 Map<String, dynamic> cheTestLedger({Duration newest = const Duration(minutes: 2), int count = 4}) {
   final rows = [
     ('SOURCE_INDEXED', 'Trading', 'EMA', 'EMA crossover paper indexed', 'INDEXED', 'ARTICLE', 'Indexed'),

@@ -1,7 +1,9 @@
-// Screenshots of the Brain Room overview for the owner's review (Brain Overview, Live Activity, Search, Memory
-// Details, Real-Time Learning, dashboard cards, sidebar), rendered at the iPhone 17 Pro Max size with the real fonts.
-// Sample records only (che_brain_overview_fixture.dart). Runs only when CHE_SHOTS_DIR names a folder to write to:
-//   CHE_SHOTS_DIR=/tmp/shots flutter test test/che_brain_overview_shots_test.dart
+// Screenshots of the Brain Room for the owner's review (UI cleanup, 2026-10-25): the seven-region first glance, one
+// region sheet, its search, Memory Details, Live Activity with Real-Time Learning, the record constellation on
+// request, the sidebar, an empty brain and a very large one. Rendered at the iPhone portrait size (440 × 956 logical
+// points, 2× pixels) with the real fonts. Sample records only (che_brain_overview_fixture.dart). Every scene runs in
+// CI (no ErrorWidget, no exception); PNGs are written only when CHE_SHOTS_DIR names a folder:
+//   CHE_SHOTS_DIR=docs/ui_cleanup/brain/after FLUTTER_ROOT=/opt/flutter flutter test test/che_brain_overview_shots_test.dart
 import 'dart:io';
 import 'dart:ui' as ui;
 
@@ -41,13 +43,17 @@ void main() {
     CheActivePalette.current = kCheHudPalette;
   });
 
-  const scenes = ['1_brain_overview', '2_live_activity', '3_search', '4_memory_details', '5_real_time_learning', '6_dashboard_cards', '7_sidebar'];
+  const scenes = ['1_brain_overview', '2_region_sheet', '3_region_search', '4_memory_details', '5_live_activity_learning', '6_constellation_on_request', '7_sidebar', '8_empty_brain', '9_large_brain'];
   for (final scene in scenes) {
     testWidgets('screenshot $scene', (tester) async {
       await tester.binding.setSurfaceSize(const Size(440, 956));
       addTearDown(() => tester.binding.setSurfaceSize(null));
       final key = GlobalKey();
-      final dots = cheTestDots();
+      final dots = switch (scene) {
+        '8_empty_brain' => <CheMemoryDot>[],
+        '9_large_brain' => cheLargeTestDots(6000),
+        _ => cheTestDots(),
+      };
       final theme = cheThemeFor(kCheHudPalette);
       await tester.pumpWidget(RepaintBoundary(
         key: key,
@@ -64,11 +70,8 @@ void main() {
                     dots: dots,
                     clock: () => cheTestNow,
                     loadLearning: () async => cheTestLedger(),
-                    initialSection: switch (scene) {
-                      '2_live_activity' => CheBrainNav.activity,
-                      '3_search' || '4_memory_details' => CheBrainNav.search,
-                      _ => CheBrainNav.overview,
-                    },
+                    onReadAloud: (_) async {},
+                    initialSection: scene == '5_live_activity_learning' ? CheBrainNav.activity : CheBrainNav.overview,
                     brain: CheMemoryBrainRoom(dots: dots, onRefresh: () async {}),
                   ),
                 ),
@@ -80,23 +83,30 @@ void main() {
       for (var i = 0; i < 30; i++) {
         await tester.pump(const Duration(milliseconds: 20));
       }
-      if (scene == '3_search' || scene == '4_memory_details') {
-        await tester.enterText(find.byKey(const ValueKey('brain-search-field')), 'red');
-        await tester.pump();
-        if (scene == '3_search') FocusManager.instance.primaryFocus?.unfocus();
-      }
-      if (scene == '4_memory_details') {
-        FocusManager.instance.primaryFocus?.unfocus();
-        await tester.tap(find.byKey(const ValueKey('brain-record-mem:red')));
+      Future<void> settle() async {
         for (var i = 0; i < 30; i++) {
           await tester.pump(const Duration(milliseconds: 20));
         }
       }
-      if (scene == '5_real_time_learning') {
+      if (scene == '2_region_sheet' || scene == '3_region_search' || scene == '4_memory_details') {
+        await tester.tap(find.byKey(ValueKey(scene == '2_region_sheet' ? 'brain-lobe-memory' : 'brain-lobe-conversations')));
+        await settle();
+      }
+      if (scene == '3_region_search' || scene == '4_memory_details') {
+        await tester.enterText(find.byKey(const ValueKey('brain-lobe-search')), 'red');
+        await tester.pump();
+        FocusManager.instance.primaryFocus?.unfocus();
+      }
+      if (scene == '4_memory_details') {
+        await tester.tap(find.byKey(const ValueKey('brain-lobe-record-conv:outfits')));
+        await settle();
+      }
+      if (scene == '5_live_activity_learning') {
         await tester.tap(find.byKey(const ValueKey('brain-learning-toggle')));
       }
-      if (scene == '6_dashboard_cards') {
-        await tester.drag(find.byKey(const ValueKey('brain-dashboard')), const Offset(-300, 0));
+      if (scene == '6_constellation_on_request') {
+        await tester.tap(find.byKey(const ValueKey('brain-constellation-toggle')));
+        await settle();
       }
       if (scene == '7_sidebar') {
         await tester.tap(find.byKey(const ValueKey('brain-sidebar-toggle')));
@@ -105,6 +115,7 @@ void main() {
         await tester.pump(const Duration(milliseconds: 20));
       }
       expect(tester.takeException(), isNull);
+      expect(find.byType(ErrorWidget), findsNothing);
       if (_dir.isNotEmpty) {
         final boundary = key.currentContext!.findRenderObject()! as RenderRepaintBoundary;
         await tester.runAsync(() async {

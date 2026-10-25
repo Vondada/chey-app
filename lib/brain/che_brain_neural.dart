@@ -394,6 +394,7 @@ class _CheBrainNeuralViewState extends State<CheBrainNeuralView> with SingleTick
 class CheBrainNeuralGeometry {
   Size? _size;
   late Rect box;
+  late Path body;
   late Path outline;
   late Path folds;
   late List<Offset> neurons;
@@ -415,34 +416,48 @@ class CheBrainNeuralGeometry {
     core = at(.5, .45);
     hubs = {for (final l in CheBrainLobe.values) l: at(l.anchor.dx, l.anchor.dy)};
 
-    // Two hemispheres seen from above, a narrow fissure between them, the stem below.
-    Path hemi(bool left) {
-      final s = left ? -1.0 : 1.0;
-      double x(double v) => .5 + s * v;
-      return Path()
-        ..moveTo(at(x(.02), .03).dx, at(x(.02), .03).dy)
-        ..cubicTo(at(x(.30), -.03).dx, at(x(.30), -.03).dy, at(x(.50), .10).dx, at(x(.50), .10).dy, at(x(.49), .36).dx, at(x(.49), .36).dy)
-        ..cubicTo(at(x(.50), .62).dx, at(x(.50), .62).dy, at(x(.40), .84).dx, at(x(.40), .84).dy, at(x(.16), .86).dx, at(x(.16), .86).dy)
-        ..cubicTo(at(x(.08), .87).dx, at(x(.08), .87).dy, at(x(.03), .85).dx, at(x(.03), .85).dy, at(x(.02), .80).dx, at(x(.02), .80).dy)
-        ..close();
+    // Two hemispheres seen from above: rounded superellipses, a little wider at the back, with a gentle ripple of
+    // folds along the rim, flat along the fissure between them; the stem below.
+    Path hemi(double side, {double scale = 1, double ripple = .008, int folds = 16}) {
+      final cx = .5 + side * .2 * scale + side * .2 * (1 - scale) * 1.1, cy = .44;
+      const n = 2.3, steps = 160;
+      final pts = <Offset>[];
+      for (var i = 0; i < steps; i++) {
+        final th = i / steps * math.pi * 2;
+        final c = math.cos(th), sn = math.sin(th);
+        final ex = c.sign * math.pow(c.abs(), 2 / n);
+        final ey = sn.sign * math.pow(sn.abs(), 2 / n);
+        final taper = .9 + .1 * (ey + 1) / 2;
+        final bump = 1 + ripple * math.sin(folds * th + side);
+        var x = cx + .29 * scale * taper * ex * bump;
+        final y = cy + .415 * scale * ey * bump;
+        if (side * (x - .5) < .012 + (1 - scale) * .08) x = .5 + side * (.012 + (1 - scale) * .08);
+        pts.add(at(x, y));
+      }
+      final path = Path()..moveTo((pts.last.dx + pts.first.dx) / 2, (pts.last.dy + pts.first.dy) / 2);
+      for (var i = 0; i < pts.length; i++) {
+        final p = pts[i], q = pts[(i + 1) % pts.length];
+        path.quadraticBezierTo(p.dx, p.dy, (p.dx + q.dx) / 2, (p.dy + q.dy) / 2);
+      }
+      return path..close();
     }
 
+    body = Path()
+      ..addPath(hemi(-1), Offset.zero)
+      ..addPath(hemi(1), Offset.zero);
     outline = Path()
-      ..addPath(hemi(true), Offset.zero)
-      ..addPath(hemi(false), Offset.zero)
-      ..moveTo(at(.46, .86).dx, at(.46, .86).dy)
-      ..quadraticBezierTo(at(.47, .94).dx, at(.47, .94).dy, at(.48, .99).dx, at(.48, .99).dy)
-      ..moveTo(at(.54, .86).dx, at(.54, .86).dy)
-      ..quadraticBezierTo(at(.53, .94).dx, at(.53, .94).dy, at(.52, .99).dx, at(.52, .99).dy);
+      ..addPath(body, Offset.zero)
+      ..moveTo(at(.47, .86).dx, at(.47, .86).dy)
+      ..quadraticBezierTo(at(.475, .94).dx, at(.475, .94).dy, at(.485, .99).dx, at(.485, .99).dy)
+      ..moveTo(at(.53, .86).dx, at(.53, .86).dy)
+      ..quadraticBezierTo(at(.525, .94).dx, at(.525, .94).dy, at(.515, .99).dx, at(.515, .99).dy);
 
+    // Gyri: two inner rims per hemisphere with a deeper ripple.
     folds = Path();
-    for (final s in [-1.0, 1.0]) {
-      for (final y in [.12, .27, .41, .56, .70]) {
-        final x0 = .5 + s * .07, x1 = .5 + s * .40;
-        folds
-          ..moveTo(at(x0, y).dx, at(x0, y).dy)
-          ..cubicTo(at(.5 + s * .17, y - .05).dx, at(.5 + s * .17, y - .05).dy, at(.5 + s * .29, y + .06).dx, at(.5 + s * .29, y + .06).dy, at(x1, y + .01).dx, at(x1, y + .01).dy);
-      }
+    for (final side in [-1.0, 1.0]) {
+      folds
+        ..addPath(hemi(side, scale: .76, ripple: .035, folds: 11), Offset.zero)
+        ..addPath(hemi(side, scale: .5, ripple: .05, folds: 8), Offset.zero);
     }
 
     // Seeded so the brain looks the same every time; points kept inside the outline.
@@ -452,7 +467,7 @@ class CheBrainNeuralGeometry {
     var guard = 0;
     while (neurons.length < ambientNeurons && guard++ < 4000) {
       final p = at(.06 + rnd.nextDouble() * .88, .05 + rnd.nextDouble() * .80);
-      if (!outline.contains(p)) continue;
+      if (!body.contains(p)) continue;
       neurons.add(p);
       phases.add(rnd.nextDouble() * math.pi * 2);
     }
@@ -579,9 +594,16 @@ class CheBrainNeuralPainter extends CustomPainter {
       final live = (s?.count ?? 0) > 0;
       final color = lobe?.color ?? _teal;
       final path = g.pathwayPaths[i];
+      if (live) {
+        // A soft wide glow under a pathway that leads to records.
+        _stroke
+          ..strokeWidth = 6
+          ..color = color.withValues(alpha: .07);
+        canvas.drawPath(path, _stroke);
+      }
       _stroke
         ..strokeWidth = lobe == null ? 1 : 1.6
-        ..color = color.withValues(alpha: lobe == null ? .12 : (live ? .30 : .10));
+        ..color = color.withValues(alpha: lobe == null ? .12 : (live ? .38 : .10));
       canvas.drawPath(path, _stroke);
       if (still) continue;
       final p = _quad(c, (t + i * .137) % 1);
@@ -593,8 +615,8 @@ class CheBrainNeuralPainter extends CustomPainter {
         for (var k = 0; k < n; k++) {
           final q = (t * 1.6 + k / n) % 1;
           final pos = _quad(c, q);
-          _fill.shader = RadialGradient(colors: [Colors.white, color, color.withValues(alpha: 0)], stops: const [0, .35, 1]).createShader(Rect.fromCircle(center: pos, radius: 7));
-          canvas.drawCircle(pos, 7, _fill);
+          _fill.shader = RadialGradient(colors: [Colors.white, color, color.withValues(alpha: 0)], stops: const [0, .3, 1]).createShader(Rect.fromCircle(center: pos, radius: 9));
+          canvas.drawCircle(pos, 9, _fill);
           _fill.shader = null;
         }
       }
@@ -723,7 +745,7 @@ class _CheBrainLobeSheetState extends State<CheBrainLobeSheet> {
     return Container(
       key: ValueKey('brain-lobe-sheet-${l.name}'),
       decoration: BoxDecoration(
-        color: const Color(0xF2040B0E),
+        color: const Color(0xFF040B0E),
         borderRadius: const BorderRadius.vertical(top: Radius.circular(26)),
         border: Border(top: BorderSide(color: l.color.withValues(alpha: .55), width: 1.2)),
         boxShadow: [BoxShadow(color: l.color.withValues(alpha: .18), blurRadius: 30, spreadRadius: -6)],
