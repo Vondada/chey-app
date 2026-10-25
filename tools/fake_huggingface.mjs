@@ -77,6 +77,22 @@ export function fakeHuggingFace({ user = 'vondada', signedIn = true, routerDown 
   return { handle, tokens, calls, state, mint };
 }
 
+// Serves the fake over local HTTP (for a real browser): paths map to huggingface.co.
+export async function serveFake(fake) {
+  const { createServer } = await import('node:http');
+  const server = createServer(async (req, res) => {
+    const chunks = [];
+    for await (const c of req) chunks.push(c);
+    const headers = {};
+    if (req.headers.authorization) headers.Authorization = req.headers.authorization;
+    const r = await fake.handle(`https://huggingface.co${req.url}`, { method: req.method, headers, body: chunks.length ? Buffer.concat(chunks).toString('utf8') : undefined });
+    res.writeHead(r.status, { 'Content-Type': r.headers.get('content-type') || 'text/plain' });
+    res.end(Buffer.from(await r.arrayBuffer()));
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  return { base: `http://127.0.0.1:${server.address().port}`, close: () => new Promise((r) => server.close(r)) };
+}
+
 // Routes only Hugging Face hosts to the fake; everything else to `fallback`.
 export function hfFetch(fake, fallback = globalThis.fetch) {
   return (input, init) => {

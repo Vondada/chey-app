@@ -155,7 +155,7 @@ void main() {
     expect(find.text('Commands'), findsOneWidget);
     expect(find.text('All 133'), findsOneWidget);
     for (final label in [_intelligenceLabel, 'YouTube 11', 'Trading 25', 'Websites, Apps & AI 20', 'Money Management 8',
-      'Client Scouting & Delivery 9', 'Marketing & Sales 7', 'Office & Automation 22', 'Creator Studio 9']) {
+      'Client Scouting & Delivery 9', 'Marketing & Sales 7', 'Office & Automation 23', 'Creator Studio 9']) {
       expect(find.text(label), findsOneWidget, reason: label);
     }
     await tester.ensureVisible(find.text('Trading 25'));

@@ -547,3 +547,31 @@ export function onboardingIntent(message) {
   if (!provider) return null;
   return { kind: 'connect', provider, capability: capabilityFrom(`${connect[1]} ${connect[2] || ''}`) };
 }
+
+// ─── Chat replies (worker.js turns these into the ndjson reply) ──────────
+export const CONNECT_HELP = 'I can connect Hugging Face automatically (I create the token in my browser with your sign-in), and guide you through Groq, Gemini, Cerebras, Mistral, OpenRouter, GitHub Models, SambaNova, Kaggle, OpenAI and xAI. Say "connect" and one of those names.';
+
+// /connect-service <input>: the input may be a name or a whole sentence.
+export function connectServiceIntent(input) {
+  const words = String(input || '').trim();
+  return onboardingIntent(words) || onboardingIntent(`connect ${words}`);
+}
+
+export async function onboardingChatReply(ctx, onboard, { owner = false } = {}) {
+  const base = { source: 'che_onboarding' };
+  if (!onboard) return { text: CONNECT_HELP, meta: { ...base, ok: false } };
+  if (!owner) return { text: 'Only the CHE owner can connect services.', meta: { ...base, ok: false } };
+  if (onboard.kind === 'status') {
+    const out = await onboardingStatus(ctx, onboard.provider, onboard.capability);
+    const text = out.state === 'none' ? `${out.speech} Say "connect" and the name to start.` : [out.speech, ...(out.lines || [])].join('\n');
+    return { text, meta: { ...base, provider: onboard.provider, onboarding: out } };
+  }
+  const out = await startOnboarding(ctx, onboard.provider, { capability: onboard.capability, account: onboard.account || '' });
+  if (!out.ok && !out.state) return { text: out.detail || 'I could not start that setup.', meta: { ...base, provider: onboard.provider, ok: false } };
+  const action = out.action || 'none';
+  const text = action === 'none' ? [out.speech, ...(out.lines || [])].join('\n') : out.speech;
+  const deviceWork = ['create_token', 'guided', 'post_held_token'].includes(action);
+  return { text, meta: { ...base, provider: onboard.provider, ok: out.ok !== false,
+    onboarding: { provider: onboard.provider, capability: out.capability, state: out.state, action, plan: out.plan || null, fingerprint: out.fingerprint || '', lines: out.lines || [] },
+    ...(deviceWork ? { open_screen: 'service_onboarding' } : {}) } };
+}

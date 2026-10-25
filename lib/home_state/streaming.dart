@@ -602,6 +602,21 @@ extension _CheHomeStreaming on _CHEHomeState {
         if (data['open_view'] == 'alpaca_paper' && mounted) {
           unawaited(Navigator.of(context).push(CheAlpacaPaperPage.route(baseUrl: () => cheAgentBaseUrl, headers: () => _authHeaders, onAsk: _runHubPrompt)));
         }
+        // "CHE, connect Hugging Face": only the Worker's onboarding reply opens the onboarding screen. The owner's
+        // own words named the service, so that is recorded as his permission for it before anything is opened.
+        final onboarding = data['onboarding'];
+        if (data['open_screen'] == 'service_onboarding' && data['source'] == 'che_onboarding' && onboarding is Map && mounted) {
+          final provider = '${onboarding['provider'] ?? ''}';
+          unawaited(CheAppPermissions.grant(provider == 'huggingface' ? 'hugging face' : provider).then((_) {
+            if (!mounted) return;
+            unawaited(Navigator.of(context).push(CheServiceOnboardingScreen.route(
+              baseUrl: cheAgentBaseUrl,
+              headers: () => _authHeaders,
+              onboarding: Map<String, dynamic>.from(onboarding),
+              onSpeak: (text) => speakText(text, record: false),
+            )));
+          }));
+        }
         // "Design a wearable robotics prototype…": the Worker made a plan; the Plan Room shows it.
         final planId = data['plan_id']?.toString().trim() ?? '';
         if (data['source'] == 'che_project_plan' && planId.isNotEmpty && data['follow_up'] == null && mounted) {
