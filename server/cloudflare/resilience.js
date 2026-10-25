@@ -19,6 +19,11 @@ export const KEY_PROVIDERS = {
   huggingface: { name: 'Hugging Face', env: 'HF_TOKEN', page: 'https://huggingface.co/settings/tokens', test: 'https://huggingface.co/api/whoami-v2', accounts: 'one account per person; Film Studio needs write access to create its free ZeroGPU Space' },
   // Film Studio's free GPU farm. Pasted as username:token; the test reads the real weekly GPU quota (a call that needs auth).
   kaggle: { name: 'Kaggle (free GPU for Film Studio)', env: 'KAGGLE_API_TOKEN', page: 'https://www.kaggle.com/settings/api', test: 'https://api.kaggle.com/v1/kernels.KernelsApiService/GetAcceleratorQuotaStatistics', method: 'POST', accounts: 'paste as username:token; GPU sessions with internet need a phone-verified Kaggle account' },
+  // Prepaid GPU providers for the compute pool (compute_pool.js + compute_budget.js). The test is a free read; a paid
+  // GPU is never started by a key alone: the owner must also set a GPU budget ("allow up to $20 for GPUs").
+  runpod: { name: 'RunPod (prepaid GPUs)', env: 'RUNPOD_API_KEY', page: 'https://www.runpod.io/console/user/settings', test: 'https://api.runpod.io/graphql', method: 'POST', body: '{"query":"query { myself { id } }"}', accounts: 'one account per person; you add prepaid credit yourself; CHE never pays' },
+  vast: { name: 'Vast.ai (prepaid GPUs)', env: 'VAST_API_KEY', page: 'https://cloud.vast.ai/manage-keys/', test: 'https://console.vast.ai/api/v0/users/current/', accounts: 'one account per person; you add prepaid credit yourself; CHE never pays' },
+  modal: { name: 'Modal (GPU functions)', env: 'MODAL_TOKEN', page: 'https://modal.com/settings/tokens', test: null, accounts: 'paste as token_id:token_secret (ak-…:as-…); Modal has no plain HTTP check, so CHE cannot verify it for free' },
   youtube: { name: 'YouTube · @Cognitive.Horizon.Engine', env: 'YOUTUBE_GOOGLE_SIGNIN', page: 'https://console.cloud.google.com/apis/credentials', test: null, accounts: 'connected with Google sign-in (Connect YouTube), not a pasted key' },
 };
 
@@ -44,6 +49,9 @@ export function providerByName(text) {
   if (/\bsamba ?nova\b/.test(t)) return 'sambanova';
   if (/\bhugging ?face\b/.test(t)) return 'huggingface';
   if (/\bkaggle\b/.test(t)) return 'kaggle';
+  if (/\brun ?pod\b/.test(t)) return 'runpod';
+  if (/\bvast(?:\.ai| ai)?\b/.test(t)) return 'vast';
+  if (/\bmodal\b/.test(t)) return 'modal';
   if (/\b(?:codex|openai|open ai|chat ?gpt)\b/.test(t)) return 'openai';
   if (/\b(?:grok|x\.?ai)\b/.test(t)) return 'xai';
   if (/\byou ?tube\b|cognitive\.horizon\.engine/i.test(t)) return 'youtube';
@@ -107,12 +115,13 @@ function authHeader(provider, key) {
 export async function testKey(provider, key, fetcher = fetch) {
   const p = KEY_PROVIDERS[provider];
   if (!p || !key) return { status: 'missing' };
+  if (!p.test) return { status: 'unverifiable' };
   const started = Date.now();
   try {
     const response = await fetcher(p.test, {
       method: p.method || 'GET',
       headers: { Authorization: authHeader(provider, key), Accept: 'application/json', ...(p.method === 'POST' ? { 'Content-Type': 'application/json' } : {}) },
-      ...(p.method === 'POST' ? { body: '{}' } : {}),
+      ...(p.method === 'POST' ? { body: p.body || '{}' } : {}),
       signal: AbortSignal.timeout(8000),
     });
     const ms = Date.now() - started;

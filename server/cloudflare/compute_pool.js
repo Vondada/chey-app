@@ -22,7 +22,7 @@ import { storedKeys } from './resilience.js';
 import { loadPolicy } from './capability_engine.js';
 import { ONLINE_MS, engineRecord, engineSettingsOf, isGpuName, needOf } from './gpu_queue.js';
 import { MIN_PAID_SESSION_S, PAID_GPU_PRICES, PAID_PROVIDERS, approveSpend, budgetOf, budgetView, canStartPaid, cheapestGpu, closeSession, marginUsd, maxUsdHr, mustEnd,
-  openSession, openSessions, reconcileSession, remainingUsd, revokeSpend, setMonthlyCap, speakRunway } from './compute_budget.js';
+  budgetIntent, openSession, openSessions, reconcileSession, remainingUsd, revokeSpend, setMonthlyCap, speakRunway } from './compute_budget.js';
 import { ADAPTERS } from './gpu_providers.js';
 
 export const POOL_KEY = 'pool:state';
@@ -722,6 +722,13 @@ export async function startPaidSession(env, { storage, pool, provider, jobs, t, 
   pool.tokens[provider].expires_ms = Math.min(pool.tokens[provider].expires_ms, s.deadline_ms);
   pool.sessions[provider] = { started_at: iso(t), ref: res.ref, job_ids: jobs.map((j) => j.id), unverified: !pool.verified?.[provider]?.sha256, paid: true };
   for (const j of jobs) poolOf(j).reserved = { provider, at: iso(t), until_ms: t + PAID_RESERVE_MS };
+  // Arm the Durable Object alarm for the start window's end, so the machine is checked even if nothing calls in
+  // (the Worker's alarm runs reapPaid; wakeTimes keeps it armed for the deadline).
+  try {
+    const wake = t + PAID_RESERVE_MS + 1000;
+    const cur = await storage.getAlarm?.();
+    if (typeof storage.setAlarm === 'function' && (!cur || cur > wake)) await storage.setAlarm(wake);
+  } catch (_) { /* no alarm support (tests): worker calls and app polls still reap */ }
   if (!real.ok) await reapPaid(env, { storage, pool, now: () => t, fetcher, force: real.reason });
   return { ok: true, ref: res.ref, usd_hr: usdHr, deadline_ms: s.deadline_ms };
 }
@@ -776,11 +783,28 @@ export async function reconcilePaid(env, { storage, pool, now, fetcher = fetch }
   }
 }
 
-/** The next time a paid session must be checked (its deadline or its start window), for the Worker's alarm. */
-export async function paidWakeAt(storage) {
-  const pool = await loadPool(storage);
-  const times = openSessions(pool).flatMap((s) => [s.deadline_ms, s.started_ms + PAID_RESERVE_MS + 1000]);
-  return times.length ? Math.min(...times) : null;
+/**
+ * When open paid sessions must be checked (each deadline and start-window end, never in the past), for the Worker's
+ * alarm, so a paid machine is deleted on time even when no app or worker calls in. Never throws; costs no AI call.
+ */
+export async function paidWakes(storage, t = Date.now()) {
+  try {
+    const pool = await loadPool(storage);
+    return openSessions(pool).flatMap((s) => [s.deadline_ms, s.started_ms + PAID_RESERVE_MS + 1000]).map((w) => Math.max(t + 250, w));
+  } catch (_) { return []; }
+}
+
+/**
+ * The /cloud-gpu "pool" and "budget" inputs as [spoken text, reply fields] for worker.js cloudCommand:
+ * "pool" reads the compute pool; "budget <words>" runs budgetCommand on the owner's words.
+ */
+export async function poolSay(env, { storage, now, fetcher = fetch }, input = '') {
+  const words = String(input || '').replace(/^budget\s*/i, '').trim();
+  if (/^pool\b/i.test(String(input || ''))) return [speakPool(await poolView(env, { storage, now, fetcher }))];
+  const intent = budgetIntent(words) || (/^runway$/i.test(words) ? { action: 'runway' } : /^stop paid\b/i.test(words) ? { action: 'stop' } : {});
+  const out = await budgetCommand(env, { storage, now, fetcher }, intent, words);
+  const b = out.budget;
+  return [out.spoken, { ok: out.ok, gpu_budget: b ? { total_cap_usd: b.total_cap_usd, monthly_cap_usd: b.monthly_cap_usd, remaining_usd: b.remaining_usd, approved_at: b.approved_at } : null }];
 }
 
 /** A GitHub dispatch answer that means a rate limit or quota (cooldown instead of hammering GitHub). */
