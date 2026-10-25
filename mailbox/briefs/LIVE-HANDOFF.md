@@ -82,6 +82,7 @@ Then, on GitHub:
 - PR #524 (that branch, head after 594f269 + che-recover commit): Worker 3930/0 fail/7 skip, `dart analyze --fatal-infos` clean, skills 19/19, full `flutter test` running. NOT merged, NOT deployed, no IPA yet.
 - New `che-recover` skill: `node .claude/skills/che-recover/scripts/preflight.mjs` (disk + unpushed-work check; safe `--clean --yes`). AGENTS.md: push every lane branch after each commit.
 - Running in worktrees (land on #524 once tested): BTC/ETH real-time streaming over the exchanges' public WebSockets (tick→candle aggregator, LIVE/STALE/DELAYED labels, reconnect); mission-engine proof (persistent checkpointed workflow on the existing engine, end-to-end test).
+- **Rebuilding the lost lanes (owner asked 2026-10-25):** no code from them exists anywhere on GitHub (searched every branch and commit message). Rebuilt from the one-line specs, each pushed to its own remote branch: `lane/studio-engine`, `lane/creation-gaps`, `lane/brain-visual`, `lane/reliability` (QA + docs/CHE_READINESS.md gap audit), plus `lane/crypto-stream`, `lane/mission-engine`. studio-tutorials runs after studio-engine lands. If this session dies, check those branches first.
 - Next: finish the lanes → push to #524 → CI green → owner says merge → deploy verify (release_status.mjs) → IPA via [ios-build].
 
 
