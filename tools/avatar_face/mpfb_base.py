@@ -122,8 +122,13 @@ def body_values(settings, youth=0.0):
         x = settings.get(k)
         return float(x) if x not in (None, '') else float(d)
     age = 0.5 + 0.5 * f('MATURE', 0.0) - 0.3125 * youth
+    # BODY_PROPORTIONS is the Create room's slider, where 0.5 is today's look (half-way to MakeHuman's ideal
+    # proportions, MakeHuman 0.75; server/cloudflare/creation_studio.js BODY_DEFAULTS): 0..0.5 maps to 0..0.75, 0.5..1
+    # to 0.75..1. The other values are MakeHuman's own (age 0.5 = 25 years, 1 = 90).
+    pv = min(1.0, max(0.0, f('BODY_PROPORTIONS', 0.5)))
+    prop = 1.5 * pv if pv <= 0.5 else 0.75 + 0.5 * (pv - 0.5)
     return {'gender': f('BODY_GENDER', f('SEX', 0.0)), 'age': f('BODY_AGE', age), 'muscle': f('BODY_MUSCLE', 0.5),
-            'weight': f('BODY_WEIGHT', 0.5), 'height': f('BODY_HEIGHT', 0.5), 'proportions': f('BODY_PROPORTIONS', 0.75)}
+            'weight': f('BODY_WEIGHT', 0.5), 'height': f('BODY_HEIGHT', 0.5), 'proportions': prop}
 
 
 def macro_full(verts, race, vals, target_fn=None):

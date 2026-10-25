@@ -312,7 +312,10 @@ else:
 lashes = lash_strands(fwd, up, length_scale=float(os.environ.get('LASH_LEN', '0.7'))); brows = brow_strands(fwd, up, per_brow=int(os.environ.get('BROW_N', '420')), width_scale=float(os.environ.get('BROW_W', '1.0')))
 check('lashes built', len(lashes.data.curves) > 100, f'{len(lashes.data.curves)} strands')
 check('brows built', len(brows.data.curves) > 300, f'{len(brows.data.curves)} strands')
-if os.environ.get('NOHAIR'):
+# The bust has only CHE's own long_wavy hair cards; any other style is close-cropped here (the full-body model,
+# tools/avatar_body/mpfb_body.py, builds every style in identity.HAIR_BUILT as a mesh).
+BUST_NOHAIR = bool(os.environ.get('NOHAIR')) or (os.environ.get('HAIR_STYLE') or 'long_wavy') != 'long_wavy'
+if BUST_NOHAIR:
     # Hair styles whose strand sets are not built yet render close-cropped: CHE's hair cards are hidden and the dark
     # scalp tint stays (HAIR_STYLE names the style the preset asks for; the job receipt reports it as not built).
     if hair_o: hair_o.hide_render = True
@@ -430,7 +433,7 @@ def export_glb(path):
         local = [inv @ v.co for v in eme.vertices]   # unit-sphere object space, +Z out of the face, as the shader sees it
         paint(eme, [ramp(math.hypot(p.x, p.y)) if p.z > 0 else stops[-1][1] for p in local])
     parts = 'head-and-neck bust, eyes'
-    if hair_o and hair_o.type == 'MESH' and not os.environ.get('NOHAIR'):
+    if hair_o and hair_o.type == 'MESH' and not BUST_NOHAIR:
         hc = [srgb(float(x) / 255) for x in os.environ.get('HAIR_SRGB', '28,18,16').split(',')]
         hm = flat('GLB_Hair', 0.6, 0.15); hm.node_tree.nodes['Principled BSDF'].inputs['Base Color'].default_value = (*hc, 1)
         hm.use_backface_culling = False
