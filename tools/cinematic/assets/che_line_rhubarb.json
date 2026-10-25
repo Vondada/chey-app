@@ -1,0 +1,163 @@
+{
+ "metadata": {
+  "soundFile": "che_line.wav",
+  "duration": 5.17
+ },
+ "mouthCues": [
+  {
+   "start": 0.0,
+   "end": 0.28,
+   "value": "X"
+  },
+  {
+   "start": 0.28,
+   "end": 0.44,
+   "value": "D"
+  },
+  {
+   "start": 0.44,
+   "end": 0.48,
+   "value": "C"
+  },
+  {
+   "start": 0.48,
+   "end": 0.73,
+   "value": "B"
+  },
+  {
+   "start": 0.73,
+   "end": 0.81,
+   "value": "A"
+  },
+  {
+   "start": 0.81,
+   "end": 0.94,
+   "value": "B"
+  },
+  {
+   "start": 0.94,
+   "end": 1.08,
+   "value": "C"
+  },
+  {
+   "start": 1.08,
+   "end": 1.45,
+   "value": "B"
+  },
+  {
+   "start": 1.45,
+   "end": 1.5,
+   "value": "F"
+  },
+  {
+   "start": 1.5,
+   "end": 1.55,
+   "value": "C"
+  },
+  {
+   "start": 1.55,
+   "end": 1.62,
+   "value": "H"
+  },
+  {
+   "start": 1.62,
+   "end": 1.76,
+   "value": "B"
+  },
+  {
+   "start": 1.76,
+   "end": 1.84,
+   "value": "A"
+  },
+  {
+   "start": 1.84,
+   "end": 2.0,
+   "value": "C"
+  },
+  {
+   "start": 2.0,
+   "end": 2.04,
+   "value": "E"
+  },
+  {
+   "start": 2.04,
+   "end": 2.3,
+   "value": "F"
+  },
+  {
+   "start": 2.3,
+   "end": 2.51,
+   "value": "E"
+  },
+  {
+   "start": 2.51,
+   "end": 2.58,
+   "value": "G"
+  },
+  {
+   "start": 2.58,
+   "end": 2.72,
+   "value": "C"
+  },
+  {
+   "start": 2.72,
+   "end": 3.15,
+   "value": "B"
+  },
+  {
+   "start": 3.15,
+   "end": 3.23,
+   "value": "C"
+  },
+  {
+   "start": 3.23,
+   "end": 3.3,
+   "value": "G"
+  },
+  {
+   "start": 3.3,
+   "end": 3.51,
+   "value": "B"
+  },
+  {
+   "start": 3.51,
+   "end": 3.65,
+   "value": "C"
+  },
+  {
+   "start": 3.65,
+   "end": 4.07,
+   "value": "B"
+  },
+  {
+   "start": 4.07,
+   "end": 4.14,
+   "value": "F"
+  },
+  {
+   "start": 4.14,
+   "end": 4.21,
+   "value": "C"
+  },
+  {
+   "start": 4.21,
+   "end": 4.49,
+   "value": "F"
+  },
+  {
+   "start": 4.49,
+   "end": 4.63,
+   "value": "D"
+  },
+  {
+   "start": 4.63,
+   "end": 4.77,
+   "value": "B"
+  },
+  {
+   "start": 4.77,
+   "end": 5.17,
+   "value": "X"
+  }
+ ]
+}

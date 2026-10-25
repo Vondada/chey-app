@@ -189,21 +189,23 @@ def contact_slip(H_foot, H_ball, fps=30.0, floor=None, height_tol=0.035, speed_t
     while it is actually on the floor: the heel (foot head) on the frames it is within touch_tol of its lowest
     height, the ball likewise. A heel lifting while the ball stays put (the roll before toe-off) is not slip; either
     point gliding while grounded is. Segments shorter than min_frames are ignored (touch-and-go steps).
-    Returns {segments, contact_frames, max_slip_mm, mean_slip_mm, per_segment_mm: [...]} (slip 0 when none)."""
+    Returns {segments, contact_frames, max_slip_mm, mean_slip_mm, per_segment_mm, segment_frames} (slip 0 when none)."""
     H_foot = np.asarray(H_foot, float); H_ball = np.asarray(H_ball, float)
     c = foot_contacts(H_foot, H_ball, floor=floor, height_tol=height_tol, speed_tol=speed_tol, fps=fps)
     touch_tol = 0.015
     grounded = [(P, P[:, 2] - np.percentile(P[:, 2], 5) < touch_tol) for P in (H_foot, H_ball)]
-    per = []
+    per, spans = [], []
     for s0, s1 in segments(c):
         if s1 - s0 < min_frames: continue
+        spans.append([int(s0), int(s1)])
         worst = 0.0
         for P, g in grounded:
             idx = np.nonzero(g[s0:s1])[0] + s0
             if len(idx) >= 2: worst = max(worst, float(np.linalg.norm(P[idx, :2] - P[idx[0], :2], axis=1).max()))
         per.append(1000 * worst)
     return {'segments': len(per), 'contact_frames': int(c.sum()), 'max_slip_mm': round(max(per), 1) if per else 0.0,
-            'mean_slip_mm': round(float(np.mean(per)), 1) if per else 0.0, 'per_segment_mm': [round(x, 1) for x in per]}
+            'mean_slip_mm': round(float(np.mean(per)), 1) if per else 0.0, 'per_segment_mm': [round(x, 1) for x in per],
+            'segment_frames': spans}
 
 
 def ground_offset(rig, local, root_loc, pct=10):

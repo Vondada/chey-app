@@ -4,6 +4,7 @@ breathing, finger-curl variation while she talks and one foot-lock pass over the
 
   build(rig, fps)              -> Timeline (clip + where the seat is + reports)
   seam_report(clip, a, b)      -> angular speed inside the crossfade window vs the rest (blend quality)
+  shard_range(n, k, N)         -> the k-th of N contiguous frame ranges (CI render matrix)
 Used by tools/cinematic/sample.py and tested in tools/test_realism_sample.py with the real 53-bone rig fixture.
 """
 import os
@@ -85,3 +86,9 @@ def seam_report(clip, a, b, bones=('pelvis', 'spine_02', 'spine_03', 'neck_01', 
     return {'window': [int(a), int(b)], 'max_step_deg': round(inside, 2), 'p99_step_deg_elsewhere': round(ref, 2),
             'ratio': round(inside / max(ref, 1e-6), 2), 'root_speed_max_ms': round(float(rs[win].max()), 3),
             'root_speed_p99_elsewhere_ms': round(float(np.percentile(rs[out], 99)), 3)}
+
+
+def shard_range(n, k, N):
+    """Frames of the k-th (0-based) of N contiguous, near-equal ranges over n frames."""
+    if not (N >= 1 and 0 <= k < N): raise ValueError(f'shard {k}/{N}')
+    return list(range((n * k) // N, (n * (k + 1)) // N))

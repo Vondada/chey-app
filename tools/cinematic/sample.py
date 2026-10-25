@@ -58,13 +58,6 @@ def device():
             'gpu': 'none (nvidia-smi absent; Cycles on CPU)', 'blender': bpy.app.version_string}
 
 
-def shard_range(n, k, N):
-    """Frames of the k-th (0-based) of N contiguous, near-equal ranges over n frames."""
-    if not 0 <= k < N: raise ValueError(f'shard {k}/{N}')
-    a, b = (n * k) // N, (n * (k + 1)) // N
-    return list(range(a, b))
-
-
 def rig_check(sc, arm, H, n, fps):
     """Plays the action on the armature in Blender and reads the evaluated foot and ball heads back each frame:
     max distance from the numpy timeline (the rig plays exactly the planned motion) and the foot-contact slip measured
@@ -92,6 +85,7 @@ def args():
     ap.add_argument('--guides', type=int, default=420); ap.add_argument('--children', type=int, default=36)
     ap.add_argument('--threads', type=int, default=0)
     ap.add_argument('--shard', default='', help='K/N: render only the K-th of N contiguous frame ranges (CI matrix)')
+    ap.add_argument('--resume', action='store_true', help='skip frames whose PNG already exists (restart after a stop)')
     ap.add_argument('--save-blend', default='', help='also save the set-up scene (debugging and timing experiments)')
     return ap.parse_args(argv)
 
@@ -300,17 +294,18 @@ def main():
     elif a.frames: f0, f1 = (int(v) for v in a.frames.split('-')); todo = list(range(f0, min(f1, n - 1) + 1))
     if a.shard:
         k, N = (int(v) for v in a.shard.split('/'))
-        todo = shard_range(n, k, N); f0, f1 = todo[0], todo[-1]
+        todo = TL.shard_range(n, k, N); f0, f1 = todo[0], todo[-1]
     receipt['render'] = {'res': a.res, 'samples': a.samples, 'close_samples': a.close_samples, 'engine': 'Cycles CPU', 'frames': [f0, f1],
                          'denoiser': 'OpenImageDenoise', 'adaptive_threshold': 0.04,
                          'hair': f'{a.guides} guides x {a.children} children in close-ups; every 4th strand (2x radius) in wider shots'}
-    frame_times = {}
+    frame_times = {}; loads = []
     char_objs = [o for o in sc.objects if o.type == 'MESH' and o.parent == arm and not o.name.startswith(('ov_', 'oj_'))]
     ghost_on = False
     json.dump(receipt, open(os.path.join(a.out, 'receipt.json'), 'w'), indent=1)
     if a.save_blend: bpy.ops.wm.save_as_mainfile(filepath=os.path.abspath(a.save_blend), copy=True)
     if not a.no_render:
         for f in todo:
+            if a.resume and os.path.exists(os.path.join(a.out, 'frames', f'{f:04d}.png')): continue
             k = kind[f]
             want_ghost = k == 'skeleton'
             if want_ghost != ghost_on:
@@ -330,7 +325,7 @@ def main():
             if c.get('hair_follow'): c['hair_follow'].update()
             sc.render.filepath = os.path.join(a.out, 'frames', f'{f:04d}.png')
             ts = time.time(); bpy.ops.render.render(write_still=True); dt = time.time() - ts
-            frame_times[f] = round(dt, 2)
+            frame_times[f] = round(dt, 2); loads.append(os.getloadavg()[0])
             print('FRAME', f, k, f'{dt:.1f}s', flush=True)
             if f % 10 == 0:
                 receipt['frame_seconds'] = frame_times
@@ -338,6 +333,8 @@ def main():
     stage('done')
     STAGES.pop('_last', None)
     receipt['stage_seconds'] = STAGES; receipt['frame_seconds'] = frame_times
+    if loads:   # other work on the machine slows frames; recorded so the timings are read honestly
+        receipt['load_avg_1m'] = {'mean': round(sum(loads) / len(loads), 2), 'max': round(max(loads), 2), 'cpus': os.cpu_count()}
     by = {}
     for f, dt in frame_times.items(): by.setdefault(kind[f], []).append(dt)
     receipt['render_seconds_by_shot'] = {k: {'frames': len(v), 'mean_s': round(sum(v) / len(v), 2), 'total_s': round(sum(v), 1)} for k, v in by.items()}

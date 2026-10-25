@@ -133,6 +133,16 @@ jobs:
           node --test server/cloudflare/rea_web_workflow.test.mjs
       - name: Video narration tests (Fish Drama 3, cache, Piper fallback)
         run: python3 -m unittest discover -s tools -p 'test_che_video_render.py'
+      # Realism lane G: mocap retargeting, foot lock and contact check, crossfade seam, face tracks, viseme timing
+      # against the line's audio, render shards and the shard merge. The CMU clips are fetched (pinned commit, SHA-256)
+      # so the tests on the sample's real timeline run too.
+      - name: Realism sample pipeline (motion, face, timing, shards)
+        run: |
+          python3 -c "import numpy" 2>/dev/null || python3 -m pip install --quiet numpy
+          python3 tools/avatar_motion/library.py --fetch > /dev/null
+          python3 -m unittest discover -s tools -p 'test_avatar_motion.py'
+          python3 -m unittest discover -s tools -p 'test_avatar_facial.py'
+          python3 -m unittest discover -s tools -p 'test_realism_sample.py' -v
       - name: Creation Engine render profiles, benchmark measures and Roblox R15 rules
         run: |
           python3 -c "import numpy" 2>/dev/null || python3 -m pip install --quiet numpy

@@ -159,10 +159,14 @@ def lip_sync_lag(mouth, x, sr, fps, max_lag_s=0.25, offset_s=0.0):
     s = int(round(offset_s * fps)); e = min(n, s + len(env))
     a[s:e] = env[:e - s]
     m = np.asarray(mouth, float)
+    # only the speech span (plus the lag search margin) counts: long silences around the line, where both curves are
+    # flat, would otherwise inflate the correlation
+    L = int(max_lag_s * fps)
+    w0, w1 = max(0, s - L), min(n, e + L)
+    a, m = a[w0:w1], m[w0:w1]; n = len(a)
     def z(v): return (v - v.mean()) / (v.std() + 1e-9)
     a, m = z(a), z(m)
     best = (0, -2.0)
-    L = int(max_lag_s * fps)
     for lag in range(-L, L + 1):
         if lag >= 0: c = float(np.mean(m[lag:] * a[:n - lag]))
         else: c = float(np.mean(m[:n + lag] * a[-lag:]))

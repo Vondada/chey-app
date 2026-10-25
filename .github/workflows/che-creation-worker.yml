@@ -1,5 +1,5 @@
 name: CHE Creation Worker
-run-name: CHE creation worker (${{ inputs.reason || 'manual' }})
+run-name: CHE creation worker (${{ inputs.mode == 'realism_sample' && 'realism sample' || inputs.reason || 'manual' }})
 # A CPU worker for CHE's Creation Engine queue (server/cloudflare/gpu_queue.js). CHE's Worker dispatches this workflow
 # itself when Create Person (or another creation job) is waiting and no worker is free (creation_orchestrator.js), so
 # the owner never opens anything. It claims jobs until the queue is empty, then exits.
@@ -9,7 +9,8 @@ run-name: CHE creation worker (${{ inputs.reason || 'manual' }})
 # Auth: no secret. The worker sends a short-lived GitHub OIDC ID token (audience che-creation-engine); CHE verifies it
 # against GitHub's keys and accepts only this workflow file on main.
 # Privacy: this repository's Actions logs are public, so the worker prints job ids and stage lines only. Models and
-# pictures go straight to CHE over the authenticated routes; nothing is uploaded as an Actions artifact.
+# pictures go straight to CHE over the authenticated routes; nothing is uploaded as an Actions artifact. (The manual
+# realism_sample mode below renders only CHE's fictional preset character and does publish that render.)
 on:
   workflow_dispatch:
     inputs:
@@ -18,6 +19,16 @@ on:
         required: false
         type: string
         default: manual
+      # realism_sample (lane G, docs/CHE_REALISM_STACK.md): instead of working the queue, render CHE's rigged
+      # character in Blender (walk in, turn, sit, gesture, speak; close-up; skeleton overlay) with the same CPU worker
+      # setup, split over parallel shards, then mux the MP4. The output is a fictional character's render (no private
+      # data), so it is uploaded as an artifact and pushed to the che-character-samples branch (realism/<run id>).
+      mode:
+        description: queue (work CHE's creation queue) or realism_sample (render the rig realism sample)
+        required: false
+        type: choice
+        options: [queue, realism_sample]
+        default: queue
 permissions:
   contents: read
   id-token: write
@@ -28,6 +39,7 @@ env:
   CHE_URL: ${{ vars.CHE_URL || 'https://chey-app.henryjavoni.workers.dev' }}
 jobs:
   work:
+    if: inputs.mode != 'realism_sample'
     runs-on: ubuntu-latest
     timeout-minutes: 330
     steps:
@@ -91,3 +103,141 @@ jobs:
           python3 scripts/che_gpu_worker.py --auth oidc --worker-class github_cpu --che-url "$CHE_URL" \
             --blender "$HOME/blender/blender" --project che-assets/project --out "$RUNNER_TEMP/che/jobs" \
             --poll 15 --idle-minutes 3
+
+  # ── realism_sample mode ──────────────────────────────────────────────────────────────────────────────────────────
+  # Same Blender 5.0.1 + MPFB2 cache and system libraries as the queue worker. 426 frames at 1280x720, Cycles on the
+  # CPU (8 samples, 12 in the close-up, OpenImageDenoise); measured 15-46 s a frame on a 4-vCPU machine, so the
+  # frames are split over 6 shards (about 71 frames each). Every shard builds the identical scene (seeded) and renders
+  # its own contiguous frame range; realism_mux joins them.
+  realism_render:
+    if: inputs.mode == 'realism_sample'
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3, 4, 5]
+    env:
+      SHARDS: 6
+      RHUBARB_VERSION: '1.13.0'
+      RHUBARB_SHA256: bd260905e88d0bdadbd4d7b452cae3b78a880fe27d10d51586772f84aac69f71
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            tools/avatar_face
+            tools/avatar_body
+            tools/avatar_motion
+            tools/avatar_facial
+            tools/cinematic
+      - uses: actions/checkout@v4
+        with:
+          ref: che-gpu-assets
+          path: che-assets
+          sparse-checkout: project
+      - name: Cache Blender and MPFB2
+        id: cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/blender
+            ~/mpfb2
+          key: che-blender-${{ env.BLENDER_VERSION }}-mpfb-${{ env.MPFB_COMMIT }}
+      - name: Blender (checked against blender.org's SHA-256) and MPFB2 (CC0, pinned)
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          name="blender-${BLENDER_VERSION}-linux-x64"; base="https://download.blender.org/release/Blender${BLENDER_VERSION%.*}"
+          curl -fsSL --retry 3 "$base/$name.tar.xz" -o /tmp/blender.tar.xz
+          want=$(curl -fsSL --retry 3 "$base/blender-${BLENDER_VERSION}.sha256" | awk -v f="$name.tar.xz" '$2==f{print $1}')
+          echo "$want  /tmp/blender.tar.xz" | sha256sum -c -
+          mkdir -p ~/blender && tar -xf /tmp/blender.tar.xz -C ~/blender --strip-components=1
+          git clone -q --filter=blob:none https://github.com/makehumancommunity/mpfb2 ~/mpfb2
+          git -C ~/mpfb2 checkout -q "$MPFB_COMMIT"
+      # CMU mocap BVH files (pinned commit + SHA-256 in tools/avatar_motion/clips.json, verified on every use) and the
+      # Rhubarb Lip Sync release (MIT, pinned SHA-256): downloaded once, then cached.
+      - name: Cache mocap clips and Rhubarb
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/che-motion
+            ~/rhubarb
+          key: che-realism-${{ hashFiles('tools/avatar_motion/clips.json') }}-rhubarb-${{ env.RHUBARB_VERSION }}
+      - name: System libraries for headless Blender
+        run: sudo apt-get -qq install -y libxi6 libxkbcommon0 libsm6 libxrender1 libgl1 libegl1 libxxf86vm1 libxfixes3 > /dev/null
+      - name: Rhubarb Lip Sync (mouth cues from the line's audio, offline)
+        run: |
+          set -euo pipefail
+          if [ ! -x ~/rhubarb/rhubarb ]; then
+            curl -fsSL --retry 3 "https://github.com/DanielSWolf/rhubarb-lip-sync/releases/download/v${RHUBARB_VERSION}/Rhubarb-Lip-Sync-${RHUBARB_VERSION}-Linux.zip" -o /tmp/rhubarb.zip
+            echo "${RHUBARB_SHA256}  /tmp/rhubarb.zip" | sha256sum -c -
+            mkdir -p ~/rhubarb /tmp/rh && unzip -q /tmp/rhubarb.zip -d /tmp/rh && cp -r "/tmp/rh/Rhubarb-Lip-Sync-${RHUBARB_VERSION}-Linux/." ~/rhubarb/
+          fi
+          ~/rhubarb/rhubarb -q -f json -d tools/cinematic/assets/che_line.txt --extendedShapes GHX \
+            tools/cinematic/assets/che_line.wav -o "$RUNNER_TEMP/che_line_rhubarb.json"
+          python3 -c "import json,sys; print('RHUBARB cues', len(json.load(open(sys.argv[1]))['mouthCues']))" "$RUNNER_TEMP/che_line_rhubarb.json"
+      - name: Render shard ${{ matrix.shard }} of the realism sample (Blender, Cycles CPU)
+        run: |
+          set -euo pipefail
+          export MPFB="$HOME/mpfb2/src/mpfb/data"
+          out="$RUNNER_TEMP/realism/shard${{ matrix.shard }}"; mkdir -p "$out"
+          "$HOME/blender/blender" -b --factory-startup -P tools/cinematic/sample.py -- --out "$out" \
+            --line-wav tools/cinematic/assets/che_line.wav --rhubarb "$RUNNER_TEMP/che_line_rhubarb.json" \
+            --fit che-assets/project/fit.json --res 1280x720 --samples 8 --close-samples 12 \
+            --shard "${{ matrix.shard }}/${SHARDS}" > "$out/blender.log" 2>&1 || { tail -40 "$out/blender.log"; exit 1; }
+          grep -E '^(STAGE|FRAME|RIG_CHECK|RECEIPT)' "$out/blender.log" || true
+          test -f "$out/receipt.json"; echo "frames: $(ls "$out/frames" | wc -l)"
+          cp "$RUNNER_TEMP/che_line_rhubarb.json" "$out/"
+          if [ "${{ matrix.shard }}" != 0 ]; then rm -f "$out/che_interactive.glb"; fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: che-realism-shard-${{ matrix.shard }}
+          path: ${{ runner.temp }}/realism/shard${{ matrix.shard }}
+          compression-level: 0
+          retention-days: 7
+
+  realism_mux:
+    needs: realism_render
+    if: inputs.mode == 'realism_sample'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write   # only to push the sample to the che-character-samples branch, as publish-character-samples does
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: tools/cinematic
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: che-realism-shard-*
+          path: shards
+      - name: ffmpeg
+        run: sudo apt-get -qq install -y ffmpeg fonts-dejavu-core > /dev/null
+      - name: Join the shards and make the MP4
+        run: |
+          set -euo pipefail
+          python3 tools/cinematic/mux.py --merge shards --dir sample --line-wav tools/cinematic/assets/che_line.wav
+          ls -la sample
+      - uses: actions/upload-artifact@v4
+        with:
+          name: che-realism-sample
+          path: |
+            sample/*.mp4
+            sample/*.glb
+            sample/*.json
+          retention-days: 30
+      - name: Push the sample to che-character-samples
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          git init -q samples && cd samples
+          git config user.name "github-actions[bot]"; git config user.email "41898729+github-actions[bot]@users.noreply.github.com"
+          git remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          if git fetch -q --depth 1 origin che-character-samples; then git checkout -q -B che-character-samples FETCH_HEAD; else git checkout -q --orphan che-character-samples; fi
+          dir="realism/${GITHUB_RUN_ID}"; mkdir -p "$dir"; cp ../sample/*.mp4 ../sample/*.glb ../sample/*.json "$dir/"
+          echo "${GITHUB_RUN_ID} ${GITHUB_SHA} realism_sample $(date -u +%FT%TZ)" >> realism/index.txt
+          git add -A && git commit -qm "Realism sample, run ${GITHUB_RUN_ID} (${GITHUB_SHA::12})" && git push -q origin HEAD:che-character-samples
+          echo "::notice title=Realism sample::branch che-character-samples, folder $dir"
