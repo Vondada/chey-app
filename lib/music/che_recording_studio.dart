@@ -227,6 +227,8 @@ class _CheRecordingStudioState extends State<CheRecordingStudio> with SingleTick
           _btn(Icons.arrow_forward_rounded, 'Forward 10 seconds', () => _do(() => c.nudge(10))),
           _btn(Icons.sync_outlined, c.loop ? 'Loop on' : 'Loop off', () => _do(() => c.toggleLoop()), on: c.loop),
           _btn(Icons.schedule_rounded, c.metronome ? 'Metronome on' : 'Metronome off', () => _do(() => c.toggleMetronome()), on: c.metronome),
+          _btn(Icons.headphones_rounded, c.monitoring ? 'Live monitoring on' : c.monitor ? 'Live monitoring requested' : 'Live monitoring off',
+              () => _do(() => c.setMonitor(!c.monitor)), on: c.monitor),
         ]),
         Semantics(
           label: 'Playhead ${cheClock(c.position)} of ${cheClock(c.song.end)}, ${c.song.bpm.round()} BPM'
@@ -347,12 +349,13 @@ class _CheRecordingStudioState extends State<CheRecordingStudio> with SingleTick
   }
 
   Future<String> _import(CheStudioController c) async {
-    final picked = await FilePicker.platform.pickFiles(type: FileType.custom, allowedExtensions: const ['wav'], withData: true);
+    final picked = await FilePicker.platform.pickFiles(type: FileType.custom, allowedExtensions: cheImportFormats, withData: true);
     final f = picked?.files.firstOrNull;
     if (f == null) return 'Import cancelled.';
     final bytes = f.bytes ?? (f.path == null ? null : await File(f.path!).readAsBytes());
     if (bytes == null) return 'That file could not be read.';
-    return c.importWav(bytes, name: f.name.replaceAll(RegExp(r'\.wav$', caseSensitive: false), ''));
+    final dot = f.name.lastIndexOf('.');
+    return c.importAudio(bytes, name: dot > 0 ? f.name.substring(0, dot) : f.name, ext: dot > 0 ? f.name.substring(dot + 1) : 'wav');
   }
 
   Widget _trackRow(CheStudioController c, CheTrack t, int total) {
@@ -444,6 +447,7 @@ class _CheRecordingStudioState extends State<CheRecordingStudio> with SingleTick
         FilledButton.icon(onPressed: () => _do(() => c.newSong()), icon: const Icon(Icons.add_rounded), label: const Text('New Recording')),
         OutlinedButton.icon(onPressed: () => _do(c.saveNow), icon: const Icon(Icons.save_rounded), label: const Text('Save')),
         OutlinedButton.icon(onPressed: () => _do(c.export), icon: const Icon(Icons.save_rounded), label: const Text('Export WAV')),
+        OutlinedButton.icon(onPressed: () => _do(() => c.export(format: 'm4a')), icon: const Icon(Icons.save_outlined), label: const Text('Export M4A')),
       ]),
       const SizedBox(height: 8),
       Text('My Songs', style: Theme.of(context).textTheme.titleMedium),
@@ -674,9 +678,11 @@ class _CheRecordingStudioState extends State<CheRecordingStudio> with SingleTick
         FilledButton(onPressed: () => _do(() => c.master()), child: const Text('Master and measure')),
         OutlinedButton(onPressed: () => _do(() => c.play(from: 0)), child: const Text('Play the master')),
         OutlinedButton.icon(onPressed: () => _do(c.export), icon: const Icon(Icons.save_rounded), label: const Text('Export WAV')),
+        OutlinedButton.icon(onPressed: () => _do(() => c.export(format: 'm4a')), icon: const Icon(Icons.save_outlined), label: const Text('Export M4A')),
       ]),
       const SizedBox(height: 8),
-      Text('Exports go to Files, On My iPhone, CHE, CHE Songs, Exports. WAV only for now.', style: CheType.bodyDim),
+      Text('Exports go to Files, On My iPhone, CHE, CHE Songs, Exports: WAV, or M4A (AAC) on the newest app build. '
+          'MP3 can be imported but not exported (the iPhone has no MP3 encoder).', style: CheType.bodyDim),
     ]);
   }
 }

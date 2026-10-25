@@ -42,6 +42,11 @@ class CheStudioController extends ChangeNotifier {
   int countInBars = 1;
   bool loop = false;
   bool punch = false;
+
+  /// Live monitoring: the owner asked to hear the microphone through the track's effects while recording.
+  /// [monitoring] is whether the iPhone really is monitoring now (headphones only, unless he allows the speaker).
+  bool monitor = false;
+  bool monitoring = false;
   String status = '';
   String warning = '';
   double? inputLevel;
@@ -105,6 +110,10 @@ class CheStudioController extends ChangeNotifier {
   }
 
   void _changed() {
+    if (monitoring) {
+      final t = song.track(_takeTrack ?? '');
+      if (t != null) unawaited(audio.updateMonitor(monitorEffects(t)));
+    }
     notifyListeners();
     _save?.cancel();
     _save = Timer(autosaveDelay, () => unawaited(saveNow()));
@@ -392,6 +401,7 @@ class CheStudioController extends ChangeNotifier {
     _clock = Stopwatch()..start();
     transport = countIn > 0 ? CheTransport.countIn : CheTransport.recording;
     warning = cheLatencyWarning(_takeLatency, measuredOutput: (_takeLatency['output_latency'] as num?)?.toDouble() ?? 0);
+    final monitorSaid = monitor ? await _startMonitor() : '';
     _meter?.cancel();
     _meter = Timer.periodic(const Duration(milliseconds: 120), (_) async {
       inputLevel = await audio.level();
@@ -403,7 +413,7 @@ class CheStudioController extends ChangeNotifier {
     }));
     final input = '${_takeLatency['input'] ?? ''}';
     return _say('Recording on ${t.name}${countIn > 0 ? ' after a ${countInBars == 1 ? 'one' : 'two'} bar count-in' : ''}'
-        '${input.isEmpty ? '' : ' from $input'}. Say stop when you are done.');
+        '${input.isEmpty ? '' : ' from $input'}. Say stop when you are done.${monitorSaid.isEmpty ? '' : ' $monitorSaid'}');
   }
 
   /// Ends the take: the WAV is saved at once, lined up by the measured latency, and placed on its track.
@@ -415,6 +425,10 @@ class CheStudioController extends ChangeNotifier {
     _clock = null;
     transport = CheTransport.stopped;
     await audio.stop();
+    if (monitoring) {
+      await audio.stopMonitor();
+      monitoring = false;
+    }
     CheTake? take;
     try {
       take = await audio.stopRecording();
@@ -482,7 +496,65 @@ class CheStudioController extends ChangeNotifier {
     return play(from: c.start);
   }
 
+  // ---- Live monitoring ----
+
+  /// What the iPhone's live monitor applies: the track's own EQ, compression, delay and reverb (pitch correction and
+  /// noise reduction need the whole take, so they are heard on playback only).
+  Map<String, Object> monitorEffects(CheTrack t) => {
+        'eq_low': t.fx.eqLow, 'eq_high': t.fx.eqHigh, 'compress': t.fx.compress,
+        'delay': t.fx.delay, 'delay_seconds': t.fx.delayMs / 1000, 'reverb': t.fx.reverb, 'volume': 1.0,
+      };
+
+  /// Turns live monitoring on or off. It starts with the next take (or now, during one).
+  Future<String> setMonitor(bool on, {bool allowSpeaker = false}) async {
+    monitor = on;
+    if (!on) {
+      if (monitoring) await audio.stopMonitor();
+      monitoring = false;
+      notifyListeners();
+      return _say('Live monitoring off.');
+    }
+    if (recording) return _say(await _startMonitor(allowSpeaker: allowSpeaker));
+    final r = await audio.route();
+    notifyListeners();
+    final where = '${r['route'] ?? ''}';
+    if (where == 'speaker' || where == 'receiver') {
+      return _say('Live monitoring is on for the next take, but sound is coming from the iPhone speaker, which would howl. '
+          'Plug in headphones first; CHE checks again when the take starts.');
+    }
+    return _say('Live monitoring on: you will hear yourself through ${(song.track(selectedTrack ?? '') ?? _vocalTrack()).name}\'s effects while you record.');
+  }
+
+  Future<String> _startMonitor({bool allowSpeaker = false}) async {
+    final t = song.track(_takeTrack ?? '') ?? _vocalTrack();
+    try {
+      final r = await audio.startMonitor(monitorEffects(t), allowSpeaker: allowSpeaker);
+      monitoring = r['monitoring'] == true;
+      notifyListeners();
+      if (monitoring) return 'Live monitoring on through ${t.name}\'s effects (${t.fx.describe()}).';
+      return '${r['message'] ?? 'Live monitoring did not start.'}';
+    } on CheAudioUnavailable catch (e) {
+      monitoring = false;
+      notifyListeners();
+      return e.message;
+    }
+  }
+
   // ---- Import ----
+
+  /// Imports any audio file: WAV directly; MP3, M4A, AAC, AIFF and CAF through the iPhone's own decoder.
+  Future<String> importAudio(Uint8List bytes, {required String name, required String ext}) async {
+    final e = ext.toLowerCase().replaceFirst('.', '');
+    if (e == 'wav' || e == 'wave') return importWav(bytes, name: name);
+    if (!cheImportFormats.contains(e)) return _say('CHE can import ${cheImportFormats.map((f) => f.toUpperCase()).join(', ')} files, not .$e.');
+    final Uint8List wav;
+    try {
+      wav = await audio.decodeToWav(bytes, e);
+    } on CheAudioUnavailable catch (err) {
+      return _say(err.message);
+    }
+    return importWav(wav, name: name);
+  }
 
   Future<String> importWav(Uint8List bytes, {String name = 'Imported'}) async {
     final CheAudio a;
@@ -750,8 +822,14 @@ class CheStudioController extends ChangeNotifier {
         'average level ${report.rmsBefore.toStringAsFixed(1)} to ${report.rmsAfter.toStringAsFixed(1)} dB RMS. Play it to hear the master.');
   }
 
-  /// Renders the whole song and saves it as a WAV in Files, On My iPhone, CHE, CHE Songs, Exports.
-  Future<String> export() async {
+  /// Renders the whole song and saves it in Files, On My iPhone, CHE, CHE Songs, Exports: a WAV, or an AAC .m4a
+  /// (Apple's encoder, on builds that have it). MP3 cannot be written: iOS has no MP3 encoder.
+  Future<String> export({String format = 'wav'}) async {
+    final f = format.toLowerCase();
+    if (f == 'mp3') {
+      return _say('MP3 export is not available: the iPhone has no MP3 encoder, and CHE does not ship one. '
+          'Say "export as M4A" for a small file that plays everywhere Apple music does, or "export" for a WAV.');
+    }
     if (song.end == 0) return _say('There is nothing to export yet.');
     await stop();
     busy = true;
@@ -759,10 +837,21 @@ class CheStudioController extends ChangeNotifier {
     try {
       final mix = await _render(CheRenderJob(song: song.toJson(), sources: sources));
       final wav = cheEncodeWav(mix, cheStudioRate);
-      final f = await store.export(song, wav);
+      var bytes = wav;
+      var ext = 'wav';
+      var note = '';
+      if (f == 'm4a' || f == 'aac') {
+        try {
+          bytes = await audio.encodeM4a(wav);
+          ext = 'm4a';
+        } on CheAudioUnavailable catch (e) {
+          note = ' ${e.message} So CHE saved a WAV instead.';
+        }
+      }
+      final file = await store.export(song, bytes, ext: ext);
       await saveNow();
-      return _say('Exported "${song.title}" as a WAV: ${cheClock(mix.first.length)}, ${(wav.length / 1048576).toStringAsFixed(1)} MB, '
-          'in Files, On My iPhone, CHE, CHE Songs, Exports (${f.path.split('/').last}). MP3 and M4A export are not available yet.');
+      return _say('Exported "${song.title}" as ${ext == 'm4a' ? 'an M4A (AAC, 256 kbps)' : 'a WAV'}: ${cheClock(mix.first.length)}, '
+          '${(bytes.length / 1048576).toStringAsFixed(1)} MB, in Files, On My iPhone, CHE, CHE Songs, Exports (${file.path.split('/').last}).$note');
     } catch (e) {
       return _say('Export failed: $e');
     } finally {
@@ -880,6 +969,12 @@ Future<String?> _studioVoice(CheStudioController c, String said, {void Function(
     showTab?.call(5);
     return c.master();
   }
+  if (has(r'\b(turn off|stop|no|disable) (the )?(live )?monitor(ing)?\b|\bstop hearing myself\b')) return c.setMonitor(false);
+  if (has(r'\b(live )?monitor(ing)?\b|\bhear myself\b')) {
+    return c.setMonitor(true, allowSpeaker: has(r'\b(speaker|anyway)\b'));
+  }
+  if (has(r'\b(export|save)\b.*\bmp3\b')) return c.export(format: 'mp3');
+  if (has(r'\b(export|save)\b.*\b(m4a|aac)\b')) return c.export(format: 'm4a');
   if (has(r'\bexport\b|\bsave (it )?as (a )?wav\b')) return c.export();
   if (has(r'\b(use|add) the beat\b|\bput the beat in\b')) return c.useBeat();
   if (has(r'\bstarter beat\b|\bmake (me )?a beat\b')) {

@@ -281,6 +281,10 @@ double cheNearestNoteHz(double hz, {int key = 0, String scale = 'chromatic'}) {
   return cheHzOf(best);
 }
 
+/// How far past the midpoint between two notes (in semitones) the voice must go before the correction changes note
+/// at once; nearer than that, it changes only if the voice stays there.
+const cheNoteSwitchSemitones = 0.3;
+
 /// What pitch correction did to one take.
 class ChePitchReport {
   const ChePitchReport(this.frames, this.pitched, this.meanCorrectionCents);
@@ -293,19 +297,50 @@ class ChePitchReport {
 /// toward the nearest note of the scale by [strength] (1 = hard snap, 0.5 = natural), and TD-PSOLA re-pitches it:
 /// two-period grains taken one input period apart are laid down one corrected period apart, so the pitch moves and
 /// the timing does not. Unpitched frames (breaths, consonants) are copied through unchanged.
+///
+/// Note hysteresis keeps a held note on one target: a sung vibrato that swings past the midpoint between two notes
+/// would otherwise flip the correction between them inside one note. The target moves to another note only when the
+/// voice is clearly nearer it ([cheNoteSwitchSemitones] beyond the midpoint) or stays nearer it for about 70 ms.
 ChePitchReport chePitchCorrect(Float32List x, {double strength = 1, int key = 0, String scale = 'chromatic', int rate = cheStudioRate}) {
-  const win = 2048, hop = 512, flat = 256;
+  const win = 2048, hop = 512, flat = 256, holdFrames = 6;
   if (x.length < win * 2 || strength <= 0) return const ChePitchReport(0, 0, 0);
   // Pitch and correction ratio per frame.
   final frames = (x.length / hop).ceil();
   final hzAt = Float64List(frames), ratioAt = Float64List(frames)..fillRange(0, frames, 1);
   var pitched = 0;
   var cents = 0.0;
+  double? held; // the note (MIDI) the current sung note is being corrected to
+  double? pending;
+  var pendingFrames = 0;
   for (var f = 0; f < frames; f++) {
-    final start = math.min(f * hop, math.max(0, x.length - win));
+    // The analysis window is centred on the frame it corrects. Starting it at the frame measured the pitch about
+    // 20 ms late, which on a sung vibrato (5 to 6 Hz) left most of the wobble uncorrected.
+    final start = (f * hop + hop ~/ 2 - win ~/ 2).clamp(0, math.max(0, x.length - win)).toInt();
     final hz = cheDetectPitch(x, start, win, rate: rate);
-    if (hz <= 0) continue;
-    final target = cheNearestNoteHz(hz, key: key, scale: scale);
+    if (hz <= 0) {
+      held = null; // a breath or consonant ends the note
+      pending = null;
+      pendingFrames = 0;
+      continue;
+    }
+    final m = cheMidiOf(hz);
+    final nearest = cheMidiOf(cheNearestNoteHz(hz, key: key, scale: scale));
+    if (held == null) {
+      held = nearest;
+    } else if (nearest != held) {
+      final clearly = (m - held).abs() - (m - nearest).abs() > 2 * cheNoteSwitchSemitones;
+      pendingFrames = pending == nearest ? pendingFrames + 1 : 1;
+      pending = nearest;
+      if (clearly || pendingFrames >= holdFrames) {
+        held = nearest;
+        pending = null;
+        pendingFrames = 0;
+      }
+    } else {
+      pending = null;
+      pendingFrames = 0;
+    }
+    final target = cheHzOf(held);
     final r = math.pow(target / hz, strength.clamp(0, 1)).toDouble();
     hzAt[f] = hz;
     ratioAt[f] = r;

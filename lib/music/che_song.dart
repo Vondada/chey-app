@@ -493,13 +493,13 @@ class CheSongStore {
     return (song, sources);
   }
 
-  /// Exports [wav] as "<title>.wav" next to the songs, where the Files app shows it. Returns the file.
-  Future<File> export(CheSong song, Uint8List wav) async {
+  /// Exports [bytes] as "<title>.<ext>" (wav or m4a) next to the songs, where the Files app shows it. Returns the file.
+  Future<File> export(CheSong song, Uint8List bytes, {String ext = 'wav'}) async {
     final safe = song.title.replaceAll(RegExp(r'[^A-Za-z0-9 _-]'), '').trim();
     final dir = Directory('${root.path}/Exports');
     await dir.create(recursive: true);
-    final f = File('${dir.path}/${safe.isEmpty ? song.id : safe}.wav');
-    await f.writeAsBytes(wav, flush: true);
+    final f = File('${dir.path}/${safe.isEmpty ? song.id : safe}.$ext');
+    await f.writeAsBytes(bytes, flush: true);
     return f;
   }
 }
