@@ -354,10 +354,11 @@ function github(record) {
   };
 }
 
-async function studio({ badFirst = 0, seconds = 60 } = {}) {
+async function studio({ badFirst = 0, seconds = 60, withR2 = true } = {}) {
   const storage = memory(); const bucket = r2(); const gh = {};
   const ai = fakeAI({ badFirst });
-  const env = { AI: ai, CHE_DATA_BUCKET: bucket, CHE_GITHUB_TOKEN: 'gh', CHE_GITHUB_REPO: 'Vondada/chey-app' };
+  // withR2: false is production's setup (no R2 bucket bound): every file goes to CHE's own store.
+  const env = { AI: ai, ...(withR2 ? { CHE_DATA_BUCKET: bucket } : {}), CHE_GITHUB_TOKEN: 'gh', CHE_GITHUB_REPO: 'Vondada/chey-app' };
   const ctx = { storage, env, keys: {}, writer: writer(), base: 'https://che.example', fetcher: github(gh), now: NOW };
   const started = await startFilm(ctx, { topic: 'a lighthouse keeper', seconds, deadline: null });
   return { storage, bucket, gh, ai, ctx, started };
@@ -413,6 +414,35 @@ test('end to end: a one-minute film is written, made, assembled on parallel runn
   const item = (await listMedia(storage)).find((m) => m.id === final.result.media_id);
   assert.deepEqual([item.kind, item.verified, item.blob_key, item.source], ['video', true, `film/${film.id}/film.mp4`, 'che_film_studio']);
   assert.equal((await filmTokenRoute(ctx, `/api/film/render/${job}/segment/0`, req(`/api/film/render/${job}/segment/0`, { token }))).status, 404, 'the token dies with the job');
+});
+
+// Regression (reliability lane, 2026-10-25): production binds no R2 bucket, so a finished film lives in CHE's own store,
+// but its media record said blob 'r2'. Opening it (GET /api/media/<id>/video reads readBlob) found no bucket and answered
+// "Media data missing", and the video library called it missing. The record must name the store the bytes are in.
+test('a film finished without R2 reopens: the record names CHE\'s own store, the exact MP4 reads back, and the library calls it playable', async () => {
+  const { storage, gh, ctx } = await studio({ seconds: 30, withR2: false });
+  const film = await runUntil(ctx, ['assembling', 'failed']);
+  assert.equal(film.state, 'assembling', film.errors?.join('; '));
+  const job = film.assembly.job.id; const token = gh.dispatch.inputs.token;
+  const bytes = mp4({ seconds: film.assembly.total_s });
+  const { upload_id: id } = await (await filmTokenRoute(ctx, `/api/film/render/${job}/upload/start`, req(`/api/film/render/${job}/upload/start`, { token, method: 'POST' }))).json();
+  const part = await (await filmTokenRoute(ctx, `/api/film/render/${job}/upload/part`, req(`/api/film/render/${job}/upload/part?upload_id=${id}&n=1`, { token, method: 'PUT', body: bytes }))).json();
+  const done = await filmTokenRoute(ctx, `/api/film/render/${job}/upload/complete`, req(`/api/film/render/${job}/upload/complete`, { token, method: 'POST', body: JSON.stringify({ upload_id: id, parts: [part] }) }));
+  assert.equal(done.status, 200);
+  const final = await new FilmStore(storage).latest();
+  assert.equal(final.state, 'done');
+  const { listMedia, readBlob, verifyMediaFile } = await import('./media.js');
+  const { mediaLibraryReport } = await import('./media_library.js');
+  const items = await listMedia(storage);
+  const item = items.find((m) => m.id === final.result.media_id);
+  assert.equal(item.blob, 'che_store', 'the record names the store that holds the bytes');
+  const back = await readBlob(ctx.env, storage, item);
+  assert.ok(back, 'the film reopens');
+  assert.deepEqual(new Uint8Array(back), new Uint8Array(bytes), 'the exact MP4 that was uploaded');
+  assert.equal(mp4Facts(new Uint8Array(back)).ok, true, 'and it decodes as an MP4');
+  assert.equal((await verifyMediaFile(ctx.env, storage, item)).status, 'verified');
+  const report = await mediaLibraryReport(ctx.env, storage, items);
+  assert.equal(report.playable, 1, JSON.stringify(report.videos));
 });
 
 test('no "done" without a verified MP4: a file of the wrong length, size or codecs fails the film', async () => {

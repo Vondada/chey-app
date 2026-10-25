@@ -5,6 +5,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { mediaLibraryIntent, mediaLibraryReply, mediaLibraryReport, wantsLatestVideo } from './media_library.js';
+import { readBlob, verifyMediaFile } from './media.js';
+import { mediaStore } from './che_media_store.js';
 
 const generated = new URL('./.media_library.generated.mjs', import.meta.url);
 writeFileSync(generated, readFileSync(new URL('./worker.js', import.meta.url), 'utf8').replace(
@@ -17,6 +19,8 @@ try { worker = await import(generated.href + '?t=' + Date.now()); } finally { tr
 export const OWNER_LIBRARY = 'Open my video library. Show only actual saved MP4 files. Tell me how many videos exist and whether any are playable.';
 export const OWNER_LATEST = 'CHE, open Creator Studio and show my latest video.';
 
+// The first bytes of a real MP4 (an ftyp box, brand isom): a stored "video" must really be one to be playable.
+const MP4_HEAD = new Uint8Array([0, 0, 0, 32, 102, 116, 121, 112, 105, 115, 111, 109, 0, 0, 2, 0, 105, 115, 111, 109, 105, 115, 111, 50, 97, 118, 99, 49, 109, 112, 52, 49]);
 const MEDIA = [
   { id: 'vid-aaaaaaaa1', kind: 'video', mode: 'video', mime_type: 'video/mp4', title: 'Launch teaser', created_at: '2026-10-21T04:00:00Z', blob: 'r2', blob_key: 'media/vid-aaaaaaaa1.mp4' },
   { id: 'vid-bbbbbbbb2', kind: 'video', mode: 'video', mime_type: 'video/mp4', title: 'Lamp explainer', created_at: '2026-10-20T10:00:00Z', blob: 'do' },
@@ -25,7 +29,7 @@ const MEDIA = [
 ];
 
 async function owner(storedMedia) {
-  const saved = new Map([['media_index', storedMedia], ['media:vid-bbbbbbbb2', 'AAAA']]);
+  const saved = new Map([['media_index', storedMedia], ['media:vid-bbbbbbbb2', Buffer.from(MP4_HEAD).toString('base64')]]);
   const storage = {
     get: async (k) => (Array.isArray(k) ? new Map(k.filter((x) => saved.has(x)).map((x) => [x, saved.get(x)])) : saved.get(k)),
     put: async (k, v) => { if (k && typeof k === 'object') for (const [a, b] of Object.entries(k)) saved.set(a, b); else saved.set(k, v); },
@@ -34,7 +38,10 @@ async function owner(storedMedia) {
     setAlarm: async () => {}, deleteAlarm: async () => {},
   };
   const modelCalls = [];
-  const bucket = { head: async (key) => (key === 'media/vid-aaaaaaaa1.mp4' ? { size: 4096 } : null) };
+  const bucket = {
+    head: async (key) => (key === 'media/vid-aaaaaaaa1.mp4' ? { size: 4096 } : null),
+    get: async (key) => (key === 'media/vid-aaaaaaaa1.mp4' ? { size: 4096, arrayBuffer: async () => MP4_HEAD.buffer.slice(0) } : null),
+  };
   const env = { CHE_PAIR_CODE: '123456', CHE_DISABLE_KEYLESS_AI: '1', CHE_DATA_BUCKET: bucket, AI: { run: async () => { modelCalls.push(1); return { response: 'I have no tool connected to inspect saved files.' }; } } };
   const state = new worker.CheState({ storage, waitUntil: () => {} }, env);
   env.CHE_STATE = { getByName: () => state };
@@ -97,4 +104,47 @@ test('an unverifiable GitHub artifact is "not checked", never playable', async (
   assert.equal(report.playable, 0);
   assert.equal(report.unverified, 1);
   assert.match(mediaLibraryReply(report), /could not be checked right now/);
+});
+
+// Regression (reliability lane, 2026-10-25): since #508 a file can live in CHE's own store (blob 'che_store'), which is
+// where every video goes in production (no R2 bucket is bound). The library knew only r2/do/github-artifact, so such a
+// real MP4 was reported "missing: the record names no file".
+test('a video in CHE\'s own store (no R2) is read back and reported playable; its bytes are the exact real MP4', async () => {
+  const mp4 = new Uint8Array(readFileSync(new URL('./fixtures/media/tiny.mp4', import.meta.url)));
+  const saved = new Map();
+  const storage = {
+    get: async (k) => (Array.isArray(k) ? new Map(k.filter((x) => saved.has(x)).map((x) => [x, saved.get(x)])) : saved.get(k)),
+    put: async (k, v) => { if (k && typeof k === 'object') for (const [a, b] of Object.entries(k)) saved.set(a, b); else saved.set(k, v); },
+    delete: async (k) => saved.delete(k),
+    list: async ({ prefix = '' } = {}) => new Map([...saved].filter(([key]) => key.startsWith(prefix))),
+  };
+  assert.equal((await mediaStore({}, storage).put('media/vid-own.mp4', mp4, { contentType: 'video/mp4' })).ok, true);
+  const item = { id: 'vid-own', kind: 'video', mode: 'video', mime_type: 'video/mp4', title: 'Own store', created_at: '2026-10-25T05:00:00Z', blob: 'che_store', blob_key: 'media/vid-own.mp4' };
+  const report = await mediaLibraryReport({}, storage, [item]);
+  assert.equal(report.playable, 1, `the stored MP4 is playable, got ${JSON.stringify(report.videos[0])}`);
+  assert.equal(report.missing, 0);
+  const check = await verifyMediaFile({}, storage, item);
+  assert.equal(check.status, 'verified', JSON.stringify(check));
+  assert.equal(check.mime_type, 'video/mp4');
+  assert.equal(check.size, mp4.length);
+  assert.deepEqual(new Uint8Array(await readBlob({}, storage, item)), mp4, 'the bytes read back are the exact file written');
+});
+
+test('"playable" needs MP4 bytes: a stored record whose bytes are not a video is missing, never playable', async () => {
+  const saved = new Map([['media:vid-junk', Buffer.from('not a video at all, just text').toString('base64')]]);
+  const report = await mediaLibraryReport({}, { get: async (k) => saved.get(k) }, [
+    { id: 'vid-junk', kind: 'video', mime_type: 'video/mp4', title: 'Junk', created_at: '2026-10-18T10:00:00Z', blob: 'do' },
+  ]);
+  assert.equal(report.playable, 0);
+  assert.equal(report.missing, 1);
+});
+
+test('an older film record that says r2 while no bucket is bound is read from CHE\'s own store, where the film really is', async () => {
+  const mp4 = new Uint8Array(readFileSync(new URL('./fixtures/media/tiny.mp4', import.meta.url)));
+  const saved = new Map();
+  const storage = { get: async (k) => saved.get(k), put: async (k, v) => saved.set(k, v), delete: async (k) => saved.delete(k) };
+  await mediaStore({}, storage).put('film/f1/film.mp4', mp4, { contentType: 'video/mp4' });
+  const item = { id: 'vid-film-old', kind: 'video', mode: 'film', mime_type: 'video/mp4', title: 'Old film', created_at: '2026-10-22T05:00:00Z', blob: 'r2', blob_key: 'film/f1/film.mp4' };
+  assert.deepEqual(new Uint8Array(await readBlob({}, storage, item)), mp4);
+  assert.equal((await mediaLibraryReport({}, storage, [item])).playable, 1);
 });

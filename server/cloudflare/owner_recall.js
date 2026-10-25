@@ -11,8 +11,8 @@
 //     removed there, and stored here as Brain records with source chatgpt_export. "What did I tell ChatGPT about X"
 //     quotes those records with their conversation title and date, or says the history is not connected.
 import { BRAIN_REGIONS } from './brain_store.js';
-import { latestAnswerEvidence, recordAnswerEvidence } from './memory_provenance.js';
-import { isQuestionLike, ownerFacts, stripWake } from './personal_recall.js';
+import { latestAnswerEvidence, readOutcome, recordAnswerEvidence } from './memory_provenance.js';
+import { explicitMemorySave, isQuestionLike, ownerFacts, statementsFromBrain, stripWake } from './personal_recall.js';
 
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 const day = (iso) => {
@@ -25,11 +25,14 @@ const clip = (text, n) => { const t = String(text || '').replace(/\s+/g, ' ').tr
 
 /** The Brain records personal recall reads: the newest 500 plus up to 50 that mention the asked words, by id. */
 export function ownerStatementCandidates(store, message) {
-  if (!store) return [];
+  // `unreadable` marks a Brain that could not be read at all, so a miss is reported as "could not read", never as
+  // "no record" (owner live test, 2026-10-25: an unreadable store and an empty one gave the same reply).
+  if (!store) return Object.assign([], { unreadable: true });
   const byId = new Map();
-  try { for (const r of store.list({ limit: 500 }).records || []) byId.set(r.id, r); } catch (_) { /* no Brain */ }
-  try { for (const r of store.search(stripWake(message), { limit: 50 }) || []) byId.set(r.id, r); } catch (_) { /* no Brain */ }
-  return [...byId.values()];
+  let failures = 0;
+  try { for (const r of store.list({ limit: 500 }).records || []) byId.set(r.id, r); } catch (_) { failures += 1; }
+  try { for (const r of store.search(stripWake(message), { limit: 50 }) || []) byId.set(r.id, r); } catch (_) { failures += 1; }
+  return Object.assign([...byId.values()], failures === 2 ? { unreadable: true } : {});
 }
 
 // ─── "Search my memory for Sprite" ──────────────────────────────────────────────────────────────────────────────────
@@ -60,10 +63,42 @@ const IDS_FORMS = [
   /^where\s+are\s+(?:the|those)\s+(?:memory\s+)?(?:ids?|records?)\s+(?:you\s+)?(?:retrieved|read|used|pulled)(?:\s+(?:just now|earlier|before|for (?:that|this|it|that answer|your (?:last )?answer)|to answer (?:that|this|it)|in (?:that|your last) answer))?$/i,
 ];
 
+// "What is the record ID and timestamp for Silver Falcon 27?", "show me the storage receipt for that memory", "what's the
+// source of those facts?" (owner live test, 2026-10-25: all three reached the model, which could give neither an id nor
+// a time). A named term is searched in every store; "that", "it", "those facts" mean the records CHE's last answer read.
+const META_NOUN = String.raw`(?:(?:memory\s+|record\s+)?ids?|record\s+(?:ids?|numbers?)|time\s*stamps?|timestamps?|times?|dates?|storage\s+receipts?|write\s+receipts?|receipts?|sources?|source\s+metadata|metadata|provenance|origin)`;
+const META_FORMS = [
+  new RegExp(String.raw`^(?:please\s+)?(?:what(?:'s|s| is| are| was| were)?|show(?:\s+me)?|give(?:\s+me)?|tell(?:\s+me)?|read(?:\s+me)?|list|get(?:\s+me)?|i\s+(?:want|need)|can\s+you\s+(?:show|give|tell)(?:\s+me)?)\s+(?:the\s+|its\s+|their\s+|your\s+)?${META_NOUN}(?:(?:\s*,\s*|\s+and\s+|\s*,\s*and\s+)(?:the\s+|its\s+)?${META_NOUN})*\s+(?:for|of|on|behind|about)\s+(.{1,80})$`, 'i'),
+];
+const POINTER_TERM = /^(?:(?:that|this|it|those|these|them|the last one|your last answer|that answer|the (?:last|previous) (?:answer|memory|record|save))(?:\s+(?:memory|memories|record|records|fact|facts|answer|answers|save|phrase|one|ones))?)$/i;
+
+// "What are my recent memories?", "show my last five memories", "what do you remember about me?" (owner live test,
+// 2026-10-25: answered "I don't have a record of your recent memories" while memory records held his statements).
+// The newest stored memory records, each with id, time and source; never a personal-fact lookup of "recent memories".
+const COUNT = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10 };
+const RECENT_FORMS = [
+  /^(?:what|which)\s+(?:are|were)\s+(?:my|your|che'?s|the)\s+(?:(?:most\s+)?(?:recent|latest|newest|last)\s+)(?:(\d{1,2}|one|two|three|four|five|six|seven|eight|nine|ten)\s+)?(?:memories|memory\s+records|saved\s+memories|stored\s+memories)$/i,
+  /^(?:show|list|give|read|tell)(?:\s+me)?\s+(?:my|your|che'?s|the)\s+(?:(?:most\s+)?(?:recent|latest|newest|last)\s+)?(?:(\d{1,2}|one|two|three|four|five|six|seven|eight|nine|ten)\s+)?(?:memories|memory\s+records|saved\s+memories|stored\s+memories)$/i,
+  /^what\s+(?:do|did)\s+you\s+(?:remember|know|have\s+(?:saved|stored))\s+about\s+me$/i,
+  /^what\s+(?:have\s+you|did\s+you)\s+(?:saved|stored|remembered)\s+(?:about\s+me\s+)?(?:recently|lately)$/i,
+];
+
 export function ownerMemorySearchIntent(message) {
   const t = stripWake(message).replace(/[?.!]+$/, '').replace(/\s+/g, ' ').trim();
   if (!t || t.length > 140) return null;
   if (IDS_FORMS.some((re) => re.test(t))) return { ids: true, term: '' };
+  for (const re of RECENT_FORMS) {
+    const m = re.exec(t);
+    if (m) return { recent: true, term: '', limit: Math.max(1, Math.min(10, m[1] ? Number(COUNT[m[1].toLowerCase()] || m[1]) : 5)) };
+  }
+  for (const re of META_FORMS) {
+    const m = re.exec(t);
+    if (!m) continue;
+    const term = m[1].replace(/^["']|["']$/g, '').replace(/\s+(?:please|sir|che)$/i, '').trim();
+    if (POINTER_TERM.test(term)) return { ids: true, term: '', meta: true };
+    if (/\b(?:trad(?:e|es|ing)|ledgers?|journals?|sim-|paper|positions?|orders?|fills?|strateg(?:y|ies)|commits?|deploy\w*|pr|pull requests?|jobs?|builds?)\b/i.test(term)) return null;
+    if (term.length >= 2 && termWords(term).length) return { term, meta: true };
+  }
   for (const re of SEARCH_FORMS) {
     const m = re.exec(t);
     if (!m) continue;
@@ -128,7 +163,8 @@ export function searchOwnerMemory(data = {}, store = null, term = '') {
         const text = said ? said[1] : r.body;
         if (!hit(text) && !hit(r.title)) continue;
         // The owner's own question ("what memories do you have about my favorite color") is not a memory of the answer.
-        if (said && (isQuestionLike(text) || ownerMemorySearchIntent(text))) continue;
+        // A save request's Brain turn is not a second memory: the memory record it wrote is listed with its own id.
+        if (said && (isQuestionLike(text) || ownerMemorySearchIntent(text) || explicitMemorySave(text))) continue;
         matches.push({ store: r.source?.kind === 'chatgpt_export' ? 'ChatGPT import' : 'Brain', id: r.id, source: r.source?.kind || null, verification: r.verification || null, at: r.source?.message_at || r.created_at || null, text: clip(text, 240), title: r.source?.conversation_title || null });
       }
     }
@@ -173,6 +209,10 @@ function currentValues(matches) {
 }
 
 const recordName = (m) => (m.id ? `record ${String(m.id).slice(0, 36)}` : 'no record id');
+// The stored instant to the minute, in UTC as stored: "stored 2026-10-25 06:03 UTC".
+const stamp = (iso) => { const t = Date.parse(String(iso || '')); return Number.isFinite(t) ? `stored ${new Date(t).toISOString().slice(0, 16).replace('T', ' ')} UTC` : 'no stored time'; };
+const SOURCES = { owner_chat: 'source: your own words in chat', owner: 'source: your own words', explicit_memory: 'source: a memory you asked me to save', owner_approved: 'source: a memory you approved', chatgpt_export: 'source: your imported ChatGPT history' };
+const sourceLabel = (source, verification) => `${SOURCES[String(source || '')] || (source ? `source: ${String(source).replace(/_/g, ' ')}` : 'source: not recorded')}${verification === 'owner_attested' ? ', owner-confirmed' : verification ? `, ${String(verification).replace(/_/g, ' ')}` : ''}`;
 
 export function speakMemorySearch(found) {
   const counts = found.stores.map((s) => (s.count == null ? `${s.store}: not readable right now` : s.store === 'ChatGPT import' && !s.connected ? 'ChatGPT import: not connected' : `${s.store}: ${s.count}`)).join('; ');
@@ -183,9 +223,38 @@ export function speakMemorySearch(found) {
   }
   // Newest first, so the owner hears his latest statement before older ones.
   const listed = found.matches.map((m, i) => ({ m, i })).sort((a, b) => (at(b.m) - at(a.m)) || (b.i - a.i)).map((x) => x.m);
-  const lines = listed.slice(0, 6).map((m, i) => `${i + 1}. ${m.store}${m.title ? ` ("${m.title}")` : ''}, ${m.at ? day(m.at) : 'no date'}${m.id ? `, ${recordName(m)}` : ''}${m.superseded ? ', superseded' : ''}: "${m.text}"`);
+  // Asked for ids, times or sources, each record names all three exactly as stored.
+  const lines = listed.slice(0, 6).map((m, i) => `${i + 1}. ${m.store}${m.title ? ` ("${m.title}")` : ''}, ${found.meta ? stamp(m.at) : m.at ? day(m.at) : 'no date'}${m.id ? `, ${recordName(m)}` : ''}${found.meta ? `, ${sourceLabel(m.source, m.verification)}` : ''}${m.superseded ? ', superseded' : ''}: "${m.text}"`);
   const current = (found.current || []).map((c) => `Your latest confirmed ${c.subject} is ${c.value} (${recordName(c.match)}${c.match.at ? `, ${day(c.match.at)}` : ''}); it replaces ${c.replaced.map((r) => `${r.value} (${recordName(r.match)}${r.match.at ? `, ${day(r.match.at)}` : ''})`).join(' and ')}.`).join(' ');
   return `I read my memory stores just now and found ${found.matches.length} record${found.matches.length === 1 ? '' : 's'} with "${found.term}", sir.${current ? ` ${current}` : ''} ${lines.join(' ')}${found.matches.length > 6 ? ` And ${found.matches.length - 6} more.` : ''} Searched: ${counts}.`;
+}
+
+/**
+ * The newest active memory records, each with its full id, stored time and source: { text, records }. An empty store
+ * says it is empty (no matching record); a store that throws is reported by ownerSearchTurn as unreadable, never as empty.
+ */
+export function speakRecentMemories(data = {}, limit = 5, store = null) {
+  if (data == null || typeof data !== 'object') throw new Error('memory records are not readable');
+  const records = Array.isArray(data.memory_records) ? data.memory_records.filter((r) => r && r.active !== false && String(r.text || '').trim()) : [];
+  // The owner's own statements of fact in the Brain ("My favorite drink is Strawberry Sprite" said in chat) count too:
+  // they are what personal recall answers from. A Brain statement already kept as a memory record is listed once.
+  const brain = ownerStatementCandidates(store, '');
+  const known = new Set(records.map((r) => String(r.text).trim().toLowerCase()));
+  const stated = statementsFromBrain(brain)
+    .filter((r) => r.origin !== 'chatgpt_export' && ownerFacts(r.text).length && !known.has(String(r.text).trim().toLowerCase()))
+    .map((r) => ({ id: r.id, text: r.text, created_at: r.created_at, source: 'owner_chat', verification_status: 'owner_attested', brain: true }));
+  const all = [...records, ...stated];
+  const newest = all.map((r, i) => ({ r, i, t: Date.parse(String(r.created_at || '')) }))
+    .sort((a, b) => ((Number.isFinite(b.t) ? b.t : -Infinity) - (Number.isFinite(a.t) ? a.t : -Infinity)) || (b.i - a.i))
+    .slice(0, limit).map((x) => x.r);
+  const brainNote = brain.unreadable ? ' I couldn\'t read my Brain store just now, so statements kept only there are not included.' : '';
+  if (!newest.length) {
+    return brain.unreadable
+      ? { text: `I read my memory records just now and there are none stored, sir, and I couldn't read my Brain store, so I can't say whether you told me anything there. That is a failed read, not an empty memory.`, records: [], unreadable: true }
+      : { text: 'I read my memory records and Brain just now and there are no memories stored yet, sir. That is an empty store, not a read failure. Tell me something to remember and I will confirm it with its record ID.', records: [] };
+  }
+  const lines = newest.map((r, i) => `${i + 1}. "${clip(r.text, 160)}", record ${r.id || 'with no id'} in ${r.brain ? 'the Brain' : 'memory records'}, ${stamp(r.created_at)}, ${sourceLabel(r.source, r.verification_status)}${r.superseded_at ? ', superseded' : ''}.`);
+  return { text: `Your ${newest.length === 1 ? 'most recent memory' : `${newest.length} most recent memories`}, newest first, sir, read from my memory records (${records.length}) and your statements in the Brain (${stated.length}) just now: ${lines.join(' ')}${brainNote}`, records: newest.map((r) => r.id).filter(Boolean), unreadable: Boolean(brain.unreadable) };
 }
 
 /**
@@ -202,7 +271,7 @@ export function speakLastRecordIds(last, data = {}, store = null) {
     let r = (Array.isArray(data.memory_records) ? data.memory_records : []).find((x) => x?.id === id) || null;
     let where = 'memory records';
     if (!r) { try { r = store?.init?.() ? store.get(id) : null; where = 'Brain'; } catch (_) { r = null; } }
-    if (r) shown.push({ id, line: `record ${String(id).slice(0, 36)} in ${where}, ${day(r.created_at) || 'no date'}: "${clip(r.text || r.title || r.body, 160)}"` });
+    if (r) shown.push({ id, line: `record ${String(id).slice(0, 36)} in ${where}, ${stamp(r.created_at)}, ${sourceLabel(r.source?.kind || r.source, r.verification_status || r.verification)}: "${clip(r.text || r.title || r.body, 160)}"` });
   }
   if (!shown.length) return { text: 'My last answer named records I can no longer find in my stores, sir, so I can\'t show their IDs as real. Ask me to search my memory and I\'ll read the stores again.', records: [] };
   return { text: `My last answer read ${shown.length} record${shown.length === 1 ? '' : 's'}, sir: ${shown.map((s, i) => `${i + 1}. ${s.line}`).join(' ')}`, records: shown.map((s) => s.id) };
@@ -218,13 +287,17 @@ export async function ownerSearchTurn(storage, data, store, ask = {}) {
   let records = [];
   let meta;
   try {
-    if (ask.ids) {
+    if (ask.recent) {
+      const recent = speakRecentMemories(data, ask.limit || 5, store);
+      ({ text, records } = recent);
+      meta = { read_receipt: { kind: 'memory_store_read', at: new Date().toISOString(), stores_read: recent.unreadable ? ['memory records'] : ['memory records', 'Brain'], stores_unreadable: recent.unreadable ? ['Brain'] : [], record_ids: records } };
+    } else if (ask.ids) {
       const shown = speakLastRecordIds(await latestAnswerEvidence(storage), data, store);
       ({ text, records } = shown);
       meta = { read_receipt: { kind: 'answer_ledger_read', at: new Date().toISOString(), record_ids: records } };
     } else {
       const found = searchOwnerMemory(data, store, ask.term);
-      text = speakMemorySearch(found);
+      text = speakMemorySearch(ask.meta ? { ...found, meta: true } : found);
       records = found.read_receipt.record_ids;
       meta = { memory_search: found, read_receipt: found.read_receipt };
     }
@@ -233,7 +306,9 @@ export async function ownerSearchTurn(storage, data, store, ask = {}) {
     meta = { ok: false, read_receipt: { kind: 'memory_store_read', at: new Date().toISOString(), error: String(error?.message || error).slice(0, 160), record_ids: [] } };
   }
   await recordAnswerEvidence(storage, text, { kind: records.length ? 'memory_search' : 'none', tools: ['memory_records', 'brain/search'] }, { records }).catch(() => null);
-  return { text, meta: { ...meta, records: records.length, record_ids: records } };
+  // A miss with a store that could not be read is a failed read, not "no record".
+  const failed = meta?.ok === false || (!records.length && (meta?.read_receipt?.stores_unreadable || []).length > 0);
+  return { text, meta: { ...meta, records: records.length, record_ids: records, outcome: readOutcome({ failed, records }) } };
 }
 
 // ─── The owner's ChatGPT history ────────────────────────────────────────────────────────────────────────────────────

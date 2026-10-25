@@ -35,14 +35,16 @@ function isVideoRecord(item) {
 }
 
 async function checkFile(env, storage, item, fetcher) {
-  if (item.blob === 'r2' && item.blob_key) {
-    const object = env.CHE_DATA_BUCKET ? await env.CHE_DATA_BUCKET.head(item.blob_key).catch(() => null) : null;
-    if (object && Number(object.size) > 0) return { status: 'playable', storage: 'r2', bytes: Number(object.size) };
-    return { status: 'missing', storage: 'r2', reason: 'The R2 file is not there.' };
-  }
-  if (item.blob === 'do') {
-    const data = await storage.get(`media:${item.id}`).catch(() => null);
-    return data ? { status: 'playable', storage: 'storage' } : { status: 'missing', storage: 'storage', reason: 'The stored file is not there.' };
+  // A file CHE stores herself (R2, CHE's own store, a storage blob) is read back and must really be an MP4: the same
+  // check as the media inventory (media.js verifyMediaFile), never a bare "the key exists".
+  if (item.blob === 'r2' || item.blob === 'che_store' || item.blob === 'do') {
+    const where = item.blob === 'r2' && env.CHE_DATA_BUCKET ? 'r2' : 'storage';
+    const check = await verifyMediaFile(env, storage, item);
+    if (check.ok) return check.mime_type === 'video/mp4' || check.mime_type === 'video/quicktime'
+      ? { status: 'playable', storage: where, ...(check.size ? { bytes: check.size } : {}) }
+      : { status: 'missing', storage: where, reason: `The stored file is ${check.mime_type}, not a video.` };
+    if (check.status === 'unverified') return { status: 'unverified', storage: where, reason: 'The file could not be read just now.' };
+    return { status: 'missing', storage: where, reason: item.blob === 'r2' && env.CHE_DATA_BUCKET ? 'The R2 file is not there or is not an MP4.' : 'The stored file is not there or is not an MP4.' };
   }
   if (item.blob === 'github-artifact' || item.github_artifact_id) {
     const bytes = await githubVideoFile(env, item.github_artifact_id, item.github_filename || 'video.mp4', fetcher).catch(() => null);
@@ -116,21 +118,24 @@ export function mediaShowLatestIntent(message) {
     && PICTURE_WORD.test(text) && !VIDEO_WORD.test(text) && !CREATION_ROOM_WORD.test(text);
 }
 
-// "Open this same picture in my Creation Room", "open media cb442323-… in Creation Room". The picture is the one the
-// message names by ID, or else the one the chat showed last (the client sends its media ID as last_media_id). Null when
-// the message is not that request, so the existing store and library routes still see it.
-const OPEN_WORD = /\b(?:open|show|view|display|bring\s+up|pull\s+up|put)\b/i;
+// "Open this same picture in my Creation Room", "open media cb442323-… in Creation Room", and (owner, 2026-10-25)
+// "Open and display saved image 6e0912e2-…": one saved item, never the store list. With the Creation Room named, the
+// picture is the one the message names by ID, or else the one the chat showed last (the client sends its media ID as
+// last_media_id), and it opens in the room. Without the room, a named media ID opens that one item in the chat.
+// Null when the message is not that request, so the existing store and library routes still see it.
+const OPEN_WORD = /\b(?:open|show|view|display|see|bring\s+up|pull\s+up|put)\b/i;
 const CREATION_ROOM_WORD = /\b(?:creation\s+room|create\s+room|creations?|creative\s+room)\b/i;
 const MEDIA_ID_WORD = /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/i;
 const OPENABLE_NOUN = /\b(?:pictures?|photos?|images?|pics?|videos?|clips?|media|creations?|files?|one)\b/i;
 const DEICTIC_WORD = /\b(?:this|that|same|it|it's)\b/i;
 export function mediaOpenIntent(message) {
   const text = cleanText(message);
-  if (text.length > MAX_STORE_REQUEST || !OPEN_WORD.test(text) || !CREATION_ROOM_WORD.test(text)) return null;
+  if (text.length > MAX_STORE_REQUEST || !OPEN_WORD.test(text)) return null;
   const id = (MEDIA_ID_WORD.exec(text) || [])[0]?.toLowerCase() || '';
+  if (!CREATION_ROOM_WORD.test(text)) return id ? { id, latest: false, room: false } : null;
   const latest = /\b(?:latest|last|newest|most\s+recent)\b/i.test(text);
   if (!id && !(OPENABLE_NOUN.test(text) && (DEICTIC_WORD.test(text) || latest))) return null;
-  return { id, latest: !id && latest };
+  return { id, latest: !id && latest, room: true };
 }
 
 function openable(row) {
@@ -150,20 +155,22 @@ export function mediaLatestOpenRow(items) {
     .find(openable) || null;
 }
 
-export function mediaOpenReply(row, { origin = '' } = {}) {
+export function mediaOpenReply(row, { origin = '', room = true } = {}) {
   const kind = row.kind === 'video' ? 'video' : 'image';
   const title = String(row.title || (kind === 'video' ? 'Video' : 'Picture')).slice(0, 80);
+  // Retrieval only: the Worker read the bytes back. Whether it is on screen is the phone's image-load result.
   return {
-    text: `Opening "${title}" (ID ${row.id}) in your Creation Room, sir.`,
+    text: room ? `Opening "${title}" (ID ${row.id}) in your Creation Room, sir.`
+      : `I retrieved "${title}" (ID ${row.id}), sir: its stored bytes were read back and verified. Showing it here now.`,
     media_id: row.id,
     media_type: kind,
     media_url: `${origin}/api/media/${row.id}/${kind === 'video' ? 'video' : 'image'}`,
   };
 }
 
-export function mediaOpenMissingReply(id) {
+export function mediaOpenMissingReply(id, { room = true } = {}) {
   return id
-    ? `I hold no saved picture or video with ID ${id}, sir, so there is nothing to open in your Creation Room.`
+    ? `I hold no saved picture or video with ID ${id}, sir, so there is nothing to open${room ? ' in your Creation Room' : ''}.`
     : 'I don\'t know which picture you mean, sir. Give me its media ID, or ask me about the picture first.';
 }
 

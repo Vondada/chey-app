@@ -2471,7 +2471,7 @@ test('memory-first: a verified owner fact is answered with zero AI engine calls'
   globalThis.fetch = async () => { providerCalls += 1; return new Response('{}', { status: 500 }); };
   try {
     // Remembering a fact that contains a URL saves it (it is not fetched as a page).
-    assert.equal(replyFromNdjson(await (await chat('Remember that my Worker URL is https://che.example.workers.dev')).text()), 'I’ll remember that, sir.');
+    assert.match(replyFromNdjson(await (await chat('Remember that my Worker URL is https://che.example.workers.dev')).text()), /^I’ll remember that, sir\. Saved \"[^\"]+\" as record [\w-]+ on \d{4}-\d{2}-\d{2} at \d{2}:\d{2} UTC, and read it back from storage\.$/);
     assert.equal(aiCalls + providerCalls, 0, 'remembering a plain fact costs no AI either');
     aiCalls = 0;
     providerCalls = 0;

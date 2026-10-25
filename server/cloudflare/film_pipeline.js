@@ -521,7 +521,7 @@ async function finishFilm(ctx, store, film, key) {
     await fail(store, film, `the uploaded film did not pass its checks: ${facts.error}`);
     return facts;
   }
-  const item = await saveFilmVideo(ctx.storage, { key, title: film.title, prompt: film.topic, seconds: facts.seconds, width: facts.width, height: facts.height, bytes: facts.bytes, film_id: film.id });
+  const item = await saveFilmVideo(ctx.storage, { key, title: film.title, prompt: film.topic, seconds: facts.seconds, width: facts.width, height: facts.height, bytes: facts.bytes, film_id: film.id, blob: mediaStore(ctx.env, ctx.storage).provider });
   // The receipt behind "the film is finished": written only after the stored MP4 read back and passed (action_receipts.js).
   await recordVideoVerified(ctx.storage, { task_id: film.id, media_id: item.id, bytes: facts.bytes, seconds: facts.seconds, width: facts.width, height: facts.height, source: 'film_studio' });
   film.state = 'done';

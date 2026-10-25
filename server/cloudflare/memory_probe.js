@@ -42,7 +42,7 @@ export async function memoryTruthProbe(env, token, objectName) {
       || String(lines.find((line) => line.message)?.message || '');
     const done = lines.find((line) => line.type === 'done') || {};
     const pass = res.status === 200 && check(reply, done);
-    steps.push({ name, pass, optional, status: res.status, ms: Date.now() - started, route: done.source || '', model_calls: done.model_calls ?? null, reply: reply.slice(0, 500),
+    steps.push({ name, pass, optional, status: res.status, ms: Date.now() - started, route: done.source || '', model_calls: done.model_calls ?? null, ...(done.outcome ? { outcome: done.outcome } : {}), reply: reply.slice(0, 500),
       ...(done.read_receipt ? { read_receipt: { kind: done.read_receipt.kind, stores_read: done.read_receipt.stores_read, record_ids: done.read_receipt.record_ids } } : {}) });
     if (keep) history.push({ role: 'user', content: message }, { role: 'assistant', content: reply });
     return reply;
@@ -101,6 +101,41 @@ export async function memoryTruthProbe(env, token, objectName) {
     await turn('No matching record is an honest no record, with no ids', 'What memories do you have about my passport?',
       (reply, done) => done.source === 'che_memory_search' && done.model_calls === 0 && /found no record/i.test(reply)
         && (done.record_ids || []).length === 0 && !/\d{3,}/.test(reply), { useHistory: false, keep: false });
+    // Trust and routing (owner live test, 2026-10-25; docs/failure_inventory/trust_memory_routing.md): a save quotes its
+    // read-back record id and time; the same record answers id, time and source; several favorites answer together;
+    // missions, collaboration and another AI's work come from stored records; every read names its outcome.
+    const once = { useHistory: false, keep: false };
+    const OUTCOMES = new Set(['retrieved', 'no_match', 'stored', 'storage_failed', 'permission_denied', 'tool_unavailable']);
+    const phrase = `Silver Falcon ${run}`;
+    let saveReceipt = null;
+    await turn('Trust: a save quotes the read-back record id and time', `Save the phrase ${phrase}`,
+      (reply, done) => {
+        saveReceipt = done.memory_receipt || null;
+        const minute = saveReceipt?.recorded_at ? new Date(Date.parse(saveReceipt.recorded_at)).toISOString().slice(0, 16).replace('T', ' at ') : '';
+        return done.source === 'che_memory' && done.outcome === 'stored' && done.model_calls === 0
+          && Boolean(saveReceipt?.record_id) && reply.includes(`record ${saveReceipt.record_id}`) && Boolean(minute) && reply.includes(minute);
+      }, once);
+    await turn('Trust: the saved record answers its id, timestamp and source', `What is the record ID and timestamp for ${phrase}?`,
+      (reply, done) => done.source === 'che_memory_search' && done.model_calls === 0 && done.outcome === 'retrieved'
+        && Boolean(saveReceipt?.record_id) && reply.includes(saveReceipt.record_id) && /stored \d{4}-\d{2}-\d{2} \d{2}:\d{2} UTC, record \S+, source: /.test(reply), once);
+    await turn('Trust: remember a favorite drink', 'Remember that my favorite drink is Strawberry Sprite', (reply, done) => done.source === 'che_memory' && done.outcome === 'stored', once);
+    await turn('Trust: remember a favorite color', 'Remember that my favorite color is teal', (reply, done) => done.source === 'che_memory' && done.outcome === 'stored', once);
+    await turn('Trust: favorite food, drink and color answer together with sources', 'What are my favorite food, drink and color?',
+      (reply, done) => done.source === 'che_personal_recall' && done.model_calls === 0 && done.outcome === 'retrieved'
+        && new RegExp(food[1], 'i').test(reply) && /Strawberry Sprite/i.test(reply) && /teal/i.test(reply) && /Source: /.test(reply)
+        && (done.recall_receipts || []).length === 3, once);
+    await turn('Trust: recent memories list real records with ids', 'What are my recent memories?',
+      (reply, done) => done.source === 'che_memory_search' && done.model_calls === 0 && done.outcome === 'retrieved'
+        && Boolean(saveReceipt?.record_id) && reply.includes(saveReceipt.record_id), once);
+    await turn('Trust: no matching record is no_match, not a guess', `What is my favorite flower ${run}?`,
+      (reply, done) => done.source === 'che_personal_recall' && done.model_calls === 0 && done.outcome === 'no_match' && /don't have a record/i.test(reply), once);
+    for (const [name, message] of [['Trust: last five missions come from stored records', 'Show my last five missions.'], ['Trust: last three projects come from stored records', 'What were our last three projects?'], ['Trust: earlier collaboration comes from stored records', 'Have we worked together before?']]) {
+      await turn(name, message, (reply, done) => done.source === 'che_work_history' && done.model_calls === 0 && ['retrieved', 'no_match'].includes(done.outcome)
+        && /I read my mission records \(\d+\)|newest first/.test(reply) && !/don't have access|no access|can't find any record of previous/i.test(reply), once);
+    }
+    await turn("Trust: another AI's work is read from the mailbox, never 'nothing is running'", 'What is Claude currently working on?',
+      (reply, done) => done.source === 'che_coding_history' && done.model_calls === 0 && OUTCOMES.has(done.outcome)
+        && !/Nothing is running|don't have access/i.test(reply) && (done.outcome !== 'retrieved' || /own report, not something I verified|outside correspondence|message/i.test(reply)), once);
     const inventedIds = 'I retrieved memory IDs 8829, 8830 and 8831 from storage, sir. Record 8829 says your favorite food is pizza.';
     const idsRefused = guardExecutionClaims(inventedIds, { receipts: [], message: 'what is my favorite food' });
     steps.push({ name: 'Invented memory ids rejected at output boundary', pass: idsRefused.removed.length > 0 && !/8829|8830|8831/.test(idsRefused.text), status: 200, route: 'execution_truth_boundary', model_calls: 0 });
@@ -148,7 +183,7 @@ export async function memoryTruthProbe(env, token, objectName) {
   } finally {
     await call('/api/security/revoke_self', {}, device).catch(() => null);
   }
-  const memorySteps = steps.filter((step) => ['che_memory_provenance', 'che_evidence_receipt', 'che_clarify', 'che_memory_search'].includes(step.route));
+  const memorySteps = steps.filter((step) => ['che_memory_provenance', 'che_evidence_receipt', 'che_clarify', 'che_memory_search', 'che_personal_recall', 'che_work_history'].includes(step.route));
   return {
     ok: steps.length > 0 && steps.every((step) => step.pass),
     object: objectName,

@@ -220,7 +220,7 @@ test('K4c: a question naming Claude or another AI about coding work never reache
     const out = await che.say(message);
     assert.equal(out.meta.source, 'che_coding_history', message);
     assert.equal(out.modelCalls, 0, message);
-    assert.match(out.reply, /I can't see (?:Claude|another agent)'s work in my own records, sir/, message);
+    assert.match(out.reply, /I can't see (?:Claude|another agent)'s (?:work|live session) in my own records, sir/, message);
     assert.doesNotMatch(out.reply, /merged PR 412|finished the coding task/, message);
   }
 });

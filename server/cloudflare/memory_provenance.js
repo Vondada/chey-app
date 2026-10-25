@@ -869,3 +869,22 @@ export function guardSpeakerAttributions(reply, { records = [], message = '' } =
 export function brainRecordForProvenance(record = {}) {
   return { ...record, text: String(record.body ?? record.text ?? ''), verification_status: record.verification };
 }
+
+// ─── Tool outcomes: what a memory, history or mailbox read really returned ──────────────────────────────────────────
+// Owner live test (2026-10-25): an empty store, an unreadable store and a missing tool all came back as the same
+// model sentence ("no record", "no access"). Every deterministic read route names one of these on its done line, and
+// the reply is the route's own text: the model never rewrites it.
+export const RECALL_OUTCOMES = Object.freeze({
+  RETRIEVED: 'retrieved',            // the store was read and held matching records
+  NO_MATCH: 'no_match',              // the store was read and held none
+  STORED: 'stored',                  // a write that was read back from storage
+  STORAGE_FAILED: 'storage_failed',  // the store could not be read or written
+  PERMISSION_DENIED: 'permission_denied', // the asker may not read it (a guest)
+  TOOL_UNAVAILABLE: 'tool_unavailable',   // the reader is not configured (no GitHub mailbox credentials)
+});
+
+/** The outcome for a read: storage_failed when it threw, retrieved when it named records, otherwise no_match. */
+export function readOutcome({ failed = false, records = [] } = {}) {
+  if (failed) return RECALL_OUTCOMES.STORAGE_FAILED;
+  return (Array.isArray(records) ? records.length : Number(records) || 0) > 0 ? RECALL_OUTCOMES.RETRIEVED : RECALL_OUTCOMES.NO_MATCH;
+}
