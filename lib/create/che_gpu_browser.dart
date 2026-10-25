@@ -108,7 +108,7 @@ class _CheGpuBrowserState extends State<CheGpuBrowser> {
         final open = CheBrowserActions.openUrl;
         if (open == null) return 'The Colab page is not ready yet. Try again in a moment.';
         try {
-          await open(cheColabNotebookUrl);
+          await open(cheGpuNotebookUrl(await _account));
         } catch (_) {
           return 'I could not open Colab. Try again in a moment.';
         }
