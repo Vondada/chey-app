@@ -4,7 +4,11 @@
 // the newest iPhone IPA release. One command, compact output. It never
 // merges, deploys, dispatches or publishes anything.
 //
-//   release_status.mjs [--pr N | --sha SHA] [--json]
+//   release_status.mjs [--pr N | --sha SHA] [--installed VERSION+BUILD] [--json]
+//
+// --installed takes what the owner's CHE Updates screen shows (e.g. 1.4.1025342820+3956317271501) and says
+// whether that phone is behind, on or ahead of the newest published IPA. The phone's report is the only
+// source for what is installed; this never infers it.
 //
 // Anything it could not read is printed as UNKNOWN, never as success.
 const REPO = 'Vondada/chey-app';
@@ -141,6 +145,23 @@ export async function releaseStatus({ pr = null, sha = null, fetcher = fetch, to
   return out;
 }
 
+/** "1.4.1025342820+3956317271501" (or "... build ...") vs a release tag che-ios-v<version>-b<build>. */
+export function compareInstalled(installed, tag) {
+  const mine = /^(\d+(?:\.\d+){1,4})(?:\+|\s+(?:build\s+)?|\s*\(|-b)(\d{1,64})\)?$/.exec(String(installed || '').trim());
+  const theirs = /^che-ios-v(\d+(?:\.\d+){1,4})-b(\d{1,64})$/.exec(String(tag || ''));
+  if (!mine || !theirs) return 'unknown';
+  const a = mine[1].split('.').map(BigInt);
+  const b = theirs[1].split('.').map(BigInt);
+  for (let i = 0; i < Math.max(a.length, b.length); i++) {
+    const x = a[i] ?? 0n;
+    const y = b[i] ?? 0n;
+    if (x !== y) return x > y ? 'ahead' : 'behind';
+  }
+  const x = BigInt(mine[2]);
+  const y = BigInt(theirs[2]);
+  return x === y ? 'current' : x > y ? 'ahead' : 'behind';
+}
+
 export function formatStatus(s) {
   const short = (x) => (x ? String(x).slice(0, 12) : 'UNKNOWN');
   const run = (r) => (r ? `${r.status === 'completed' ? r.conclusion : r.status} (run ${r.id})` : 'no run for this commit');
@@ -164,6 +185,13 @@ export function formatStatus(s) {
     lines.push(`shorebird: ${run(s.runs.shorebird)}; ipa build: ${run(s.runs.ipa)}; ipa release: ${run(s.runs.ipa_release)}`);
   }
   if (s.ipa) lines.push(`newest IPA release: ${s.ipa.tag} (${s.ipa.published_at || 'unpublished'})${s.ipa.asset ? ` ${s.ipa.asset.name} ${s.ipa.asset.bytes} bytes sha256 ${s.ipa.asset.sha256 || 'UNKNOWN'}` : ' — no .ipa asset'}`);
+  if (s.installed) {
+    const verdict = s.ipa ? compareInstalled(s.installed, s.ipa.tag) : 'unknown';
+    lines.push(`installed (owner-reported) ${s.installed}: ${verdict === 'current' ? 'is the newest published IPA'
+      : verdict === 'behind' ? `BEHIND the newest published IPA ${s.ipa.tag}; a Shorebird patch only reaches the release it was made for`
+        : verdict === 'ahead' ? 'newer than every published IPA (an unpublished or locally built IPA)'
+          : 'UNKNOWN (unreadable version or no published IPA)'}`);
+  }
   lines.push(`/health from here: ${s.live.reachable ? `version_tag ${s.live.version_tag || 'UNKNOWN'}${s.live.version_tag && s.target_sha ? (s.target_sha.startsWith(s.live.version_tag) ? ' (matches target)' : ' (DOES NOT match target)') : ''}` : `not reachable (${s.live.reason}); rely on the deploy's live commit check`}`);
   for (const u of s.unknown) lines.push(`UNKNOWN ${u}`);
   lines.push('iPhone: not verifiable from here; only the owner\'s device can confirm installed behavior.');
@@ -182,11 +210,12 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   const val = (name) => { const i = argv.indexOf(name); return i >= 0 ? argv[i + 1] : null; };
   const pr = val('--pr') ? Number(val('--pr')) : null;
   const sha = val('--sha');
-  if ((val('--pr') && !Number.isInteger(pr)) || (sha && !/^[0-9a-f]{7,40}$/i.test(sha))) {
-    console.error('usage: release_status.mjs [--pr N | --sha SHA] [--json]');
+  const installed = val('--installed');
+  if ((val('--pr') && !Number.isInteger(pr)) || (sha && !/^[0-9a-f]{7,40}$/i.test(sha)) || (argv.includes('--installed') && !/^\d+(?:\.\d+){1,4}\+\d{1,64}$/.test(installed || ''))) {
+    console.error('usage: release_status.mjs [--pr N | --sha SHA] [--installed VERSION+BUILD] [--json]');
     process.exit(2);
   }
-  const status = await releaseStatus({ pr, sha });
+  const status = { ...(await releaseStatus({ pr, sha })), ...(installed ? { installed } : {}) };
   console.log(argv.includes('--json') ? JSON.stringify(status, null, 2) : formatStatus(status));
   process.exit(status.unknown.some((u) => /^main head/.test(u)) ? 2 : 0);
 }
