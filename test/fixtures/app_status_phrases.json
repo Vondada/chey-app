@@ -1,0 +1,34 @@
+{
+  "_about": "Owner phrases about CHE's own version, build or install. The phone (lib/self_update/che_self_update_intent.dart cheIsAppStatusRequest) must attach its native build report to every 'runtime' and 'receipt' phrase, or the Worker answers 'installed version unavailable'. The Worker (server/cloudflare/self_update.js appStatusIntent) must route every 'runtime' phrase to che_runtime_status, and neither side may claim a 'neither' phrase. Read by test/che_app_status_test.dart and server/cloudflare/version_truth.test.mjs.",
+  "runtime": [
+    "What version of CHE am I running?",
+    "What’s my installed build number?",
+    "What backend version are you connected to?",
+    "Open Settings and show my app version.",
+    "Chay, what version of CHE am I running?",
+    "hey chey what build number is installed",
+    "Is the new build installed on my phone?",
+    "Did the update go through?",
+    "Has the latest patch landed on my iPhone?",
+    "Is the new version on my iPhone?",
+    "What's on my iPhone right now?",
+    "Chay, what's installed on my phone?",
+    "What GitHub commit is deployed?"
+  ],
+  "receipt": [
+    "What changed in commit f37bc3ac and what can I test on my iPhone?",
+    "Is the latest commit live?"
+  ],
+  "neither": [
+    "Deploy a new version of CHE",
+    "Install app version 9",
+    "Update yourself",
+    "What commit added the app status tests?",
+    "What version of the CHE app added Rithmic?",
+    "What version of Python should my project use?",
+    "Is the MNQ data live?",
+    "Did the email go through?",
+    "Is the new song on my phone?",
+    "What's on my calendar right now?"
+  ]
+}

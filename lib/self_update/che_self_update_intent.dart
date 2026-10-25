@@ -355,6 +355,16 @@ bool cheIsAppStatusRequest(String raw) {
   if (cheOpensAppVersion(text)) return true;
   // Commit and deployment receipts need the phone's own build and patch report too (deploy_receipt.js).
   if (cheIsCommitReceiptRequest(text)) return true;
+  // Install and update questions about this phone, mirroring self_update.js appStatusIntent: the Worker answers them
+  // from this device report, so without it "Is the new build installed on my phone?" came back "unavailable".
+  if (!RegExp(r'^(?:fix|change|set|install|update|deploy|build|release|publish|run|start)\b').hasMatch(text)) {
+    if (RegExp(r'^(?:is|are|did|has|have)\b').hasMatch(text) &&
+        RegExp(r'\b(?:new|latest|last)?\s*(?:build|update|patch|version|ipa)\b').hasMatch(text) &&
+        RegExp(r'\b(?:installed|go(?:ne)? through|went through|land(?:ed)?|arrived?|reach(?:ed)?|on my (?:phone|iphone))\b').hasMatch(text)) {
+      return true;
+    }
+    if (RegExp(r"^what(?:'s| is)\s+(?:installed\s+)?on my (?:phone|iphone)(?: right now| now)?$").hasMatch(text)) return true;
+  }
   return RegExp(r"^(?:what(?:'s| is| are)?|which|tell me|show me|check|read|give me)\b").hasMatch(text) &&
       RegExp(r'\b(?:version|build number|deployment (?:identifier|id|status)|commit|sha)\b').hasMatch(text) &&
       RegExp(r'\b(?:installed|backend|worker|connected|deployed|deployment|running|che|(?:my|the|this) (?:app|build|iphone app|phone app))\b').hasMatch(text);
