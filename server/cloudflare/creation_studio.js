@@ -729,6 +729,48 @@ export class CreationStudio {
     return { projects: out, engine: eng, capabilities: CAPABILITIES,
       spoken: `${out.length} creation${out.length === 1 ? '' : 's'}${active ? `, ${active} building or waiting` : ''}. ${eng.label}.` };
   }
+  /**
+   * Lists unique reference photos already stored on any Create Person project (for selection in Creation Studio).
+   * Returns { references: [{ sha256, bytes, consent, consent_label, at, used_by: [project ids] }] }.
+   * Owner can then call selectReference(projectId, sha256) to attach one as a new version.
+   */
+  async listReferences() {
+    const projects = await load(this.storage);
+    const bySha = new Map();
+    for (const p of projects) {
+      if (p.kind !== 'person') continue;
+      for (const v of p.versions || []) {
+        const r = v.reference;
+        if (!r || !r.sha256) continue;
+        if (!bySha.has(r.sha256)) {
+          bySha.set(r.sha256, { sha256: r.sha256, bytes: r.bytes || 0, consent: r.consent, consent_label: REFERENCE_CONSENTS[r.consent] || r.consent, at: r.at, used_by: [] });
+        }
+        bySha.get(r.sha256).used_by.push(p.id);
+      }
+    }
+    return { references: [...bySha.values()].sort((a, b) => String(b.at).localeCompare(String(a.at))) };
+  }
+
+  /**
+   * Attaches an already-stored reference photo (by SHA) to a project as a new version.
+   * Requires the photo to still exist in the media store and a valid consent.
+   */
+  async selectReference(id, sha256, consent = 'self') {
+    const { list, p } = await this.find(id);
+    if (!p) return { ok: false, status: 404, detail: 'No such creation.' };
+    if (isThing(p)) return { ok: false, status: 422, detail: 'Reference photos are for Create Person characters only.' };
+    if (!REFERENCE_CONSENTS[consent]) return { ok: false, status: 422, detail: `Choose a valid consent: ${Object.keys(REFERENCE_CONSENTS).join(' or ')}.` };
+    const media = mediaStore(this.env, this.storage);
+    const key = referenceKey(sha256);
+    const head = await media.head(key);
+    if (!head) return { ok: false, status: 404, detail: 'That reference photo is no longer stored.' };
+    const next = this.pushVersion(p, 'Reference photo selected from saved images.', {
+      reference: { sha256, bytes: head.size, consent, at: iso(this.now()) },
+    });
+    await store(this.storage, list);
+    return { ok: true, changed: true, spoken: `Selected the saved reference photo for this character. Saved as version ${next.n}. You can generate now.`, project: await this.detailOf(p) };
+  }
+
 
   async create(body = {}) {
     const kind = body.kind || 'person';
