@@ -14,7 +14,7 @@
     "storage_gets": 12,
     "median_ms": 200
   },
-  "worker_js_bytes": 1100000,
+  "worker_js_bytes": 1100200,
   "cold_import_ms": 4000,
   "runtime": {
     "_doc": "Live watch (perf_watch.js): p95 of the last samples per route, deterministic replies only for chat.",

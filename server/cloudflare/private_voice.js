@@ -13,7 +13,10 @@
 //   3. Requests that only make sense with an outside service (web search, news, research, other AIs, sub-agents,
 //      picture reading, video rendering) are refused up front, saying why and that nothing was sent.
 //
-// This module holds the request test and the refusal wording; the guard lives in security_intelligence.js.
+// worker.js calls privateTurn (around the whole request) and privateChatGate (inside /api/chat, after the device is
+// authenticated); the egress guard itself lives in security_intelligence.js.
+
+import { holdPrivateEgress, privateEgressHeld } from './security_intelligence.js';
 
 /** True when the phone sent this turn with Private voice on. */
 export function isPrivateRequest(body) {
@@ -90,10 +93,76 @@ export function privateEngineError(detail = '') {
   return error;
 }
 
+function ndjson(text, meta) {
+  return new Response(`${JSON.stringify({ type: 'delta', delta: text })}\n${JSON.stringify({ type: 'done', ...meta })}\n`, {
+    headers: { 'Content-Type': 'application/x-ndjson; charset=utf-8', 'Cache-Control': 'no-store' },
+  });
+}
+
+/**
+ * Inside /api/chat, after the owner's device is authenticated: the refusal Response for a private turn that needs an
+ * outside service, or null. A private turn that may go ahead has its plugin and research fields cleared in place.
+ */
+export function privateChatGate(message, body) {
+  if (!isPrivateRequest(body)) return null;
+  const blocked = privateToolBlock(message, body);
+  if (blocked) return ndjson(blocked.text, { source: 'che_private_voice', ok: false, model_calls: 0, private_blocked: blocked.kind, ...privateDoneFields() });
+  Object.assign(body, privateRequestBody(body));
+  return null;
+}
+
+/** Adds the private fields to the reply's last done event (shown as quiet text on the phone, never spoken). */
+export async function markPrivateReply(response) {
+  if (!response?.ok || !/ndjson/i.test(response.headers.get('Content-Type') || '')) return response;
+  const lines = (await response.text()).split('\n');
+  for (let i = lines.length - 1; i >= 0; i -= 1) {
+    let event = null;
+    try { event = JSON.parse(lines[i]); } catch (_) { event = null; }
+    if (event?.type === 'done') { lines[i] = JSON.stringify({ ...event, ...privateDoneFields() }); break; }
+  }
+  return new Response(lines.join('\n'), { status: response.status, headers: response.headers });
+}
+
+// Background work started while a private turn runs (memory records, summaries) keeps the hold until it settles, so
+// the owner's words cannot reach an outside engine after the reply is sent.
+function holdBackgroundWork(ctx) {
+  if (!ctx?.waitUntil || ctx.waitUntil.chePrivate) return;
+  const original = ctx.waitUntil.bind(ctx);
+  const wrapped = (promise) => {
+    if (!privateEgressHeld()) return original(promise);
+    holdPrivateEgress(1);
+    return original(Promise.resolve(promise).finally(() => holdPrivateEgress(-1)));
+  };
+  wrapped.chePrivate = true;
+  try { ctx.waitUntil = wrapped; } catch (_) { /* a frozen ctx keeps the plain waitUntil */ }
+}
+
+/**
+ * Around the whole Durable Object request: null for anything but a private /api/chat turn; otherwise an object whose
+ * fetchInner runs the state's handler with the private hold on (released afterwards, even on error) and marks the
+ * reply as answered by Workers AI.
+ */
+export async function privateTurn(request, state) {
+  if (request.method !== 'POST' || new URL(request.url).pathname !== '/api/chat') return null;
+  if (!isPrivateRequest(await request.clone().json().catch(() => null))) return null;
+  return {
+    fetchInner: async (req) => {
+      holdPrivateEgress(1);
+      holdBackgroundWork(state.ctx);
+      try {
+        return await markPrivateReply(await state.fetchInner(req));
+      } finally {
+        holdPrivateEgress(-1);
+      }
+    },
+  };
+}
+
 /** Strips a private request's fields that would hand work to outside services before the chat route reads them. */
 export function privateRequestBody(body) {
   return {
     ...body,
+    private: true,
     requested_capabilities: [],
     plugin_tools: [],
     plugin_instructions: [],
