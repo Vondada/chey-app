@@ -77,6 +77,14 @@ Then, on GitHub:
 
 ## 2. Current position
 
+**Claude, 2026-10-25 (owner: FIX CHE'S CODING EVIDENCE AND GPU ROUTING) — read-only audit, no code or job changed.**
+- Main is `9bdd6468` (#632). Live Worker: last `[worker-deploy]` run is `4360d9d0` (#534, success). #632–#635 are NOT deployed; no Worker deploy run exists for `9bdd6468`.
+- Modal: `CHE Modal deploy` runs 40238828084 (`9bdd6468`) and 40238634534 / 40237486454 succeeded, so the Modal app connects. Modal is a compute-pool provider for GPU-only character jobs only (`server/cloudflare/compute_pool.js` ~L86-90, ~L520, ~L707-727; `modal_gpu.js` `modalDispatch` posts `/blender_preview`). Dispatch is held by the owner's credit gates (`modalCreditGate`). No Modal character job is proven on the live Worker from this sandbox.
+- Video: NO Modal route. `tools/modal/che_modal_app.py` has only `/health` and `/blender_preview` (a still PNG). Video renders run only on the free GitHub CPU worker: `.github/workflows/che-video-render.yml` → `tools/che_video_render.py` (PIL frames, ffmpeg libx264 on the Actions runner). That is the CPU-only route the owner saw.
+- Real evidence: `CHE free render gha_9e6ed56f62494ae19e8ca2797afd1282` = run 40239996031 (success, `9bdd6468`), artifact `che-video-gha_9e6ed56f…` 1,077,401 bytes, created 22:24:47Z. The MP4 could NOT be downloaded from the sandbox (artifact blob returns 403), so its playability is UNVERIFIED here.
+- Not done (needs owner decision or a build): (1) a Modal video route (ffmpeg in the Modal image, a `/video_render` route, dispatch and MP4 check in `modal_gpu.js`/`compute_pool.js`); (2) a real Modal test render (blocked by credit gates; owner must say the gate phrases and set Modal's $0 spend limit); (3) CHE answering commit/deploy/Modal-status questions from GitHub and Modal records (not built; the Worker can't call GitHub Actions logs yet from this path); (4) the video pilot job ID is not in the repo or mailbox.
+- Owner ask for Modal spend: a hard $5 stop in code, $15 never reached. Not built yet.
+
 **Claude, 2026-10-25 (owner decision: part knowledge source) — option A chosen.**
 - Parts for any object (boat, engine, body part, room) come from CHE's own knowledge plus research. Every part carries a source label (researched, CHE-knowledge, or unverified) and a cost band. No licensed model library for now.
 - Next build step: a general part-tree format (children, size, material, cost band, source label) with the jet engine as one instance; decomposition answers "I don't know the parts of X yet" instead of inventing them. Not started.
