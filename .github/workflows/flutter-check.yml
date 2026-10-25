@@ -152,6 +152,7 @@ jobs:
           python3 -m pip install --quiet mediapipe==1.1.1 pillow
           python3 -m unittest discover -s tools -p 'test_photo_fit.py' -v
           python3 -m unittest discover -s tools -p 'test_photo_reference_job.py'
+          python3 -m unittest discover -s tools -p 'test_worker_reference.py'
           python3 -m unittest discover -s tools -p 'test_glb_inspect.py'
           python3 -m unittest discover -s tools -p 'test_body_macros.py'
       - name: Claude Code project skills (.claude/skills) tests
