@@ -1,0 +1,1101 @@
+{
+ "version": "matrix-v3.1",
+ "paper_only": true,
+ "live": "disabled",
+ "note": "Research and paper only. Live trading is disabled and no order can be placed from this matrix. Past results do not promise future profit.",
+ "groups": [
+  {
+   "group": "crypto",
+   "run": {
+    "generated_at": "2026-10-25T11:57:29.109Z",
+    "run_id": "40191015468",
+    "run_url": "https://github.com/Vondada/chey-app/actions/runs/40191015468",
+    "commit": "67367925a32d1ac336df38d6c4227d6eb464d455",
+    "engine": "matrix-v3.1"
+   },
+   "coverage": [
+    {
+     "market": "BTC",
+     "tf": "5m",
+     "ok": true,
+     "source": "Coinbase Exchange BTC-USD 5m candles (public API, no account)",
+     "symbol": "BTC-USD",
+     "from": "2026-07-27T11:55:00.000Z",
+     "to": "2026-10-25T11:50:00.000Z",
+     "bars": 25920,
+     "missing_bars": 0,
+     "roll_dates": [],
+     "volume_share": 1,
+     "sessions": "24/7 including weekends; the engine's daily cutoff (flat by 16:55 New York) applies"
+    },
+    {
+     "market": "BTC",
+     "tf": "15m",
+     "ok": true,
+     "source": "Coinbase Exchange BTC-USD 15m candles (public API, no account)",
+     "symbol": "BTC-USD",
+     "from": "2025-10-24T23:45:00.000Z",
+     "to": "2026-10-25T11:30:00.000Z",
+     "bars": 35040,
+     "missing_bars": 48,
+     "roll_dates": [],
+     "volume_share": 1,
+     "sessions": "24/7 including weekends; the engine's daily cutoff (flat by 16:55 New York) applies"
+    },
+    {
+     "market": "BTC",
+     "tf": "1h",
+     "ok": true,
+     "source": "Coinbase Exchange BTC-USD 1h candles (public API, no account)",
+     "symbol": "BTC-USD",
+     "from": "2023-10-26T01:00:00.000Z",
+     "to": "2026-10-25T10:00:00.000Z",
+     "bars": 26280,
+     "missing_bars": 10,
+     "roll_dates": [],
+     "volume_share": 1,
+     "sessions": "24/7 including weekends; the engine's daily cutoff (flat by 16:55 New York) applies"
+    },
+    {
+     "market": "ETH",
+     "tf": "5m",
+     "ok": true,
+     "source": "Coinbase Exchange ETH-USD 5m candles (public API, no account)",
+     "symbol": "ETH-USD",
+     "from": "2026-07-27T11:55:00.000Z",
+     "to": "2026-10-25T11:50:00.000Z",
+     "bars": 25920,
+     "missing_bars": 0,
+     "roll_dates": [],
+     "volume_share": 1,
+     "sessions": "24/7 including weekends; the engine's daily cutoff (flat by 16:55 New York) applies"
+    },
+    {
+     "market": "ETH",
+     "tf": "15m",
+     "ok": true,
+     "source": "Coinbase Exchange ETH-USD 15m candles (public API, no account)",
+     "symbol": "ETH-USD",
+     "from": "2025-10-24T23:45:00.000Z",
+     "to": "2026-10-25T11:30:00.000Z",
+     "bars": 35040,
+     "missing_bars": 48,
+     "roll_dates": [],
+     "volume_share": 1,
+     "sessions": "24/7 including weekends; the engine's daily cutoff (flat by 16:55 New York) applies"
+    },
+    {
+     "market": "ETH",
+     "tf": "1h",
+     "ok": true,
+     "source": "Coinbase Exchange ETH-USD 1h candles (public API, no account)",
+     "symbol": "ETH-USD",
+     "from": "2023-10-26T01:00:00.000Z",
+     "to": "2026-10-25T10:00:00.000Z",
+     "bars": 26280,
+     "missing_bars": 10,
+     "roll_dates": [],
+     "volume_share": 1,
+     "sessions": "24/7 including weekends; the engine's daily cutoff (flat by 16:55 New York) applies"
+    }
+   ],
+   "freshness": {
+    "state": "fresh",
+    "age_hours": 1,
+    "generated_at": "2026-10-25T11:57:29.109Z"
+   },
+   "pending": false
+  },
+  {
+   "group": "futures",
+   "run": {
+    "generated_at": "2026-10-25T11:57:32.812Z",
+    "run_id": "40191017025",
+    "run_url": "https://github.com/Vondada/chey-app/actions/runs/40191017025",
+    "commit": "67367925a32d1ac336df38d6c4227d6eb464d455",
+    "engine": "matrix-v3.1"
+   },
+   "coverage": [
+    {
+     "market": "MNQ",
+     "tf": "5m",
+     "ok": true,
+     "source": "Yahoo Finance chart (public, free, delayed) MNQ=F 5m bars (public, DELAYED; continuous front month, unadjusted)",
+     "symbol": "MNQ=F",
+     "from": "2026-08-17T04:00:00.000Z",
+     "to": "2026-10-23T20:50:00.000Z",
+     "bars": 13320,
+     "missing_bars": 361,
+     "roll_dates": [
+      "2026-09-10"
+     ],
+     "volume_share": 0.997,
+     "sessions": "CME Globex hours only (Sunday 18:00 to Friday 17:00 New York, daily 17:00–18:00 break)"
+    },
+    {
+     "market": "MNQ",
+     "tf": "15m",
+     "ok": true,
+     "source": "Yahoo Finance chart (public, free, delayed) MNQ=F 15m bars (public, DELAYED; continuous front month, unadjusted)",
+     "symbol": "MNQ=F",
+     "from": "2026-08-17T04:00:00.000Z",
+     "to": "2026-10-23T20:30:00.000Z",
+     "bars": 4461,
+     "missing_bars": 100,
+     "roll_dates": [
+      "2026-09-10"
+     ],
+     "volume_share": 1,
+     "sessions": "CME Globex hours only (Sunday 18:00 to Friday 17:00 New York, daily 17:00–18:00 break)"
+    },
+    {
+     "market": "MNQ",
+     "tf": "1h",
+     "ok": true,
+     "source": "Yahoo Finance chart (public, free, delayed) MNQ=F 1h bars (public, DELAYED; continuous front month, unadjusted)",
+     "symbol": "MNQ=F",
+     "from": "2024-06-04T04:00:00.000Z",
+     "to": "2026-10-23T19:00:00.000Z",
+     "bars": 13649,
+     "missing_bars": 539,
+     "roll_dates": [
+      "2024-06-13",
+      "2024-09-12",
+      "2024-12-12",
+      "2025-03-13",
+      "2025-06-12",
+      "2025-09-11",
+      "2025-12-11",
+      "2026-03-12",
+      "2026-06-11",
+      "2026-09-10"
+     ],
+     "volume_share": 0.962,
+     "sessions": "CME Globex hours only (Sunday 18:00 to Friday 17:00 New York, daily 17:00–18:00 break)"
+    },
+    {
+     "market": "NQ",
+     "tf": "5m",
+     "ok": true,
+     "source": "Yahoo Finance chart (public, free, delayed) NQ=F 5m bars (public, DELAYED; continuous front month, unadjusted)",
+     "symbol": "NQ=F",
+     "from": "2026-08-17T04:00:00.000Z",
+     "to": "2026-10-23T20:50:00.000Z",
+     "bars": 13320,
+     "missing_bars": 361,
+     "roll_dates": [
+      "2026-09-10"
+     ],
+     "volume_share": 0.997,
+     "sessions": "CME Globex hours only (Sunday 18:00 to Friday 17:00 New York, daily 17:00–18:00 break)"
+    },
+    {
+     "market": "NQ",
+     "tf": "15m",
+     "ok": true,
+     "source": "Yahoo Finance chart (public, free, delayed) NQ=F 15m bars (public, DELAYED; continuous front month, unadjusted)",
+     "symbol": "NQ=F",
+     "from": "2026-08-17T04:00:00.000Z",
+     "to": "2026-10-23T20:30:00.000Z",
+     "bars": 4461,
+     "missing_bars": 100,
+     "roll_dates": [
+      "2026-09-10"
+     ],
+     "volume_share": 1,
+     "sessions": "CME Globex hours only (Sunday 18:00 to Friday 17:00 New York, daily 17:00–18:00 break)"
+    },
+    {
+     "market": "NQ",
+     "tf": "1h",
+     "ok": true,
+     "source": "Yahoo Finance chart (public, free, delayed) NQ=F 1h bars (public, DELAYED; continuous front month, unadjusted)",
+     "symbol": "NQ=F",
+     "from": "2024-06-04T04:00:00.000Z",
+     "to": "2026-10-23T19:00:00.000Z",
+     "bars": 13609,
+     "missing_bars": 575,
+     "roll_dates": [
+      "2024-06-13",
+      "2024-09-12",
+      "2024-12-12",
+      "2025-03-13",
+      "2025-06-12",
+      "2025-09-11",
+      "2025-12-11",
+      "2026-03-12",
+      "2026-06-11",
+      "2026-09-10"
+     ],
+     "volume_share": 0.964,
+     "sessions": "CME Globex hours only (Sunday 18:00 to Friday 17:00 New York, daily 17:00–18:00 break)"
+    }
+   ],
+   "freshness": {
+    "state": "fresh",
+    "age_hours": 1,
+    "generated_at": "2026-10-25T11:57:32.812Z"
+   },
+   "pending": false
+  }
+ ],
+ "cost_models": {
+  "MNQ": "MNQ: 1 tick spread (0.25 pt = $0.50, half per side), 1 tick slippage per market order or stop, $1.50 commission + $0.50 exchange/NFA fees per side; about $5.50 per round turn.",
+  "NQ": "NQ: 1 tick spread (0.25 pt = $5, half per side), 1 tick slippage per market order or stop, $1.50 commission + $1.40 exchange/NFA fees per side; about $20.80 per round turn.",
+  "BTC": "BTC: Coinbase 0.60% taker on entries, stops and time exits, 0.40% maker on targets, $1 spread and $2 slippage per side (per coin).",
+  "ETH": "ETH: Coinbase 0.60% taker on entries, stops and time exits, 0.40% maker on targets, $0.10 spread and $0.10 slippage per side (per coin)."
+ },
+ "strategies": [
+  {
+   "key": "ema20-pullback",
+   "name": "EMA 20 pullback",
+   "rules": "Long: 20 EMA above the 50 EMA and rising; the bar touches the 20 EMA and closes above it on an up bar. Short: mirror. Stop 1 tick beyond the two-bar extreme.",
+   "timeframes": [
+    "5m",
+    "15m",
+    "1h"
+   ]
+  },
+  {
+   "key": "vwap-reversion",
+   "name": "VWAP reversion",
+   "rules": "Session VWAP from 18:00 New York. Long: a close below VWAP minus 2 standard deviations, then a close back inside on an up bar. Short: mirror. Stop 1 tick beyond the two-bar extreme. Target: VWAP.",
+   "timeframes": [
+    "5m",
+    "15m",
+    "1h"
+   ]
+  },
+  {
+   "key": "sweep-reclaim",
+   "name": "Liquidity sweep and reclaim",
+   "rules": "Long: the bar trades below the last confirmed swing low, closes back above it and above the prior bar high. Short: mirror at the last swing high. Stop 1 tick beyond the sweep extreme.",
+   "timeframes": [
+    "5m",
+    "15m",
+    "1h"
+   ]
+  },
+  {
+   "key": "opening-range-breakout",
+   "name": "Opening range breakout",
+   "rules": "Range: high and low of 9:30–9:45 New York. Entry: the first 5-minute close above the high (long) or below the low (short) between 9:45 and 11:30. Stop: the middle of the range. Target: the R multiple of the portfolio. Flat by 15:55 New York.",
+   "timeframes": [
+    "5m",
+    "15m"
+   ]
+  },
+  {
+   "key": "breakout-retest",
+   "name": "Trend breakout and retest",
+   "rules": "Breakout: within the last 10 bars, a close above the high of the 20 bars before it (long) or below their low (short), with no close back inside since. Entry: a later bar trades back to the broken level (within 0.25 ATR) and closes beyond it in the breakout direction; market order at the next open. Stop: 1 tick beyond the retest bar. Target: the R multiple of the portfolio.",
+   "timeframes": [
+    "5m",
+    "15m",
+    "1h"
+   ]
+  },
+  {
+   "key": "momentum-continuation",
+   "name": "Momentum continuation",
+   "rules": "Long: 20 EMA above the 50 EMA and rising; the previous bar is an up displacement (body at least 1.5 ATR, close in the top quarter of its range); this bar closes above the displacement high. Short: mirror. Stop: 1 tick beyond the displacement bar's far end. Target: the R multiple of the portfolio.",
+   "timeframes": [
+    "5m",
+    "15m",
+    "1h"
+   ]
+  },
+  {
+   "key": "range-rejection",
+   "name": "Range rejection",
+   "rules": "Range: the 20-bar efficiency ratio is 0.25 or less (choppy). Long: the bar trades into the bottom 10% of the prior 20-bar range and closes up, in the upper half of its own range, below the range midpoint. Short: mirror at the top. Stop: 1 tick beyond the bar or the range edge, whichever is further. Target: the range midpoint.",
+   "timeframes": [
+    "5m",
+    "15m",
+    "1h"
+   ]
+  },
+  {
+   "key": "volatility-squeeze",
+   "name": "Volatility contraction and expansion",
+   "rules": "Contraction: the previous bar's Bollinger(20, 2σ) band width is in the narrowest 10% of its last 100 values. Expansion: this bar closes outside the band with a true range of at least 1.2 ATR; above is long, below is short. Stop: the band middle (20-bar average). Target: the R multiple of the portfolio.",
+   "timeframes": [
+    "5m",
+    "15m",
+    "1h"
+   ]
+  }
+ ],
+ "limits": {
+  "per_market": 2,
+  "total": 4,
+  "min_sample": 30
+ },
+ "best": {
+  "BTC": null,
+  "ETH": null,
+  "MNQ": "breakout-retest|MNQ|1h",
+  "NQ": "breakout-retest|NQ|1h"
+ },
+ "rows": [
+  {
+   "strategy": "breakout-retest",
+   "candidate": "breakout-retest-5m",
+   "name": "Trend breakout and retest",
+   "rules": "Breakout: within the last 10 bars, a close above the high of the 20 bars before it (long) or below their low (short), with no close back inside since. Entry: a later bar trades back to the broken level (within 0.25 ATR) and closes beyond it in the breakout direction; market order at the next open. Stop: 1 tick beyond the retest bar. Target: the R multiple of the portfolio.",
+   "market": "MNQ",
+   "asset": "futures",
+   "tf": "1h",
+   "status": "ok",
+   "trades_tested": 269,
+   "qualified_samples": 180,
+   "full": {
+    "trades": 269,
+    "win_rate": 43.87,
+    "avg_winner": 108.97,
+    "avg_loser": -65.41,
+    "risk_reward": 1.67,
+    "net_pnl": 2982.5,
+    "expectancy_dollars": 11.09,
+    "expectancy_r": 0.1318,
+    "expectancy_r_95ci": {
+     "low": -0.0373,
+     "high": 0.3008
+    },
+    "profit_factor": 1.3,
+    "max_drawdown": 784.5,
+    "max_drawdown_r": 12.8541,
+    "costs_paid": 1431.5
+   },
+   "oos": {
+    "trades": 180,
+    "win_rate": 51.11,
+    "avg_winner": 93.45,
+    "avg_loser": -70.49,
+    "risk_reward": 1.33,
+    "net_pnl": 2394,
+    "expectancy_dollars": 13.3,
+    "expectancy_r": 0.1696,
+    "expectancy_r_95ci": {
+     "low": -0.0161,
+     "high": 0.3554
+    },
+    "profit_factor": 1.39,
+    "max_drawdown": 679.5,
+    "max_drawdown_r": 7.2496,
+    "costs_paid": 951.5
+   },
+   "gross_expectancy_r": 0.2699,
+   "walk_forward": {
+    "method": "rolling: 8 equal slices, train 3, test the next 1, step 1; target chosen on train only (1.5R, 2R or 3R)",
+    "windows": [
+     {
+      "window": 1,
+      "train_from": "2024-06-04T04:00:00.000Z",
+      "train_to": "2025-04-28T06:00:00.000Z",
+      "test_from": "2025-04-28T06:00:00.000Z",
+      "test_to": "2025-08-12T01:00:00.000Z",
+      "chosen_target_r": 1.5,
+      "train_trades": 97,
+      "test_trades": 47,
+      "test_expectancy_r": 0.0772,
+      "test_net_pnl": 175.5
+     }
+    ],
+    "folds": 5,
+    "folds_positive": 5
+   },
+   "hours": {
+    "best": {
+     "hour": 3,
+     "trades": 8,
+     "expectancy_r": 0.7549
+    },
+    "worst": {
+     "hour": 20,
+     "trades": 24,
+     "expectancy_r": -0.2611
+    },
+    "min_trades": 8,
+    "basis": "full period at 2R, entry hour in New York time"
+   },
+   "regimes": [
+    {
+     "key": "normal",
+     "trades": 50,
+     "expectancy_r": 0.0116
+    },
+    {
+     "key": "high",
+     "trades": 47,
+     "expectancy_r": -0.0082
+    },
+    {
+     "key": "low",
+     "trades": 83,
+     "expectancy_r": 0.3655
+    }
+   ],
+   "regime_stability": 0.67,
+   "recent_oos": {
+    "trades": 60,
+    "expectancy_r": 0.1072
+   },
+   "look_ahead": "passed",
+   "confidence": "moderate",
+   "key": "breakout-retest|MNQ|1h",
+   "tier": "ranked",
+   "paper_priority": 1,
+   "score": 56.5,
+   "reasons": [
+    "expectancy 0.1696R after costs",
+    "win rate 51.11% against the 42.92% its 1.33 reward:risk needs",
+    "positive in 67% of volatility regimes",
+    "recent out-of-sample 0.1072R on 60"
+   ],
+   "status_detail": {
+    "backtest": "tested",
+    "forward_paper": "no paper trades yet",
+    "live": "disabled"
+   },
+   "paper": null,
+   "sentence": "Trend breakout and retest on MNQ hourly bars: 180 out-of-sample trades after costs, 51.11% winners after costs, average win $93.45, average loss $70.49, net $2394.00, 0.1696R per trade, profit factor 1.39, worst drawdown $679.50. Best New York hour 3 AM (0.7549R), worst 8 PM (-0.2611R). Confidence moderate."
+  },
+  {
+   "strategy": "breakout-retest",
+   "candidate": "breakout-retest-5m",
+   "name": "Trend breakout and retest",
+   "rules": "Breakout: within the last 10 bars, a close above the high of the 20 bars before it (long) or below their low (short), with no close back inside since. Entry: a later bar trades back to the broken level (within 0.25 ATR) and closes beyond it in the breakout direction; market order at the next open. Stop: 1 tick beyond the retest bar. Target: the R multiple of the portfolio.",
+   "market": "NQ",
+   "asset": "futures",
+   "tf": "1h",
+   "status": "ok",
+   "trades_tested": 278,
+   "qualified_samples": 181,
+   "full": {
+    "trades": 278,
+    "win_rate": 41.73,
+    "avg_winner": 1130.75,
+    "avg_loser": -615.55,
+    "risk_reward": 1.84,
+    "net_pnl": 31447.6,
+    "expectancy_dollars": 113.12,
+    "expectancy_r": 0.1428,
+    "expectancy_r_95ci": {
+     "low": -0.0227,
+     "high": 0.3082
+    },
+    "profit_factor": 1.32,
+    "max_drawdown": 8024.6,
+    "max_drawdown_r": 12.5025,
+    "costs_paid": 5307.4
+   },
+   "oos": {
+    "trades": 181,
+    "win_rate": 44.75,
+    "avg_winner": 1054.66,
+    "avg_loser": -642,
+    "risk_reward": 1.64,
+    "net_pnl": 21227.7,
+    "expectancy_dollars": 117.28,
+    "expectancy_r": 0.1464,
+    "expectancy_r_95ci": {
+     "low": -0.0497,
+     "high": 0.3426
+    },
+    "profit_factor": 1.33,
+    "max_drawdown": 8343.4,
+    "max_drawdown_r": 11.7038,
+    "costs_paid": 3439.8
+   },
+   "gross_expectancy_r": 0.1832,
+   "walk_forward": {
+    "method": "rolling: 8 equal slices, train 3, test the next 1, step 1; target chosen on train only (1.5R, 2R or 3R)",
+    "windows": [
+     {
+      "window": 1,
+      "train_from": "2024-06-04T04:00:00.000Z",
+      "train_to": "2025-04-28T18:00:00.000Z",
+      "test_from": "2025-04-28T18:00:00.000Z",
+      "test_to": "2025-08-12T15:00:00.000Z",
+      "chosen_target_r": 3,
+      "train_trades": 96,
+      "test_trades": 47,
+      "test_expectancy_r": -0.1655,
+      "test_net_pnl": -3812.6
+     }
+    ],
+    "folds": 5,
+    "folds_positive": 3
+   },
+   "hours": {
+    "best": {
+     "hour": 7,
+     "trades": 11,
+     "expectancy_r": 0.8636
+    },
+    "worst": {
+     "hour": 15,
+     "trades": 13,
+     "expectancy_r": -0.4133
+    },
+    "min_trades": 8,
+    "basis": "full period at 2R, entry hour in New York time"
+   },
+   "regimes": [
+    {
+     "key": "normal",
+     "trades": 49,
+     "expectancy_r": 0.0795
+    },
+    {
+     "key": "high",
+     "trades": 47,
+     "expectancy_r": -0.0793
+    },
+    {
+     "key": "low",
+     "trades": 85,
+     "expectancy_r": 0.3098
+    }
+   ],
+   "regime_stability": 0.67,
+   "recent_oos": {
+    "trades": 61,
+    "expectancy_r": 0.0393
+   },
+   "look_ahead": "passed",
+   "confidence": "moderate",
+   "key": "breakout-retest|NQ|1h",
+   "tier": "ranked",
+   "paper_priority": 2,
+   "score": 48.2,
+   "reasons": [
+    "expectancy 0.1464R after costs",
+    "win rate 44.75% against the 37.88% its 1.64 reward:risk needs",
+    "positive in 67% of volatility regimes",
+    "recent out-of-sample 0.0393R on 61"
+   ],
+   "status_detail": {
+    "backtest": "tested",
+    "forward_paper": "no paper trades yet",
+    "live": "disabled"
+   },
+   "paper": null,
+   "sentence": "Trend breakout and retest on NQ hourly bars: 181 out-of-sample trades after costs, 44.75% winners after costs, average win $1054.66, average loss $642.00, net $21227.70, 0.1464R per trade, profit factor 1.33, worst drawdown $8343.40. Best New York hour 7 AM (0.8636R), worst 3 PM (-0.4133R). Confidence moderate."
+  },
+  {
+   "strategy": "volatility-squeeze",
+   "candidate": "vol-squeeze-5m",
+   "name": "Volatility contraction and expansion",
+   "rules": "Contraction: the previous bar's Bollinger(20, 2σ) band width is in the narrowest 10% of its last 100 values. Expansion: this bar closes outside the band with a true range of at least 1.2 ATR; above is long, below is short. Stop: the band middle (20-bar average). Target: the R multiple of the portfolio.",
+   "market": "NQ",
+   "asset": "futures",
+   "tf": "15m",
+   "status": "ok",
+   "trades_tested": 32,
+   "qualified_samples": 20,
+   "full": {
+    "trades": 32,
+    "win_rate": 40.63,
+    "avg_winner": 1658.39,
+    "avg_loser": -928.29,
+    "risk_reward": 1.79,
+    "net_pnl": 3921.65,
+    "expectancy_dollars": 122.55,
+    "expectancy_r": 0.1753,
+    "expectancy_r_95ci": {
+     "low": -0.3413,
+     "high": 0.6919
+    },
+    "profit_factor": 1.22,
+    "max_drawdown": 5476.65,
+    "max_drawdown_r": 6.4392,
+    "costs_paid": 605.6
+   },
+   "oos": {
+    "trades": 20,
+    "win_rate": 40,
+    "avg_winner": 1662.61,
+    "avg_loser": -989.05,
+    "risk_reward": 1.68,
+    "net_pnl": 1432.25,
+    "expectancy_dollars": 71.61,
+    "expectancy_r": 0.2239,
+    "expectancy_r_95ci": {
+     "low": -0.4936,
+     "high": 0.9413
+    },
+    "profit_factor": 1.12,
+    "max_drawdown": 5308,
+    "max_drawdown_r": 5.1008,
+    "costs_paid": 376
+   },
+   "gross_expectancy_r": 0.2457,
+   "walk_forward": {
+    "method": "rolling: 8 equal slices, train 3, test the next 1, step 1; target chosen on train only (1.5R, 2R or 3R)",
+    "windows": [
+     {
+      "window": 1,
+      "train_from": "2026-08-17T04:00:00.000Z",
+      "train_to": "2026-09-11T13:45:00.000Z",
+      "test_from": "2026-09-11T13:45:00.000Z",
+      "test_to": "2026-09-21T15:00:00.000Z",
+      "chosen_target_r": 1.5,
+      "train_trades": 12,
+      "test_trades": 8,
+      "test_expectancy_r": 0.5699,
+      "test_net_pnl": 3825.1
+     }
+    ],
+    "folds": 5,
+    "folds_positive": 2
+   },
+   "hours": {
+    "best": null,
+    "worst": null,
+    "min_trades": 8,
+    "basis": "full period at 2R, entry hour in New York time"
+   },
+   "regimes": [
+    {
+     "key": "low",
+     "trades": 17,
+     "expectancy_r": 0.1964
+    },
+    {
+     "key": "normal",
+     "trades": 3,
+     "expectancy_r": 0.3795
+    }
+   ],
+   "regime_stability": 1,
+   "recent_oos": {
+    "trades": 7,
+    "expectancy_r": 0.717
+   },
+   "look_ahead": "passed",
+   "confidence": "insufficient sample",
+   "key": "volatility-squeeze|NQ|15m",
+   "tier": "insufficient sample",
+   "paper_priority": 13,
+   "score": null,
+   "reasons": [
+    "20 out-of-sample trades; 30 are needed before it is ranked"
+   ],
+   "status_detail": {
+    "backtest": "tested",
+    "forward_paper": "no paper trades yet",
+    "live": "disabled"
+   },
+   "paper": null,
+   "sentence": "Volatility contraction and expansion on NQ 15-minute bars: 20 out-of-sample trades from 32 tested, an insufficient sample, so it is not ranked."
+  },
+  {
+   "strategy": "volatility-squeeze",
+   "candidate": "vol-squeeze-5m",
+   "name": "Volatility contraction and expansion",
+   "rules": "Contraction: the previous bar's Bollinger(20, 2σ) band width is in the narrowest 10% of its last 100 values. Expansion: this bar closes outside the band with a true range of at least 1.2 ATR; above is long, below is short. Stop: the band middle (20-bar average). Target: the R multiple of the portfolio.",
+   "market": "MNQ",
+   "asset": "futures",
+   "tf": "15m",
+   "status": "ok",
+   "trades_tested": 29,
+   "qualified_samples": 18,
+   "full": {
+    "trades": 29,
+    "win_rate": 37.93,
+    "avg_winner": 163.34,
+    "avg_loser": -101.7,
+    "risk_reward": 1.61,
+    "net_pnl": -33.78,
+    "expectancy_dollars": -1.16,
+    "expectancy_r": 0.0397,
+    "expectancy_r_95ci": {
+     "low": -0.4874,
+     "high": 0.5668
+    },
+    "profit_factor": 0.98,
+    "max_drawdown": 637.78,
+    "max_drawdown_r": 6.6575,
+    "costs_paid": 154.5
+   },
+   "oos": {
+    "trades": 18,
+    "win_rate": 44.44,
+    "avg_winner": 148.75,
+    "avg_loser": -98.99,
+    "risk_reward": 1.5,
+    "net_pnl": 200.03,
+    "expectancy_dollars": 11.11,
+    "expectancy_r": 0.1616,
+    "expectancy_r_95ci": {
+     "low": -0.4932,
+     "high": 0.8164
+    },
+    "profit_factor": 1.2,
+    "max_drawdown": 275.4,
+    "max_drawdown_r": 3.1936,
+    "costs_paid": 95
+   },
+   "gross_expectancy_r": 0.2216,
+   "walk_forward": {
+    "method": "rolling: 8 equal slices, train 3, test the next 1, step 1; target chosen on train only (1.5R, 2R or 3R)",
+    "windows": [
+     {
+      "window": 1,
+      "train_from": "2026-08-17T04:00:00.000Z",
+      "train_to": "2026-09-11T13:45:00.000Z",
+      "test_from": "2026-09-11T13:45:00.000Z",
+      "test_to": "2026-09-21T15:00:00.000Z",
+      "chosen_target_r": 1.5,
+      "train_trades": 11,
+      "test_trades": 7,
+      "test_expectancy_r": 0.3665,
+      "test_net_pnl": 263.63
+     }
+    ],
+    "folds": 5,
+    "folds_positive": 3
+   },
+   "hours": {
+    "best": null,
+    "worst": null,
+    "min_trades": 8,
+    "basis": "full period at 2R, entry hour in New York time"
+   },
+   "regimes": [
+    {
+     "key": "low",
+     "trades": 14,
+     "expectancy_r": 0.0758
+    },
+    {
+     "key": "normal",
+     "trades": 4,
+     "expectancy_r": 0.462
+    }
+   ],
+   "regime_stability": 1,
+   "recent_oos": {
+    "trades": 6,
+    "expectancy_r": -0.0779
+   },
+   "look_ahead": "passed",
+   "confidence": "insufficient sample",
+   "key": "volatility-squeeze|MNQ|15m",
+   "tier": "insufficient sample",
+   "paper_priority": 14,
+   "score": null,
+   "reasons": [
+    "18 out-of-sample trades; 30 are needed before it is ranked"
+   ],
+   "status_detail": {
+    "backtest": "tested",
+    "forward_paper": "no paper trades yet",
+    "live": "disabled"
+   },
+   "paper": null,
+   "sentence": "Volatility contraction and expansion on MNQ 15-minute bars: 18 out-of-sample trades from 29 tested, an insufficient sample, so it is not ranked."
+  },
+  {
+   "strategy": "range-rejection",
+   "candidate": "range-reject-5m",
+   "name": "Range rejection",
+   "rules": "Range: the 20-bar efficiency ratio is 0.25 or less (choppy). Long: the bar trades into the bottom 10% of the prior 20-bar range and closes up, in the upper half of its own range, below the range midpoint. Short: mirror at the top. Stop: 1 tick beyond the bar or the range edge, whichever is further. Target: the range midpoint.",
+   "market": "BTC",
+   "asset": "crypto",
+   "tf": "15m",
+   "status": "ok",
+   "trades_tested": 1660,
+   "qualified_samples": 1043,
+   "full": {
+    "trades": 1660,
+    "win_rate": 1.2,
+    "avg_winner": 2.19,
+    "avg_loser": -8.68,
+    "risk_reward": 0.25,
+    "net_pnl": -14187.44,
+    "expectancy_dollars": -8.55,
+    "expectancy_r": -4.6749,
+    "expectancy_r_95ci": {
+     "low": -4.8147,
+     "high": -4.5351
+    },
+    "profit_factor": 0,
+    "max_drawdown": 14187.44,
+    "max_drawdown_r": 7760.3375,
+    "costs_paid": 14374.13
+   },
+   "oos": {
+    "trades": 1043,
+    "win_rate": 0.58,
+    "avg_winner": 3.43,
+    "avg_loser": -8.02,
+    "risk_reward": 0.43,
+    "net_pnl": -8297.44,
+    "expectancy_dollars": -7.96,
+    "expectancy_r": -5.0363,
+    "expectancy_r_95ci": {
+     "low": -5.2147,
+     "high": -4.8578
+    },
+    "profit_factor": 0,
+    "max_drawdown": 8297.44,
+    "max_drawdown_r": 5252.8094,
+    "costs_paid": 8393.02
+   },
+   "gross_expectancy_r": 0.0501,
+   "walk_forward": {
+    "method": "rolling: 8 equal slices, train 3, test the next 1, step 1; target chosen on train only (1.5R, 2R or 3R)",
+    "windows": [
+     {
+      "window": 1,
+      "train_from": "2025-10-24T23:45:00.000Z",
+      "train_to": "2026-03-11T02:30:00.000Z",
+      "test_from": "2026-03-11T02:30:00.000Z",
+      "test_to": "2026-04-25T17:30:00.000Z",
+      "chosen_target_r": 1.5,
+      "train_trades": 617,
+      "test_trades": 192,
+      "test_expectancy_r": -4.3017,
+      "test_net_pnl": -1507.68
+     }
+    ],
+    "folds": 5,
+    "folds_positive": 0
+   },
+   "hours": {
+    "best": {
+     "hour": 10,
+     "trades": 102,
+     "expectancy_r": -3.2597
+    },
+    "worst": {
+     "hour": 7,
+     "trades": 74,
+     "expectancy_r": -5.7976
+    },
+    "min_trades": 8,
+    "basis": "full period at 2R, entry hour in New York time"
+   },
+   "regimes": [
+    {
+     "key": "low",
+     "trades": 400,
+     "expectancy_r": -6.127
+    },
+    {
+     "key": "high",
+     "trades": 365,
+     "expectancy_r": -3.9328
+    },
+    {
+     "key": "normal",
+     "trades": 278,
+     "expectancy_r": -4.9156
+    }
+   ],
+   "regime_stability": 0,
+   "recent_oos": {
+    "trades": 348,
+    "expectancy_r": -5.3532
+   },
+   "look_ahead": "passed",
+   "confidence": "low",
+   "key": "range-rejection|BTC|15m",
+   "tier": "demoted",
+   "paper_priority": null,
+   "score": null,
+   "reasons": [
+    "out-of-sample expectancy -5.0363R on 1043 trades, 95% upper bound -4.8578R is below zero",
+    "out-of-sample drawdown 5252.8094R is deeper than its 104.3R limit"
+   ],
+   "status_detail": {
+    "backtest": "tested",
+    "forward_paper": "no paper trades yet",
+    "live": "disabled"
+   },
+   "paper": null,
+   "sentence": "Range rejection on BTC 15-minute bars: 1043 out-of-sample trades after costs, 0.58% winners after costs, average win $3.43, average loss $8.02, net minus $8297.44, -5.0363R per trade, profit factor 0, worst drawdown $8297.44. Best New York hour 10 AM (-3.2597R), worst 7 AM (-5.7976R). Confidence low."
+  },
+  {
+   "strategy": "range-rejection",
+   "candidate": "range-reject-5m",
+   "name": "Range rejection",
+   "rules": "Range: the 20-bar efficiency ratio is 0.25 or less (choppy). Long: the bar trades into the bottom 10% of the prior 20-bar range and closes up, in the upper half of its own range, below the range midpoint. Short: mirror at the top. Stop: 1 tick beyond the bar or the range edge, whichever is further. Target: the range midpoint.",
+   "market": "ETH",
+   "asset": "crypto",
+   "tf": "15m",
+   "status": "ok",
+   "trades_tested": 1521,
+   "qualified_samples": 990,
+   "full": {
+    "trades": 1521,
+    "win_rate": 1.64,
+    "avg_winner": 3.85,
+    "avg_loser": -6.75,
+    "risk_reward": 0.57,
+    "net_pnl": -10004.38,
+    "expectancy_dollars": -6.58,
+    "expectancy_r": -3.7498,
+    "expectancy_r_95ci": {
+     "low": -3.8787,
+     "high": -3.6209
+    },
+    "profit_factor": 0.01,
+    "max_drawdown": 10004.38,
+    "max_drawdown_r": 5703.4126,
+    "costs_paid": 10178.92
+   },
+   "oos": {
+    "trades": 990,
+    "win_rate": 0.81,
+    "avg_winner": 1.94,
+    "avg_loser": -6.11,
+    "risk_reward": 0.32,
+    "net_pnl": -5983.51,
+    "expectancy_dollars": -6.04,
+    "expectancy_r": -4.1142,
+    "expectancy_r_95ci": {
+     "low": -4.2738,
+     "high": -3.9547
+    },
+    "profit_factor": 0,
+    "max_drawdown": 5983.51,
+    "max_drawdown_r": 4073.1013,
+    "costs_paid": 5957.32
+   },
+   "gross_expectancy_r": -0.0334,
+   "walk_forward": {
+    "method": "rolling: 8 equal slices, train 3, test the next 1, step 1; target chosen on train only (1.5R, 2R or 3R)",
+    "windows": [
+     {
+      "window": 1,
+      "train_from": "2025-10-24T23:45:00.000Z",
+      "train_to": "2026-03-11T02:30:00.000Z",
+      "test_from": "2026-03-11T02:30:00.000Z",
+      "test_to": "2026-04-25T17:30:00.000Z",
+      "chosen_target_r": 1.5,
+      "train_trades": 531,
+      "test_trades": 185,
+      "test_expectancy_r": -3.2803,
+      "test_net_pnl": -1155.79
+     }
+    ],
+    "folds": 5,
+    "folds_positive": 0
+   },
+   "hours": {
+    "best": {
+     "hour": 12,
+     "trades": 56,
+     "expectancy_r": -2.487
+    },
+    "worst": {
+     "hour": 3,
+     "trades": 76,
+     "expectancy_r": -4.8784
+    },
+    "min_trades": 8,
+    "basis": "full period at 2R, entry hour in New York time"
+   },
+   "regimes": [
+    {
+     "key": "low",
+     "trades": 445,
+     "expectancy_r": -5.0054
+    },
+    {
+     "key": "high",
+     "trades": 275,
+     "expectancy_r": -2.9607
+    },
+    {
+     "key": "normal",
+     "trades": 270,
+     "expectancy_r": -3.8204
+    }
+   ],
+   "regime_stability": 0,
+   "recent_oos": {
+    "trades": 330,
+    "expectancy_r": -4.5122
+   },
+   "look_ahead": "passed",
+   "confidence": "low",
+   "key": "range-rejection|ETH|15m",
+   "tier": "demoted",
+   "paper_priority": null,
+   "score": null,
+   "reasons": [
+    "out-of-sample expectancy -4.1142R on 990 trades, 95% upper bound -3.9547R is below zero",
+    "out-of-sample drawdown 4073.1013R is deeper than its 99R limit"
+   ],
+   "status_detail": {
+    "backtest": "tested",
+    "forward_paper": "no paper trades yet",
+    "live": "disabled"
+   },
+   "paper": null,
+   "sentence": "Range rejection on ETH 15-minute bars: 990 out-of-sample trades after costs, 0.81% winners after costs, average win $1.94, average loss $6.11, net minus $5983.51, -4.1142R per trade, profit factor 0, worst drawdown $5983.51. Best New York hour 12 PM (-2.487R), worst 3 AM (-4.8784R). Confidence low."
+  },
+  {
+   "strategy": "opening-range-breakout",
+   "candidate": "orb-15m",
+   "name": "Opening range breakout",
+   "rules": "Range: high and low of 9:30–9:45 New York. Entry: the first 5-minute close above the high (long) or below the low (short) between 9:45 and 11:30. Stop: the middle of the range. Target: the R multiple of the portfolio. Flat by 15:55 New York.",
+   "market": "BTC",
+   "asset": "crypto",
+   "tf": "1h",
+   "status": "not_applicable",
+   "reason": "Opening range breakout is defined on 5m and 15m bars only: a 1h bar is longer than the 15-minute opening range",
+   "key": "opening-range-breakout|BTC|1h",
+   "tier": "not applicable",
+   "paper_priority": null,
+   "score": null,
+   "reasons": [
+    "Opening range breakout is defined on 5m and 15m bars only: a 1h bar is longer than the 15-minute opening range"
+   ],
+   "status_detail": {
+    "backtest": "tested",
+    "forward_paper": "no paper trades yet",
+    "live": "disabled"
+   },
+   "paper": null,
+   "sentence": "Opening range breakout on BTC hourly bars: not tested. Opening range breakout is defined on 5m and 15m bars only: a 1h bar is longer than the 15-minute opening range.",
+   "walk_forward": {
+    "windows": []
+   }
+  },
+  {
+   "strategy": "opening-range-breakout",
+   "candidate": "orb-15m",
+   "name": "Opening range breakout",
+   "rules": "Range: high and low of 9:30–9:45 New York. Entry: the first 5-minute close above the high (long) or below the low (short) between 9:45 and 11:30. Stop: the middle of the range. Target: the R multiple of the portfolio. Flat by 15:55 New York.",
+   "market": "ETH",
+   "asset": "crypto",
+   "tf": "1h",
+   "status": "not_applicable",
+   "reason": "Opening range breakout is defined on 5m and 15m bars only: a 1h bar is longer than the 15-minute opening range",
+   "key": "opening-range-breakout|ETH|1h",
+   "tier": "not applicable",
+   "paper_priority": null,
+   "score": null,
+   "reasons": [
+    "Opening range breakout is defined on 5m and 15m bars only: a 1h bar is longer than the 15-minute opening range"
+   ],
+   "status_detail": {
+    "backtest": "tested",
+    "forward_paper": "no paper trades yet",
+    "live": "disabled"
+   },
+   "paper": null,
+   "sentence": "Opening range breakout on ETH hourly bars: not tested. Opening range breakout is defined on 5m and 15m bars only: a 1h bar is longer than the 15-minute opening range.",
+   "walk_forward": {
+    "windows": []
+   }
+  }
+ ],
+ "selection_log": []
+}
