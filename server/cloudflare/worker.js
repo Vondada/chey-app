@@ -135,6 +135,7 @@ import { jsRegexFlagProblems } from './flagstaff_code_check.js';
 import { ownToolPermissionProblems } from './flagstaff_reply_check.js';
 import { cachedCodeIndex } from './code_index.js';
 import { CHE_SELF_BRIEF, starredFocus, studyLesson } from './che_self_knowledge.js';
+import { onboardingIntent, onboardingRoute, onboardingStatus, startOnboarding } from './service_onboarding.js';
 import { KEY_PROVIDERS, MEMORY_DB, hasStoredMemoryDatabase, memorySetupIntent, memorySetupSteps, removeMemoryDatabase, saveMemoryDatabase, removeKey, storedKeys, withStoredKeys, cachedAnswer, checkAllKeys, fileLetter, fileTech, forgetAnswer, isLockedDown, listLetters, looksLikeAttack, markLetter, nextLetter, rememberAnswer, resilienceIntent, runScout, saveKey, setLockdown, setupSteps, speakKeyHealth, speakMailboxSummary, speakTech, techItems } from './resilience.js';
 import { applyCorrections, correctedPrevious, correctionsContext, detectCorrection, learnCorrection, loadCorrections } from './speech_learning.js';
 import { applyModelReading, asksAboutScreen, clipKeepingLimits, interpretOwnerTurn, interpretWithModel } from './speech_intent.js';
@@ -4961,6 +4962,30 @@ export class CheState extends DurableObject {
     try { socket.close(code, 'closed'); } catch (_) { /* already closed */ }
   }
 
+  // One handler for the spoken/typed connect words and /connect-service (service_onboarding.js).
+  async onboardingChat(onboard, ownerDevice, extra = {}) {
+    if (!ownerDevice) return ndjsonReply('Only the CHE owner can connect services.', { source: 'che_onboarding', ok: false, ...extra });
+    await this.refreshKeyEnv();
+    const ctx = this.onboardingCtx();
+    if (onboard.kind === 'status') {
+      const out = await onboardingStatus(ctx, onboard.provider, onboard.capability);
+      const text = out.state === 'none' ? `${out.speech} Say "connect" and the name to start.` : [out.speech, ...(out.lines || [])].join('\n');
+      return ndjsonReply(text, { source: 'che_onboarding', provider: onboard.provider, onboarding: out, ...extra });
+    }
+    const out = await startOnboarding(ctx, onboard.provider, { capability: onboard.capability, account: onboard.account || '' });
+    if (!out.ok && !out.state) return ndjsonReply(out.detail || 'I could not start that setup.', { source: 'che_onboarding', provider: onboard.provider, ok: false, ...extra });
+    const text = out.action === 'none' || !out.action ? [out.speech, ...(out.lines || [])].join('\n') : out.speech;
+    const deviceWork = ['create_token', 'guided', 'post_held_token'].includes(out.action);
+    return ndjsonReply(text, { source: 'che_onboarding', provider: onboard.provider, ok: out.ok !== false,
+      onboarding: { provider: onboard.provider, capability: out.capability, state: out.state, action: out.action || 'none', plan: out.plan || null, fingerprint: out.fingerprint || '', lines: out.lines || [] },
+      ...(deviceWork ? { open_screen: 'service_onboarding' } : {}), ...extra });
+  }
+
+  // What service onboarding may touch: storage, the Worker secrets (read only), the merged env consumers read.
+  onboardingCtx() {
+    return { storage: this.ctx.storage, env: this.env, keyEnv: () => this.keyEnv || this.env, refresh: () => this.refreshKeyEnv(), fetcher: (...args) => fetch(...args) };
+  }
+
   // Keys the owner saved in CHE's Keys tab count everywhere a Worker secret
   // would, so a pasted key "just works" for the Office crew too.
   async refreshKeyEnv() {
@@ -5926,6 +5951,12 @@ export class CheState extends DurableObject {
       return withDoneFields(await this.improvementChat(body || {}, ask), { command: command.id });
     }
     // CHE World population: records, generated base models and (only the viewer knows) active characters, kept apart.
+    if (command.local === 'connect_service') {
+      const words = String(input || '').trim();
+      const onboard = onboardingIntent(words) || onboardingIntent(`connect ${words}`);
+      if (onboard) return this.onboardingChat(onboard, OWNER_CHAT_REQUESTS.has(request), { command: command.id, model_calls: 0 });
+      return ndjsonReply('I can connect Hugging Face automatically (I create the token in my browser with your sign-in), and guide you through Groq, Gemini, Cerebras, Mistral, OpenRouter, GitHub Models, SambaNova, Kaggle, OpenAI and xAI. Say "connect" and one of those names.', { source: 'che_onboarding', ok: false, command: command.id, model_calls: 0 });
+    }
     if (command.local === 'world_population') {
       if (!OWNER_CHAT_REQUESTS.has(request)) return ndjsonReply('Only the CHE owner can read CHE World.', { source: 'che_world_population', ok: false, command: command.id, model_calls: 0 });
       const out = await populationAnswer(this.ctx.storage, new GpuQueue(this.ctx.storage));
@@ -8722,6 +8753,13 @@ export class CheState extends DurableObject {
         }
         const saved = await saveKey(this.ctx.storage, String(body.provider || ''), String(body.key || ''));
         return json(saved.ok ? { ok: true, provider: saved.provider, last4: saved.last4, status: saved.test.status } : { detail: saved.detail }, saved.ok ? 200 : 422);
+      }
+      // Service onboarding ("CHE, connect Hugging Face"): owner-only state machine; the token arrives once
+      // on /secret, is tested before it replaces anything, and only fingerprints come back (service_onboarding.js).
+      if (path.startsWith('/api/onboarding/')) {
+        await this.refreshKeyEnv();
+        const routed = await onboardingRoute(this.onboardingCtx(), path, request.method, body, { owner: ownerDevice, lockedDown: await isLockedDown(this.ctx.storage), query: new URL(request.url).search });
+        if (routed) return json(routed.body, routed.status);
       }
       if (path === '/api/letters' && request.method === 'GET') {
         return json({ letters: (await listLetters(this.ctx.storage)).slice(-200).reverse() });
@@ -11870,6 +11908,9 @@ export class CheState extends DurableObject {
           // 503 → the app answers with CHE's on-phone brain instead.
           return json({ detail: 'Lockdown is on: remote engines are paused. Say "end lockdown" to resume.' }, 503);
         }
+        // "CHE, connect Hugging Face" / "is Hugging Face connected?": the onboarding state machine, no model.
+        const onboard = onboardingIntent(message);
+        if (onboard) return this.onboardingChat(onboard, ownerDevice);
         if (resil) {
           const st = this.ctx.storage;
           if (resil.kind === 'lockdown') {
