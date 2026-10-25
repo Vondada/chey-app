@@ -216,7 +216,7 @@ String cheStatExplain(CheAccountStats s, CheStat stat) {
         : 'Realized P&L: $value, the sum of ${s.closed} closed trade${s.closed == 1 ? '' : 's'}${s.unit == 'R' ? ' in R' : ' after costs'}. $where$asOf$missing Backtests are never included.',
     CheStat.winRate => s.closed == 0
         ? 'Win rate: no recorded trades yet. $where Win rate is wins divided by closed trades.'
-        : 'Win rate: ${(s.winRate! * 100).round()} percent, ${s.wins} wins divided by ${s.closed} closed trades. ${s.wins} wins, ${s.losses} losses${s.flat > 0 ? ', ${s.flat} flat' : ''}. $where$asOf',
+        : 'Win rate: ${(s.winRate! * 100).round()} percent, ${s.wins} win${s.wins == 1 ? '' : 's'} divided by ${s.closed} closed trade${s.closed == 1 ? '' : 's'}. ${s.wins} win${s.wins == 1 ? '' : 's'}, ${s.losses} loss${s.losses == 1 ? '' : 'es'}${s.flat > 0 ? ', ${s.flat} flat' : ''}. $where$asOf',
     CheStat.open => s.open == null
         ? 'Open positions: not reported by this account\'s records. $where'
         : 'Open positions: ${s.open}, as this account\'s own record reports them now. $where',

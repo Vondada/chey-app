@@ -1266,6 +1266,24 @@ extension _CheHomeSend on _CHEHomeState {
       return;
     }
 
+    // Trading Room v3 (additive): "explain win rate", "what's my drawdown", "open advanced controls". Answered from
+    // the figures the room shows (lib/trading/che_trading_voice.dart); the room opens on its chart section.
+    final tradingVoice = _pendingAttachment == null ? CheTradingVoice.parse(message) : null;
+    if (tradingVoice != null) {
+      if (mounted) _set(() => controller.clear());
+      CheTradingRoom.requestedSection.value = CheTradingSection.chart;
+      if (!_assistantHubOpen) _openAssistantHub(tab: 1);
+      final reply = tradingVoice.run();
+      HapticFeedback.selectionClick();
+      if (mounted) {
+        _set(() => messages
+          ..add({'role': 'user', 'text': message})
+          ..add({'role': 'assistant', 'text': reply}));
+      }
+      await speakText(reply, record: false);
+      return;
+    }
+
     // Trading Room live chart: "show me the E-mini", "switch to Tesla on the
     // 1 minute", "read the price". Opens the room and speaks the result.
     final chartCommand = _pendingAttachment == null ? CheChartCommand.parse(message) : null;
