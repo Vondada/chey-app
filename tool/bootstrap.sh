@@ -1865,7 +1865,8 @@ struct CHEAppShortcuts: AppShortcutsProvider {
       reverb.bypass = mix <= 0
       reverb.wetDryMix = mix * 60
     }
-    monitorEngine?.mainMixerNode.outputVolume = (args["volume"] as? NSNumber)?.floatValue ?? 1.0
+    // The monitor level is the reverb-to-mixer connection (AVAudioMixing), never the iPhone's own volume.
+    monitorReverb?.volume = max(0, min(1, (args["volume"] as? NSNumber)?.floatValue ?? 1.0))
   }
 
   private func stopMonitor() {
