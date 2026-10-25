@@ -1056,3 +1056,28 @@ export function guardClaimedOwnerActions(reply, { message = '', acted = false, r
   const rest = kept.join('').replace(/\n{3,}/g, '\n\n').trim();
   return { text: rest ? `${rest} ${note}` : note, removed };
 }
+
+// Coding/GitHub inspection reliability (added 2026-10-25): reject invented or truncated SHAs
+// and placeholder commit messages. A real GitHub SHA is exactly 40 lowercase hex characters.
+// Placeholder patterns like "feature X" / "bug fix Y" are never evidence.
+export const VALID_SHA = /^[0-9a-f]{40}$/;
+export const PLACEHOLDER_MSG = /\b(?:feature|bug\s*fix|documentation)\s+[XYZ]\b/i;
+
+export function validateCodingEvidence(text, { receipts = [] } = {}) {
+  const t = String(text || '');
+  const shaMatches = t.match(/\b[0-9a-f]{7,64}\b/gi) || [];
+  for (const m of shaMatches) {
+    if (!VALID_SHA.test(m.toLowerCase())) {
+      return { ok: false, reason: 'invalid_sha', text: 'I cannot verify that commit SHA. A real GitHub SHA is 40 hex characters. No verified execution receipt backs this answer.' };
+    }
+  }
+  if (PLACEHOLDER_MSG.test(t)) {
+    return { ok: false, reason: 'placeholder_message', text: 'I will not report placeholder commit messages. Real commit messages come only from a verified GitHub read.' };
+  }
+  // Strip any leaked che-remember blocks from coding replies.
+  const cleaned = t.replace(/```che-remember[\s\S]*?```/gi, '').trim();
+  if (cleaned !== t && !receipts.some(isExecutionReceipt)) {
+    return { ok: true, text: cleaned || 'Coding inspection complete. No memory commands were part of this reply.', cleaned: true };
+  }
+  return { ok: true, text: cleaned };
+}
