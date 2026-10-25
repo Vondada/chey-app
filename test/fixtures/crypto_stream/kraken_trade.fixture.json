@@ -1,0 +1,17 @@
+{
+  "_fixture": "FORMAT FIXTURE, NOT MARKET DATA. Hand-written in the message format of Kraken WebSocket v2 (trade and heartbeat channels, https://docs.kraken.com/api/docs/websocket-v2/trade). Prices, sizes, ids and times are made up for tests and must never be shown as real trades.",
+  "product": "ETH-USD",
+  "messages": [
+    {"channel": "status", "type": "update", "data": [{"api_version": "v2", "connection_id": 1, "system": "online", "version": "2.0.0"}]},
+    {"method": "subscribe", "result": {"channel": "trade", "snapshot": true, "symbol": "ETH/USD"}, "success": true, "time_in": "2026-10-25T14:00:00.000000Z", "time_out": "2026-10-25T14:00:00.000100Z"},
+    {"channel": "trade", "type": "snapshot", "data": [
+      {"symbol": "ETH/USD", "side": "buy", "price": 2500.1, "qty": 0.5, "ord_type": "market", "trade_id": 7001, "timestamp": "2026-10-25T14:00:10.000000Z"},
+      {"symbol": "ETH/USD", "side": "sell", "price": 2499.9, "qty": 1.25, "ord_type": "limit", "trade_id": 7002, "timestamp": "2026-10-25T14:00:40.000000Z"}
+    ]},
+    {"channel": "heartbeat"},
+    {"channel": "trade", "type": "update", "data": [
+      {"symbol": "ETH/USD", "side": "buy", "price": 2501.0, "qty": 0.1, "ord_type": "market", "trade_id": 7003, "timestamp": "2026-10-25T14:01:05.000000Z"},
+      {"symbol": "BTC/USD", "side": "buy", "price": 67000.0, "qty": 0.1, "ord_type": "market", "trade_id": 9, "timestamp": "2026-10-25T14:01:05.000000Z"}
+    ]}
+  ]
+}

@@ -1,0 +1,29 @@
+{
+  "_fixture": "FORMAT FIXTURE, NOT MARKET DATA. Hand-written in the message format of Coinbase Advanced Trade WebSocket (market_trades and heartbeats channels, https://docs.cdp.coinbase.com/coinbase-app/advanced-trade-apis/websocket/websocket-channels). Prices, sizes, ids and times are made up for tests and must never be shown as real trades.",
+  "product": "BTC-USD",
+  "messages": [
+    {"channel": "subscriptions", "client_id": "", "timestamp": "2026-10-25T14:00:00.010Z", "sequence_num": 0, "events": [{"subscriptions": {"market_trades": ["BTC-USD"]}}]},
+    {"channel": "market_trades", "client_id": "", "timestamp": "2026-10-25T14:01:00.000Z", "sequence_num": 1, "events": [{"type": "snapshot", "trades": [
+      {"trade_id": "102", "product_id": "BTC-USD", "price": "67005.00", "size": "0.005", "side": "BUY", "time": "2026-10-25T14:00:59.900Z"},
+      {"trade_id": "101", "product_id": "BTC-USD", "price": "67010.50", "size": "0.020", "side": "SELL", "time": "2026-10-25T14:00:30.000Z"},
+      {"trade_id": "100", "product_id": "BTC-USD", "price": "67000.00", "size": "0.010", "side": "BUY", "time": "2026-10-25T14:00:05.100Z"}
+    ]}]},
+    {"channel": "heartbeats", "client_id": "", "timestamp": "2026-10-25T14:01:01.000Z", "sequence_num": 2, "events": [{"current_time": "2026-10-25 14:01:01.000000000 +0000 UTC m=+1.0", "heartbeat_counter": 1}]},
+    {"channel": "market_trades", "client_id": "", "timestamp": "2026-10-25T14:01:51.000Z", "sequence_num": 3, "events": [{"type": "update", "trades": [
+      {"trade_id": "103", "product_id": "BTC-USD", "price": "67020.00", "size": "0.100", "side": "BUY", "time": "2026-10-25T14:01:10.000Z"},
+      {"trade_id": "105", "product_id": "BTC-USD", "price": "67030.00", "size": "0.050", "side": "BUY", "time": "2026-10-25T14:01:50.000Z"},
+      {"trade_id": "900", "product_id": "ETH-USD", "price": "2500.00", "size": "1.000", "side": "SELL", "time": "2026-10-25T14:01:15.000Z"},
+      {"trade_id": "999", "product_id": "BTC-USD", "price": "1.00", "size": "1.000", "side": "SELL"}
+    ]}]},
+    {"channel": "market_trades", "client_id": "", "timestamp": "2026-10-25T14:01:52.000Z", "sequence_num": 4, "events": [{"type": "update", "trades": [
+      {"trade_id": "104", "product_id": "BTC-USD", "price": "66990.00", "size": "0.200", "side": "SELL", "time": "2026-10-25T14:01:20.000Z"}
+    ]}]},
+    {"channel": "market_trades", "client_id": "", "timestamp": "2026-10-25T14:02:00.000Z", "sequence_num": 0, "events": [{"type": "snapshot", "trades": [
+      {"trade_id": "105", "product_id": "BTC-USD", "price": "67030.00", "size": "0.050", "side": "BUY", "time": "2026-10-25T14:01:50.000Z"},
+      {"trade_id": "104", "product_id": "BTC-USD", "price": "66990.00", "size": "0.200", "side": "SELL", "time": "2026-10-25T14:01:20.000Z"}
+    ]}]},
+    {"channel": "market_trades", "client_id": "", "timestamp": "2026-10-25T14:03:16.000Z", "sequence_num": 1, "events": [{"type": "update", "trades": [
+      {"trade_id": "106", "product_id": "BTC-USD", "price": "67100.00", "size": "0.300", "side": "BUY", "time": "2026-10-25T14:03:15.000Z"}
+    ]}]}
+  ]
+}
