@@ -3,12 +3,11 @@
 # and the existing CLOUDFLARE_API_TOKEN. GitHub Actions cannot read Cloudflare Worker secrets (Cloudflare never returns
 # a secret's value once stored), so the Modal API token must also be saved here.
 #
-# One run: generate a random 256-bit access token (masked) -> store it as the Modal secret che-gpu-auth -> modal deploy
-# -> authenticated GET /health from this runner -> write MODAL_TOKEN=bearer:<token>@<endpoint> into the Worker with
-# wrangler (the Worker verifies the same /health when the owner says "CHE, connect Modal").
-# With gpu_test, it also calls the deployed function gpu_check once: one 256x256 Cycles render of the default cube on a
-# T4, about a minute of GPU time inside Modal's included credit. Nothing else starts a GPU. No secret is printed.
-# Spec: docs/CHE_MODAL_FREE_FIRST_USAGE_PRIVACY.md
+# The steps live in tools/modal/connect_modal.sh, which the regression test tools/test_connect_modal.py runs end to end
+# with stubs. A missing secret, a failed deploy or a failed check fails this job and says why; "connected" is printed
+# only after the Worker secret is written. With gpu_test, it also calls the deployed function gpu_check once: one
+# 256x256 Cycles render of the default cube on a T4, about a minute of GPU time inside Modal's included credit.
+# Nothing else starts a GPU. No secret is printed. Spec: docs/CHE_MODAL_FREE_FIRST_USAGE_PRIVACY.md
 name: CHE Modal deploy
 
 on:
@@ -41,66 +40,18 @@ jobs:
       CLOUDFLARE_ACCOUNT_ID: c49b395e8f1138b5fae36ab88222542c
       CHE_ALLOWED_BASES: ${{ inputs.che_base }}
     steps:
-      - name: Check the secrets
-        id: secrets
-        run: |
-          missing=""
-          [ -n "$MODAL_TOKEN_ID" ] || missing="$missing MODAL_TOKEN_ID"
-          [ -n "$MODAL_TOKEN_SECRET" ] || missing="$missing MODAL_TOKEN_SECRET"
-          [ -n "$CLOUDFLARE_API_TOKEN" ] || missing="$missing CLOUDFLARE_API_TOKEN"
-          if [ -n "$missing" ]; then
-            echo "ready=false" >> "$GITHUB_OUTPUT"
-            echo "::notice title=Modal not deployed::Missing GitHub Actions secrets:${missing}. Add them under Settings > Secrets and variables > Actions > Repository secrets and run this workflow again. Cloudflare Worker secrets cannot be reused: GitHub cannot read them. Nothing was deployed."
-            echo "### Modal not deployed" >> "$GITHUB_STEP_SUMMARY"
-            echo "Missing GitHub Actions repository secrets:${missing}. Nothing was deployed or spent." >> "$GITHUB_STEP_SUMMARY"
-          else
-            echo "ready=true" >> "$GITHUB_OUTPUT"
-          fi
       - uses: actions/checkout@v4
-        if: steps.secrets.outputs.ready == 'true'
       - uses: actions/setup-python@v5
-        if: steps.secrets.outputs.ready == 'true'
         with:
           python-version: '3.11'
-      - name: Validate the app logic (no Modal needed)
-        if: steps.secrets.outputs.ready == 'true'
-        run: python3 -m unittest discover -s tools -p test_che_modal_app.py
+      - name: Validate the app logic and the connect script (no Modal needed)
+        run: python3 -m unittest discover -s tools -p 'test_*modal*.py'
       - name: Install the Modal CLI
-        if: steps.secrets.outputs.ready == 'true'
         run: python3 -m pip install --quiet 'modal>=1.0,<2'
-      - name: Issue the access token, deploy, verify and connect the Worker
-        if: steps.secrets.outputs.ready == 'true'
-        working-directory: tools/modal
-        run: |
-          set -euo pipefail
-          tok=$(openssl rand -hex 32)
-          echo "::add-mask::$tok"
-          modal secret create che-gpu-auth "CHE_GPU_ENDPOINT_TOKEN=$tok" --force > /dev/null
-          modal deploy che_modal_app.py > /tmp/deploy.log 2>&1 || { grep -v -i -E 'token|secret' /tmp/deploy.log | tail -40; echo "::error::modal deploy failed"; exit 1; }
-          grep -v -i -E 'token|secret' /tmp/deploy.log | tail -20
-          url=$(grep -o -E 'https://[A-Za-z0-9-]+--che-gpu[A-Za-z0-9-]*\.modal\.run' /tmp/deploy.log | head -1 || true)
-          [ -n "$url" ] || { echo "::error::the endpoint URL was not in the deploy log"; exit 1; }
-          echo "Endpoint: $url"
-          # Unauthenticated must be refused; authenticated must answer the expected app and version.
-          anon=$(curl -s -o /dev/null -w '%{http_code}' --max-time 120 "$url/health" || true)
-          health=$(curl -sf --max-time 120 -H "Authorization: Bearer $tok" "$url/health")
-          echo "Unauthenticated /health: HTTP $anon"
-          echo "Authenticated /health: $health"
-          [ "$anon" = "401" ] || { echo "::error::the endpoint did not refuse an unauthenticated request"; exit 1; }
-          echo "$health" | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d.get("app")=="che-gpu" and d.get("version"), d'
-          # Connect the Worker (stdin, never argv or logs). Writing a secret publishes a new Worker version.
-          cd ../../server/cloudflare
-          printf '%s' "bearer:${tok}@${url}" | npx --yes wrangler@4 secret put MODAL_TOKEN > /tmp/wrangler.log 2>&1 || { grep -v -i -E 'bearer' /tmp/wrangler.log | tail -20; echo "::error::could not write the Worker secret"; exit 1; }
-          {
-            echo "### CHE Modal app deployed and connected"
-            echo "- Endpoint: \`$url\`"
-            echo "- Unauthenticated request refused: HTTP $anon"
-            echo "- Authenticated /health: \`$health\`"
-            echo "- Worker secret MODAL_TOKEN written (value never printed)."
-            echo "- Next: say \"CHE, connect Modal\"; she verifies the same /health before saying Connected."
-          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Deploy, verify and connect the Worker
+        run: bash tools/modal/connect_modal.sh
       - name: GPU test (one short Cycles render on the T4)
-        if: steps.secrets.outputs.ready == 'true' && inputs.gpu_test
+        if: inputs.gpu_test
         run: |
           python3 - <<'PY' | tee /tmp/gpu.json
           import json, time, modal
