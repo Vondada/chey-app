@@ -57,7 +57,7 @@ class FakeFinder implements RithmicRouteFinder {
   int calls = 0;
   bool? preferPaper;
   @override
-  Future<RithmicRoute> find({required bool preferPaper}) async {
+  Future<RithmicRoute> find({required bool preferPaper, String? systemName}) async {
     calls++;
     this.preferPaper = preferPaper;
     if (error != null) throw error!;

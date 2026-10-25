@@ -103,8 +103,7 @@ Future<RithmicOpened> cheRithmicOpen({
     route = RithmicRoute(system: system, gatewayName: 'manual', gatewayUri: uri);
   } else {
     final preferPaper = RegExp(r'fund\s*your\s*edge|fye|paper|evaluation|prop', caseSensitive: false).hasMatch(settings.label);
-    final found = await (routeFinder ?? RithmicBootstrapDiscovery()).find(preferPaper: preferPaper);
-    route = system.isEmpty ? found : RithmicRoute(system: system, gatewayName: found.gatewayName, gatewayUri: found.gatewayUri);
+    route = await (routeFinder ?? RithmicBootstrapDiscovery()).find(preferPaper: preferPaper, systemName: system);
   }
   final symbol = settings.symbolOverride.trim().isEmpty
       ? rithmicFrontMonth('MNQ', (now ?? DateTime.now)())
