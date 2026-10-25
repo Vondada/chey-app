@@ -77,6 +77,15 @@ Then, on GitHub:
 
 ## 2. Current position
 
+**Claude, 2026-10-25 ~02:10 UTC — PR #524 MERGED as `afb8de1`; Worker LIVE and verified.**
+- Deploy run 40152765240: "VERIFIED afb8de155d3a is live" (Worker version 22362764-d908-4966-900a-3a6f7938b6af); memory truth 22/22 (0 model calls), Command Center 5/5 (130 commands ready), Knowledge Atlas 11/11, ElevenLabs voice 52287 bytes in 625 ms.
+- Live trading (paper, read-only): futures paper ON, DELAYED MNQ=F MNQZ6 (weekend), 219 closed, 53 won/166 lost, net -6917.09; Orion crypto PAUSED, read real Coinbase BTC/ETH 5m/15m/1h LIVE bars (BTC 5m close 80781.14 at 01:55Z).
+- Pre-merge evidence on head 32f2edb: all gating checks GREEN; local full Flutter 1365 pass / 0 fail / 2 skipped; Worker 3967/0; 13 Python suites OK.
+- Running: IPA build 40152765510, Shorebird 40152765316, creation_check dispatch 40153146586.
+- Not verified: iPhone install/behavior (native changes need the new IPA), phone WebSocket crypto stream vs real exchanges, Colab GPU, live Poly Haven fetch, Brain Room fps on device.
+- Open: studio-tutorials lane never rebuilt; ~15 lane-requested commands not yet in command_catalog.js; "Research queue failed: k.startsWith" log line in the e2e server (pre-existing).
+
+
 **Claude, 2026-10-25 ~02:30 UTC — new container (30 GB free; the earlier full disk is gone). PR #524 open; main `0c43197`.**
 - **Lost:** the lanes brain-visual, studio-engine, studio-tutorials, creation-gaps and reliability existed only in the old container's `.claude/worktrees` and were never pushed. They are gone; redo only if still wanted. **Recovered:** trading-gaps + music-gaps (pushed earlier) on `claude/che-latency-optimization-8ruaus`.
 - PR #524 (that branch, head after 594f269 + che-recover commit): Worker 3930/0 fail/7 skip, `dart analyze --fatal-infos` clean, skills 19/19, full `flutter test` running. NOT merged, NOT deployed, no IPA yet.
