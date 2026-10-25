@@ -848,6 +848,18 @@ extension _CheHomeSend on _CHEHomeState {
         : typedMessage;
     if (message.isEmpty) return;
 
+    // Privacy Center (owner, 2026-10-25): a Social Security number never leaves the iPhone. The turn is answered
+    // here and is not sent to the CHE server, an AI provider, chat history or logs (lib/security/che_ssn_guard.dart).
+    if (cheContainsSsn(message)) {
+      if (mounted) _set(() => controller.clear());
+      HapticFeedback.heavyImpact();
+      await speakText(cheSsnReply, record: false, show: true);
+      return;
+    }
+
+    // Privacy Center voice routes run on the phone: its consent, inventory and checks never go to the server.
+    if (_pendingAttachment == null && await _runPrivacyCenterTurn(message)) return;
+
     // Password vault: handled entirely on the phone. The words never go to
     // the CHE server, an AI provider, chat history or memory.
     final vaultCommand = CheVaultCommand.parse(message);

@@ -1266,6 +1266,17 @@ extension _CheHomeSecurity on _CHEHomeState {
       await speakText(notice, record: false, show: true);
     }
 
+    // A Social Security number (or the start of one: "my social security number is") leaves live voice the same
+    // way, with the same residual limit: Realtime transcribed that audio before CHE saw the words. The item is
+    // dropped from the live session and the next words go to the iPhone recognizer; sendMessage then keeps the
+    // number off the CHE server, models, chat history and logs (lib/security/che_ssn_guard.dart).
+    if (!cheIsPasswordTurn(clean) && cheIsSsnTurn(clean)) {
+      _realtimeVoice?.forgetUserItem(itemId);
+      _realtimeSkipUntil = DateTime.now().add(chePasswordVoiceHold);
+      await _fallbackAfterRealtimeLoss('SSN turn: switched to the iPhone recognizer.');
+      if (!mounted) return;
+    }
+
     // Master profile values ("set my business phone to ...") stay out of the
     // live session's context too. Same residual limit as passwords: Realtime
     // transcribed the audio before CHE saw the words.

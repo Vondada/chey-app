@@ -497,6 +497,10 @@ extension _CheHomeStreaming on _CHEHomeState {
         if (data['open_screen'] == 'recording_studio' && data['source'] == 'che_recording_studio' && mounted) unawaited(_openRecordingStudio());
         // "Open your cloud computer": only the Cloud Computer Manager's own reply opens the room.
         if (data['open_screen'] == 'cloud_computer' && data['source'] == 'che_cloud_computer' && mounted) unawaited(_openCloudComputer());
+        // "/privacy-center": only the Worker's Privacy Center route opens the room; its data stays on this iPhone.
+        if (data['open_screen'] == 'privacy_center' && data['source'] == 'che_privacy_center' && mounted) {
+          unawaited(_openPrivacyCenter(action: data['privacy_action']?.toString() ?? ''));
+        }
         // "How many characters live in CHE World?": the Worker's population answer also shows the three counts on screen.
         if (data['open_screen'] == 'world_population' && data['source'] == 'che_world_population' && mounted) unawaited(_openWorldPopulation());
         // "Connect GPU" matched by the Worker (/cloud-gpu connect): the owner's own command, so the flow may open Colab.

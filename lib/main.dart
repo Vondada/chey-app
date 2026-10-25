@@ -35,6 +35,9 @@ import 'security/che_secret_scan.dart';
 import 'security/che_security_screen.dart';
 import 'security/che_security_visibility.dart';
 import 'security/che_session_store.dart';
+import 'security/che_privacy_center.dart';
+import 'security/che_ssn_guard.dart';
+import 'rooms/che_privacy_center_room.dart';
 import 'brain/che_brain_ledger_screen.dart';
 import 'brain/che_brain_overview.dart';
 import 'brain/che_brain_regions.dart' show CheBrainNav, CheBrainSourceKind, CheBrainSourceLink;
@@ -762,6 +765,52 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
     await Navigator.of(context).push(MaterialPageRoute<void>(
       builder: (_) => CheCloudComputerRoom(
         client: CheCloudComputerClient(baseUrl: cheAgentBaseUrl, headers: () => _authHeaders),
+        onSpeak: (text) => unawaited(speakText(text, record: false, readOnDemand: true)),
+        onListen: () => unawaited(toggleListening()),
+      ),
+    ));
+  }
+
+  /// The one Privacy Center for this app (lib/security/che_privacy_center.dart): data in the Keychain only.
+  ChePrivacyCenter? _chePrivacyCenter;
+  ChePrivacyCenter get _privacyCenter => _chePrivacyCenter ??= ChePrivacyCenter(
+        connectedServices: () async {
+          if (cheAgentBaseUrl.isEmpty) return const <ChePrivacyService>[];
+          final r = await http.get(Uri.parse('$cheAgentBaseUrl/api/privacy/services'), headers: _authHeaders).timeout(const Duration(seconds: 15));
+          if (r.statusCode != 200) return const <ChePrivacyService>[];
+          final list = (jsonDecode(r.body) as Map)['services'] as List? ?? const [];
+          return [for (final s in list) ?ChePrivacyService.fromJson(s)];
+        },
+        // Official pages open in Safari's in-app view, so CHE never sees what the owner types there.
+        openLink: (uri) => launchUrl(uri, mode: LaunchMode.inAppBrowserView),
+      );
+
+  /// "Turn on Privacy Center", "check my passwords for breaches", "freeze my credit", /privacy-center ... and,
+  /// while the room is open, its numbered actions and yes/no: run on the phone, the real result spoken and shown.
+  Future<bool> _runPrivacyCenterTurn(String message) async {
+    final room = ChePrivacyCenterRoom.isOpen ? ChePrivacyCenterVoice.handler : null;
+    String? reply = room == null ? null : await room(message);
+    final command = reply == null ? cheParsePrivacyVoice(message, awaitingYes: _privacyCenter.awaitingTurnOff) : null;
+    if (reply == null && command == null) return false;
+    if (mounted) setState(() => controller.clear());
+    if (command != null) {
+      reply = await _privacyCenter.handle(command);
+      if (!ChePrivacyCenterRoom.isOpen && command.op != ChePrivacyOp.yes && command.op != ChePrivacyOp.no) {
+        unawaited(_openPrivacyCenter(action: command.op.name));
+      }
+    }
+    await speakText(reply!, record: false, show: true);
+    return true;
+  }
+
+  /// More → Privacy Center (also "open Privacy Center" by voice). Opening it is silent.
+  Future<void> _openPrivacyCenter({String action = ''}) async {
+    if (ChePrivacyCenterRoom.isOpen) return;
+    HapticFeedback.selectionClick();
+    await Navigator.of(context).push(MaterialPageRoute<void>(
+      builder: (_) => ChePrivacyCenterRoom(
+        center: _privacyCenter,
+        initialAction: action,
         onSpeak: (text) => unawaited(speakText(text, record: false, readOnDemand: true)),
         onListen: () => unawaited(toggleListening()),
       ),
@@ -2421,6 +2470,13 @@ OWNER AGENCY
           title: 'Cloud Computer',
           subtitle: 'Where CHE\'s jobs run, what each environment has, approvals and costs',
           onTap: () => unawaited(_openCloudComputer()),
+          hue: kit.CheColors.apps,
+        ),
+        CheMoreItem(
+          icon: Icons.shield_outlined,
+          title: 'Privacy Center',
+          subtitle: 'Opt-in: your services, password breach check, opt-out pages and credit freeze links',
+          onTap: () => unawaited(_openPrivacyCenter()),
           hue: kit.CheColors.apps,
         ),
         CheMoreItem(

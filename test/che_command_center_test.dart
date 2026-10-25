@@ -257,7 +257,7 @@ void main() {
     final reloaded = CheCommandStore();
     await reloaded.load();
     expect(reloaded.favorites, ['che']);
-    expect(reloaded.cachedCatalog?.commands.length, 134, reason: 'the catalog is cached for offline use');
+    expect(reloaded.cachedCatalog?.commands.length, 135, reason: 'the catalog is cached for offline use');
   });
 
   testWidgets('offline: the cached library still opens and says it may be out of date', (tester) async {
