@@ -955,7 +955,15 @@ class CheBrainSpaceController {
     return null;
   }
 
-  String execute(CheBrainCommand command) => switch (command.action) {
+  /// Told before each spoken command runs (the Brain Room overview shows the constellation for camera commands).
+  static void Function(CheBrainAction action)? beforeCommand;
+
+  String execute(CheBrainCommand command) {
+    beforeCommand?.call(command.action);
+    return _execute(command);
+  }
+
+  String _execute(CheBrainCommand command) => switch (command.action) {
         CheBrainAction.open => overview(),
         CheBrainAction.inside => inside(),
         CheBrainAction.overview => overview(),

@@ -4,6 +4,7 @@
 // ledger events in Live Activity. Sample records only (the shape the phone replica hands over).
 import 'dart:ui' show PictureRecorder;
 
+import 'package:chey/brain/che_brain_neural.dart';
 import 'package:chey/brain/che_brain_overview.dart';
 import 'package:chey/brain/che_brain_regions.dart';
 import 'package:chey/brain/che_brain_space.dart';
@@ -154,22 +155,21 @@ void main() {
   });
 
   group('the Brain Room', () {
-    testWidgets('each region is a VoiceOver node with its name and count; it opens a page of its real records', (tester) async {
+    testWidgets('each first-glance region is a VoiceOver node with its name and count; it opens its records', (tester) async {
       final handle = tester.ensureSemantics();
       final c = CheBrainSpaceController(cheTestDots());
       await _pump(tester, CheBrainOverview(brain: CheBrainSpace(controller: c), dots: cheTestDots(), clock: () => cheTestNow));
-      final counts = cheBrainRegionCounts(cheTestDots());
-      for (final r in CheBrainRegion.values) {
-        final n = counts[r]!;
-        expect(find.bySemanticsLabel('${r.label} region: $n record${n == 1 ? '' : 's'}. Opens its records.'), findsOneWidget, reason: r.label);
+      final stats = cheBrainLobeStats(cheTestDots(), now: cheTestNow);
+      for (final l in CheBrainLobe.values) {
+        expect(find.bySemanticsLabel(cheBrainLobeSemantics(l, stats[l]!)), findsOneWidget, reason: l.label);
       }
-      final node = tester.getSemantics(find.byKey(const ValueKey('brain-region-trading')));
-      expect(node.getSemanticsData().customSemanticsActionIds, isNotEmpty, reason: 'VoiceOver can fly to the region');
-      await tester.tap(find.byKey(const ValueKey('brain-region-research')));
+      // Knowledge gathers Knowledge and Research; its Research filter shows the investigation.
+      await tester.tap(find.byKey(const ValueKey('brain-lobe-knowledge')));
       await tester.pumpAndSettle();
-      expect(find.byKey(const ValueKey('brain-region-details-research')), findsOneWidget);
-      expect(find.text('Research region'), findsOneWidget);
-      await tester.tap(find.byKey(const ValueKey('brain-region-record-note:rea')));
+      expect(find.byKey(const ValueKey('brain-lobe-sheet-knowledge')), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('brain-lobe-filter-research')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('brain-lobe-record-note:rea')));
       await tester.pumpAndSettle();
       expect(find.byKey(const ValueKey('brain-record-details')), findsOneWidget);
       expect(find.text('How BandLab layers tracks'), findsOneWidget);
@@ -178,35 +178,33 @@ void main() {
       c.dispose();
     });
 
-    testWidgets('an empty region says so; "Fly there" sends the neural brain to the region and reads the result', (tester) async {
-      final spoken = <String>[];
-      final c = CheBrainSpaceController(cheTestDots());
-      await _pump(tester, CheBrainOverview(brain: CheBrainSpace(controller: c), dots: cheTestDots(), clock: () => cheTestNow, onReadAloud: (t) async => spoken.add(t)));
-      expect(spoken, isEmpty, reason: 'opening the Brain Room is silent');
-      await tester.tap(find.byKey(const ValueKey('brain-region-coding')));
+    testWidgets('an empty region says so; the eleven-region page still flies the neural brain and reads the result', (tester) async {
+      await _pump(tester, CheBrainOverview(brain: const SizedBox(), dots: const [], clock: () => cheTestNow));
+      await tester.tap(find.byKey(const ValueKey('brain-lobe-creation')));
       await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const ValueKey('brain-region-fly')));
-      await tester.pumpAndSettle();
-      expect(c.focusedRegion, CheBrainRegion.coding);
-      expect(spoken.single, startsWith('Coding region: 1 record.'));
+      expect(find.byKey(const ValueKey('brain-lobe-empty')), findsOneWidget);
+      expect(find.textContaining('Nothing in Creation on this phone yet'), findsOneWidget);
       await tester.pumpWidget(const SizedBox());
-      c.dispose();
       await _pump(tester, CheBrainRegionDetails(region: CheBrainRegion.creative, dots: const [], now: cheTestNow));
       expect(find.textContaining('has no records on this phone yet'), findsOneWidget);
       expect(find.byKey(const ValueKey('brain-region-fly')), findsNothing);
     });
 
-    testWidgets('voice: "go to the trading region" flies there, "open the trading region" opens its page', (tester) async {
+    testWidgets('voice: "go to the trading region" shows the constellation and flies there; "open the trading region" opens its sheet', (tester) async {
       final c = CheBrainSpaceController(cheTestDots());
       await _pump(tester, CheBrainOverview(brain: CheBrainSpace(controller: c), dots: cheTestDots(), clock: () => cheTestNow));
       final space = CheBrainSpaceController.current!;
+      expect(find.byKey(const ValueKey('brain-neural')), findsOneWidget);
       expect(space.execute(CheBrainCommand.parse('go to the trading region')!), startsWith('Trading region: 2 records. Newest: BTC short setup analysed'));
       expect(space.focusedRegion, CheBrainRegion.trading);
+      await tester.pump();
+      expect(find.byKey(const ValueKey('brain-neural')), findsNothing, reason: 'a camera command shows the constellation it moves');
       expect(space.execute(CheBrainCommand.parse('open the trading region')!), 'Opening the Trading region: 2 records, newest first.');
       await tester.pumpAndSettle();
-      expect(find.byKey(const ValueKey('brain-region-details-trading')), findsOneWidget);
+      expect(find.byKey(const ValueKey('brain-lobe-sheet-trading')), findsOneWidget);
       await tester.pumpWidget(const SizedBox());
       expect(CheBrainSpaceController.regionOpener, isNull, reason: 'off screen, nothing opens region pages');
+      expect(CheBrainSpaceController.beforeCommand, isNull);
       c.dispose();
     });
 

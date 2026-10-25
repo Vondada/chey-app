@@ -1,5 +1,5 @@
 // The Brain Room overview (owner, 2026-10-24, his original reference): every sidebar section opens its own real
-// view, the dashboard cards show real counts and open their sections, Real-Time Learning shows only ledger events
+// view, the seven first-glance regions show real counts and open one sheet (UI cleanup 2026-10-25), Real-Time Learning shows only ledger events
 // (idle when there are none), Live Activity filters real records, Search highlights real matches, Memory Details
 // shows the record's own facts and connections, the brain lights a region only for a real event, and nothing speaks
 // on its own.
@@ -127,7 +127,8 @@ void main() {
 
   testWidgets('every sidebar section opens its own view, never Home or Chat', (tester) async {
     await _pumpSized(tester, _overview());
-    expect(find.byKey(const ValueKey('the-neural-brain')), findsOneWidget);
+    expect(find.byKey(const ValueKey('brain-neural')), findsOneWidget, reason: 'first glance: the seven regions');
+    expect(find.byKey(const ValueKey('the-neural-brain'), skipOffstage: false), findsOneWidget, reason: 'the record constellation stays mounted');
     for (final s in CheBrainNav.values) {
       await tester.tap(find.byKey(const ValueKey('brain-sidebar-toggle')));
       await tester.pump();
@@ -137,7 +138,7 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.byKey(const ValueKey('brain-sidebar')), findsNothing, reason: 'on iPhone the sidebar closes after a choice');
       if (s == CheBrainNav.overview) {
-        expect(find.byKey(const ValueKey('brain-dashboard')), findsOneWidget);
+        expect(find.byKey(const ValueKey('brain-neural')), findsOneWidget);
         expect(find.byKey(const ValueKey('brain-section-overview')), findsNothing);
       } else {
         expect(find.byKey(ValueKey('brain-section-${s.name}')), findsOneWidget, reason: '${s.label} opens its own section');
@@ -147,31 +148,24 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('dashboard cards show real counts and open their sections; region labels open their records', (tester) async {
+  testWidgets('the seven regions show real counts; a region opens one sheet of its records and closes back', (tester) async {
     await _pumpSized(tester, _overview());
-    final dots = cheTestDots();
-    for (final s in cheBrainDashboardCards) {
-      final f = cheBrainCardFigure(s, dots, cheBrainLinks(dots));
-      final card = find.byKey(ValueKey('brain-card-${s.name}'));
-      await tester.dragUntilVisible(card, find.byKey(const ValueKey('brain-dashboard')), const Offset(-120, 0));
-      expect(find.descendant(of: card, matching: find.text('${f.count}')), findsOneWidget, reason: '${s.label} shows ${f.count}');
-      await tester.tap(card);
-      await tester.pumpAndSettle();
-      expect(find.byKey(ValueKey('brain-section-${s.name}')), findsOneWidget);
-      await tester.tap(find.byKey(const ValueKey('brain-back')));
-      await tester.pumpAndSettle();
-    }
-    // A region label opens that region's own page of real records (lane brain-visual; it opened the section before).
-    await tester.tap(find.byKey(const ValueKey('brain-region-trading')));
-    await tester.pumpAndSettle();
-    expect(find.byKey(const ValueKey('brain-region-details-trading')), findsOneWidget);
+    expect(find.byKey(const ValueKey('brain-dashboard')), findsNothing, reason: 'no dashboard cards under the brain any more');
+    expect(find.byKey(const ValueKey('brain-learning')), findsNothing, reason: 'no learning panel stacked under the brain');
+    expect(find.text('2'), findsWidgets);
+    await tester.tap(find.byKey(const ValueKey('brain-lobe-trading')));
+    await tester.pump();
+    expect(find.byKey(const ValueKey('brain-lobe-sheet-trading')), findsOneWidget);
     expect(find.text('BTC short setup analysed'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('brain-lobe-close')));
+    await tester.pump();
+    expect(find.byKey(const ValueKey('brain-lobe-sheet-trading')), findsNothing);
   });
 
   testWidgets('learning panel: live with real events, idle without; polling and new events never speak', (tester) async {
     final spoken = <String>[];
     var calls = 0;
-    await _pumpSized(tester, _overview(spoken: spoken, load: () async {
+    await _pumpSized(tester, _overview(spoken: spoken, initial: CheBrainNav.activity, load: () async {
       calls++;
       return cheTestLedger();
     }));
@@ -186,17 +180,17 @@ void main() {
     expect(spoken, isEmpty, reason: 'a passive screen never speaks');
     await tester.pumpWidget(const SizedBox());
 
-    await _pumpSized(tester, _overview(load: () async => cheTestLedger(newest: const Duration(hours: 5))));
+    await _pumpSized(tester, _overview(initial: CheBrainNav.activity, load: () async => cheTestLedger(newest: const Duration(hours: 5))));
     await tester.pump();
     expect(find.text('Idle'), findsOneWidget);
     expect(find.textContaining('Idle — waiting for work'), findsOneWidget);
     await tester.pumpWidget(const SizedBox());
 
-    await _pumpSized(tester, _overview());
+    await _pumpSized(tester, _overview(initial: CheBrainNav.activity));
     expect(find.textContaining('Learning feed not connected'), findsOneWidget, reason: 'no ledger: says so, shows nothing made up');
     await tester.pumpWidget(const SizedBox());
 
-    await _pumpSized(tester, _overview(load: () async => throw Exception('CHE did not answer within 20 seconds.')));
+    await _pumpSized(tester, _overview(initial: CheBrainNav.activity, load: () async => throw Exception('CHE did not answer within 20 seconds.')));
     await tester.pump();
     expect(find.textContaining('Learning feed unavailable: CHE did not answer'), findsOneWidget);
   });
@@ -258,7 +252,7 @@ void main() {
     expect(await voice('open skills and training'), startsWith('Skills & Training:'));
     await tester.pump();
     expect(find.byKey(const ValueKey('brain-section-skills')), findsOneWidget);
-    expect(await voice('open the brain'), startsWith('Brain overview:'));
+    expect(await voice('open the brain'), startsWith('Your brain holds 30 records in 7 regions. 1, Memory: 2 records;'));
     final menu = await voice('show the sidebar');
     expect(menu, contains('1, Brain Overview'));
     expect(menu, contains('16, Analytics'));

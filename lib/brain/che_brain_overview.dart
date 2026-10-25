@@ -7,31 +7,35 @@
 // records (the phone's Brain replica and the Worker lists, as CheMemoryDot) or the Brain Population Ledger
 // (/api/brain/ledger). Empty data shows an empty state; an idle ledger says "Idle — waiting for work".
 //
+// First glance (owner, 2026-10-25 UI cleanup): seven category regions of one neural brain with real counts
+// (che_brain_neural.dart); records appear only in one region sheet at a time. The record-level 3D constellation
+// (the [brain] widget) stays mounted for its voice commands and opens only when the owner asks for it.
+//
 // Quiet by design (AGENTS.md): opening the room, switching sections, polling the ledger and new learning events
 // never speak. Explicit voice commands and Read Aloud speak.
 
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:flutter/semantics.dart' show CustomSemanticsAction;
 import 'package:flutter/services.dart';
 
 import '../che_ui/che_hud.dart';
 import '../home/che_memory_brain.dart' show CheMemoryDot;
 import 'che_brain_list.dart';
+import 'che_brain_neural.dart';
 import 'che_brain_regions.dart';
 import 'che_brain_sections.dart';
 import 'che_brain_space.dart' show CheBrainSpaceController;
+import 'che_brain_space_model.dart' show CheBrainAction;
 
 /// Loads the Brain Population Ledger overview (/api/brain/ledger), as CheBrainLedgerClient.overview does.
 typedef CheBrainLedgerLoader = Future<Map<String, dynamic>> Function();
 
 /// What the overview keeps under the brain (the collapsed Real-Time Learning bar and the dashboard cards): the
 /// Brain room's Soul & facts / Log chips sit above it.
-const double cheBrainOverviewChipsInset = 186;
+const double cheBrainOverviewChipsInset = 10;
 
 const _glass = Color(0xD9070B1C);
-const _glassHi = Color(0xE60B1230);
 const _rimDim = Color(0x334F6BFF);
 
 class CheBrainOverview extends StatefulWidget {
@@ -75,6 +79,10 @@ class CheBrainOverview extends StatefulWidget {
   final DateTime Function()? clock;
   final Duration pollEvery;
 
+  /// True while a region sheet or a section covers the brain: the room's floating chips (CheInsightsRoom) hide so
+  /// nothing stacks over the one open panel.
+  static final ValueNotifier<bool> chromeHidden = ValueNotifier<bool>(false);
+
   /// The open Brain Room's voice handler (lib/home_state/send.dart), or null when it is not on screen.
   static Future<String?> Function(String words)? voiceHandler;
 
@@ -82,6 +90,27 @@ class CheBrainOverview extends StatefulWidget {
   static CheBrainOverviewCommand? parse(String words) {
     final t = words.toLowerCase().replaceAll(RegExp(r'[^a-z0-9& ]'), ' ').replaceAll(RegExp(r'\s+'), ' ').trim().replaceFirst(RegExp(r'^(?:hey )?(?:che|chey|chay) '), '');
     if (t.isEmpty) return null;
+    final brainSaid = RegExp(r'\bbrain\b').hasMatch(t);
+    if (RegExp(r'^(?:what s|whats|what is|what are) (?:in )?(?:the |my |your )?brain(?: regions)?$|^describe (?:the |my |your )?brain$|^(?:read|list|what are) (?:the )?(?:brain )?regions$|^(?:read|list) (?:the |my |your )?brain$').hasMatch(t)) {
+      return CheBrainOverviewCommand(null, summary: true, explicitBrain: brainSaid);
+    }
+    if (RegExp(r'^(?:go back|back|close|close it|close (?:the |this )?(?:sheet|region|list|panel)|back to (?:the )?brain|go back to (?:the )?brain)$').hasMatch(t)) {
+      return const CheBrainOverviewCommand(null, close: true);
+    }
+    if (RegExp(r'^(?:show|open)(?: me)? (?:the )?(?:detailed |full |record )?constellation$|^(?:show )?(?:every|all) (?:the )?records? in (?:the |my )?brain$|^detailed (?:brain )?view$').hasMatch(t)) {
+      return const CheBrainOverviewCommand(null, constellation: true, explicitBrain: true);
+    }
+    if (RegExp(r'^(?:show|open|back to)(?: me)? (?:the )?(?:brain )?regions$').hasMatch(t)) return const CheBrainOverviewCommand(null, constellation: false);
+    final lobeOpen = RegExp(r'^(?:open|show|go to|read)(?: me)? (?:the |my |your )?(.+?)(?: in (?:the|my|your) brain)?$').firstMatch(t);
+    if (lobeOpen != null) {
+      final name = lobeOpen.group(1)!.trim();
+      final lobe = cheBrainLobeFromWords(name);
+      if (lobe != null) {
+        final region = RegExp(r'\d|^(?:region|number) ').hasMatch(name) ? null : cheBrainRegionFromWords(name);
+        final only = region != null && lobe.regions.length > 1 && lobe.regions.contains(region) ? region : null;
+        return CheBrainOverviewCommand(null, lobe: lobe, only: only, explicitBrain: brainSaid);
+      }
+    }
     final search = RegExp(r'^(?:search|find|look up)(?: in)? (?:my |your |the |che s |ches )?brain (?:for|about) (.{1,80})$').firstMatch(t) ??
         RegExp(r'^search (?:my |your |the )?(?:memories|brain) (?:for|about) (.{1,80})$').firstMatch(t);
     if (search != null) return CheBrainOverviewCommand(CheBrainNav.search, query: search.group(1)!.trim());
@@ -107,17 +136,39 @@ class CheBrainOverview extends StatefulWidget {
 }
 
 class CheBrainOverviewCommand {
-  const CheBrainOverviewCommand(this.section, {this.query, this.learning = false, this.sidebar = false});
+  const CheBrainOverviewCommand(this.section, {this.query, this.learning = false, this.sidebar = false, this.lobe, this.only, this.summary = false, this.close = false, this.constellation, this.explicitBrain = false});
   final CheBrainNav? section;
   final String? query;
   final bool learning;
   final bool sidebar;
+
+  /// Opens one first-glance region's sheet ("open memory in the brain"), optionally narrowed to one record region.
+  final CheBrainLobe? lobe;
+  final CheBrainRegion? only;
+
+  /// "What's in the brain": the regions as a numbered list with their real counts.
+  final bool summary;
+
+  /// "Go back" / "close": closes the open sheet or section. Not a Brain phrase when nothing is open.
+  final bool close;
+
+  /// True shows the detailed record constellation, false returns to the regions.
+  final bool? constellation;
+
+  /// The words named the Brain, so the phrase may open the Brain from another screen.
+  final bool explicitBrain;
 }
 
 class _CheBrainOverviewState extends State<CheBrainOverview> {
   late CheBrainNav _nav = widget.initialSection;
   bool _sidebarOpen = false;
   bool _learningOpen = false;
+
+  // First glance: the region sheet open (one at a time), and whether the record constellation is shown instead.
+  CheBrainLobe? _lobe;
+  CheBrainRegion? _lobeOnly;
+  bool _constellation = false;
+  Map<CheBrainLobe, CheBrainLobeStat> _lobes = const {};
   CheBrainLearning _learning = const CheBrainLearning();
   Timer? _poll;
   bool _loading = false;
@@ -139,7 +190,9 @@ class _CheBrainOverviewState extends State<CheBrainOverview> {
     _derive();
     CheBrainOverview.voiceHandler = _voice;
     CheBrainSpaceController.regionOpener = _openRegion;
+    CheBrainSpaceController.beforeCommand = _beforeSpaceCommand;
     _syncPolling();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _syncChrome());
   }
 
   @override
@@ -155,6 +208,8 @@ class _CheBrainOverviewState extends State<CheBrainOverview> {
     _query.dispose();
     if (CheBrainOverview.voiceHandler == _voice) CheBrainOverview.voiceHandler = null;
     if (CheBrainSpaceController.regionOpener == _openRegion) CheBrainSpaceController.regionOpener = null;
+    if (CheBrainSpaceController.beforeCommand == _beforeSpaceCommand) CheBrainSpaceController.beforeCommand = null;
+    CheBrainOverview.chromeHidden.value = false;
     super.dispose();
   }
 
@@ -165,6 +220,65 @@ class _CheBrainOverviewState extends State<CheBrainOverview> {
     _sig = sig;
     _links = cheBrainLinks(widget.dots, brainLinks: widget.brainLinks);
     _regions = cheBrainRegionCounts(widget.dots);
+    _lobes = cheBrainLobeStats(widget.dots, now: _now);
+  }
+
+  /// Hides the room's floating chips while a sheet or a section covers the brain.
+  void _syncChrome() {
+    if (!mounted) return;
+    final hidden = _lobe != null || _nav != CheBrainNav.overview;
+    if (CheBrainOverview.chromeHidden.value != hidden) CheBrainOverview.chromeHidden.value = hidden;
+  }
+
+  @override
+  void setState(VoidCallback fn) {
+    super.setState(fn);
+    _syncChrome();
+  }
+
+  // A spoken camera command for the record constellation ("zoom in", "fly to the trading region") shows it first,
+  // so the owner never commands an invisible view. Reading and opening commands leave the regions on screen.
+  static const _visualActions = {
+    CheBrainAction.inside, CheBrainAction.filter, CheBrainAction.clearFilter, CheBrainAction.find, CheBrainAction.openSelected,
+    CheBrainAction.expand, CheBrainAction.collapse, CheBrainAction.zoomIn, CheBrainAction.zoomOut, CheBrainAction.fit,
+    CheBrainAction.centerChe, CheBrainAction.centerSelected, CheBrainAction.openWorker, CheBrainAction.lens, CheBrainAction.list,
+    CheBrainAction.space, CheBrainAction.region, CheBrainAction.rotate,
+  };
+
+  void _beforeSpaceCommand(CheBrainAction action) {
+    if (!mounted || !_visualActions.contains(action) || (_constellation && _lobe == null && _nav == CheBrainNav.overview)) return;
+    setState(() {
+      _constellation = true;
+      _lobe = null;
+      _nav = CheBrainNav.overview;
+    });
+  }
+
+  /// Opens one region's sheet (only one is ever open; a second replaces the first).
+  void _openLobe(CheBrainLobe l, {CheBrainRegion? only}) {
+    HapticFeedback.selectionClick();
+    setState(() {
+      _nav = CheBrainNav.overview;
+      _sidebarOpen = false;
+      _constellation = false;
+      _lobe = l;
+      _lobeOnly = only;
+    });
+  }
+
+  void _closeLobe() {
+    if (_lobe == null) return;
+    HapticFeedback.selectionClick();
+    setState(() {
+      _lobe = null;
+      _lobeOnly = null;
+    });
+  }
+
+  String _lobesSpoken() {
+    final total = widget.dots.length;
+    return 'Your brain holds $total record${total == 1 ? '' : 's'} in ${CheBrainLobe.values.length} regions. ${cheBrainLobesSpoken(_lobes)}. '
+        'Say open, then a region name or number, to hear its records.';
   }
 
   // Polls only while the room is on screen; a hidden tab costs nothing.
@@ -211,12 +325,47 @@ class _CheBrainOverviewState extends State<CheBrainOverview> {
   Future<String?> _voice(String words) async {
     final cmd = CheBrainOverview.parse(words);
     if (cmd == null) return null;
+    if (cmd.close) {
+      if (_lobe != null) {
+        final name = _lobe!.label;
+        _closeLobe();
+        return 'Closed $name. Back at the brain: ${CheBrainLobe.values.length} regions.';
+      }
+      if (_nav != CheBrainNav.overview) {
+        _open(CheBrainNav.overview);
+        return 'Back at the brain overview.';
+      }
+      return null;
+    }
+    if (cmd.summary) {
+      setState(() => _lobe = null);
+      return _lobesSpoken();
+    }
+    if (cmd.constellation != null) {
+      setState(() {
+        _constellation = cmd.constellation!;
+        _lobe = null;
+        _nav = CheBrainNav.overview;
+      });
+      return cmd.constellation!
+          ? 'Showing the detailed constellation of every record. Say show the brain regions to go back.'
+          : 'Showing the brain regions. ${cheBrainLobesSpoken(_lobes)}.';
+    }
+    if (cmd.lobe != null) {
+      final l = cmd.lobe!;
+      _openLobe(l, only: cmd.only);
+      final list = cheBrainLobeRecords(l, widget.dots, only: cmd.only);
+      final stat = _lobes[l] ?? const CheBrainLobeStat();
+      final scope = cmd.only == null ? '' : ' Showing ${cmd.only!.label.toLowerCase()} only: ${list.length} record${list.length == 1 ? '' : 's'}.';
+      return 'Opened ${cheBrainLobeSummary(l, stat, list)}$scope Say go back to return to the brain.';
+    }
     if (cmd.sidebar) {
       setState(() => _sidebarOpen = true);
       return 'The Brain sections are open: ${[for (final (i, s) in CheBrainNav.values.indexed) '${i + 1}, ${s.label}'].join('; ')}.';
     }
     if (cmd.learning) {
       if (widget.loadLearning != null) await _refreshLearning();
+      _open(CheBrainNav.activity);
       setState(() => _learningOpen = true);
       return _learningSpoken();
     }
@@ -245,8 +394,7 @@ class _CheBrainOverviewState extends State<CheBrainOverview> {
   String _spokenFor(CheBrainNav nav) {
     switch (nav) {
       case CheBrainNav.overview:
-        final total = widget.dots.length;
-        return 'Brain overview: $total record${total == 1 ? '' : 's'}. ${[for (final r in CheBrainRegion.values) if (_regions[r]! > 0) '${_regions[r]} ${r.label.toLowerCase()}'].join(', ')}.';
+        return _lobesSpoken();
       case CheBrainNav.activity:
         final a = cheBrainActivity(widget.dots, limit: 3);
         final links = _learning.connections;
@@ -288,6 +436,11 @@ class _CheBrainOverviewState extends State<CheBrainOverview> {
   /// region"), VoiceOver (the region labels) and touch all come here.
   void _openRegion(CheBrainRegion r) {
     if (!mounted) return;
+    if (r != CheBrainRegion.verified) {
+      final l = cheBrainLobeOfRegion(r);
+      _openLobe(l, only: l.regions.length > 1 ? r : null);
+      return;
+    }
     HapticFeedback.selectionClick();
     Navigator.of(context).push(MaterialPageRoute<void>(
       builder: (_) => CheBrainRegionDetails(
@@ -408,6 +561,14 @@ class _CheBrainOverviewState extends State<CheBrainOverview> {
               ]),
             ),
           ),
+          if (_nav == CheBrainNav.overview && _lobe == null) ...[
+            _iconButton(_constellation ? Icons.blur_on_rounded : Icons.hub_rounded, _constellation ? 'Back to the brain regions' : 'Show the detailed constellation of every record', () {
+              HapticFeedback.selectionClick();
+              setState(() => _constellation = !_constellation);
+            }, key: const ValueKey('brain-constellation-toggle'), on: _constellation),
+            if (widget.onReadAloud != null)
+              _iconButton(Icons.volume_up_rounded, 'Read the brain aloud', () => unawaited(widget.onReadAloud!(_lobesSpoken())), key: const ValueKey('brain-read-aloud')),
+          ],
           _iconButton(Icons.search_rounded, 'Search the Brain', () => _open(CheBrainNav.search), key: const ValueKey('brain-header-search'), on: _nav == CheBrainNav.search),
           const SizedBox(width: 4),
         ],
@@ -489,76 +650,101 @@ class _CheBrainOverviewState extends State<CheBrainOverview> {
     );
   }
 
-  // ─── Overview: brain + region labels + learning + dashboard cards ─────────
+  // ─── Overview: seven regions, one sheet at a time ────────────────────────
 
   Widget _overviewBody() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Expanded(
-          child: Stack(
-            children: [
-              Positioned.fill(child: widget.brain),
-              // Region labels with real counts, like the reference's floating labels. Tap one to open its records.
-              Positioned(left: 6, top: 96, child: _regionColumn(const [CheBrainRegion.memories, CheBrainRegion.conversations, CheBrainRegion.knowledge, CheBrainRegion.research, CheBrainRegion.creative, CheBrainRegion.media])),
-              Positioned(right: 6, top: 96, child: _regionColumn(const [CheBrainRegion.trading, CheBrainRegion.coding, CheBrainRegion.agents, CheBrainRegion.verified, CheBrainRegion.errors])),
+    final lobe = _lobe;
+    return PopScope(
+      // The system back gesture closes the open sheet first, then leaves the room as before.
+      canPop: lobe == null,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop) _closeLobe();
+      },
+      child: LayoutBuilder(builder: (context, c) {
+        final sheetHeight = c.maxHeight * .72;
+        return Stack(
+          fit: StackFit.expand,
+          children: [
+            // The record constellation: mounted (its voice commands and camera survive), shown only on request.
+            Offstage(
+              offstage: !_constellation,
+              child: TickerMode(enabled: _constellation, child: widget.brain),
+            ),
+            if (!_constellation)
+              Positioned.fill(
+                child: ExcludeSemantics(
+                  // While a sheet is open VoiceOver stays in the sheet: one panel, nothing behind it to wander into.
+                  excluding: lobe != null,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Expanded(
+                        child: TickerMode(
+                          enabled: lobe == null,
+                          child: CheBrainNeuralView(key: const ValueKey('brain-neural'), stats: _lobes, selected: lobe, onOpen: (l) => lobe == l ? _closeLobe() : _openLobe(l)),
+                        ),
+                      ),
+                      _statusLine(),
+                    ],
+                  ),
+                ),
+              ),
+            if (lobe != null) ...[
+              Positioned.fill(
+                bottom: sheetHeight - 12,
+                child: Semantics(
+                  button: true,
+                  label: 'Close ${lobe.label} and go back to the brain',
+                  excludeSemantics: true,
+                  child: GestureDetector(key: const ValueKey('brain-lobe-barrier'), onTap: _closeLobe, child: const ColoredBox(color: Color(0x66000000))),
+                ),
+              ),
+              Positioned(
+                left: 0,
+                right: 0,
+                bottom: 0,
+                height: sheetHeight,
+                child: CheBrainLobeSheet(
+                  key: const ValueKey('brain-lobe-sheet'),
+                  lobe: lobe,
+                  initialOnly: _lobeOnly,
+                  dots: widget.dots,
+                  stat: _lobes[lobe] ?? const CheBrainLobeStat(),
+                  now: _now,
+                  onClose: _closeLobe,
+                  onOpenRecord: _details,
+                  onReadAloud: widget.onReadAloud,
+                ),
+              ),
             ],
-          ),
-        ),
-        _learningPanel(),
-        _dashboard(),
-      ],
+          ],
+        );
+      }),
     );
   }
 
-  Widget _regionColumn(List<CheBrainRegion> regions) => Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [for (final r in regions) Padding(padding: const EdgeInsets.only(bottom: 6), child: _regionBadge(r))],
-      );
-
-  Widget _regionBadge(CheBrainRegion r) {
-    final n = _regions[r] ?? 0;
-    // Each region is one VoiceOver node with its name and real count; activating it opens its records, and its
-    // custom action (or a long press) flies the brain there.
+  /// One quiet line under the brain: totals and what CHE is learning. Muted text, never announced on its own;
+  /// activating it opens Live Activity.
+  Widget _statusLine() {
+    final total = widget.dots.length;
+    final verified = _regions[CheBrainRegion.verified] ?? 0;
+    final fresh = _lobes.values.fold<int>(0, (a, s) => a + s.fresh);
+    final learning = widget.loadLearning == null ? 'Learning feed not connected' : (_learning.isActive(_now) ? 'Learning now' : 'Idle, waiting for work');
+    final text = '${_fmt(total)} record${total == 1 ? '' : 's'} · ${_fmt(verified)} verified${fresh > 0 ? ' · $fresh new today' : ''} · $learning';
     return Semantics(
       button: true,
-      label: '${r.label} region: $n record${n == 1 ? '' : 's'}. Opens its records.',
-      customSemanticsActions: {
-        CustomSemanticsAction(label: 'Fly to the ${r.label} region'): () => _flyToRegion(r),
-      },
+      label: '$text. Opens Live Activity.',
       excludeSemantics: true,
-      child: GestureDetector(
-        key: ValueKey('brain-region-${r.name}'),
-        onTap: () => _openRegion(r),
-        onLongPress: () => _flyToRegion(r),
-        child: Container(
-          constraints: const BoxConstraints(minWidth: 74, minHeight: 34),
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-          decoration: BoxDecoration(
-            color: const Color(0xA6050A1A),
-            borderRadius: BorderRadius.circular(10),
-            border: Border.all(color: r.color.withValues(alpha: n == 0 ? .25 : .7)),
-            boxShadow: n == 0 ? null : [BoxShadow(color: r.color.withValues(alpha: .28), blurRadius: 10)],
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(r.label, style: TextStyle(fontSize: 10.5, color: r.color.withValues(alpha: n == 0 ? .5 : 1), fontWeight: FontWeight.w600)),
-              Text(_fmt(n), style: TextStyle(fontSize: 13, color: n == 0 ? Colors.white38 : Colors.white, fontWeight: FontWeight.w700, fontFeatures: const [FontFeature.tabularFigures()])),
-            ],
-          ),
+      child: InkWell(
+        key: const ValueKey('brain-status'),
+        onTap: () => _open(CheBrainNav.activity),
+        child: Padding(
+          // Leaves the right side to the room's Soul & facts and Log chips.
+          padding: const EdgeInsets.fromLTRB(18, 10, 196, 14),
+          child: Text(text, maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 13, height: 1.3, color: Colors.white60)),
         ),
       ),
     );
-  }
-
-  /// Flies the neural brain to a region; the reply is shown and, being an explicit owner action, read aloud.
-  void _flyToRegion(CheBrainRegion r) {
-    final space = CheBrainSpaceController.current;
-    HapticFeedback.selectionClick();
-    final said = space == null ? 'The neural brain is not on screen, so I cannot fly to the ${r.label} region.' : space.flyToRegion(r);
-    unawaited(widget.onReadAloud?.call(said));
   }
 
   Widget _learningPanel() {
@@ -662,64 +848,6 @@ class _CheBrainOverviewState extends State<CheBrainOverview> {
     );
   }
 
-  Widget _dashboard() {
-    return SizedBox(
-      key: const ValueKey('brain-dashboard'),
-      height: 112,
-      child: ListView.separated(
-        scrollDirection: Axis.horizontal,
-        padding: EdgeInsets.fromLTRB(10, 2, 10, 8 + MediaQuery.viewPaddingOf(context).bottom * 0),
-        itemCount: cheBrainDashboardCards.length,
-        separatorBuilder: (_, _) => const SizedBox(width: 10),
-        itemBuilder: (_, i) => _card(cheBrainDashboardCards[i]),
-      ),
-    );
-  }
-
-  Widget _card(CheBrainNav s) {
-    final f = cheBrainCardFigure(s, widget.dots, _links);
-    final sub = switch (s) {
-      CheBrainNav.connections => '${f.verified} strong',
-      CheBrainNav.learningTasks => f.count == 0 ? 'none running' : 'in progress',
-      _ => f.count == 0 ? 'none yet' : '${(100 * f.verified / f.count).round()}% verified',
-    };
-    final share = s == CheBrainNav.learningTasks || f.count == 0 ? null : f.verified / f.count;
-    return Semantics(
-      button: true,
-      label: '${s.label}: ${f.count} ${f.unit}, $sub. Opens ${s.label}.',
-      excludeSemantics: true,
-      child: GestureDetector(
-        key: ValueKey('brain-card-${s.name}'),
-        onTap: () => _open(s),
-        child: Container(
-          width: 132,
-          padding: const EdgeInsets.fromLTRB(10, 9, 10, 9),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(16),
-            gradient: LinearGradient(begin: Alignment.topLeft, end: Alignment.bottomRight, colors: [s.color.withValues(alpha: .22), _glassHi]),
-            border: Border.all(color: s.color.withValues(alpha: .65)),
-            boxShadow: [BoxShadow(color: s.color.withValues(alpha: .32), blurRadius: 14, spreadRadius: -2)],
-          ),
-          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Row(children: [
-              Icon(s.icon, size: 17, color: s.color),
-              const SizedBox(width: 6),
-              Expanded(child: Text(s.label, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 12, color: Colors.white, fontWeight: FontWeight.w600))),
-            ]),
-            const Spacer(),
-            Text(_fmt(f.count), style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w800, color: Colors.white, fontFeatures: [FontFeature.tabularFigures()])),
-            Text(sub, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 11, color: Colors.white60)),
-            const SizedBox(height: 4),
-            ClipRRect(
-              borderRadius: BorderRadius.circular(3),
-              child: LinearProgressIndicator(value: share ?? 0, minHeight: 3, backgroundColor: Colors.white10, color: s.color),
-            ),
-          ]),
-        ),
-      ),
-    );
-  }
-
   // ─── Sections ─────────────────────────────────────────────────────────────
 
   Widget _section() => switch (_nav) {
@@ -810,6 +938,8 @@ class _CheBrainOverviewState extends State<CheBrainOverview> {
     final list = onlyLinks ? const <CheMemoryDot>[] : cheBrainActivity(widget.dots, filter: _filter);
     final links = _filter == CheBrainActivityFilter.all ? _learning.connections.take(3).toList() : onlyLinks ? _learning.connections : const <CheBrainConnectionEvent>[];
     return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+      // Real-Time Learning lives here now (it used to sit under the brain as a stacked panel).
+      _learningPanel(),
       SizedBox(
         height: 46,
         // A plain row in a scroller (not a lazy list): every filter exists for VoiceOver and voice, even off screen.

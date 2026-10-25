@@ -6,6 +6,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../brain/che_brain_overview.dart' show CheBrainOverview;
 import '../che_ui/che_agent_chat.dart';
 import '../che_ui/che_brain.dart';
 import '../che_ui/che_log.dart';
@@ -98,25 +99,30 @@ class _CheInsightsRoomState extends State<CheInsightsRoom> {
         child: Stack(
           children: [
             Positioned.fill(child: widget.map),
-            Positioned(
-              right: CheSpace.gutter,
-              bottom: CheSpace.md + widget.chipsBottomInset + (widget.chipsBottomInset > 0 ? 0 : MediaQuery.viewPaddingOf(context).bottom),
-              child: MediaQuery(
-                // Capped like the Brain chrome so the card inset always clears it.
-                data: MediaQuery.of(context).copyWith(textScaler: MediaQuery.textScalerOf(context).clamp(minScaleFactor: 1.0, maxScaleFactor: 1.2)),
-                child: Material(
-                  color: CheColors.surfaceHi.withValues(alpha: 0.94),
-                  elevation: 6,
-                  borderRadius: BorderRadius.circular(CheRadius.pill),
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        _BrainChip(icon: Icons.psychology_alt_outlined, label: 'Soul & facts', onTap: _openSoulSheet),
-                        const SizedBox(width: 4),
-                        _BrainChip(icon: Icons.forum_outlined, label: 'Log', onTap: _openLogSheet),
-                      ],
+            // Hidden while the Brain shows a region sheet or a section, so no chip floats over the one open panel.
+            ValueListenableBuilder<bool>(
+              valueListenable: CheBrainOverview.chromeHidden,
+              builder: (context, hidden, chips) => hidden ? const SizedBox.shrink() : chips!,
+              child: Positioned(
+                right: CheSpace.gutter,
+                bottom: CheSpace.md + widget.chipsBottomInset + (widget.chipsBottomInset > 0 ? 0 : MediaQuery.viewPaddingOf(context).bottom),
+                child: MediaQuery(
+                  // Capped like the Brain chrome so the card inset always clears it.
+                  data: MediaQuery.of(context).copyWith(textScaler: MediaQuery.textScalerOf(context).clamp(minScaleFactor: 1.0, maxScaleFactor: 1.2)),
+                  child: Material(
+                    color: CheColors.surfaceHi.withValues(alpha: 0.94),
+                    elevation: 6,
+                    borderRadius: BorderRadius.circular(CheRadius.pill),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          _BrainChip(icon: Icons.psychology_alt_outlined, label: 'Soul & facts', onTap: _openSoulSheet),
+                          const SizedBox(width: 4),
+                          _BrainChip(icon: Icons.forum_outlined, label: 'Log', onTap: _openLogSheet),
+                        ],
+                      ),
                     ),
                   ),
                 ),

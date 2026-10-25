@@ -234,7 +234,10 @@ extension _CheHomeSend on _CHEHomeState {
     // Brain Room phrases off the Brain screen ("search my brain for red", "show live activity", "what is CHE
     // learning"): open the Brain, then let its handler answer, so the same words work everywhere.
     final brainPhrase = CheBrainOverview.voiceHandler == null ? CheBrainOverview.parse(message) : null;
-    if (brainPhrase != null && (brainPhrase.query != null || brainPhrase.learning || brainPhrase.section == CheBrainNav.activity)) {
+    // Also "open memory in the brain" / "what's in the brain" (the Brain's seven regions), only when the words name
+    // the Brain, so "open trading" still opens the Trading Room.
+    final brainRegionPhrase = brainPhrase != null && brainPhrase.explicitBrain && (brainPhrase.lobe != null || brainPhrase.summary);
+    if (brainPhrase != null && (brainPhrase.query != null || brainPhrase.learning || brainPhrase.section == CheBrainNav.activity || brainRegionPhrase)) {
       if (_assistantHubOpen && mounted) Navigator.of(context).pop();
       _openAssistantHub(tab: 0);
       for (var i = 0; i < 14 && CheBrainOverview.voiceHandler == null; i++) {
