@@ -486,6 +486,12 @@ extension _CheHomeStreaming on _CHEHomeState {
         if (data['open_screen'] == 'recording_studio' && data['source'] == 'che_recording_studio' && mounted) unawaited(_openRecordingStudio());
         // "Open your cloud computer": only the Cloud Computer Manager's own reply opens the room.
         if (data['open_screen'] == 'cloud_computer' && data['source'] == 'che_cloud_computer' && mounted) unawaited(_openCloudComputer());
+        // "Connect GPU" matched by the Worker (/cloud-gpu connect): the owner's own command, so the flow may open Colab.
+        if (data['open_screen'] == 'gpu_connect' && data['source'] == 'che_cloud_computer' && mounted) {
+          _configureGpuConnect();
+          CheGpuConnect.instance.start('/cloud-gpu connect');
+          unawaited(_showGpuBrowser());
+        }
         // "Open Truth and Verification": only the Worker's own truth handler opens the Brain Room section.
         if (data['open_screen'] == 'brain_truth' && data['source'] == 'che_brain_truth' && mounted) unawaited(_openBrainTruth());
         // Owner Improvements: a setting CHE changed applies here at once, and the app reports what it now uses.

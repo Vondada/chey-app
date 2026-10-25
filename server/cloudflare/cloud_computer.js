@@ -837,6 +837,8 @@ const GPU_JOBS = /^(?:(?:what|how)(?:'s| are| is)\s+(?:my|the|your)\s+(?:gpu|col
 // The compute pool (compute_pool.js): which computers can build characters, and why a character waits. Asked as a
 // question too; answered by /cloud-gpu with input "pool".
 const POOL = /^(?:(?:which|what)\s+(?:computers?|machines?|gpus?|workers?)\s+(?:can|could)\s+(?:build|make|create|render)\s+(?:my\s+|the\s+)?(?:characters?|people|persons?|avatars?)|why\s+(?:is|are)\s+(?:my|the)\s+(?:characters?|avatars?|person|people|character jobs?)\s+(?:still\s+)?(?:waiting|queued|stuck|not (?:started|building))|(?:show|read|check)(?: me)?\s+(?:my|the|your)\s+compute\s+pool|(?:what(?:'s| is)\s+)?(?:my|the|your)\s+compute\s+pool(?:\s+status)?)$/i;
+// Connect GPU (owner, 2026-10-25): the app runs the flow (lib/create/che_gpu_connect.dart); here it only opens it.
+const CONNECT_GPU = /^(?:connect|start|turn on|reconnect)\s+(?:(?:my|the|your)\s+)?(?:colab\s+)?gpu(?:\s+(?:runtime|worker|now))?$/i;
 const CONTROL = /^(approve|cancel|stop|retry)\s+(?:the\s+|that\s+|my\s+|your\s+)?cloud\s+job(?:\s+([0-9a-f]{6,36}))?$/i;
 
 /** The owner's spoken request to the Cloud Computer as { command, input }, or null. Questions never match. */
@@ -845,6 +847,7 @@ export function cloudIntent(message) {
   if (t && t.length <= 160 && GPU_JOBS.test(t)) return { command: 'cloud-gpu', input: '' };   // asked as a question too
   if (t && t.length <= 160 && POOL.test(t.replace(/\?+$/, ''))) return { command: 'cloud-gpu', input: 'pool' };
   if (!t || t.length > 160 || /\?\s*$/.test(String(message || ''))) return null;
+  if (CONNECT_GPU.test(t)) return { command: 'cloud-gpu', input: 'connect' };
   if (OPEN.test(t)) return { command: 'cloud-open', input: '' };
   if (BLENDER.test(t)) return { command: 'cloud-blender', input: t };
   if (RENDER.test(t)) return { command: 'cloud-render', input: '' };

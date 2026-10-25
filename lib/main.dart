@@ -102,6 +102,7 @@ import 'create/che_creative_studio.dart';
 import 'create/che_project_manager.dart';
 import 'create/che_creation_engine_page.dart';
 import 'create/che_gpu_browser.dart';
+import 'create/che_gpu_connect.dart';
 import 'create/che_live_studio.dart';
 import 'agents/che_agent_runtime.dart';
 import 'agents/che_office_floor_screen.dart';
