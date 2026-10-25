@@ -219,9 +219,30 @@ test('compute receipts come from a ledger when one is exported, else from the jo
   const derived = await computeReceipts(storage, { month: '2026-10', now: NOW, ledger: null });
   assert.equal(derived.source, 'gpu:jobs attempts');
   assert.deepEqual(derived.rows.map((r) => [r.provider, r.gpu_seconds, r.cpu_seconds]), [['kaggle', 600, 0], ['github_actions_cpu', 0, 7200]]);
-  const viaLedger = await computeReceipts(storage, { month: '2026-10', ledger: async (_s, { month }) => [{ provider: 'modal', job: `m-${month}`, gpu_seconds: 42, estimated_cost: 0.01, provenance: 'estimated' }] });
+  // lane/modal-gpu's modal_gpu.js computeUsageLedger(storage, { month, now }) shape.
+  const modalLedger = async (_s, { month }) => ({
+    month, generated_at: at(NOW), provenance_values: ['OBSERVED', 'ESTIMATED', 'USER-ENTERED', 'UNAVAILABLE'], providers: {},
+    receipts: [
+      { job_id: 'gpu_m1', job_title: 'Cube render', job_state: 'completed', provider: 'modal', idempotency_key: 'mc_1', state: 'completed', gpu: 'T4', gpu_seconds: 42, gpu_seconds_provenance: 'OBSERVED',
+        estimated_cost_usd: 0.0069, cost_provenance: 'ESTIMATED', billed_cost_usd: null, billed_provenance: 'UNAVAILABLE', started_at: at(NOW - H), ended_at: at(NOW - H + 42_000), attempts: 1, artifact_sha256: null, error: '',
+        data_provenance: { gpu_seconds: 'OBSERVED', cost: 'ESTIMATED', billed: 'UNAVAILABLE' } },
+      { job_id: 'gpu_k1', job_title: 'Character', job_state: 'completed', provider: 'kaggle', idempotency_key: null, state: 'completed', gpu: 'GPU', gpu_seconds: null, gpu_seconds_provenance: 'UNAVAILABLE', cpu_seconds: null,
+        estimated_cost_usd: 0, cost_provenance: 'ESTIMATED', cost_basis: 'Kaggle weekly free GPU quota', billed_cost_usd: null, billed_provenance: 'UNAVAILABLE', ended_at: at(NOW - 2 * H) },
+    ],
+    totals: { estimated_cost_usd: 0.0069, billed_cost_usd: null },
+    modal_credit: { opt_in: true, spend_limit_zero: true, stated_credit_usd: 30, stated_credit_provenance: 'USER-ENTERED', third_party_listing_usd: 30, stop_at_usd: 28.5, used_estimate_usd: 0.0069, used_estimate_provenance: 'ESTIMATED',
+      remaining_credit_usd: null, remaining_credit_provenance: 'UNAVAILABLE', remaining_credit_why: 'Modal billing reports are Team/Enterprise only and show costs before credits (modal.com/docs/guide/billing).' },
+  });
+  const viaLedger = await computeReceipts(storage, { month: '2026-10', now: NOW, ledger: modalLedger });
   assert.equal(viaLedger.source, 'computeUsageLedger');
-  assert.deepEqual(viaLedger.rows[0], { provider: 'modal', job: 'm-2026-10', kind: '', outcome: '', gpu_seconds: 42, cpu_seconds: 0, estimated_cost: 0.01, provenance: 'ESTIMATED', source: '' });
+  assert.deepEqual(viaLedger.rows[0], { provider: 'modal', job: 'gpu_m1', kind: 'Cube render', outcome: 'completed', gpu_seconds: 42, cpu_seconds: 0, measured: true, estimated_cost: 0.0069, billed_cost: null, provenance: 'OBSERVED', source: '' });
+  assert.equal(viaLedger.rows[1].measured, false, 'an unknown run time is unmeasured, not zero');
+  const view = await usageView({}, { storage, now: NOW, ledger: modalLedger });
+  assert.equal(metricOf(view, 'compute:modal', 'gpu_seconds').value, 42);
+  assert.equal(metricOf(view, 'compute:modal', 'used_estimate').provenance, PROVENANCE.ESTIMATED);
+  assert.equal(metricOf(view, 'compute:modal', 'stated_credit').provenance, PROVENANCE.USER_ENTERED);
+  assert.match(metricOf(view, 'compute:modal', 'credits').why, /Team\/Enterprise/);
+  assert.equal(metricOf(view, 'compute:kaggle', 'gpu_seconds').provenance, PROVENANCE.UNAVAILABLE, 'the only Kaggle job has no measured time');
   const failing = await computeReceipts(storage, { month: '2026-10', now: NOW, ledger: async () => { throw new Error('ledger down'); } });
   assert.equal(failing.source, 'gpu:jobs attempts', 'a failing ledger falls back to the records');
 });

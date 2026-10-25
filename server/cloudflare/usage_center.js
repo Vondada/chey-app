@@ -68,14 +68,18 @@ function metricText(m) {
 // ─── Compute receipts (adapter) ────────────────────────────────────────────────────────────────────────────────
 const poolGpu = Object.fromEntries(POOL_PROVIDERS.map((p) => [p.id, p.gpu]));
 
-/** Normalized per-job compute receipts for one month: { provider, job, kind, gpu_seconds, cpu_seconds, estimated_cost, provenance, source }. */
+/**
+ * Normalized per-job compute receipts for one month: { provider, job, kind, gpu_seconds, cpu_seconds, estimated_cost,
+ * billed_cost, provenance, source }. The ledger is lane/modal-gpu's modal_gpu.js computeUsageLedger(storage, { month, now })
+ * ({ receipts: [...], modal_credit, totals }); integrating it is one line: import it here and make it the default.
+ */
 export async function computeReceipts(storage, { month, now = Date.now(), ledger = computePool.computeUsageLedger || computeBudget.computeUsageLedger } = {}) {
   const m = month || monthOf(now);
   if (typeof ledger === 'function') {
     try {
-      const out = await ledger(storage, { month: m });
-      const rows = Array.isArray(out) ? out : Array.isArray(out?.rows) ? out.rows : null;
-      if (rows) return { source: 'computeUsageLedger', rows: rows.map((r) => normalizeReceipt(r)) };
+      const out = await ledger(storage, { month: m, now });
+      const rows = Array.isArray(out) ? out : Array.isArray(out?.receipts) ? out.receipts : Array.isArray(out?.rows) ? out.rows : null;
+      if (rows) return { source: 'computeUsageLedger', rows: rows.map((r) => normalizeReceipt(r)), modal_credit: out?.modal_credit || null };
     } catch (_) { /* fall back to the job records below */ }
   }
   const jobs = (await storage.get('gpu:jobs')) ?? [];
@@ -95,9 +99,12 @@ export async function computeReceipts(storage, { month, now = Date.now(), ledger
 
 function normalizeReceipt(r = {}) {
   const num = (v) => (Number.isFinite(Number(v)) && v !== null && v !== '' ? Number(v) : null);
-  return { provider: clip(r.provider || 'unknown', 40), job: clip(r.job || r.job_id || '', 64), kind: clip(r.kind || '', 40), outcome: clip(r.outcome || '', 30),
-    gpu_seconds: num(r.gpu_seconds) || 0, cpu_seconds: num(r.cpu_seconds) || 0, estimated_cost: num(r.estimated_cost),
-    provenance: String(r.provenance || 'observed').toUpperCase().replace('-', '_'), source: clip(r.source || '', 160) };
+  const prov = (v) => String(v || '').toUpperCase().replace('-', '_');
+  // A ledger row's time can be unknown (gpu_seconds null, provenance UNAVAILABLE): it is counted as unmeasured, never as 0.
+  const timed = !(r.gpu_seconds == null && r.cpu_seconds == null && 'gpu_seconds' in r) && prov(r.gpu_seconds_provenance) !== 'UNAVAILABLE';
+  return { provider: clip(r.provider || 'unknown', 40), job: clip(r.job || r.job_id || r.idempotency_key || '', 64), kind: clip(r.kind || r.job_title || '', 80), outcome: clip(r.outcome || r.state || r.job_state || '', 30),
+    gpu_seconds: num(r.gpu_seconds) || 0, cpu_seconds: num(r.cpu_seconds) || 0, measured: timed, estimated_cost: num(r.estimated_cost ?? r.estimated_cost_usd), billed_cost: num(r.billed_cost_usd),
+    provenance: prov(r.gpu_seconds_provenance || r.provenance || 'observed'), source: clip(r.source || r.cost_basis || '', 160) };
 }
 
 // ─── Subscriptions the owner tells CHE ──────────────────────────────────────────────────────────────────────────
@@ -325,8 +332,12 @@ async function computeRows(env, storage, t, receipts) {
     if (receipts.source === 'unavailable') metrics.push(unavailable('jobs_month', 'Jobs and compute time this month', 'CHE could not read her job records just now.'));
     else {
       metrics.push(metric('jobs_month', 'Jobs this month', jobsN, 'jobs', PROVENANCE.OBSERVED, measured));
-      if (s.gpu === true) metrics.push(metric('gpu_seconds', 'GPU seconds this month', gpuS, 's', PROVENANCE.OBSERVED, measured));
-      else metrics.push(metric('cpu_hours', 'CPU hours this month', hours(cpuS), 'h', PROVENANCE.OBSERVED, measured));
+      const timed = mine.filter((r) => r.measured !== false);
+      const timeProv = timed.some((r) => r.provenance === PROVENANCE.ESTIMATED) ? PROVENANCE.ESTIMATED : PROVENANCE.OBSERVED;
+      const timeSrc = { source: `${measured.source}${timed.length < mine.length ? `; ${mine.length - timed.length} of ${mine.length} jobs have no measured time and are not counted` : ''}` };
+      if (mine.length && !timed.length) metrics.push(unavailable(s.gpu === true ? 'gpu_seconds' : 'cpu_hours', s.gpu === true ? 'GPU seconds this month' : 'CPU hours this month', 'No job this month has a measured run time.'));
+      else if (s.gpu === true) metrics.push(metric('gpu_seconds', 'GPU seconds this month', Math.round(gpuS * 10) / 10, 's', timeProv, timeSrc));
+      else metrics.push(metric('cpu_hours', 'CPU hours this month', hours(cpuS), 'h', timeProv, timeSrc));
     }
     if (id === 'github_actions_cpu') {
       if (s.status === 'ready' || s.status === 'cooling_down') status = 'connected';
@@ -368,8 +379,11 @@ async function computeRows(env, storage, t, receipts) {
     } else if (id === 'modal') {
       status = has ? 'unverified' : 'not_connected';
       evidence = has ? 'A Modal key is saved, but Modal has no plain HTTP check CHE can call, and no Modal route is wired yet.' : 'No Modal key is saved. Modal stays off until you set it up and approve it.';
-      metrics.push(unavailable('credits', 'Free credits left', 'CHE has no Modal API read; Modal shows credits in its dashboard.'));
-      metrics.push(unavailable('cost', 'Cost', 'Modal is not wired, so CHE has run nothing there.'));
+      const mc = receipts.modal_credit;
+      if (mc?.stated_credit_usd != null) metrics.push(metric('stated_credit', 'Monthly credit you stated', mc.stated_credit_usd, 'usd', PROVENANCE.USER_ENTERED, { source: 'Modal lane record' }));
+      if (mc && Number.isFinite(Number(mc.used_estimate_usd))) metrics.push(metric('used_estimate', 'Used this month', Number(mc.used_estimate_usd), 'usd', PROVENANCE.ESTIMATED, { source: 'CHE\'s Modal call records × Modal\'s published per-second price' }));
+      metrics.push(unavailable('credits', 'Free credits left', mc?.remaining_credit_why || 'CHE has no Modal API read; Modal shows credits in its dashboard.'));
+      if (!mc) metrics.push(unavailable('cost', 'Cost', 'Modal is not wired, so CHE has run nothing there.'));
     }
     rows.push({ id: `compute:${id}`, group: 'compute', name: label, status: STATUS[status], status_id: status, evidence: clip(evidence, 400), purpose: PURPOSE[id],
       scopes: has ? s.credential.source : 'none', metrics, paid: Boolean(s.paid), cooling_until: s.cooling_until || null, quota: q });
@@ -467,9 +481,9 @@ async function tokenTotals(storage, t) {
 
 // ─── The view ───────────────────────────────────────────────────────────────────────────────────────────────────
 /** The whole Usage Center: rows, subscriptions, alerts and totals. Reads stored records only (no provider calls). */
-export async function usageView(env = {}, { storage, now } = {}) {
+export async function usageView(env = {}, { storage, now, ledger } = {}) {
   const t = clock(now)();
-  const receipts = await computeReceipts(storage, { month: monthOf(t), now: t }).catch(() => ({ source: 'unavailable', rows: [] }));
+  const receipts = await computeReceipts(storage, { month: monthOf(t), now: t, ...(ledger !== undefined ? { ledger } : {}) }).catch(() => ({ source: 'unavailable', rows: [] }));
   const noReceipts = receipts.source === 'unavailable';
   const ai = await aiRows(env, storage, t).catch(() => []);
   const { rows: compute, pool } = await computeRows(env, storage, t, receipts).catch(() => ({ rows: [], pool: null }));
