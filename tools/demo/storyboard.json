@@ -1,0 +1,229 @@
+{
+ "note": "Create Room demo storyboard (lane E). Each segment: what is shown, its honesty label(s), and the spoken lines. Voices are Kokoro int8 v0.19 speakers from CHE's local voice catalog (lib/che_native_voice.dart): CHE = 0 'af' (Chaze signature) at speed 0.94; the owner's words are RE-ENACTED with speaker 6 'am_michael' (not the owner's voice); Ava's voices are 3 'af_sarah' and 7 'bf_emma'. 'min' is the shortest segment length in seconds; a segment lasts at least as long as its speech plus 'tail'.",
+ "voices": {
+  "che": {
+   "sid": 0,
+   "speed": 0.94
+  },
+  "owner": {
+   "sid": 6,
+   "speed": 1.0
+  },
+  "ava": {
+   "sid": 3,
+   "speed": 1.0
+  },
+  "ava2": {
+   "sid": 7,
+   "speed": 1.0
+  }
+ },
+ "segments": [
+  {
+   "id": "s01_title",
+   "min": 6.5,
+   "tail": 0.8,
+   "lines": [
+    {
+     "who": "che",
+     "at": 0.6,
+     "text": "CHE's Create Room, demonstrated. Each part is labelled real, prototype, or not possible at zero cost."
+    }
+   ]
+  },
+  {
+   "id": "s02_create",
+   "min": 11,
+   "tail": 1.0,
+   "lines": [
+    {
+     "who": "owner",
+     "at": 0.5,
+     "text": "Create Ava: a fictional woman in her thirties, warm brown skin, dark hair, terracotta top. All three styles."
+    },
+    {
+     "who": "che",
+     "gap": 0.5,
+     "text": "Creating Ava in three styles on the free CPU worker."
+    }
+   ]
+  },
+  {
+   "id": "s03_styles",
+   "min": 9.5,
+   "tail": 1.2,
+   "lines": [
+    {
+     "who": "che",
+     "at": 0.6,
+     "text": "Ava is ready in three styles. One, photoreal. Two, game-like. Three, stylized. Say a number to choose."
+    }
+   ]
+  },
+  {
+   "id": "s04_rig",
+   "min": 9,
+   "tail": 1.0,
+   "lines": [
+    {
+     "who": "owner",
+     "at": 0.4,
+     "text": "Show her skeleton."
+    },
+    {
+     "who": "che",
+     "gap": 0.4,
+     "text": "Skeleton shown. Fifty-three bones with skin weights, five animation clips, and five facial shape keys."
+    }
+   ]
+  },
+  {
+   "id": "s05_face",
+   "min": 7,
+   "tail": 0.8,
+   "lines": [
+    {
+     "who": "che",
+     "at": 0.5,
+     "text": "Her face: a blink, a smile, raised brows, and an open mouth. These are her own shape keys."
+    }
+   ]
+  },
+  {
+   "id": "s06_move",
+   "min": 12,
+   "tail": 0.5,
+   "lines": [
+    {
+     "who": "owner",
+     "at": 0.3,
+     "text": "Walk, turn around, run, then wave."
+    },
+    {
+     "who": "che",
+     "gap": 0.3,
+     "text": "Walking."
+    },
+    {
+     "who": "che",
+     "at": 5.2,
+     "text": "Turning."
+    },
+    {
+     "who": "che",
+     "at": 7.6,
+     "text": "Running."
+    },
+    {
+     "who": "che",
+     "at": 10.0,
+     "text": "Waving."
+    }
+   ]
+  },
+  {
+   "id": "s07_speak",
+   "min": 8,
+   "tail": 1.0,
+   "lines": [
+    {
+     "who": "owner",
+     "at": 0.3,
+     "text": "Let her speak."
+    },
+    {
+     "who": "ava",
+     "gap": 0.5,
+     "lipsync": true,
+     "text": "Hi, I'm Ava. My mouth follows this voice, generated on this machine, for free."
+    }
+   ]
+  },
+  {
+   "id": "s08_custom",
+   "min": 13.5,
+   "tail": 0.8,
+   "lines": [
+    {
+     "who": "owner",
+     "at": 0.3,
+     "text": "Make her hair copper, change the outfit to navy, and make her taller and stronger."
+    },
+    {
+     "who": "che",
+     "gap": 0.4,
+     "text": "Done. All three kept the same fifty-three bones and five clips, so every animation still plays."
+    }
+   ]
+  },
+  {
+   "id": "s08b_voice",
+   "min": 7,
+   "tail": 0.8,
+   "lines": [
+    {
+     "who": "owner",
+     "at": 0.3,
+     "text": "Try another voice."
+    },
+    {
+     "who": "ava2",
+     "gap": 0.4,
+     "lipsync": true,
+     "text": "This is voice seven, from CHE's free local voice list."
+    }
+   ]
+  },
+  {
+   "id": "s09_office",
+   "min": 15,
+   "tail": 0.5,
+   "lines": [
+    {
+     "who": "owner",
+     "at": 0.3,
+     "text": "Put her in my office. Walk to the desk, sit down, and point at the screen."
+    },
+    {
+     "who": "che",
+     "at": 5.0,
+     "text": "Ava is walking to the desk."
+    },
+    {
+     "who": "che",
+     "at": 9.6,
+     "text": "Sitting, and gesturing at the screen."
+    }
+   ]
+  },
+  {
+   "id": "s10_save",
+   "min": 12,
+   "tail": 1.0,
+   "lines": [
+    {
+     "who": "owner",
+     "at": 0.3,
+     "text": "Save her, then open My Creations."
+    },
+    {
+     "who": "che",
+     "gap": 0.4,
+     "text": "Saved. Opening Ava from My Creations in Live Studio. Exports: a G L B file, and a Roblox R fifteen F B X."
+    }
+   ]
+  },
+  {
+   "id": "s11_end",
+   "min": 7,
+   "tail": 1.5,
+   "lines": [
+    {
+     "who": "che",
+     "at": 0.5,
+     "text": "That is the Create Room today. The labels show what is real now, and what is still planned."
+    }
+   ]
+  }
+ ]
+}

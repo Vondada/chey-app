@@ -1,0 +1,27 @@
+{
+  "note": "Create Room demo (lane E). One fictional character ('Ava', invented for the demo, not a real person) described in words, then built by the real person_model job (scripts/che_gpu_face_preview.py --model) in three styles, plus three customised variants of the photoreal build. Each entry is the job's --settings file. Body changes go through the job's existing FACE setting, which applies any MakeHuman/MPFB2 target by name (tools/avatar_body/mpfb_body.py); the app's own body sliders are lane A/B work.",
+  "description": "Ava, a fictional woman in her early thirties: warm brown skin, dark brown hair, green-brown eyes, friendly round face, terracotta long-sleeved top, charcoal trousers.",
+  "base": {
+    "IDENTITY": "ava_demo",
+    "MODEL_MODE": "full_body",
+    "RENDER_PROFILE": "final",
+    "SEX": "0",
+    "MATURE": "0.05",
+    "RACE": "african=0.45,asian=0.15,caucasian=0.4",
+    "TARGET_SRGB": "150,98,70",
+    "IRIS_SRGB": "86,92,52",
+    "HAIR_SRGB": "38,24,18",
+    "OUTFIT_SRGB": "184,84,58",
+    "TROUSERS_SRGB": "44,46,52",
+    "FACE": "lr:cheek/cheek-volume-incr=0.3,mouth/mouth-lowerlip-volume-incr=0.3,nose/nose-point-width-incr=0.2,head/head-round=0.2"
+  },
+  "jobs": {
+    "photoreal": {"STYLE": "photoreal"},
+    "hybrid": {"STYLE": "hybrid"},
+    "stylized": {"STYLE": "stylized"},
+    "hair_copper": {"STYLE": "photoreal", "HAIR_SRGB": "150,62,30"},
+    "outfit_navy": {"STYLE": "photoreal", "OUTFIT_SRGB": "40,62,112", "TROUSERS_SRGB": "122,110,92", "SHOES_SRGB": "92,58,36"},
+    "body_tall_strong": {"STYLE": "photoreal",
+      "FACE": "lr:cheek/cheek-volume-incr=0.3,mouth/mouth-lowerlip-volume-incr=0.3,nose/nose-point-width-incr=0.2,head/head-round=0.2,macrodetails/height/female-young-averagemuscle-averageweight-maxheight=0.8,macrodetails/universal-female-young-maxmuscle-maxweight=0.5,macrodetails/universal-female-young-averagemuscle-averageweight=-0.5"}
+  }
+}
