@@ -271,6 +271,13 @@ test('broker: Alpaca PAPER fills are kept once each, and the calendar shows real
   const day = await tradingCalendar(s, { day: '2026-09-23', source: 'broker', env: { CHE_OWNER_TIMEZONE: 'America/New_York' } });
   assert.equal(day.trades.length, 1);
   assert.deepEqual([day.trades[0].entry_price, day.trades[0].exit_price, day.trades[0].net, day.trades[0].evidence_label], [200, 190, -60, 'BROKER-CONFIRMED (PAPER)']);
+  // Voice-first: the spoken answer carries the realized P&L for both views, never "undefined".
+  const saidDay = speakTradingCalendar(day);
+  assert.match(saidDay, /1 closed trades on 2026-09-23, 0 wins, 1 losses, realized net minus \$60\.00\. 0 orders recorded/);
+  assert.doesNotMatch(saidDay, /undefined/);
+  assert.match(speakTradingCalendar(month), /2 closed trades in 2026-09, 1 wins, 1 losses, realized net minus \$40\.00/);
+  const quiet = await tradingCalendar(s, { day: '2026-09-01', source: 'broker' });
+  assert.match(speakTradingCalendar(quiet), /No closing fill on 2026-09-01\. 0 orders recorded/);
 });
 
 test('Office rollup: finished work outlives the 120-row job list; days before the rollup say "no record kept"', async () => {

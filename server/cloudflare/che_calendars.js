@@ -415,7 +415,15 @@ const amount = (v, unit) => (unit === 'R' ? (v == null ? 'not recorded' : `${v} 
 
 export function speakTradingCalendar(v) {
   if (!v.ok) return v.detail;
-  if (v.source === 'broker') return `${v.source_label}: ${v.note}${v.totals ? ` ${v.totals.orders} orders recorded in ${v.month}.` : ''}`;
+  if (v.source === 'broker') {
+    // Realized P&L from the stored Alpaca paper fills, plus the orders recorded; a day view has no month and no order total.
+    const orders = v.day ? (v.orders || []).length : v.totals?.orders || 0;
+    const when = v.day ? `on ${v.day}` : `in ${v.month}`;
+    const pnl = v.totals?.trades
+      ? `${v.totals.trades} closed trades ${when}, ${v.totals.wins} wins, ${v.totals.losses} losses, realized net ${amount(v.totals.net, v.unit)}.`
+      : `No closing fill ${when}.`;
+    return `${v.source_label}: ${pnl} ${orders} ${orders === 1 ? 'order' : 'orders'} recorded. ${v.note}`;
+  }
   if (v.day) return v.totals.trades ? `${v.source_label} on ${v.day}: ${v.totals.trades} closed trades, ${v.totals.wins} wins, ${v.totals.losses} losses, net ${amount(v.totals.net, v.unit)}.` : `${v.source_label}: no trade closed on ${v.day}.`;
   if (v.empty) return `${v.source_label}: no trade closed in ${v.month}. Nothing is shown as a sample.`;
   return `${v.source_label}, ${v.month}: ${v.totals.trades} closed trades, ${v.totals.wins} wins and ${v.totals.losses} losses, win rate ${v.totals.win_rate} percent, net ${amount(v.totals.net, v.unit)}. ${v.totals.green_days} green days, ${v.totals.red_days} red, ${v.totals.yellow_days} near break-even.`;

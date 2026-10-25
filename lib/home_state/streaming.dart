@@ -575,6 +575,7 @@ extension _CheHomeStreaming on _CHEHomeState {
             month: '${calendarAsk['month'] ?? ''}',
             source: '${calendarAsk['source'] ?? 'paper'}',
             day: '${calendarAsk['day'] ?? ''}',
+            basis: '${calendarAsk['basis'] ?? 'owner'}',
           )));
         }
         if (data['open_view'] == 'office_calendar' && mounted) {

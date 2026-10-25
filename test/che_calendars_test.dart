@@ -142,4 +142,34 @@ void main() {
     expect(find.textContaining('The calendar could not be read: Choose a source'), findsOneWidget);
     expect(find.byKey(const Key('calendar_summary')), findsNothing);
   });
+  // Codex review of #524: the CME basis the spoken answer used reaches both page requests, and broker
+  // realized P&L is what Read This says (not only an order count).
+  testWidgets('trading calendar: CME basis reaches month and day requests; broker P&L is read aloud', (tester) async {
+    tester.view.physicalSize = const Size(1179, 6000);
+    tester.view.devicePixelRatio = 3;
+    addTearDown(tester.view.reset);
+    final urls = <Uri>[];
+    final spoken = <String>[];
+    final broker = MockClient((r) async {
+      urls.add(r.url);
+      final day = r.url.queryParameters['day'];
+      return http.Response(jsonEncode({
+        'ok': true, 'source': 'broker', 'source_label': 'Paper broker (Alpaca)', 'unit': 'USD', 'note': 'Paper account; no money at risk.',
+        'basis': 'cme', 'basis_label': 'CME trading day (6 PM New York rollover)', 'break_even': {'unit': 'USD', 'within': 25},
+        if (day != null) ...{'day': day, 'totals': {'trades': 1, 'wins': 0, 'losses': 1, 'net': -60}, 'trades': [], 'orders': []}
+        else ...{'month': '2026-09', 'weeks': [], 'totals': {'trades': 2, 'wins': 1, 'losses': 1, 'net': -40, 'orders': 3}},
+      }), 200);
+    });
+    await tester.pumpWidget(app(CheTradingCalendarPage(baseUrl: () => 'https://che.test', headers: () => const {}, client: broker, onRead: spoken.add, initialSource: 'broker', initialDay: '2026-09-22', basis: 'cme')));
+    await tester.pumpAndSettle();
+    expect(urls.map((u) => u.queryParameters['basis']), everyElement('cme'));
+    expect(urls.any((u) => u.queryParameters['day'] == '2026-09-22'), isTrue);
+    await tester.tap(find.byTooltip('Read this').last);
+    expect(spoken.single, contains('realized net −\$60.00'));
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Read this').first);
+    expect(spoken.last, contains('2 closed trades, 1 wins, 1 losses, realized net −\$40.00'));
+    expect(spoken.last, contains('3 broker paper orders recorded'));
+  });
 }
