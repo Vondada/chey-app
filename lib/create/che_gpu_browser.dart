@@ -5,7 +5,6 @@ import 'package:http/http.dart' as http;
 import '../browser/che_browser.dart';
 import '../che_gpu_jobs.dart' show cheGpuWorkerOnline;
 import 'che_gpu_connect.dart';
-import 'che_live_studio.dart' show cheColabNotebookUrl;
 
 /// One retained session in CHE's existing browser. This never starts or keeps a Colab runtime alive.
 class CheGpuBrowser extends StatefulWidget {
@@ -27,6 +26,8 @@ class CheGpuBrowser extends StatefulWidget {
 }
 
 class _CheGpuBrowserState extends State<CheGpuBrowser> {
+  // The owner's saved Colab account (or the default), read once. Both the first page and Reopen use it (review of #536).
+  late final Future<String> _account = CheGpuAccount.read();
   late final http.Client _http = widget.client ?? http.Client();
   String _status = 'GPU status not checked.';
   Timer? _timer;
@@ -87,7 +88,7 @@ class _CheGpuBrowserState extends State<CheGpuBrowser> {
     if (RegExp(r'^(?:reconnect(?: (?:the )?gpu)?|open(?: (?:the )?(?:notebook|colab))?)$').hasMatch(t)) {
       final open = CheBrowserActions.openUrl;
       if (open == null) return 'The notebook browser is not ready. Try Open again.';
-      await open(cheGpuNotebookUrl(cheGpuDefaultAccount));
+      await open(cheGpuNotebookUrl(await _account));
       return 'Notebook refreshed. Choose Runtime, Reconnect or Run all in Colab. CHE cannot start the GPU herself. ${await _check()}';
     }
     return null;
@@ -122,7 +123,12 @@ class _CheGpuBrowserState extends State<CheGpuBrowser> {
           TextButton(onPressed: () => unawaited(_action(command)),
               child: Text(const {'open': 'Open', 'refresh': 'Refresh', 'reconnect': 'Reconnect', 'gpu status': 'GPU Status'}[command]!)),
       ])),
-      Expanded(child: widget.browser ?? CheBrowserScreen(initialUrl: cheGpuNotebookUrl(cheGpuDefaultAccount), title: 'Colab', sessionKey: cheGpuSessionKey, appMode: false, googleSignInInPage: true)),
+      Expanded(child: widget.browser ?? FutureBuilder<String>(
+        future: _account,
+        builder: (context, saved) => saved.hasData
+            ? CheBrowserScreen(initialUrl: cheGpuNotebookUrl(saved.data!), title: 'Colab', sessionKey: cheGpuSessionKey, appMode: false, googleSignInInPage: true)
+            : const Center(child: CircularProgressIndicator()),
+      )),
     ]),
   );
 }

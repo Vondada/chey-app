@@ -3,6 +3,7 @@ import 'package:chey/browser/che_browser.dart';
 import 'package:chey/create/che_gpu_browser.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
@@ -13,6 +14,8 @@ void main() {
     expect(cheGoogleSignInUrl('https://colab.research.google.com/'), isFalse);
   });
   testWidgets('GPU status excludes CPU workers and reconnect never claims connection', (tester) async {
+    // The saved Colab account is read from preferences; a test has none, so give it an empty store (it would wait forever).
+    SharedPreferences.setMockInitialValues({});
     final spoken = <String>[];
     var gpuOnline = false;
     final client = MockClient((r) async {
