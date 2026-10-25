@@ -97,7 +97,7 @@ void main() {
     }
   }
 
-  testWidgets('connects, subscribes within the deadline, goes LIVE on a heartbeat, STALE when silent, and reconnects past the watchdog', (tester) async {
+  testWidgets('connects, subscribes within the deadline, LIVE only with a recent trade, STALE when silent, and reconnects past the watchdog', (tester) async {
     final s = make();
     s.start();
     await tester.pump();
@@ -105,9 +105,14 @@ void main() {
     expect(sockets.single.sent.map((m) => jsonDecode(m)['channel']), ['market_trades', 'heartbeats'], reason: 'sent at once: Coinbase closes after 5 s');
     expect(s.describe(restAvailable: true).state, CryptoFeedState.delayed, reason: 'subscribed is not live: no message yet');
 
+    // Regression (reliability lane, 2026-10-25): a heartbeat proves the socket, not the trades. Before the fix the
+    // chart said LIVE on heartbeats alone, so a silent trade channel (a failed market_trades subscription) showed LIVE
+    // over minutes-old candles.
     sockets.single.push(_cbHeartbeat);
     await tester.pump();
-    expect(s.describe(restAvailable: true).state, CryptoFeedState.live);
+    final beatOnly = s.describe(restAvailable: true);
+    expect(beatOnly.state, CryptoFeedState.stale, reason: 'heartbeats without a trade are not live candles');
+    expect(beatOnly.label, 'STALE · Coinbase connected, no trade yet');
 
     sockets.single.push(_cbTrades('update', [('1', 67000.5, clock.subtract(const Duration(seconds: 1)))]));
     await tester.pump();
@@ -128,6 +133,28 @@ void main() {
     await advance(tester, const Duration(seconds: 1)); // first retry after 1 s (full jitter value 1.0)
     expect(sockets.length, 2);
     expect(sockets.last.sent.length, 2, reason: 'resubscribed on the new connection');
+    await s.stop();
+    s.dispose();
+  });
+
+  testWidgets('heartbeats over an old last trade are STALE, never LIVE: the label says how old the last trade is', (tester) async {
+    final s = make();
+    s.start();
+    await tester.pump();
+    // The snapshot's newest trade is five minutes old; heartbeats keep arriving every second.
+    sockets.single.push(_cbTrades('snapshot', [('50', 67000, clock.subtract(const Duration(minutes: 5)))]));
+    for (var i = 0; i < 3; i++) {
+      sockets.single.push(_cbHeartbeat);
+      await advance(tester, const Duration(seconds: 1));
+    }
+    final v = s.describe(restAvailable: true);
+    expect(v.state, CryptoFeedState.stale);
+    expect(v.label, startsWith('STALE · Coinbase connected, no trade for 5m'));
+    expect(v.spoken, contains('connected, but no trade has arrived for 5 minutes'));
+    // A fresh trade makes it LIVE again.
+    sockets.single.push(_cbTrades('update', [('51', 67001, clock)]));
+    await tester.pump();
+    expect(s.describe(restAvailable: true).state, CryptoFeedState.live);
     await s.stop();
     s.dispose();
   });
@@ -176,10 +203,15 @@ void main() {
     expect(jsonDecode(sockets.last.sent.single)['params']['symbol'], ['BTC/USD']);
     sockets.last.push({'channel': 'heartbeat'});
     await tester.pump();
+    expect(s.failures, 0, reason: 'a message ends the failure streak');
+    expect(s.describe(restAvailable: true).state, CryptoFeedState.stale, reason: 'a heartbeat alone is not live');
+    sockets.last.push({'channel': 'trade', 'type': 'update', 'data': [
+      {'symbol': 'BTC/USD', 'side': 'buy', 'price': 67000.1, 'qty': 0.01, 'ord_type': 'market', 'trade_id': 1, 'timestamp': clock.toIso8601String()},
+    ]});
+    await tester.pump();
     final v = s.describe(restAvailable: true);
     expect(v.state, CryptoFeedState.live);
     expect(v.label, startsWith('LIVE · Kraken trades'));
-    expect(s.failures, 0, reason: 'a message ends the failure streak');
     await s.stop();
     s.dispose();
   });

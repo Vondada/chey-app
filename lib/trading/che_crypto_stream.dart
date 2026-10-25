@@ -24,9 +24,10 @@
 //   https://docs.kraken.com/websockets-v2
 //
 // Status, never stronger than the evidence:
-// - LIVE: a trade or heartbeat arrived within [CheCryptoStream.liveWithin].
-// - STALE: connected but silent beyond that; the label shows how long. Silent past [CheCryptoStream.silentReconnect],
-//   the socket is closed and reopened.
+// - LIVE: the connection spoke within [CheCryptoStream.liveWithin] AND the newest trade is within
+//   [CheCryptoStream.tradeLiveWithin]. A heartbeat proves the socket, not the candles: heartbeats alone are never LIVE.
+// - STALE: connected but silent beyond that, or connected with no recent trade; the label shows how long. Silent past
+//   [CheCryptoStream.silentReconnect], the socket is closed and reopened.
 // - DELAYED: not streaming; the chart shows the Worker's polled REST candles, labelled as such.
 // - DISCONNECTED: not streaming and no REST candles either, with the reason.
 // Nothing here speaks. The chart shows the label quietly; "Read chart" reads it only when the owner asks.
@@ -208,6 +209,7 @@ class CheCryptoStream extends ChangeNotifier {
     DateTime Function()? now,
     math.Random? random,
     this.liveWithin = const Duration(seconds: 10),
+    this.tradeLiveWithin = const Duration(seconds: 60),
     this.silentReconnect = const Duration(seconds: 30),
     this.connectTimeout = const Duration(seconds: 10),
     this.backoffBase = const Duration(seconds: 1),
@@ -224,8 +226,12 @@ class CheCryptoStream extends ChangeNotifier {
   final DateTime Function() _now;
   final math.Random _random;
 
-  /// LIVE while a trade or heartbeat arrived within this.
+  /// LIVE needs a message (trade or heartbeat) within this...
   final Duration liveWithin;
+
+  /// ...and a trade, by its exchange time, within this. BTC and ETH trade every few seconds on both venues, so a
+  /// minute without one means the trade channel is not delivering, whatever the heartbeats say.
+  final Duration tradeLiveWithin;
 
   /// Connected but silent this long: the socket is closed and reopened.
   final Duration silentReconnect;
@@ -411,8 +417,17 @@ class CheCryptoStream extends ChangeNotifier {
     if (_running && _connected && _lastMessageAt != null) {
       final silent = now.difference(_lastMessageAt!);
       if (silent <= liveWithin) {
-        return CryptoFeedView(CryptoFeedState.live, 'LIVE · ${_venue.label} trades$tradeAge',
-            '$coin live stream: LIVE from ${_venue.label} trades. $tradeWords');
+        final sinceTrade = trade == null ? null : now.difference(trade.time);
+        if (sinceTrade != null && sinceTrade <= tradeLiveWithin) {
+          return CryptoFeedView(CryptoFeedState.live, 'LIVE · ${_venue.label} trades$tradeAge',
+              '$coin live stream: LIVE from ${_venue.label} trades. $tradeWords');
+        }
+        // Heartbeats only: the socket is up, but the candles are not being fed.
+        return sinceTrade == null
+            ? CryptoFeedView(CryptoFeedState.stale, 'STALE · ${_venue.label} connected, no trade yet',
+                '$coin live stream: STALE. ${_venue.label} is connected, but no trade has arrived yet.')
+            : CryptoFeedView(CryptoFeedState.stale, 'STALE · ${_venue.label} connected, no trade for ${_ago(sinceTrade)}',
+                '$coin live stream: STALE. ${_venue.label} is connected, but no trade has arrived for ${_agoWords(sinceTrade)}. $tradeWords');
       }
       return CryptoFeedView(CryptoFeedState.stale, 'STALE · ${_venue.label} silent ${_ago(silent)}$tradeAge',
           '$coin live stream: STALE. ${_venue.label} is connected but has sent nothing for ${_agoWords(silent)}. $tradeWords');
