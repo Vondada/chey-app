@@ -69,12 +69,12 @@
   "walk_turn_sit": {
    "file": "86_15",
    "frames": [
-    880,
+    700,
     1650
    ],
    "kind": "transition",
    "loop": false,
-   "description": "walks a short arc, turns around and sits down on a chair-height seat (same take as seated_gesture)",
+   "description": "walks an arc across the room, turns around and sits down on a chair-height seat (same take as seated_gesture)",
    "foot_lock": true
   },
   "sit_down": {
@@ -125,7 +125,7 @@
    "file": "86_15",
    "frames": [
     2950,
-    3850
+    4200
    ],
    "kind": "gesture",
    "loop": false,
