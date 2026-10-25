@@ -56,11 +56,11 @@ def main():
     look = Vector((0.0, mid.y, mid.z - 0.035))
     cam.location = look + Vector((0, -0.95, 0))
     cam.rotation_euler = (look - cam.location).to_track_quat('-Z', 'Y').to_euler()
-    area(sc, 'Key', (0.35, mid.y - 1.4, mid.z + 0.6), 1.2, 160, look)
-    area(sc, 'Fill', (-0.6, mid.y - 1.2, mid.z + 0.1), 1.5, 70, look)
+    area(sc, 'Key', (0.35, mid.y - 1.4, mid.z + 0.6), 1.2, 25, look)
+    area(sc, 'Fill', (-0.6, mid.y - 1.2, mid.z + 0.1), 1.5, 12, look)
     w = bpy.data.worlds.new('W'); sc.world = w; w.use_nodes = True
     w.node_tree.nodes['Background'].inputs['Color'].default_value = (0.32, 0.34, 0.36, 1)
-    w.node_tree.nodes['Background'].inputs['Strength'].default_value = 0.6
+    w.node_tree.nodes['Background'].inputs['Strength'].default_value = 0.4
     out = os.path.abspath(os.environ.get('OUT', 'fixture.png'))
     sc.render.filepath = out; sc.render.image_settings.file_format = 'PNG'; sc.render.image_settings.color_mode = 'RGB'
     bpy.ops.render.render(write_still=True)

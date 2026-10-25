@@ -48,7 +48,7 @@ from mathutils import Matrix, Quaternion, Vector
 HERE = os.path.dirname(os.path.abspath(__file__))
 FACE_DIR = os.path.join(HERE, '..', 'avatar_face')
 sys.path.insert(0, FACE_DIR)
-from mpfb_base import MPFB, apply_sliders, load_base, macro_woman, slider_deltas, target, to_blender  # noqa: E402
+from mpfb_base import MPFB, apply_sliders, load_base, macro_from_settings, slider_deltas, target, to_blender  # noqa: E402
 
 FPS = 30
 CLIPS = ('idle', 'walk', 'run', 'wave', 'talk')
@@ -93,11 +93,11 @@ def build():
     sc.render.fps = FPS
     verts, uvs, faces, groups = load_base()
     n = len(verts)
-    race = {k: float(x) for k, x in (kv.split('=') for kv in os.environ.get('RACE', 'african=0.7,caucasian=0.3').split(','))}
     fitw = float(os.environ.get('FIT_W', '0' if os.environ.get('IDENTITY') else '1'))   # as mpfb_dress.py: CHE's own fit
     win = json.load(open(os.environ['FIT']))['winner'] if fitw and os.environ.get('FIT') and os.path.exists(os.environ['FIT']) else {'weights': {}, 'youth': 0.0}
-    v = apply_sliders(macro_woman(verts, race, youth=win.get('youth', 0.0) * fitw, mature=float(os.environ.get('MATURE', '0')),
-                                  sex=float(os.environ.get('SEX', '0'))),
+    # Body macros (BODY_GENDER, BODY_AGE, BODY_HEIGHT, BODY_WEIGHT, BODY_MUSCLE, BODY_PROPORTIONS; MakeHuman 0..1 values):
+    # with none set this is exactly the previous macro_woman body, so existing presets build the same model.
+    v = apply_sliders(macro_from_settings(verts, os.environ, youth=win.get('youth', 0.0) * fitw),
                       slider_deltas(n), {k: w * fitw for k, w in win.get('weights', {}).items()})
     style_face = {
         'photoreal': '',
@@ -305,16 +305,21 @@ def build():
     for gname, name in (('helper-l-eye', 'Eye_l'), ('helper-r-eye', 'Eye_r')):
         pts = co[sorted(groups[gname])]; c = Vector(pts.mean(0)); r = float(np.linalg.norm(pts - pts.mean(0), axis=1).max()) * 0.97
         em = bpy.data.meshes.new(name)
-        bm = bmesh.new(); bmesh.ops.create_uvsphere(bm, u_segments=32, v_segments=16, radius=r); bm.to_mesh(em); bm.free()
+        # The sphere's pole looks forward (-Y), so its rings are concentric with the pupil and iris: the vertex colours
+        # then draw a round pupil, iris and limbal ring instead of a smear across a few coarse rows (realism pass,
+        # 2026-10-25: the 32x16 sphere with a vertical pole rendered the eye as one orange blot).
+        bm = bmesh.new(); bmesh.ops.create_uvsphere(bm, u_segments=48, v_segments=40, radius=r)
+        bmesh.ops.rotate(bm, verts=bm.verts, cent=(0, 0, 0), matrix=Matrix.Rotation(math.radians(90), 3, 'X'))
+        bm.to_mesh(em); bm.free()
         cols = []
         for vx in em.vertices:
             p = vx.co / r   # unit sphere; the eye looks along -Y
             rad = math.hypot(p.x, p.z)
-            if p.y > 0: c3 = (0.82, 0.8, 0.78)
-            elif rad < 0.19: c3 = (0.01, 0.01, 0.01)
-            elif rad < 0.6: c3 = tuple(min(1.0, x * (1.0 if rad > 0.3 else 0.75)) for x in iris)
-            elif rad < 0.67: c3 = tuple(x * 0.35 for x in iris)
-            else: c3 = (0.82, 0.8, 0.78)
+            if p.y > 0: c3 = (0.66, 0.62, 0.58)
+            elif rad < 0.15: c3 = (0.01, 0.01, 0.01)
+            elif rad < 0.44: c3 = tuple(min(1.0, x * (1.0 if rad > 0.26 else 0.75)) for x in iris)
+            elif rad < 0.5: c3 = tuple(x * 0.35 for x in iris)
+            else: c3 = (0.66, 0.62, 0.58)
             cols.append(c3)
         a = em.color_attributes.new('Col', 'FLOAT_COLOR', 'POINT'); a.data.foreach_set('color', [x for c3 in cols for x in (*c3, 1.0)])
         em.materials.append(eye_m)
