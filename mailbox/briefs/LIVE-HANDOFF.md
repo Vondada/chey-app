@@ -77,6 +77,14 @@ Then, on GitHub:
 
 ## 2. Current position
 
+
+<!-- codex-music-truth-20261025:start -->
+**Codex, 2026-10-25T16:15:54.866Z — owner: “Help she is lying” (11:04 phone recording).**
+- PR #534 OPEN, head `e992ed53c458f600ac5733ef412238edcab9a966`, branch `codex/music-audio-truth-20261025`, based on main `262924b`. Implements the owner's music false-completion/pretend-playback repair in the existing hallucination auditor; guest replies use that auditor too. A file is distinct from playback, and unrelated receipts do not prove this request. Bracketed descriptions remain text. No music engine/provider was connected or run.
+- Exact /api/chat replay: before 0/2 expectations, after 2/2. Focused auditor/pipeline/owner/guest checks 48/48. Full local Worker check before the final question-suffix refinement: 4128/4137 pass, 7 pre-existing skips, 2 pre-existing TODO; skills 20/20. Final-head CI is running (40210774124, UI 40210774142); no unresolved review threads at this checkpoint. Worker source 1,099,978 bytes within the existing budget. New live boundary checks in memory_probe.js; evidence in docs/failure_inventory/music_audio_truth.md.
+- NEXT: final-head checks green, merge #534 with [worker-deploy], verify exact live SHA and both new Music probe steps. No phone rebuild needed. Actual owner-device retest is still required; don't claim all possible hallucinations are solved. Preserve Claude's separate UI, GitHub App and other work below.
+<!-- codex-music-truth-20261025:end -->
+
 **Claude, 2026-10-25 (session takeover: Codex mission recovery) — position now.**
 - **Coding-job fix** `lane/coding-job-status` `3acd6b32` → **PR #529 OPEN, not merged** (named-job status routing; full server suite 4120 pass / 0 fail). Not deployed.
 - **Modal connect** `lane/modal-connect-e2e` `8f9337f3` → **PR #530 OPEN, not merged**. `tools/modal/connect_modal.sh` + `tools/test_connect_modal.py` (10 e2e cases with stubbed modal/curl/wrangler; 10/10). NOT verified: a real Modal deploy or Worker write (needs owner go-ahead and the secrets). Browser token creation not built.
@@ -102,8 +110,8 @@ Then, on GitHub:
 **Codex, 2026-10-25T10:30:22.006Z — owner: “Just fix the problem” (Rithmic phone failures).**
 - PR #525 MERGED as `9ae2a1bb29574bc38f1a5222ec6a6b73be5f0715`; reviewed head `4e74f9b101fc99d05feda3210194562e7d9968c4`. Required full Flutter/UI analysis, Worker and render checks passed; no unresolved review threads. Post-merge checks passed too.
 - Reproduced a real local WebSocket defect before editing: heartbeat sent raw `98b64b12`, missing R | Protocol's four-byte length. Corrected transport sends `0000000498b64b12` and decodes incoming envelopes. Production discovery now uses `rprotocol.rithmic.com`, UAT only for an explicit Rithmic Test selection. Advanced system selection is resolved with its own gateway; stale errors/diagnostics are cleared. Tests cover actual socket framing, malformed lengths and production/UAT/system routing. Evidence: `docs/CHE_RITHMIC_CONNECTION_REPAIR.md`.
-- Automatic Shorebird patch run **40184513397**, job **121142346023**, is IN PROGRESS (patch compilation). Native IPA run **40184513385** skipped as expected for this Dart-only change. Do not claim publication/installation until verified. NEXT: inspect that run's result/log for patch number and target release, then have the phone reconnect.
-- TLS validation, registered app name/version and the on-device login are preserved. No order path changed. Actual account login/authorization is UNVERIFIED; a remaining code 13 is not proof of a bad password. Direct Rithmic-host checks in this container failed DNS. Local Flutter complete-suite tooling was blocked by an environment metadata-access restriction; safer dependency-free Dart checks and GitHub's full suite provided verification.
+- Automatic Shorebird patch run **40184513397**, job **121142346023**, SUCCESS: logs confirm **Published Patch 1** for **1.4.1025668296+4015276551001**. Native IPA run **40184513385** skipped as expected for this Dart-only change. Publication is verified; installation and actual Rithmic account login on the phone remain UNVERIFIED.
+- TLS validation, configured app name/version and the on-device login are preserved. No order path changed. Actual account login/authorization is UNVERIFIED; a remaining code 13 is not proof of a bad password. Direct Rithmic-host checks in this container failed DNS. Local Flutter complete-suite tooling was blocked by an environment metadata-access restriction; safer dependency-free Dart checks and GitHub's full suite provided verification.
 - All code is saved on GitHub. Local git-only mirror/merge metadata differs from the API-created commit, but its complete tree matches main; there are no unpushed file changes. Preserve Claude's separate reliability/character work below.
 <!-- codex-rithmic-repair-20261025:end -->
 
