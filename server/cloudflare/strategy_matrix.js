@@ -297,3 +297,21 @@ export function speakStrategyMatrix(ask, view) {
   for (const [m, key] of Object.entries(view.best)) lines.push(key ? `${m}: best supported ${view.rows.find((r) => r.key === key).name} on ${key.split('|')[2]}.` : `${m}: no ranked strategy with a positive out-of-sample result.`);
   return lines.join(' ');
 }
+
+// ─── Worker glue (kept here so worker.js stays within its byte budget) ───────
+
+/** GET /api/trading/strategy-matrix: owner only. */
+export async function strategyMatrixRoute(storage, ownerDevice, url = null) {
+  if (!ownerDevice) return { status: 403, body: { detail: 'Only the CHE owner can read the strategy matrix.' } };
+  const market = url ? new URL(url).searchParams.get('market') : null;
+  return { status: 200, body: await strategyMatrixView(storage, { market: MARKETS[market] ? market : null }) };
+}
+
+/** The chat answer for a Strategy Matrix question, or null when the message is not one. No model call. */
+export async function strategyMatrixChat(message, storage, ownerDevice) {
+  const ask = strategyMatrixIntent(message);
+  if (!ask) return null;
+  const extra = { source: 'che_strategy_matrix', model_calls: 0, kind: ask.kind, open_view: 'trading_strategy_matrix' };
+  if (!ownerDevice) return { text: 'Only the CHE owner can read the strategy matrix, sir.', extra: { ...extra, ok: false } };
+  return { text: speakStrategyMatrix(ask, await strategyMatrixView(storage)), extra: { ...extra, ok: true } };
+}

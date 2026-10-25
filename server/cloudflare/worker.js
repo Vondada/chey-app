@@ -110,6 +110,7 @@ function spokenPick(message, n) {
 }
 import { ATLAS_SOURCE, answerAtlas, atlasHiddenAction, atlasIntent, atlasQuizAnswerTurn, atlasPromptContext, atlasResetAsk, atlasResetIntent, projectAtlasToBrain, resetAtlasProgress } from './knowledge_atlas.js';
 import { CRYPTO_SOURCE, cryptoIntent, cryptoTick, cryptoView, nextCryptoTickAt, setCryptoPaper, speakCrypto } from './crypto_markets.js';
+import { strategyMatrixChat, strategyMatrixRoute } from './strategy_matrix.js';
 import { LIVE_BACKTEST, LIVE_FEED, LIVE_RUNS, LIVE_STATE, haltLivePaper, liveSpecs, liveBacktest, liveDashboard, livePaperSummary, liveTick, nextLiveTickAt, readLivePortfolios, researchDue, setLivePaper } from './trading_live.js';
 import { governorAction, queueAllocationFollowUp, readDecisions, runGovernor, speakGovernor, tradeDecisions } from './strategy_governor.js';
 import { ICT_CONCEPTS, applyControlChange, controlsView, noteAuditEffect, readControls, strategyRegistry, resolveStep, speakControlResult, speakControlsView, speakSkipReasons, stockOrderProblem } from './trading_controls.js';
@@ -8271,14 +8272,14 @@ export class CheState extends DurableObject {
         if (body.action === 'backtest') return json(await liveBacktest(this.ctx.storage));
         return json({ detail: 'Unknown action. Use start, stop, tick or backtest.' }, 400);
       }
-      // Strategy Control Center (owner, 2026-10-20): limits, pause/resume, Emergency Stop and the audit trail.
+      // Strategy Control Center: limits, pause/resume, Emergency Stop, audit trail.
       // The latest FundYourEdge draft (owner, 2026-10-22). Read-only: there is no send path behind it.
       if (path === '/api/trading/fye/draft' && request.method === 'GET') {
         if (!ownerDevice) return ownerOnly();
         const draft = await Promise.resolve().then(() => this.ctx.storage.get('fye_draft')).catch(() => null);
         return json({ ok: true, status: FYE_STATUS, draft: draft || null, order_sent: false });
       }
-      // Orion's crypto desk (owner master mission, 2026-10-23): feeds, schedule, budget, simulated trades and research.
+      // Orion's crypto desk (2026-10-23): feeds, budget, simulated trades and research.
       if (path === '/api/trading/crypto' && request.method === 'GET') {
         if (!ownerDevice) return ownerOnly();
         const view = await cryptoView(this.ctx.storage);
@@ -8321,7 +8322,7 @@ export class CheState extends DurableObject {
         const done = lines.find((l) => l.type === 'done') || {};
         return json({ ok: done.ok !== false, spoken: lines.filter((l) => l.type === 'delta').map((l) => l.delta).join(''), improvement_id: id, improvement_status: done.improvement_status || null, job_id: done.job_id || null });
       }
-      // Strategy governor (owner, 2026-10-23): which strategies may trade forward paper, why, and every decision with its evidence.
+      // Strategy governor (2026-10-23): which strategies may trade forward paper, and why.
       if (path === '/api/trading/governor' && request.method === 'GET') {
         if (!ownerDevice) return ownerOnly();
         const view = await runGovernor(this.ctx.storage, { record: false });
@@ -8350,7 +8351,7 @@ export class CheState extends DurableObject {
         const result = await this.tradingControl(body.change, { who: String(body.who || 'owner (iPhone)').slice(0, 40), confirm: body.confirm === true });
         return json({ ...result, spoken: speakControlResult(result), view: await this.tradingControlsView() }, result.ok || result.needs_confirmation ? 200 : 400);
       }
-      // Strategy simulation (step a): paper minute-bar strategies. Read and the kill switch are owner-only; nothing here orders or spends.
+      // Strategy simulation: paper minute-bar strategies, owner-only; nothing orders or spends.
       // Visual Studio (owner, 2026-10-22): Create → Images, Video, Templates, Projects. Owner only.
       if (path === '/api/visual' && (request.method === 'GET' || request.method === 'POST')) {
         if (!ownerDevice) return json({ detail: 'Only the CHE owner can use Visual Studio.' }, 403);
@@ -8455,7 +8456,8 @@ export class CheState extends DurableObject {
         if (request.method === 'POST' && result.status === 200 && !['read', 'readiness', 'defend'].includes(String(ask.action))) await this.ctx.storage.put('che', data);
         return json(result.body, result.status);
       }
-      // Timeframe backtest matrix: read the stored result, or run it now. Owner only; free delayed data, no orders.
+      if (path === '/api/trading/strategy-matrix') { const r = await strategyMatrixRoute(this.ctx.storage, ownerDevice, request.url); return json(r.body, r.status); }
+      // Timeframe backtest matrix: stored result or a run now. Owner only.
       if (path === '/api/trading/matrix' && (request.method === 'GET' || request.method === 'POST')) {
         if (!ownerDevice) return json({ detail: 'Only the CHE owner can read or run the timeframe backtest.' }, 403);
         if (request.method === 'POST') return json(await runMatrix(this.ctx.storage));
@@ -8467,7 +8469,7 @@ export class CheState extends DurableObject {
         return json(await strategySimView(this.ctx.storage));
       }
       if (path === '/api/trading/sim' && request.method === 'POST') return ownerDevice ? simControlRoute(this.ctx.storage, body, () => this.scheduleWork()) : simOwnerOnly();
-      // Historical trading intelligence: the Trading Room dashboard, the auditable report, and the owner's run. Owner only.
+      // Historical trading intelligence: dashboard, report and run. Owner only.
       if (path.startsWith('/api/trading/intelligence')) {
         if (!ownerDevice) return json({ detail: 'Only the CHE owner can view or run the historical trading study.' }, 403);
         if (path === '/api/trading/intelligence' && request.method === 'GET') return json(await intelligenceView(this.ctx.storage));
@@ -8481,7 +8483,7 @@ export class CheState extends DurableObject {
         }
         return json({ detail: 'Not found.' }, 404);
       }
-      // Multi-timeframe research (owner, 2026-10-22): docs/CHE_TRADING_RESEARCH_API.md. Owner only. Research and paper only.
+      // Multi-timeframe research: docs/CHE_TRADING_RESEARCH_API.md. Owner only, paper only.
       if (path === '/api/trading/research' || path.startsWith('/api/trading/research/')) {
         if (!ownerDevice) return json({ detail: 'Only the CHE owner can view or run trading research.' }, 403);
         const url = new URL(request.url);
@@ -12813,8 +12815,10 @@ export class CheState extends DurableObject {
           const answer = await answerCrossRoom({ store: crossStore, storage: this.ctx.storage, env: this.keyEnv || this.env, intent: cross, screen: seen });
           return ndjsonReply(answer.text, { source: BRAIN_ROOMS_SOURCE, ok: answer.ok, model_calls: 0, rooms: answer.rooms, hits: answer.hits, kind: cross.kind });
         }
-        // Orion's crypto desk by voice (owner master mission, 2026-10-23): "Have Orion research BTC and ETH … during the
-        // weekend", "pause Orion crypto research", "how is crypto paper trading going". Stored records only, no model.
+        // Strategy Matrix by voice (V3): "best strategy for BTC", "explain the EMA 20 pullback". Before the crypto desk.
+        const sm = !body.attachment && await strategyMatrixChat(message, this.ctx.storage, ownerDevice);
+        if (sm) return ndjsonReply(sm.text, sm.extra);
+        // Orion's crypto desk by voice (2026-10-23). Stored records only, no model.
         const cryptoAsk = body.attachment ? null : cryptoIntent(message, { followup: followupWords, referent: referentText });
         if (cryptoAsk) {
           if (!ownerDevice) return ndjsonReply('Only the CHE owner can run or read Orion\'s crypto desk.', { source: CRYPTO_SOURCE, ok: false, model_calls: 0 });
@@ -13001,8 +13005,7 @@ export class CheState extends DurableObject {
           const reply = await this.legalChat(legalAsk, message, { ownerDevice, attachment: body.attachment });
           if (reply) return ndjsonReply(reply.text, { source: 'che_legal', model_calls: 0, ok: reply.ok !== false, ...(reply.extra || {}) });
         }
-        // Multi-timeframe research (owner, 2026-10-22): best strategy now, one strategy by timeframe, history coverage,
-        // paper learning on/off and research jobs. Answered from recorded evidence; no model call.
+        // Multi-timeframe research (2026-10-22), from recorded evidence; no model call.
         const researchAsk = !body.attachment && researchIntent(message, { followup: followupWords, referent: referentText });
         if (researchAsk) {
           if (!ownerDevice) return ndjsonReply('Only the CHE owner can use trading research, sir.', { source: 'che_trading_research', ok: false, model_calls: 0 });

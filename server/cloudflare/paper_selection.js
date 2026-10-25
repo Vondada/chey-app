@@ -134,9 +134,11 @@ export function prioritize(portfolios, plan, tf) {
  * Wraps an existing paper gate. On a new signal: session (futures pause outside CME hours), demotion, duplicate (same
  * strategy, market and bar), the per-market cap and the total cap, in that order; every decision is appended to
  * `log` with its reasons. Fills and exits pass through to the wrapped gate. `open` maps market → open or pending
- * paper positions at the start of the pass.
+ * paper positions at the start of the pass. The futures forward-paper grid (trading_live.js) passes `limits: null` and
+ * `dedupe: false`: its isolated variants (trend filter on/off, target 1.5R/2R/3R) are the owner's experiment grid and
+ * its exposure is already bounded by his account limits in trading_controls.js; it keeps the session pause and demotion.
  */
-export function selectionGate(base, { plan = null, open = {}, limits = PAPER_LIMITS, log = [] } = {}) {
+export function selectionGate(base, { plan = null, open = {}, limits = PAPER_LIMITS, dedupe = true, log = [] } = {}) {
   const counts = { ...open };
   const seen = new Set();
   const total = () => Object.values(counts).reduce((a, n) => a + n, 0);
@@ -150,9 +152,9 @@ export function selectionGate(base, { plan = null, open = {}, limits = PAPER_LIM
     const session = sessionAllows(market, info.time);
     if (!session.ok) return note('refused', session.reason);
     if (entry?.tier === 'demoted') return note('refused', `demoted by the written rules: ${entry.reasons.join('; ')}`);
-    if (seen.has(dup)) return note('refused', 'duplicate: this strategy already took a paper signal on this market and bar');
-    if ((counts[market] || 0) >= limits.per_market) return note('refused', `exposure cap: ${limits.per_market} paper positions already open on ${market}`);
-    if (total() >= limits.total) return note('refused', `exposure cap: ${limits.total} paper positions already open in total`);
+    if (dedupe && seen.has(dup)) return note('refused', 'duplicate: this strategy already took a paper signal on this market and bar');
+    if (limits && (counts[market] || 0) >= limits.per_market) return note('refused', `exposure cap: ${limits.per_market} paper positions already open on ${market}`);
+    if (limits && total() >= limits.total) return note('refused', `exposure cap: ${limits.total} paper positions already open in total`);
     const blocked = base ? base(pf, info) : null;
     if (blocked) return note('refused', blocked);
     seen.add(dup);

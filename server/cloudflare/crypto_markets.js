@@ -18,6 +18,8 @@ import { readControls } from './trading_controls.js';
 import { postTradeReview } from './trading_live.js';
 import { queueRoomEvent } from './room_events.js';
 import { intervalFromWords, intervalLabel } from './trading_lab.js';
+import { buildPaperPlan, prioritize, saveSelectionLog, selectionGate } from './paper_selection.js';
+import CRYPTO_MATRIX from './strategy_matrix_crypto.js';
 
 export const CRYPTO_SOURCE = 'che_crypto';
 export const CRYPTO_STATE = 'crypto_state';
@@ -242,7 +244,15 @@ export async function cryptoTick(storage, { fetcher = fetch, now = Date.now(), f
   if (!due.length) return { skipped: 'no new bar has closed yet' };
   const controls = await readControls(storage);
   const paused = await pausedUnits(storage);
-  const gate = governedGate(ownerGate(controls), paused);
+  // Smart paper selection (Strategy V3, paper_selection.js): best-supported strategies are stepped first, demoted ones take
+  // no new entry, the same strategy never enters twice on one bar, and open paper exposure is capped per coin and in total.
+  const plan = buildPaperPlan([CRYPTO_MATRIX]);
+  const keys = Object.keys(COINS).flatMap((c) => Object.keys(TIMEFRAMES).map((t) => pfKey(c, t)));
+  const saved = await storage.get(keys);
+  const open = {};
+  for (const k of keys) for (const pf of Object.values(saved?.get?.(k) || {})) if (pf.open || pf.pending) open[pf.contract] = (open[pf.contract] || 0) + 1;
+  const selectionLog = [];
+  const gate = selectionGate(governedGate(ownerGate(controls), paused), { plan, open, log: selectionLog });
   const fetched = { ...(state.fetched || {}) };
   const closedAll = [];
   for (const { coin, tf } of due) {
@@ -268,7 +278,7 @@ export async function cryptoTick(storage, { fetcher = fetch, now = Date.now(), f
       await storage.put(barsKey(coin, tf), { bars, status: row.status, reason: row.reason, checked_at: iso(now), source: 'Coinbase Exchange', product: COINS[coin].product, cross_check: stored.cross_check || null });
       if (!problems.length && trade) {
         // The newest 600 bars are plenty for every indicator (50 EMA, swings, the previous day) and keep a pass cheap.
-        const res = stepSeries(await readPortfolios(storage, coin, tf), coin, tf, bars.slice(-STEP_WINDOW), row.status, gate);
+        const res = stepSeries(prioritize(await readPortfolios(storage, coin, tf), plan, tf), coin, tf, bars.slice(-STEP_WINDOW), row.status, gate);
         await storage.put(pfKey(coin, tf), Object.fromEntries(res.portfolios.map((pf) => [pf.key, pf])));
         row.signals = res.signals; row.open = res.portfolios.filter((pf) => pf.open).length;
         run.signals += res.signals;
@@ -302,6 +312,7 @@ export async function cryptoTick(storage, { fetcher = fetch, now = Date.now(), f
     if (run.closed) await queueRoomEvent(storage, { room: 'trading', kind: 'journal_trades', key: `crypto:${run.at}`, title: `${run.closed} crypto paper trade${run.closed === 1 ? '' : 's'} closed`, body: `Orion's crypto paper journal closed ${run.closed} simulated trade${run.closed === 1 ? '' : 's'} at ${run.at} on Coinbase Exchange bars. Paper only; no order was sent anywhere.`, status: 'verified', evidence: [`crypto_runs ${run.at}`], refs: { ledger: 'forward_paper_journal', market: 'crypto', run_at: run.at } }).catch(() => null);
   }
   if (rejected.length) run.rejected = rejected.slice(0, 3);
+  if (selectionLog.length) { run.selection = { allowed: selectionLog.filter((d) => d.decision === 'allowed').length, refused: selectionLog.filter((d) => d.decision === 'refused').length }; await saveSelectionLog(storage, selectionLog); }
   run.ok = run.series.some((s) => s.status === 'LIVE' || s.status === 'DELAYED');
   await storage.put(CRYPTO_STATE, { ...state, fetched, last_run_at: run.at, last_ok_at: run.ok ? run.at : state.last_ok_at || null });
   const runs = (await storage.get(CRYPTO_RUNS)) || [];

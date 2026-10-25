@@ -13,6 +13,8 @@ import {
 } from './trading_evidence.js';
 import { makeEntryGate, readControls } from './trading_controls.js';
 import { decisionsEvent, governedGate, pausedUnits, runGovernor, tradeDecisions } from './strategy_governor.js';
+import { buildPaperPlan, saveSelectionLog, selectionGate } from './paper_selection.js';
+import FUTURES_MATRIX from './strategy_matrix_futures.js';
 import { queueRoomEvent } from './room_events.js';
 import { MAX_DELAYED_BAR_AGE_MS, readDelayedTraining, resetDelayedTraining, runDelayedTraining } from './trading_delayed_training.js';
 
@@ -221,7 +223,10 @@ export async function liveTick(storage, { fetcher = fetch, now = Date.now(), for
         const realizedToday = (await readTrades(storage, isLive))
           .filter((t) => tradeDayOf(t.exit?.time || 0) === today).reduce((sum, t) => sum + (Number(t.net_pnl) || 0), 0);
         // The strategy governor restricts forward paper only; simulation (delayed training, research) keeps every strategy.
-        const gate = governedGate(makeEntryGate(controls, { realized_today: realizedToday, open_positions: portfolios.filter((pf) => pf.open || pf.pending).length }), await pausedUnits(storage));
+        // Strategy V3 selection (paper_selection.js): futures paper pauses outside CME hours and demoted rows take no new
+        // entry; this grid keeps its own exposure limits (trading_controls) and its isolated variants (no cap, no dedupe).
+        const selectionLog = [];
+        const gate = selectionGate(governedGate(makeEntryGate(controls, { realized_today: realizedToday, open_positions: portfolios.filter((pf) => pf.open || pf.pending).length }), await pausedUnits(storage)), { plan: buildPaperPlan([FUTURES_MATRIX]), limits: null, dedupe: false, log: selectionLog });
         const closed = [];
         run.missed_windows = portfolios.filter((pf) => pf.last_bar_time && pf.last_bar_time < bars[0].t).length;
         const before = new Map(portfolios.map((pf) => [pf.key, pf.last_bar_time]));
@@ -237,6 +242,7 @@ export async function liveTick(storage, { fetcher = fetch, now = Date.now(), for
         // This pass's enter and skip decisions, one bounded Brain event (the full list stays in each portfolio).
         const fresh = tradeDecisions(portfolios.map((pf) => ({ ...pf, signals: (pf.signals || []).filter((x) => x.time > (before.get(pf.key) || '')), skips: (pf.skips || []).filter((x) => x.time > (before.get(pf.key) || '')) })), { limit: 500 });
         run.decisions = { entered: fresh.filter((x) => x.decision === 'taken').length, skipped: fresh.filter((x) => x.decision === 'skipped').length };
+        await saveSelectionLog(storage, selectionLog.filter((d) => d.decision === 'refused'));
         const brainEvent = decisionsEvent(fresh, run.at);
         if (brainEvent) await queueRoomEvent(storage, brainEvent).catch(() => false);
         const valid = [];
