@@ -1,5 +1,6 @@
 import 'package:chey/agents/che_agent_runtime.dart';
 import 'package:chey/agents/che_office_floor_screen.dart';
+import 'package:chey/agents/che_office_status.dart';
 import 'package:chey/agents/che_office_store.dart';
 import 'package:chey/che_ui/che_agents.dart';
 import 'package:flutter/material.dart';
@@ -74,38 +75,53 @@ void main() {
     store.dispose();
   });
 
-  testWidgets('floor plan: labeled grid of desks, War Room on the same canvas, CHE front and center', (tester) async {
-    tester.view.physicalSize = const Size(1170, 2532);
+  testWidgets('floor plan: clear zones, every desk in one zone, CHE in the central office', (tester) async {
+    tester.view.physicalSize = const Size(1320, 2868);
     tester.view.devicePixelRatio = 3;
     addTearDown(tester.view.reset);
 
     final store = CheOfficeStore()..setRoster(CheAgent.che(), _roster());
     store.setBoard(_board());
     final tapped = <String>[];
+    final zones = <CheOfficeZone>[];
     var warRoom = 0;
     await tester.pumpWidget(MaterialApp(
       home: Scaffold(
         body: ListView(children: [
-          CheOfficeFloorPlan(store: store, onTapDesk: tapped.add, onWarRoom: () => warRoom++),
+          CheOfficeFloorPlan(store: store, onTapDesk: tapped.add, onWarRoom: () => warRoom++, onOpenZone: zones.add),
         ]),
       ),
     ));
     await tester.pump();
 
-    expect(find.byType(GridView), findsOneWidget);
-    for (final name in ['Nova', 'Atlas', 'Mira', 'Knox', 'Sage', 'Lyra']) {
-      expect(find.descendant(of: find.byType(GridView), matching: find.text(name)), findsOneWidget, reason: name);
+    for (final title in ['BRAIN LAB', 'WAR ROOM', 'CHE CENTRAL OFFICE', 'BUSINESS OPERATIONS', 'TRADING DESK', 'CREATIVE STUDIO', 'AGENT DESKS']) {
+      expect(find.text(title), findsOneWidget, reason: title);
     }
-    expect(find.text('CHE'), findsOneWidget);
-    expect(find.text('FRONT OF THE OFFICE'), findsOneWidget);
-    expect(find.text('WAR ROOM'), findsOneWidget);
-    expect(find.bySemanticsLabel(RegExp(r'^Knox, Knox role\. Blocked: tool not configured \(Codex\)\.')), findsOneWidget);
+    // Each core agent sits in its own zone (from the role, else the known core desk).
+    Finder inZone(String zone, String name) =>
+        find.descendant(of: find.byKey(ValueKey('office-zone-$zone')), matching: find.text(name));
+    expect(inZone('operations', 'Nova'), findsOneWidget);
+    expect(inZone('research', 'Atlas'), findsOneWidget);
+    expect(inZone('creative', 'Mira'), findsOneWidget);
+    expect(inZone('creative', 'Lyra'), findsOneWidget);
+    expect(inZone('trading', 'Sage'), findsOneWidget);
+    expect(inZone('desks', 'Knox'), findsOneWidget);
+    expect(inZone('central', 'CHE'), findsOneWidget);
+    expect(find.bySemanticsLabel(RegExp(r'^Knox, Knox role\. Blocked: tool not configured \(Codex\)\. Blocked\.')), findsOneWidget);
     expect(find.bySemanticsLabel(RegExp(r'^CHE, Office Boss\.')), findsOneWidget);
+    // Zones say what they are and who is there.
+    expect(find.bySemanticsLabel(RegExp(r'^Trading Desk\. Paper trading research\. Never real money\. Sage available\.')), findsOneWidget);
+    expect(find.bySemanticsLabel(RegExp(r'^Agent Desks\. .* Knox blocked\.')), findsOneWidget);
 
     await tester.tap(find.text('Knox'));
     expect(tapped, ['k']);
+    await tester.tap(find.text('CHE'));
+    expect(tapped, ['k', 'che']);
     await tester.tap(find.text('WAR ROOM'));
     expect(warRoom, 1);
+    await tester.tap(find.text('TRADING DESK'));
+    expect(zones, [CheOfficeZone.trading]);
+    expect(tester.takeException(), isNull);
 
     await tester.pumpWidget(const SizedBox());
     store.dispose();

@@ -375,7 +375,7 @@ void main() {
       200,
       scrollable: officeScroll,
     );
-    await tester.drag(officeScroll, const Offset(0, -120));
+    await tester.ensureVisible(find.text('Full transcript').first);
     await tester.pump();
     // Tapping the meeting opens its visual room; "Full transcript" opens the War Room's text record.
     await tester.tap(find.text('Full transcript').first);

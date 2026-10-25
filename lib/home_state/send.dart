@@ -340,6 +340,14 @@ extension _CheHomeSend on _CHEHomeState {
       _openAssistantHub(tab: 5);
       return true;
     }
+    // Office zones, desks and card actions by voice (owner UI cleanup, 2026-10-25): "take me to the trading desk",
+    // "open Atlas's desk", "message Atlas in the War Room", "assign a task to Atlas". Additive; the routes below stay.
+    final officeVoice = cheParseOfficeVoice(message);
+    if (officeVoice != null) {
+      _openOfficeFloor(agentName: officeVoice.agentName, zone: officeVoice.zone?.id, action: officeVoice.action);
+      await speakText(officeVoice.reply, record: false);
+      return true;
+    }
     if (RegExp(r'\b(open|show|go to)\s+(office|team|coworkers?|partners?|workplace)\b').hasMatch(lower)) {
       _openAssistantHub(tab: 6);
       return true;

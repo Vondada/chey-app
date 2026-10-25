@@ -993,7 +993,21 @@ extension _CheHomeHubRooms on _CHEHomeState {
     if (route != null) unawaited(Navigator.of(context).push(route));
   }
 
-  void _openOfficeFloor({String? agentName}) {
+  /// A floor-plan zone's room ('brain', 'business', 'trading', 'create'): closes what is open and opens that hub tab.
+  void _openOfficeZoneRoom(String room) {
+    final tab = switch (room) {
+      'brain' => 0,
+      'trading' => 1,
+      'business' => 2,
+      'create' => 5,
+      _ => -1,
+    };
+    if (tab < 0 || !mounted) return;
+    Navigator.of(context).popUntil((route) => route.isFirst);
+    _openAssistantHub(tab: tab);
+  }
+
+  void _openOfficeFloor({String? agentName, String? zone, CheOfficeVoiceAction action = CheOfficeVoiceAction.open}) {
     HapticFeedback.selectionClick();
     Navigator.of(context)
         .push(
@@ -1003,6 +1017,10 @@ extension _CheHomeHubRooms on _CHEHomeState {
               runtime: _officeRuntime,
               onSpeak: (text) => speakText(text, record: false, readOnDemand: true),
               initialAgentName: agentName,
+              initialZone: zone,
+              initialAction: action,
+              onOpenRoom: _openOfficeZoneRoom,
+              projects: _boardItems(),
               // Tapping CHE's desk returns to the conversation.
               onTalkToChe: () => Navigator.of(context).popUntil((route) => route.isFirst),
             ),
@@ -1020,6 +1038,8 @@ extension _CheHomeHubRooms on _CHEHomeState {
       embedded: true,
       onSpeak: (text) => speakText(text, record: false, readOnDemand: true),
       onTalkToChe: () => Navigator.of(context).popUntil((route) => route.isFirst),
+      onOpenRoom: _openOfficeZoneRoom,
+      projects: _boardItems(),
     );
   }
 }

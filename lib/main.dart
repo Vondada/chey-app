@@ -105,6 +105,8 @@ import 'create/che_gpu_browser.dart';
 import 'create/che_live_studio.dart';
 import 'agents/che_agent_runtime.dart';
 import 'agents/che_office_floor_screen.dart';
+import 'agents/che_office_status.dart' show CheOfficeZoneInfo;
+import 'agents/che_office_voice.dart';
 import 'home/che_activity_feed.dart';
 import 'home/che_ui_controls_screen.dart';
 import 'home/che_live_steps.dart';
@@ -2167,6 +2169,12 @@ OWNER AGENCY
                 embedded: true,
                 onSpeak: (text) => speakText(text, record: false, readOnDemand: true),
                 onTalkToChe: () => _goShellTab(1),
+                projects: _boardItems(),
+                onOpenProjects: () {
+                  setState(() => _officePane = 1);
+                  unawaited(_loadAgentState(silent: true));
+                },
+                onOpenRoom: _openOfficeZoneRoom,
                 ),
               ),
               CheProjectsBoard(

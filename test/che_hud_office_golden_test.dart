@@ -1,6 +1,6 @@
 // The Office in the owner's approved HUD glass look (owner, 2026-10-22: "this style for all her rooms"), rendered at
 // the owner's iPhone size (440 x 956 points). The Office header, the crew rows, the meeting row and today's board are
-// glass panels over the navy backdrop, with mono HUD labels and a chrome title. The data is a fixed sample of the
+// glass panels over the navy backdrop, with mono HUD labels and a chrome title; the floor plan is drawn in code. The data is a fixed sample of the
 // Worker's own answers (/api/agents and /api/office/today), so the picture shows real shapes, not invented ones.
 import 'dart:convert';
 import 'dart:io';
@@ -120,16 +120,17 @@ void main() {
 
     // The room still says what it did before: the header, the crew and the readable controls.
     expect(find.text('The Office'), findsOneWidget);
-    expect(find.text('YOUR CREW'), findsOneWidget);
+    expect(find.text('BUSINESS OVERVIEW'), findsOneWidget);
+    expect(find.text('OFFICE FLOOR PLAN'), findsOneWidget);
     expect(find.bySemanticsLabel(RegExp(r'^Office header\. ')), findsOneWidget);
     expect(find.byTooltip('Refresh'), findsOneWidget);
 
     await expectLater(find.byType(MaterialApp), matchesGoldenFile('goldens/hud_office_floor.png'));
 
-    // Further down: the meeting row and today's board, also glass.
-    await tester.scrollUntilVisible(find.text('STRIPE TODAY'), 300, scrollable: find.byType(Scrollable).first);
+    // Further down: the agents as contact cards, then the War Room and next steps, also glass.
+    await tester.scrollUntilVisible(find.text('NEXT STEPS'), 300, scrollable: find.byType(Scrollable).first);
     await tester.pump(const Duration(milliseconds: 400));
-    expect(find.text('LA AGENCIA • TODAY'), findsOneWidget);
+    expect(find.text('WAR ROOM'), findsWidgets);
     await expectLater(find.byType(MaterialApp), matchesGoldenFile('goldens/hud_office_board.png'));
     await tester.pumpWidget(const SizedBox());
   });

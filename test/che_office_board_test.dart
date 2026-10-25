@@ -163,16 +163,19 @@ void main() {
     // Desks: full names, roles and the real job status (never a bare Idle).
     expect(find.bySemanticsLabel(RegExp(r'^Knox, Engineering / Codex jobs\. Blocked: tool not configured \(Codex\)\.')), findsOneWidget);
     expect(find.bySemanticsLabel(RegExp(r'^Atlas, Research\. Up next: Research competitors in Houston\.')), findsOneWidget);
-    expect(find.bySemanticsLabel(RegExp(r'^CHE, Office Boss\.')), findsOneWidget);
+    expect(find.bySemanticsLabel(RegExp(r'^CHE, Office Boss\..*the central office')), findsOneWidget);
 
-    // The board sits below the floor plan and action buttons; scroll to it.
-    await tester.scrollUntilVisible(find.text('BLOCKERS (1)'), 200, scrollable: find.byType(Scrollable).first);
-    expect(find.text('STARTED TODAY (3)'), findsOneWidget);
-    expect(find.text('FINISHED TODAY (1)'), findsOneWidget);
-    expect(find.text('STRIPE TODAY'), findsOneWidget);
-    expect(find.text('BLOCKERS (1)'), findsOneWidget);
-    await tester.scrollUntilVisible(find.text('STALLED (1)'), 200, scrollable: find.byType(Scrollable).first);
-    expect(find.text('STALLED (1)'), findsOneWidget);
+    // The operations center: what needs the owner, current tasks and verified work, each from the board.
+    expect(find.text('NEEDS YOU (2)'), findsOneWidget);
+    expect(find.bySemanticsLabel(RegExp(r'^Knox\. Blocked: tool not configured \(Codex\) · Build a landing page\.')), findsOneWidget);
+    expect(find.bySemanticsLabel(RegExp(r'^Knox\. Stalled \(blocked\) · Build a landing page\.')), findsOneWidget);
+    await tester.scrollUntilVisible(find.text('CURRENT TASKS (1)'), 200, scrollable: find.byType(Scrollable).first);
+    final task = find.bySemanticsLabel(RegExp(r'^Atlas\. Queued\. Up next: Research competitors in Houston\.'));
+    await tester.scrollUntilVisible(task, 100, scrollable: find.byType(Scrollable).first);
+    expect(task, findsOneWidget);
+    final verified = find.bySemanticsLabel(RegExp(r'^Mira finished Write FAQ replies\. Approved by CHE\. Office job t3\.'));
+    await tester.scrollUntilVisible(verified, 100, scrollable: find.byType(Scrollable).first);
+    expect(verified, findsOneWidget);
 
     await tester.ensureVisible(find.text('Stand down the Office'));
     await tester.pump();
@@ -183,7 +186,8 @@ void main() {
     expect(spoken.last, startsWith('CHE here. Office standing down.'));
     expect(find.text(spoken.last), findsOneWidget, reason: 'spoken result is also shown');
 
-    await tester.tap(find.byTooltip('Read this Office to me'));
+    await tester.scrollUntilVisible(find.text('BUSINESS OVERVIEW'), -300, scrollable: find.byType(Scrollable).first);
+    await tester.tap(find.byTooltip('Read the business overview aloud'));
     await tester.pump();
     expect(spoken.last, startsWith('CHE here. Office board.'));
     await tester.pumpWidget(const SizedBox());

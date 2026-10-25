@@ -11,24 +11,46 @@ import 'package:flutter/foundation.dart';
 
 import '../che_ui/che_agents.dart';
 import 'che_agent_runtime.dart';
+import 'che_office_status.dart';
 
 /// What one desk shows: the live agent plus the board's real job status.
 @immutable
 class CheDeskView {
-  const CheDeskView({required this.agent, this.note});
+  const CheDeskView({required this.agent, this.note, this.boardState, this.job = ''});
   final CheAgent agent;
 
   /// Board status for this desk, e.g. "Blocked: tool not configured (Codex)".
   final String? note;
 
+  /// The board's desk state (office_board.js: working, queued, stalled, blocked, failed, done, idle), when known.
+  final String? boardState;
+
+  /// The board's job title for this desk, when it has one.
+  final String job;
+
   String get line => cheDeskLine(agent, note);
 
-  CheDeskView withNote(String? value) => CheDeskView(agent: agent, note: value);
+  /// Working, Queued, Blocked, Finished, Available (or Offline), from the board first, then the roster.
+  CheWorkState get workState => cheWorkStateFor(agent, boardState: boardState);
+
+  /// The card line for [workState]: the real task, or plain availability.
+  String get workLine => cheWorkLine(workState, agent, note: note, job: job);
+
+  CheDeskView withNote(String? value) => CheDeskView(agent: agent, note: value, boardState: boardState, job: job);
+
+  CheDeskView withBoard(CheOfficeDesk? desk) => CheDeskView(
+        agent: agent,
+        note: desk == null || desk.state == 'idle' ? null : desk.status,
+        boardState: desk?.state,
+        job: desk?.job ?? '',
+      );
 
   @override
   bool operator ==(Object other) =>
       other is CheDeskView &&
       other.note == note &&
+      other.boardState == boardState &&
+      other.job == job &&
       other.agent.id == agent.id &&
       other.agent.name == agent.name &&
       other.agent.role == agent.role &&
@@ -37,7 +59,7 @@ class CheDeskView {
       other.agent.color == agent.color;
 
   @override
-  int get hashCode => Object.hash(agent.id, agent.name, agent.role, agent.status, agent.task, agent.color, note);
+  int get hashCode => Object.hash(agent.id, agent.name, agent.role, agent.status, agent.task, agent.color, note, boardState, job);
 }
 
 /// Counts as working on the floor: anything but idle, offline or done.
@@ -51,12 +73,13 @@ class CheOfficeStore extends ChangeNotifier {
 
   final ValueNotifier<List<String>> deskOrder = ValueNotifier<List<String>>(const []);
   final ValueNotifier<CheOfficeToday?> board = ValueNotifier<CheOfficeToday?>(null);
-  /// Agents actually doing work right now (the floor plan's "N working").
+  /// Agents whose real state is Working right now (the floor plan's "N working").
   final ValueNotifier<int> working = ValueNotifier<int>(0);
   final ValueNotifier<({int live, int total})> warRoom = ValueNotifier<({int live, int total})>((live: 0, total: 0));
 
   final Map<String, ValueNotifier<CheDeskView>> _desks = {};
   final Map<String, String> _notesByName = {};
+  final Map<String, CheOfficeDesk> _boardByName = {};
   final List<String> _pendingSpeech = [];
 
   /// The live notifier for one desk (CHE is [cheId]).
@@ -85,10 +108,10 @@ class CheOfficeStore extends ChangeNotifier {
     for (final a in agents) {
       _put(a.id, a);
     }
-    working.value = agents.where((a) => cheAgentIsWorking(a.status)).length;
     for (final gone in _desks.keys.where((id) => !order.contains(id)).toList()) {
       _desks.remove(gone)?.dispose();
     }
+    _countWorking();
     if (!listEquals(order, deskOrder.value)) {
       deskOrder.value = List.unmodifiable(order);
       notifyListeners();
@@ -105,10 +128,15 @@ class CheOfficeStore extends ChangeNotifier {
         for (final d in today?.desks ?? const <CheOfficeDesk>[])
           if (d.state != 'idle') d.name: d.status,
       });
+    _boardByName
+      ..clear()
+      ..addAll({for (final d in today?.desks ?? const <CheOfficeDesk>[]) d.name: d});
     for (final entry in _desks.entries) {
       final view = entry.value.value;
-      entry.value.value = view.withNote(_notesByName[view.agent.name]);
+      final desk = _boardByName[view.agent.name];
+      entry.value.value = desk == null ? view.withNote(_notesByName[view.agent.name]) : view.withBoard(desk);
     }
+    _countWorking();
     if (today != null && today.announcements.isNotEmpty) {
       _pendingSpeech.addAll(today.announcements);
     }
@@ -135,8 +163,18 @@ class CheOfficeStore extends ChangeNotifier {
     return out;
   }
 
+  /// Agent desks whose real state is Working (the board first, then the roster), never CHE's own desk.
+  void _countWorking() {
+    working.value = [for (final e in _desks.entries) if (e.key != cheId) e.value.value]
+        .where((v) => v.workState == CheWorkState.working)
+        .length;
+  }
+
   void _put(String id, CheAgent agent) {
-    final view = CheDeskView(agent: agent, note: _notesByName[agent.name]);
+    final desk = _boardByName[agent.name];
+    final view = desk == null
+        ? CheDeskView(agent: agent, note: _notesByName[agent.name])
+        : CheDeskView(agent: agent).withBoard(desk).withNote(_notesByName[agent.name]);
     final existing = _desks[id];
     if (existing == null) {
       _desks[id] = ValueNotifier<CheDeskView>(view);
