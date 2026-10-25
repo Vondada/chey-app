@@ -77,6 +77,11 @@ Then, on GitHub:
 
 ## 2. Current position
 
+**Claude, 2026-10-25 (owner: 3D PERFORMANCE + CHE MATHEMATICAL GENIUS) — stage 1 pushed.**
+- `lane/engineering-math` `1dca3782` (from main): `server/cloudflare/engineering_math.js`, same contract as `atlas_math.js`. Helix length, headroom, rotation, shaft power, spin-up, gear train, box clearance, cantilever deflection. Each result carries a second method (chord sum, numeric integration, double integration of curvature) and a dimension check. Tests 11/11, reference values from sympy. First-order only, marked not certified.
+- `lane/invention-jet-engine` `af54bb17`: `tools/bench/invention_scene_bench.mjs` measures CPU time in Node: explode 0.04 ms, resize 0.02 ms, GLB build 0.48 ms, 20 KB, 15 parts. NOT measured: rendering, iPhone FPS, the Kimi-scale complexity.
+- NOT done: progressive preview, the viewer's real FPS, caching, background jobs, the acceptance spiral atrium, the chat route for calculations, saved calculation receipts, the mechanical assembly constraint test.
+
 **Claude, 2026-10-25 (owner: CLAUDE — ADD KIMI-LEVEL INTERACTIVE 3D BUILDING TO CHE) — first slice pushed.**
 - Branch `lane/invention-jet-engine` at `1786d2b3` (from main `2d713a4b`). Not merged, no PR, not deployed, not on the iPhone.
 - Done: `jet_engine` template (15 named box parts; stage and group per part) in `server/cloudflare/invention_visuals.js`; `server/cloudflare/invention_scene.js` edits the named parts (explode by stage, exact reassemble, open casing halves, spoken part-name resolution, size/scale one part, hide/show, JSON save/reload). Every edit returns a receipt naming the parts it changed.
