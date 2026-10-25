@@ -5748,7 +5748,7 @@ export class CheState extends DurableObject {
         max_tokens: 700,
         che_audit: { tenant_id: tenant?.id, agent: 'CHE', route: 'guest_chat' },
       });
-      const reply = auditReply(String(answer?.response || answer?.choices?.[0]?.message?.content || '').trim(), { evidence: null, fiction: storyRequested(message) }).text;
+      const reply = auditReply(String(answer?.response || answer?.choices?.[0]?.message?.content || '').trim(), { evidence: null, fiction: storyRequested(message), ownerRecords: false }).text;
       return ndjsonReply(reply || 'I could not answer that just now. Please try again.', { source: 'che_guest', ok: Boolean(reply), model_calls: 1 });
     } catch (_) {
       return ndjsonReply('I could not reach my engines just now. Please try again in a moment.', { source: 'che_guest', ok: false, model_calls: 1 });

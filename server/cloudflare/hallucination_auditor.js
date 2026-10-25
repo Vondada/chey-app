@@ -22,7 +22,7 @@ const SUBJECT = String.raw`(?:I|CHE|she|we)(?:'ve|’ve)?\s+`;
 const AUDIO = String.raw`(?:tracks?|songs?|beats?|music|audio(?:\s+(?:clips?|files?|tracks?))?|recordings?|vocals?|mix(?:es)?|masters?)\b(?!\s+(?:(?:production|creative)\s+)?(?:brief|outline|plan|prompt|description|script|lyrics|notes)\b)`;
 // A claim is a completed, real action stated as fact. Questions, denials and hedges are judged separately.
 export const CLAIMS = Object.freeze([
-  { kind: 'audio_made', re: new RegExp(String.raw`\b${SUBJECT}${PAST}(?:created|made|generated|rendered|produced|exported|mixed|mastered|finished)\b[^.!?\n]{0,100}\b${AUDIO}|\b(?:the|your|my|our|this|that)\s+(?:[\w-]+\s+){0,3}${AUDIO}\s+(?:is|was|has\s+been)\s+(?:now\s+)?(?:complete|finished|done|ready|generated|rendered|exported|produced|mixed|mastered)\b|\bhere(?:'s|’s|\s+is)\s+(?:(?:your|the|a)\s+)?(?:(?:finished|generated|completed)\s+)?${AUDIO}`, 'i') },
+  { kind: 'audio_made', re: new RegExp(String.raw`\b${SUBJECT}${PAST}(?:created|made|generated|rendered|produced|exported|mixed|mastered|finished)\b(?!\s+(?:(?:a|an|the|your|my|our|this|that)\s+)?(?:[\w-]+\s+){0,2}(?:brief|outline|plan|prompt|description|script|lyrics|notes)\b)[^.!?\n]{0,100}\b${AUDIO}|\b(?:the|your|my|our|this|that)\s+(?:[\w-]+\s+){0,3}${AUDIO}\s+(?:is|was|has\s+been)\s+(?:now\s+)?(?:complete|finished|done|ready|generated|rendered|exported|produced|mixed|mastered)\b|\bhere(?:'s|’s|\s+is)\s+(?:(?:your|the|a)\s+)?(?:(?:finished|generated|completed)\s+)?${AUDIO}`, 'i') },
   { kind: 'audio_played', re: new RegExp(String.raw`\b(?:${SUBJECT}${PAST}(?:played|started\s+playing|am\s+playing)|I(?:'m|’m)\s+playing|I(?:'ll|’ll|\s+will)\s+(?:play|start\s+playing))\b[^.!?\n]{0,70}\b${AUDIO}|\b(?:the|your)\s+${AUDIO}\s+(?:is\s+)?(?:now\s+)?playing\b`, 'i') },
   { kind: 'audio_placeholder', re: /(?:^|\s)[\[(]\s*(?:(?:a\s+)?short\s+)?(?:(?:audio|music)\s+(?:clip|plays?|playing|starts?|begins?)|(?:plays?|playing)\s+(?:an?\s+)?(?:audio|music|song|track|beat))\b/i },
   { kind: 'memory_saved', re: new RegExp(String.raw`\b${SUBJECT}${PAST}(?:saved|stored|written|recorded)\b[^.!?\n]{0,60}\b(?:memory|memories|note)\b|\b${SUBJECT}${PAST}(?:saved|stored|noted|memori[sz]ed)\s+(?:that|it|this|them)(?:\s+(?:for\s+you|away|safely|now))?\b|\bI(?:'ll|’ll|\s+will)\s+(?:always\s+|definitely\s+)?remember\s+(?:that|it|this|them)\b|\b(?:it|that)(?:'s|’s|\s+is|\s+has\s+been|\s+was)\s+(?:now\s+)?(?:saved|stored)\b[^.!?\n]{0,30}\b(?:memory|memories|for\s+you)\b`, 'i') },
@@ -135,7 +135,7 @@ function labelClaim(kind, sentence, evidence, now) {
  * A null evidence makes every claim UNVERIFIED (fail closed).
  * Returns { text, outcome, claims, entries }: outcome is 'none' | 'pass' | 'corrected' | 'blocked'.
  */
-export function auditReply(reply, { evidence = null, requestId = '', now = Date.now(), fiction = false } = {}) {
+export function auditReply(reply, { evidence = null, requestId = '', now = Date.now(), fiction = false, ownerRecords = true } = {}) {
   const source = String(reply || '');
   // A story, poem or role-play the owner asked for narrates in its own voice ("I read the book by candlelight").
   // The older guards exempt it through storyRequested(message); the auditor keeps that same exemption.
@@ -149,7 +149,8 @@ export function auditReply(reply, { evidence = null, requestId = '', now = Date.
   for (const sentence of splitSentences(source)) {
     // A model's "I don't have access to mission history" is a claim about CHE's stores it never read: removed, and the
     // owner is told the words that read them (owner live test, 2026-10-25).
-    if (RECORDS_DENIAL.test(sentence)) {
+    // Owner only: a guest is told the truth about what CHE can read for them, so a guest's denial stays as written.
+    if (ownerRecords && RECORDS_DENIAL.test(sentence)) {
       sawClaim = true;
       claims.push({ kind: 'records_denied', label: 'CONTRADICTED' });
       if (!corrections.includes(RECORDS_DENIAL_LINE)) corrections.push(RECORDS_DENIAL_LINE);
