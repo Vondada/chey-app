@@ -212,4 +212,22 @@ void main() {
     expect(result.pauseStep, 'permissions');
     expect(page.calls.any((c) => c.contains('submit()')), isFalse);
   });
+
+  // GPU providers (RunPod, Vast.ai, Modal, Kaggle) use the guided screen: the owner's key goes from the secure field
+  // or the clipboard straight to the Worker; the reply decides what CHE says.
+  test('guided GPU replies: Connected only when verified; a stored key without a free check is saved-not-verified', () {
+    expect(cheGuidedStatus({'state': 'verified', 'outcomes': {'connection_verified': true, 'secret_configured': ['worker']}}), CheOnboardingStatus.connected);
+    expect(cheGuidedStatus({'state': 'secret_configured', 'outcomes': {'connection_verified': false, 'secret_configured': ['worker']}}), CheOnboardingStatus.savedNotVerified);
+    expect(cheGuidedStatus({'state': 'failed', 'outcomes': {'connection_verified': false, 'secret_configured': <String>[]}}), CheOnboardingStatus.failed);
+    expect(cheGuidedStatus({'detail': 'That does not look like a Modal token.'}), CheOnboardingStatus.failed);
+  });
+
+  test('guided steps are read as a numbered list and provider names are spoken properly', () {
+    expect(cheGuidedSteps({'plan': {'steps': ['Sign in at runpod.io.', 'Add prepaid credit yourself.']}}), ['1. Sign in at runpod.io.', '2. Add prepaid credit yourself.']);
+    expect(cheGuidedSteps({'plan': null}), isEmpty);
+    expect(cheOnboardingProviderName('runpod'), 'RunPod');
+    expect(cheOnboardingProviderName('vast'), 'Vast.ai');
+    expect(cheOnboardingProviderName('huggingface'), 'Hugging Face');
+    expect(cheOnboardingProviderName('groq'), 'Groq');
+  });
 }
