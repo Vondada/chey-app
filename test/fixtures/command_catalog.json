@@ -1626,6 +1626,42 @@
    "optional_missing": []
   },
   {
+   "id": "music-studio",
+   "category": "studio",
+   "title": "Recording Studio",
+   "summary": "Open the Recording Studio: record, beats, mix, master, export.",
+   "does": "Opens the Recording Studio on the iPhone: multitrack recording from the microphone or an audio interface, live monitoring through the effects on headphones, the Beat Maker, effects, mixer, mastering, WAV or M4A export and MP3, M4A or WAV import. Recording and audio formats need the newest app build.",
+   "mode": "BUILD",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": null,
+   "examples": [
+    "Open the recording studio",
+    "Record my vocals"
+   ],
+   "needs": [],
+   "optional": [],
+   "handler": "app: CheRecordingStudio (lib/music/che_recording_studio.dart)",
+   "route": "che_recording_studio",
+   "produces": "recording studio",
+   "evidence": "The app opens the studio; nothing is recorded until the owner says record.",
+   "cost": "Free engines only, unless you turned paid AI on.",
+   "keywords": [
+    "recording studio",
+    "record",
+    "beats",
+    "mix",
+    "master",
+    "vocals",
+    "song"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
    "id": "film-status",
    "category": "studio",
    "title": "Film Status",

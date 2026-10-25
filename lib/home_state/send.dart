@@ -312,6 +312,13 @@ extension _CheHomeSend on _CHEHomeState {
       await speakText(said, record: false);
       return true;
     }
+    if (RegExp('$wake(?:open|show)(?: my| the)? gpu browser\\W*\$').hasMatch(lower)) {
+      unawaited(Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) =>
+        CheGpuBrowser(baseUrl: cheAgentBaseUrl, headers: _authHeaders,
+          onRead: (text) => speakText(text, record: false, readOnDemand: true)))));
+      await speakText('Opening GPU Browser.', record: false);
+      return true;
+    }
     if (RegExp('$wake(?:open|show|connect)(?: to)? (?:my |the )?(?:cloud computer|creation engine)\\W*\$').hasMatch(lower)) {
       _openCreationEngine();
       await speakText('Opening your Cloud Computer.', record: false);
@@ -812,6 +819,15 @@ extension _CheHomeSend on _CHEHomeState {
     }
 
     // The Live 3D Studio, while it is open, takes viewport moves, edits, undo, redo, save and generate.
+    final gpuVoice = CheGpuBrowser.voiceHandler;
+    if (gpuVoice != null && _pendingAttachment == null) {
+      final reply = await gpuVoice(message);
+      if (reply != null) {
+        if (mounted) _set(() => controller.clear());
+        if (reply.isNotEmpty) await speakText(reply, record: false, show: true);
+        return;
+      }
+    }
     final liveVoice = CheLiveStudio.voiceHandler;
     if (liveVoice != null && _pendingAttachment == null) {
       final reply = await liveVoice(message);

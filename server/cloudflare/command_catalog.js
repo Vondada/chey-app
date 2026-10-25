@@ -420,6 +420,14 @@ export const COMMANDS = Object.freeze([
     prompt: 'Make me a {input}', produces: 'video', evidence: 'The MP4 read back from R2: length, frame size and codecs; shots that failed their checks are listed.',
     cost: 'Free: Workers AI daily allowance, GitHub Actions free minutes, and free GPU quotas you connect. Hard caps; nothing paid.', keywords: ['movie', 'film', 'feature', 'film studio'],
   }),
+  // The Recording Studio (owner, 2026-10-24): an app screen (lib/music/che_recording_studio.dart); this opens it.
+  C('music-studio', 'studio', 'BUILD', 'Open the Recording Studio: record, beats, mix, master, export.', {
+    title: 'Recording Studio',
+    does: 'Opens the Recording Studio on the iPhone: multitrack recording from the microphone or an audio interface, live monitoring through the effects on headphones, the Beat Maker, effects, mixer, mastering, WAV or M4A export and MP3, M4A or WAV import. Recording and audio formats need the newest app build.',
+    needs: [], route: 'che_recording_studio', local: 'recording_studio', handler: 'app: CheRecordingStudio (lib/music/che_recording_studio.dart)',
+    input: null, examples: ['Open the recording studio', 'Record my vocals'],
+    prompt: 'Open the recording studio.', produces: 'recording studio', evidence: 'The app opens the studio; nothing is recorded until the owner says record.', keywords: ['recording studio', 'record', 'beats', 'mix', 'master', 'vocals', 'song'],
+  }),
   C('film-status', 'studio', 'EXPLORE', 'Film progress, ETA and the free render farm.', {
     does: 'Says where the current film is (shots done, elapsed time against the estimate) and, when asked, which free GPUs are connected and how much free quota is left.',
     needs: [], route: 'che_film_studio', local: 'film_status', handler: 'film_studio.speakStatus / speakFarm',

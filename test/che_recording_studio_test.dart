@@ -415,13 +415,75 @@ void main() {
       expect(again.songs.map((s) => s.title), contains('Late night idea'));
     });
 
+    test('M4A export uses the iPhone encoder; without it CHE says so and saves a WAV; MP3 export is refused honestly', () async {
+      final audio = FakeAudio();
+      final c = await studio(dir, audio);
+      c.rename('Demo');
+      await c.importWav(cheEncodeWav([sine(220, 1)], sr), name: 'Beat');
+      final old = await c.export(format: 'm4a');
+      expect(old, contains('M4A export needs the next CHE app build'));
+      expect(old, contains('saved a WAV instead'));
+      expect(File('${dir.path}/Exports/Demo.wav').existsSync(), isTrue);
+      Uint8List? sent;
+      audio.m4a = (wav) {
+        sent = wav;
+        return Uint8List.fromList([0, 0, 0, 0x20, 0x66, 0x74, 0x79, 0x70, 0x4d, 0x34, 0x41, 0x20]); // an "ftypM4A " box
+      };
+      final now = await c.export(format: 'm4a');
+      expect(now, contains('as an M4A (AAC, 256 kbps)'));
+      expect(cheDecodeWav(sent!).length, sr, reason: 'the encoder is given the rendered song as a WAV');
+      expect(File('${dir.path}/Exports/Demo.m4a').readAsBytesSync().sublist(4, 8), [0x66, 0x74, 0x79, 0x70]);
+      final mp3 = await cheStudioVoice(c, 'export it as an mp3');
+      expect(mp3, contains('MP3 export is not available'));
+      expect(File('${dir.path}/Exports/Demo.mp3').existsSync(), isFalse);
+      expect(await cheStudioVoice(c, 'export as m4a'), contains('as an M4A'));
+    });
+
+    test('MP3 and M4A imports go through the iPhone decoder; an older build says so; unknown types are refused', () async {
+      final audio = FakeAudio();
+      final c = await studio(dir, audio);
+      expect(await c.importAudio(Uint8List(10), name: 'Song', ext: 'mp3'), contains('Importing MP3 needs the next CHE app build'));
+      String? askedExt;
+      audio.decoder = (bytes, ext) {
+        askedExt = ext;
+        return cheEncodeWav([sine(330, 1.5)], 48000);
+      };
+      final said = await c.importAudio(Uint8List(10), name: 'Song', ext: 'MP3');
+      expect(askedExt, 'mp3');
+      expect(said, contains('Imported "Song"'));
+      expect(said, contains('mono 48000 Hz'));
+      expect(await c.importAudio(Uint8List(10), name: 'Doc', ext: 'pdf'), contains('not .pdf'));
+    });
+
+    test('live monitoring: refused on the iPhone speaker (feedback), started with headphones during a take, stopped with it', () async {
+      final audio = FakeAudio(routeKind: 'speaker', take: cheEncodeWav([sine(300, 2)], sr));
+      final c = await studio(dir, audio);
+      expect(await cheStudioVoice(c, 'turn on live monitoring'), contains('iPhone speaker, which would howl'));
+      final refused = await c.record();
+      expect(refused, contains('Live monitoring is off because sound is coming from the iPhone speaker'));
+      expect(c.monitoring, isFalse);
+      await c.stopRecording();
+      audio.routeKind = 'headphones';
+      c.setEffect('reverb', 0.4);
+      final started = await c.record();
+      expect(started, contains('Live monitoring on through'));
+      expect(c.monitoring, isTrue);
+      expect(audio.monitorFx!['reverb'], 0.4);
+      c.setEffect('delay', 0.2);
+      expect(audio.monitorCalls.last, 'update', reason: 'changing an effect while monitoring updates what he hears');
+      expect(audio.monitorFx!['delay'], 0.2);
+      await c.stopRecording();
+      expect(audio.monitorCalls.last, 'stop');
+      expect(c.monitoring, isFalse);
+      expect(await cheStudioVoice(c, 'stop monitoring'), 'Live monitoring off.');
+    });
+
     test('export writes a real WAV of the whole song to Exports', () async {
       final c = await studio(dir, FakeAudio());
       c.rename('Demo');
       await c.importWav(cheEncodeWav([sine(220, 2)], sr), name: 'Beat');
       final said = await c.export();
       expect(said, contains('Exported "Demo" as a WAV'));
-      expect(said, contains('MP3 and M4A export are not available yet'));
       final f = File('${dir.path}/Exports/Demo.wav');
       final back = cheDecodeWav(f.readAsBytesSync());
       expect(back.channels.length, 2);
@@ -486,6 +548,42 @@ void main() {
     expect(c.recording, isTrue);
     final saved = await cheStudioVoice(c, 'stop', speakFirst: speak);
     expect(saved, contains('Take saved'), reason: 'results after the sound has stopped are spoken normally');
+  });
+
+  test('My Songs by voice: list them, open one by number or by name (review of #523)', () async {
+    final dir = Directory.systemTemp.createTempSync('che_studio_songs_');
+    addTearDown(() => dir.deleteSync(recursive: true));
+    final c = await studio(dir, FakeAudio());
+    await c.newSong(title: 'Sunset Drive');
+    await c.newSong(title: 'Night Shift');
+    final tabs = <int>[];
+    final list = await cheStudioVoice(c, 'list my songs', showTab: tabs.add);
+    expect(list, startsWith('Your songs: 1 '));
+    expect(list, contains('Sunset Drive'));
+    expect(list, contains('Night Shift'));
+    final firstTitle = c.songs.first.title;
+    expect(await cheStudioVoice(c, 'open song one'), startsWith('Opened "$firstTitle"'));
+    expect(c.song.title, firstTitle);
+    expect(await cheStudioVoice(c, 'open the song called sunset drive'), startsWith('Opened "Sunset Drive"'));
+    expect(c.song.title, 'Sunset Drive');
+    expect(await cheStudioVoice(c, 'open song 9'), startsWith('There is no song 9.'));
+    expect(await cheStudioVoice(c, 'open song called nothing like this'), startsWith('No saved song is called'));
+    expect(await cheStudioVoice(c, 'open my songs', showTab: tabs.add), 'Showing my songs.');
+    expect(tabs.last, 1);
+  });
+
+  test('by voice, a microphone that fails after "Recording on…" was said is still reported aloud (review of #523)', () async {
+    final dir = Directory.systemTemp.createTempSync('che_studio_denied_');
+    addTearDown(() => dir.deleteSync(recursive: true));
+    final audio = FakeAudio(inLat: 0, outLat: 0, unavailable: 'Microphone access is off for CHE. Turn it on in Settings, Privacy, Microphone.');
+    final c = await studio(dir, audio);
+    c.setCountIn(0);
+    final spoken = <String>[];
+    Future<void> speak(String s) async => spoken.add(s);
+    final reply = await cheStudioVoice(c, 'record my vocals', speakFirst: speak);
+    expect(spoken.single, startsWith('Recording on'));
+    expect(reply, 'Microphone access is off for CHE. Turn it on in Settings, Privacy, Microphone.');
+    expect(c.recording, isFalse);
   });
 
   testWidgets('the studio shows its six sections and labelled transport', (tester) async {

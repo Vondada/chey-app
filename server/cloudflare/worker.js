@@ -5906,6 +5906,8 @@ export class CheState extends DurableObject {
       if (!ask) return ndjsonReply('Say the length and the subject, for example "/film-make 10-minute movie about a lighthouse keeper".', { source: 'che_film_studio', ok: false, command: command.id, model_calls: 0 });
       return withDoneFields(await this.filmChat(request, ask), { command: command.id });
     }
+    // Recording Studio: an app screen; the Worker only says so and asks the app to open it.
+    if (command.local === 'recording_studio') return ndjsonReply('Opening the Recording Studio, sir.', { source: 'che_recording_studio', ok: true, command: command.id, model_calls: 0, open_screen: 'recording_studio' });
     // Owner Improvements: the command's words go through the same intent the owner's chat uses.
     if (command.local === 'owner_improvement') {
       if (!OWNER_CHAT_REQUESTS.has(request)) return ndjsonReply('Only the CHE owner can change CHE. Nothing was changed.', { source: 'che_owner_improvement', ok: false, command: command.id, model_calls: 0 });

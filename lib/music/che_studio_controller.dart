@@ -384,8 +384,14 @@ class CheStudioController extends ChangeNotifier {
     try {
       _takeLatency = await audio.startRecording();
     } on CheAudioUnavailable catch (e) {
+      // The "Recording on…" sentence went ahead; this failure is the real outcome and must be said too.
+      _spokeAhead = false;
       notifyListeners();
       return _say(e.message);
+    } catch (e) {
+      _spokeAhead = false;
+      notifyListeners();
+      return _say('Recording did not start: the microphone did not open.');
     }
     final gen = ++_playGen;
     _takeStart = start;
@@ -978,6 +984,30 @@ Future<String?> _studioVoice(CheStudioController c, String said, {void Function(
   if (has(r'\bsplit\b')) return c.split();
   if (has(r'\bduplicate\b')) return c.duplicate();
   if (has(r'\bsave\b')) return c.saveNow();
+  // My Songs by voice: the numbered list, then a number or a name opens it (the same openSong a tap uses).
+  if (has(r'\b(list|read|which|what)\b.*\bsongs\b')) {
+    showTab?.call(1);
+    if (c.songs.isEmpty) return 'You have no saved songs yet. Say new song to start one.';
+    return 'Your songs: ${[for (var i = 0; i < c.songs.length; i++) '${i + 1} ${c.songs[i].title}'].join(', ')}. Say open song and a number.';
+  }
+  const numbers = {'one': 1, 'two': 2, 'three': 3, 'four': 4, 'five': 5, 'six': 6, 'seven': 7, 'eight': 8, 'nine': 9, 'ten': 10};
+  final byNumber = RegExp(r'\bopen song (?:number )?(\d{1,3}|one|two|three|four|five|six|seven|eight|nine|ten)\b').firstMatch(s);
+  if (byNumber != null) {
+    final w = byNumber.group(1)!;
+    final n = int.tryParse(w) ?? numbers[w]!;
+    if (n < 1 || n > c.songs.length) return c.songs.isEmpty ? 'You have no saved songs yet.' : 'There is no song $n. You have ${c.songs.length}.';
+    showTab?.call(0);
+    return c.openSong(c.songs[n - 1].id);
+  }
+  final byName = RegExp(r'\bopen (?:the |my )?song (?:called |named )?(.+)$').firstMatch(s);
+  if (byName != null) {
+    final want = byName.group(1)!.trim();
+    final hits = c.songs.where((x) => x.title.toLowerCase().replaceAll(RegExp(r"[^a-z0-9 ']"), ' ').replaceAll(RegExp(r'\s+'), ' ').trim().contains(want)).toList();
+    if (hits.isEmpty) return 'No saved song is called $want. Say list my songs.';
+    if (hits.length > 1) return '${hits.length} songs match $want: ${hits.map((x) => x.title).join(', ')}. Say open song and a number.';
+    showTab?.call(0);
+    return c.openSong(hits.single.id);
+  }
   const tabs = {'timeline': 0, 'record': 0, 'my songs': 1, 'songs': 1, 'beat maker': 2, 'mixer': 3, 'effects': 4, 'mastering': 5, 'master': 5};
   for (final e in tabs.entries) {
     if (has('\\b(open|show|go to)( the| my)? ${e.key}\\b')) {
