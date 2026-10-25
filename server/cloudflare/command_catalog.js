@@ -619,6 +619,15 @@ export const COMMANDS = Object.freeze([
     prompt: 'Orion crypto research {input}', produces: 'crypto desk status', evidence: 'Stored exchange bars, runs, budget counters and journal records only.',
     keywords: ['crypto', 'bitcoin', 'btc', 'ethereum', 'eth', 'orion', 'weekend', '24/7'],
   }),
+  // Strategy Matrix (Trading Room V3, owner 2026-10-25): strategy_matrix.js through its own chat route.
+  C('trade-strategy-matrix', 'trading', 'EXPLORE', 'Strategy Matrix: which strategy is best supported on BTC, ETH, MNQ and NQ.', {
+    title: 'Strategy Matrix',
+    does: 'Reads the Strategy Matrix: eight written strategies on BTC, ETH, MNQ and NQ (5-minute, 15-minute and hourly), researched on real public bars with costs on every fill, rolling walk-forward out-of-sample tests and a look-ahead audit; ranked by expectancy after costs, drawdown, sample and stability, never by win rate; thin samples are labelled insufficient. Also explains any strategy\'s exact rules. Paper and research only; live trading stays disabled.',
+    needs: ['market_data'], route: 'che_strategy_matrix', handler: 'strategy_matrix.strategyMatrixIntent → strategyMatrixView / speakStrategyMatrix', input: null,
+    examples: ['Read the strategy matrix', "What's the best strategy for BTC?", 'Which strategy works best on MNQ?', 'Explain the EMA 20 pullback'],
+    prompt: 'Read the strategy matrix', produces: 'strategy matrix', evidence: 'Committed research results with their GitHub run id, data coverage and cost model; journal records for forward paper.',
+    keywords: ['strategy matrix', 'best strategy', 'most profitable strategy', 'explain strategy', 'walk forward', 'expectancy'],
+  }),
   C('trade-replay', 'trading', 'EXPLORE', "Replay one of CHE's trades on its own chart.", {
     does: 'Opens a trade by its ID (or CHE\'s last forward paper trade) on the exact bars it was traded on: entry, exit, stop, target, times and outcome, labelled BACKTEST, SIMULATION, FORWARD PAPER or BROKER-CONFIRMED. Replay shows a bar only once it has closed. Without recorded bars it says so and draws nothing.',
     needs: ['office'], route: 'che_trade_evidence', handler: 'trade_evidence.readTradeEvidence',

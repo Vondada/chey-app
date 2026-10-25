@@ -252,7 +252,8 @@ export function strategyMatrixIntent(message) {
   if (/\b(?:read|show|open|what(?:'s| is) (?:in|on)) (?:me )?(?:the |my )?strategy matrix\b/.test(t)) return { kind: 'summary' };
   const best = /\b(?:best|top|strongest|most profitable) (?:trading )?strateg(?:y|ies)\b[^?]*?\b(?:for|on|in|with) (?:the )?([a-z0-9 -]{2,24})/.exec(t)
     || /\b(?:which|what) strateg(?:y|ies) (?:is|are|works?|performs?) (?:the )?best (?:for|on|in|with) (?:the )?([a-z0-9 -]{2,24})/.exec(t);
-  if (best) {
+  // "Which strategy works best on which timeframe / at what hour" stays with the timeframe matrix (backtest_matrix.js).
+  if (best && !/\btime ?frames?\b|\bwhich hours?\b|\bwhat hours?\b|\bbest (?:hour|time)\b|\btime of (?:the )?day\b/.test(t)) {
     const words = best[1];
     const market = MARKET_WORDS.find(([re]) => re.test(words))?.[1] || null;
     if (market) return { kind: 'best', market };

@@ -243,7 +243,8 @@ test('voice: best strategy per market and explain a strategy, answered from the 
   assert.equal(strategyMatrixIntent('Explain the EMA 20 pullback').key, 'ema20-pullback');
   assert.equal(strategyMatrixIntent('how does the liquidity sweep and reclaim work?').key, 'sweep-reclaim');
   assert.equal(strategyMatrixIntent('Read the strategy matrix').kind, 'summary');
-  for (const other of ['Explain expectancy like I\'m a beginner', "What's the formula for VWAP?", 'Which strategy is best right now?', 'What is the price of bitcoin?', 'explain recursion']) {
+  for (const s of MATRIX_STRATEGIES) assert.equal(strategyMatrixIntent(`Explain the ${s.name}`)?.key, s.key, `the widget's Explain button for ${s.name}`);
+  for (const other of ['Which strategy works best on which timeframe for NQ?', 'Explain expectancy like I\'m a beginner', "What's the formula for VWAP?", 'Which strategy is best right now?', 'What is the price of bitcoin?', 'explain recursion']) {
     assert.equal(strategyMatrixIntent(other), null, other);
   }
   const empty = await strategyMatrixView(null, { sets: [null, null] });
