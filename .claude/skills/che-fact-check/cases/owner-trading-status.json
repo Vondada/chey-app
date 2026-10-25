@@ -1,0 +1,10 @@
+{
+  "about": "Reliability lane, 2026-10-25. The owner's trading status questions. With no market data read and no broker connected, CHE must say paper only, live orders off and prices DELAYED, from her records, with no model call; the fake model claims a live real-time feed and live trades and must never reach the reply.",
+  "owner": true,
+  "model": "Yes sir, the MNQ feed is live and real-time and I placed three live trades today.",
+  "turns": [
+    { "message": "Trading status", "expect": { "route": "che_trading_desk", "model_calls": 0, "match": "Live orders are off", "not": "real-time|live trades" } },
+    { "message": "How is paper trading doing?", "expect": { "route": "che_trading_live", "model_calls": 0, "match": "Paper trading only[\\s\\S]*DELAYED", "not": "real-time and|three live trades" } },
+    { "message": "Did you place any real trades?", "expect": { "route": "che_trading_live", "model_calls": 0, "match": "No paper trade has closed yet", "not": "three live trades|Yes sir" } }
+  ]
+}
