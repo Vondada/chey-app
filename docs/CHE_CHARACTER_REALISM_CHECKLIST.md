@@ -111,7 +111,7 @@ Branch: `claude/che-character-realism` (from main `afb8de1`). Lanes push to `lan
 | G10 | Acceptance driver + publish job | me | pushed `6651850`; lane B accept routes merged |
 | G11 | Compute pool (providers, cooldowns, handoff) | C | merged (lane C `5de754f`); compute_pool 10/10, Worker 4001/0; live handoff with real files NOT yet proven; Kaggle token presence unknown |
 | G12 | World population + benchmarks | D | merged (lane D `8211d73`): records, 288 buckets, routes, /world-population, panel, crowd viewer; measured in docs/CHE_WORLD_POPULATION.md; iPhone not verified |
-| G13 | Create Room demo video + walkthrough | E | merged (tools/demo, docs/CHE_CREATE_ROOM_DEMO.md); 122.6 s labelled prototype sent to owner; close-ups show described skin tone/gender/hair not honoured (sent to lane A) |
+| G13 | Create Room demo video + walkthrough | E | merged (tools/demo, docs/CHE_CREATE_ROOM_DEMO.md); 122.6 s labelled prototype sent to owner; close-ups show described skin tone/gender/hair not honoured (sent to lane A); lane A fixed in `57e63b4` (demo settings now from describePerson), demo video not re-rendered |
 | G14 | "Open and display saved image <id>" listed all 26 media items | me | fixed `dfd3f48`: Worker 19/19 media tests, full Worker 3990/0; Flutter che_chat_image 2/2; iPhone display unverified |
 | G15 | GPU Connect flow with 4 separate verifications | F | merged `5d47937`: Flutter gpu_connect 12/12, Worker 4016/0; all live Google/Colab steps iPhone-only; Google likely refuses WebView sign-in → Safari fallback (account check then 'not verified') |
 | G16 | Realism stack + 15–20 s CHE sample | G | in progress |
@@ -129,11 +129,11 @@ Contract: job settings `REFERENCE` = `{"url","sha256","bytes","consent":"self"|"
 - [x] Wired into the person_model job; receipt `reference_fit`; cached fit (`983f348`, `tools/test_photo_reference_job.py`).
 - [x] Synthetic fixtures with known sliders (no real people); recovery error measured (`7b8aa5b`, `211d4d2`).
 - [x] Hair styles as meshes (8 styles) in the full-body GLB; HAIR_BUILT synced JS ↔ Python with HAIR_BUST_BUILT for the bust (`e34d634`, parity test).
-- [ ] Description → skin tone / age / gender / hair honoured; brows + lashes; three styles visibly distinct (Create Room demo defects, G13).
+- [x] Description → skin tone / age / gender / hair honoured; brows + lashes; three styles visibly distinct (Create Room demo defects, G13): `57e63b4`. Measured on local bpy 5.0.1 + MPFB2 builds (not the CI worker): rendered cheek 181,131,108 → 134,82,46 for the described brown; age macro 0.525 (27 y) → 0.577 (35 y); brows 2128/1064/144 vertices and lashes with blink 8.1 mm in the GLB; looks differ by 12.7/19.1/23.5 mean pixel levels in the face box (was 0.2/3.3/3.5). Tests: creation_demo_settings.test.mjs 4/4, test_character_style.py 7/7, test_glb_inspect.py 12/12 with real builds. CI render: NOT YET RUN.
 - [ ] Measured CPU timing for a full person job with the final profile; sample GLB + renders inspected (needs the CI character_accept run).
 
 ## Integration and release
-- [ ] Merge lanes in dependency order (A then B); sync HAIR_BUILT in JS and Python (parity test).
+- [ ] Merge lanes in dependency order (A then B). HAIR_BUILT synced JS ↔ Python (all 8 styles) with HAIR_BUST_BUILT, parity test green (`93ea9e7`).
 - [ ] Full Worker suite, full Flutter suite, Python suites, analyze: all green locally.
 - [ ] PR; required checks green on the exact head; review threads answered; merge.
 - [ ] Deploy verified live; creation_check run with this code; sample receipts.
