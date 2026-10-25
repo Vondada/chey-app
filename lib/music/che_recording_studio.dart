@@ -364,8 +364,8 @@ class _CheRecordingStudioState extends State<CheRecordingStudio> with SingleTick
               onSelected: (on) => _do(() => on ? e.start() : e.stop()),
             ),
             OutlinedButton.icon(onPressed: () => _do(e.undo), icon: const Icon(Icons.undo_rounded), label: const Text('Undo')),
-            OutlinedButton.icon(onPressed: () => _do(e.bringMeBack), icon: const Icon(Icons.restore_rounded), label: const Text('Bring me back')),
-            OutlinedButton.icon(onPressed: () => _do(e.markGood), icon: const Icon(Icons.bookmark_add_outlined), label: const Text('Mark mix as good')),
+            OutlinedButton.icon(onPressed: () => _do(e.bringMeBack), icon: const Icon(Icons.history_rounded), label: const Text('Bring me back')),
+            OutlinedButton.icon(onPressed: () => _do(e.markGood), icon: const Icon(Icons.bookmark_outline_rounded), label: const Text('Mark mix as good')),
             OutlinedButton(onPressed: () => _do(e.listSnapshots), child: const Text('Read snapshots')),
           ]),
           const SizedBox(height: 4),
@@ -654,7 +654,7 @@ class _CheRecordingStudioState extends State<CheRecordingStudio> with SingleTick
           Wrap(spacing: 8, runSpacing: 8, children: [
             FilledButton.icon(
               onPressed: () => _do(() => c.engineer.produceBeat(spec())),
-              icon: const Icon(Icons.auto_fix_high_rounded),
+              icon: const Icon(Icons.tune_rounded),
               label: Text('Produce ${g.name} beat at ${c.song.bpm.round()} BPM'),
             ),
             OutlinedButton(onPressed: c.song.producer == null ? null : () => _do(c.engineer.anotherBeat), child: const Text('New variation')),
@@ -752,7 +752,7 @@ class _CheRecordingStudioState extends State<CheRecordingStudio> with SingleTick
       const SizedBox(height: 8),
       Wrap(spacing: 8, runSpacing: 8, children: [
         OutlinedButton.icon(onPressed: () => _do(c.engineer.analyze), icon: const Icon(Icons.graphic_eq_rounded), label: const Text('Analyze vocal')),
-        OutlinedButton.icon(onPressed: () => _do(c.engineer.personalize), icon: const Icon(Icons.person_rounded), label: const Text('Personalize processing')),
+        OutlinedButton.icon(onPressed: () => _do(c.engineer.personalize), icon: const Icon(Icons.person_outline_rounded), label: const Text('Personalize processing')),
       ]),
       if (c.engineer.report != null)
         Semantics(

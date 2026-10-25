@@ -469,7 +469,7 @@ class CheCodeWorkspaceState extends State<CheCodeWorkspace> {
                   minimumSize: const Size.fromHeight(54),
                 ),
                 onPressed: _stopping ? null : () async => _say(await stopTheJob()),
-                icon: const Icon(Icons.stop_circle_rounded),
+                icon: const Icon(Icons.stop_circle),
                 label: Text(_stopping ? 'Stopping…' : 'Stop the job'),
               ),
             ),
