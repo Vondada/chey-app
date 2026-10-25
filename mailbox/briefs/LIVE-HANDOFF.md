@@ -77,6 +77,14 @@ Then, on GitHub:
 
 ## 2. Current position
 
+**Claude, 2026-10-25 ~02:30 UTC — new container (30 GB free; the earlier full disk is gone). PR #524 open; main `0c43197`.**
+- **Lost:** the lanes brain-visual, studio-engine, studio-tutorials, creation-gaps and reliability existed only in the old container's `.claude/worktrees` and were never pushed. They are gone; redo only if still wanted. **Recovered:** trading-gaps + music-gaps (pushed earlier) on `claude/che-latency-optimization-8ruaus`.
+- PR #524 (that branch, head after 594f269 + che-recover commit): Worker 3930/0 fail/7 skip, `dart analyze --fatal-infos` clean, skills 19/19, full `flutter test` running. NOT merged, NOT deployed, no IPA yet.
+- New `che-recover` skill: `node .claude/skills/che-recover/scripts/preflight.mjs` (disk + unpushed-work check; safe `--clean --yes`). AGENTS.md: push every lane branch after each commit.
+- Running in worktrees (land on #524 once tested): BTC/ETH real-time streaming over the exchanges' public WebSockets (tick→candle aggregator, LIVE/STALE/DELAYED labels, reconnect); mission-engine proof (persistent checkpointed workflow on the existing engine, end-to-end test).
+- Next: finish the lanes → push to #524 → CI green → owner says merge → deploy verify (release_status.mjs) → IPA via [ios-build].
+
+
 **Claude, 2026-10-25 — RESUME mission: parallel lanes running; main `0c43197` (#523, merged by Codex), no open PRs.**
 - **Verified live (deploy run 40143945084, creation_check):** Generate → free GitHub CPU worker → Blender 5.0.1 → GLB in 1.7 min (job gpu_aa40ade12d98, GLB 1,149,516 bytes, sha matches the receipt, 53 bones, rig verified, clips idle/walk/run/wave/talk) → viewport loaded 7 meshes and played walk. Memory truth 22/22, voice, Command Center 5/5, Atlas 11/11. Defect: the notice names the worker "?" (creation-gaps lane fixing).
 - Trading audit now 1,109 closed / 9 open, −8,144.41 R = gross −216.55 R − costs 7,927.86 R (325 cost>risk; the 9 new ones closed from positions opened before the cost gate — to confirm).
