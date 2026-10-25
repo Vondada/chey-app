@@ -28,7 +28,7 @@ export const BACKOFF_BASE_MS = 5 * 60_000;          // first cooldown after a pr
 export const BACKOFF_MAX_MS = 6 * 3600_000;         // cooldowns never exceed 6 hours without a known reset time
 export const MIN_HOLD_MS = 10 * 60_000;             // a job that used its attempts waits at least this long
 export const MAX_HANDOFFS = 50;
-export const MAX_ATTEMPTS_KEPT = 12;
+export const MAX_ATTEMPTS_KEPT = 6;               // per job; `total` keeps the full count
 export const KAGGLE_MARGIN_S = 2 * 3600;            // never start a Kaggle session with less than 2 GPU hours left
 export const KAGGLE_SESSION_S = 3 * 3600;           // Kaggle itself stops the kernel at this (sessionTimeoutSeconds)
 export const KAGGLE_RESERVE_MS = 25 * 60_000;       // a started kernel must claim within 25 min (Blender download + setup)
@@ -158,7 +158,7 @@ export function poolNote(j, lease, outcome, t, reason = '') {
   const provider = providerOf(lease) || 'unknown';
   const wid = lease?.worker_id || '';
   const open = [...(p.attempts || [])].reverse().find((a) => a.outcome === 'running' && a.provider === provider && (!wid || a.worker_id === wid));
-  const done = { outcome, ended_at: iso(t), reason: String(reason || '').slice(0, 200), applied: false };
+  const done = { outcome, ended_at: iso(t), reason: String(reason || '').slice(0, 160), applied: false };
   if (open) Object.assign(open, done);
   else {
     p.attempts = [...(p.attempts || []), { provider, worker_id: String(wid).slice(0, 64), started_at: iso(t), ...done }].slice(-MAX_ATTEMPTS_KEPT);
@@ -176,7 +176,7 @@ export function roundFailures(j) {
 export function stampReceipt(j, lease) {
   if (!j.receipt) j.receipt = {};
   j.receipt.provider = providerOf(lease) || 'unknown';
-  j.receipt.attempts = Math.max(1, (j.pool?.attempts || []).length);
+  j.receipt.attempts = Math.max(1, j.pool?.total || (j.pool?.attempts || []).length);
   if (lease?.device) j.receipt.provider_device = String(lease.device).slice(0, 80);
 }
 
@@ -232,7 +232,7 @@ export async function applyPending(storage, jobs, t, pool = null) {
     }
     for (const a of p.attempts || []) {
       if (a.applied !== false) continue;
-      a.applied = true; jobsChanged = true; poolChanged = true;
+      delete a.applied; jobsChanged = true; poolChanged = true;
       const at = Date.parse(a.ended_at) || t;
       if (PROVIDER_FAILURES.includes(a.outcome)) {
         const quota = a.outcome === 'quota';
@@ -597,7 +597,7 @@ export async function poolView(env = {}, { storage, now, fetcher = fetch, refres
   const counts = {}; for (const j of jobs) counts[j.state] = (counts[j.state] || 0) + 1;
   const waiting = jobs.filter((j) => (j.state === 'queued' || j.state === 'paused') && !j.owner_paused).map((j) => {
     const sel = selectProvider(providers, j, { pool, t, allowUnverified: pool.settings.allow_unverified_gpu });
-    return { id: j.id, kind: j.kind, title: String(j.title || '').slice(0, 80), state: j.state, needs_gpu: needOf(j), attempts: (j.pool?.attempts || []).length,
+    return { id: j.id, kind: j.kind, title: String(j.title || '').slice(0, 80), state: j.state, needs_gpu: needOf(j), attempts: j.pool?.total || 0,
       next_provider: sel.provider, waiting_reason: heldReason(pool, j, t) || j.cloud?.reason || (sel.provider ? `Next: ${providerLabel(sel.provider)}.` : sel.why),
       checkpoints: Object.keys(j.checkpoints || {}) };
   });

@@ -93,3 +93,7 @@ The Creation Engine's workers are part of this one Cloud Computer, not a second 
 - The only Colab link is the explicit setup button in Settings → Connections → Cloud Computer.
 
 **Live proof.** The deploy workflow's `creation_check` input runs Generate on the live Worker. It waits for the real worker, checks the GLB against its receipt, and opens it in the Live Studio viewport (`creation_probe.js`, `tools/creation_open_in_studio.mjs`).
+
+**Compute pool (2026-10-25).** Which computers can build characters, their real status, quota, cooldowns and handoffs,
+and which ones cannot meet "no new keys or manual setup": see [CHE_COMPUTE_POOL.md](CHE_COMPUTE_POOL.md)
+(`compute_pool.js`, `GET /api/creations/pool`, or say "which computers can build characters").
