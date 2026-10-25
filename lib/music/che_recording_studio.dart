@@ -16,7 +16,9 @@ import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
 
 import '../che_ui/che_theme.dart';
+import 'che_beat_producer.dart';
 import 'che_dsp.dart';
+import 'che_preset_recreate.dart';
 import 'che_song.dart';
 import 'che_studio_audio.dart';
 import 'che_studio_controller.dart';
@@ -181,8 +183,12 @@ class _CheRecordingStudioState extends State<CheRecordingStudio> with SingleTick
       CheTransport.recording => 'recording',
       CheTransport.stopped => 'stopped',
     };
+    final e = c.engineer;
+    final good = e.snapshots.where((s) => s.good).length;
     return 'Recording Studio, ${CheRecordingStudio.tabs[_tabs.index]} tab. ${c.brief()}. Playhead ${cheClock(c.position)}, $state. '
-        'Metronome ${c.metronome ? 'on' : 'off'}, loop ${c.loop ? 'on' : 'off'}, punch ${c.punch ? 'on' : 'off'}. ${c.warning}';
+        'Metronome ${c.metronome ? 'on' : 'off'}, loop ${c.loop ? 'on' : 'off'}, punch ${c.punch ? 'on' : 'off'}. '
+        'Engineer Mode ${e.active ? 'on' : 'off'}, ${e.snapshots.length} snapshots, $good good mixes saved.'
+        '${e.receipt.isEmpty ? '' : ' Last personalized processing receipt: ${e.receipt}.'} ${c.warning}';
   }
 
   Widget _banner(String text) => Semantics(
@@ -297,6 +303,8 @@ class _CheRecordingStudioState extends State<CheRecordingStudio> with SingleTick
           TextButton(onPressed: () => _do(() => c.setLoop(c.song.loopStart!, math.max(c.song.loopStart! + c.song.barSamples, c.position))), child: const Text('Loop ends here')),
         ]),
       const SizedBox(height: 8),
+      _engineerCard(c),
+      const SizedBox(height: 8),
       Text('Recording Timeline', style: Theme.of(context).textTheme.titleMedium),
       for (final t in c.song.tracks) _trackRow(c, t, total),
       Semantics(
@@ -331,6 +339,63 @@ class _CheRecordingStudioState extends State<CheRecordingStudio> with SingleTick
         ]),
       ),
     ]);
+  }
+
+  // ---- Engineer Mode (che_engineer.dart): punch-in by bar, undo, bring me back ----
+
+  int _punchFrom = 1, _punchTo = 2;
+
+  Widget _engineerCard(CheStudioController c) {
+    final e = c.engineer;
+    final bars = math.max(8, (c.song.end / c.song.barSamples).ceil());
+    if (_punchFrom > bars) _punchFrom = 1;
+    if (_punchTo < _punchFrom || _punchTo > bars) _punchTo = _punchFrom;
+    final good = e.snapshots.where((s) => s.good).lastOrNull;
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(8),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text('Engineer', style: Theme.of(context).textTheme.titleSmall),
+          Wrap(spacing: 8, runSpacing: 8, children: [
+            FilterChip(
+              label: const Text('Engineer Mode'),
+              tooltip: e.active ? 'Engineer Mode on. Turn it off' : 'Engineer Mode off. Turn it on and hear the options',
+              selected: e.active,
+              onSelected: (on) => _do(() => on ? e.start() : e.stop()),
+            ),
+            OutlinedButton.icon(onPressed: () => _do(e.undo), icon: const Icon(Icons.undo_rounded), label: const Text('Undo')),
+            OutlinedButton.icon(onPressed: () => _do(e.bringMeBack), icon: const Icon(Icons.restore_rounded), label: const Text('Bring me back')),
+            OutlinedButton.icon(onPressed: () => _do(e.markGood), icon: const Icon(Icons.bookmark_add_outlined), label: const Text('Mark mix as good')),
+            OutlinedButton(onPressed: () => _do(e.listSnapshots), child: const Text('Read snapshots')),
+          ]),
+          const SizedBox(height: 4),
+          Wrap(spacing: 8, crossAxisAlignment: WrapCrossAlignment.center, children: [
+            Semantics(
+              label: 'Punch from bar $_punchFrom',
+              child: DropdownButton<int>(
+                value: _punchFrom,
+                items: [for (var b = 1; b <= bars; b++) DropdownMenuItem(value: b, child: Text('From bar $b'))],
+                onChanged: (v) => setState(() => _punchFrom = v ?? 1),
+              ),
+            ),
+            Semantics(
+              label: 'Punch to bar $_punchTo',
+              child: DropdownButton<int>(
+                value: _punchTo,
+                items: [for (var b = _punchFrom; b <= bars; b++) DropdownMenuItem(value: b, child: Text('To bar $b'))],
+                onChanged: (v) => setState(() => _punchTo = v ?? _punchFrom),
+              ),
+            ),
+            FilledButton(
+              onPressed: () => _do(() => e.armPunch(fromBar: _punchFrom, toBar: _punchTo)),
+              child: Text('Arm punch-in, bars $_punchFrom to $_punchTo'),
+            ),
+          ]),
+          Text(good == null ? 'No good mix saved yet.' : 'Last good mix: ${good.label}, ${good.when}. ${e.snapshots.length} snapshots saved with the song.',
+              style: CheType.caption),
+        ]),
+      ),
+    );
   }
 
   Future<void> _confirmDelete(CheStudioController c) async {
@@ -476,6 +541,9 @@ class _CheRecordingStudioState extends State<CheRecordingStudio> with SingleTick
   Widget _beatTab(CheStudioController c) {
     final beat = c.song.beat;
     return ListView(padding: const EdgeInsets.fromLTRB(CheSpace.gutter, 8, CheSpace.gutter, 24), children: [
+      _producerCard(c),
+      const SizedBox(height: 8),
+      Text('Beat Maker', style: Theme.of(context).textTheme.titleSmall),
       Wrap(spacing: 8, runSpacing: 8, children: [
         FilledButton.icon(onPressed: () => _do(c.playBeat), icon: const Icon(Icons.play_arrow_rounded), label: const Text('Play the beat')),
         OutlinedButton(onPressed: () => _do(c.useBeat), child: const Text('Use in song')),
@@ -536,6 +604,71 @@ class _CheRecordingStudioState extends State<CheRecordingStudio> with SingleTick
           ]),
         ),
     ]);
+  }
+
+  String _genre = 'hip hop';
+  int? _beatKey;
+  bool? _beatMinor;
+
+  Widget _producerCard(CheStudioController c) {
+    final g = cheGenres[_genre]!;
+    final key = _beatKey ?? g.key;
+    final minor = _beatMinor ?? g.minor;
+    CheBeatSpec spec() => CheBeatSpec.of(_genre, bpm: c.song.bpm, key: key, minor: minor);
+    final producedTrack = c.song.tracks.where((t) => t.name == 'Produced beat').firstOrNull;
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(8),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text('Beat Producer', style: Theme.of(context).textTheme.titleSmall),
+          Wrap(spacing: 8, runSpacing: 4, crossAxisAlignment: WrapCrossAlignment.center, children: [
+            Semantics(
+              label: 'Genre ${g.name}',
+              child: DropdownButton<String>(
+                value: _genre,
+                items: [for (final e in cheGenres.entries) DropdownMenuItem(value: e.key, child: Text(e.value.name))],
+                onChanged: (v) => setState(() {
+                  _genre = v ?? 'hip hop';
+                  _beatKey = null;
+                  _beatMinor = null;
+                }),
+              ),
+            ),
+            Semantics(
+              label: 'Key ${cheNoteNames[key]}',
+              child: DropdownButton<int>(
+                value: key,
+                items: [for (var k = 0; k < 12; k++) DropdownMenuItem(value: k, child: Text(cheNoteNames[k]))],
+                onChanged: (v) => setState(() => _beatKey = v),
+              ),
+            ),
+            Semantics(
+              label: minor ? 'Minor key' : 'Major key',
+              child: DropdownButton<bool>(
+                value: minor,
+                items: const [DropdownMenuItem(value: true, child: Text('minor')), DropdownMenuItem(value: false, child: Text('major'))],
+                onChanged: (v) => setState(() => _beatMinor = v),
+              ),
+            ),
+          ]),
+          Wrap(spacing: 8, runSpacing: 8, children: [
+            FilledButton.icon(
+              onPressed: () => _do(() => c.engineer.produceBeat(spec())),
+              icon: const Icon(Icons.auto_fix_high_rounded),
+              label: Text('Produce ${g.name} beat at ${c.song.bpm.round()} BPM'),
+            ),
+            OutlinedButton(onPressed: c.song.producer == null ? null : () => _do(c.engineer.anotherBeat), child: const Text('New variation')),
+            if (producedTrack != null)
+              OutlinedButton.icon(
+                onPressed: () => _do(() => c.play(onlyTrack: producedTrack.id, from: 0)),
+                icon: const Icon(Icons.play_arrow_rounded),
+                label: const Text('Play produced beat'),
+              ),
+          ]),
+          Text('Synthesised on this iPhone and placed on the Produced beat track, ready for the mixer and export.', style: CheType.caption),
+        ]),
+      ),
+    );
   }
 
   // ---- Mixer ----
@@ -599,6 +732,39 @@ class _CheRecordingStudioState extends State<CheRecordingStudio> with SingleTick
         for (final p in CheEffects.presets.keys)
           ChoiceChip(label: Text(p), selected: fx.preset == p, onSelected: (_) => _do(() => c.applyPreset(p))),
       ]),
+      const SizedBox(height: 8),
+      Text('BandLab-style chains ($cheRecreatedLabel)', style: CheType.caption),
+      Wrap(spacing: 6, children: [
+        for (final p in cheRecreatedPresets)
+          Semantics(
+            button: true,
+            selected: fx.preset == p.label,
+            label: '${p.name}, $cheRecreatedLabel',
+            child: ExcludeSemantics(
+              child: ChoiceChip(
+                label: Text(p.name.replaceFirst('BandLab ', '')),
+                selected: fx.preset == p.label,
+                onSelected: (_) => _do(() => c.engineer.recreatePreset(p.name)),
+              ),
+            ),
+          ),
+      ]),
+      const SizedBox(height: 8),
+      Wrap(spacing: 8, runSpacing: 8, children: [
+        OutlinedButton.icon(onPressed: () => _do(c.engineer.analyze), icon: const Icon(Icons.graphic_eq_rounded), label: const Text('Analyze vocal')),
+        OutlinedButton.icon(onPressed: () => _do(c.engineer.personalize), icon: const Icon(Icons.person_rounded), label: const Text('Personalize processing')),
+      ]),
+      if (c.engineer.report != null)
+        Semantics(
+          container: true,
+          label: 'Vocal analysis: ${c.engineer.report!.describe()}${c.engineer.receipt.isEmpty ? '' : ' Receipt, before to after: ${c.engineer.receipt}.'}',
+          child: ExcludeSemantics(
+            child: Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: Text('${c.engineer.report!.describe()}${c.engineer.receipt.isEmpty ? '' : '\nBefore to after: ${c.engineer.receipt}'}', style: CheType.caption),
+            ),
+          ),
+        ),
       SwitchListTile(
         contentPadding: EdgeInsets.zero,
         title: const Text('Noise reduction'),

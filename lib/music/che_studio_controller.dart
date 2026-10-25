@@ -3,11 +3,13 @@
 // sentence CHE says (or shows) about what really happened. The screen (che_recording_studio.dart) and the voice
 // routes both call these methods, so voice and touch do exactly the same thing.
 import 'dart:async';
+import 'dart:convert';
 import 'dart:isolate';
 import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
 
 import 'che_dsp.dart';
+import 'che_engineer.dart';
 import 'che_song.dart';
 import 'che_studio_audio.dart';
 import 'che_wav.dart';
@@ -22,13 +24,31 @@ String cheClock(int samples) {
 }
 
 class CheStudioController extends ChangeNotifier {
-  CheStudioController({required this.audio, required this.store, Future<List<Float32List>> Function(CheRenderJob job)? render, this.autosaveDelay = const Duration(milliseconds: 800)})
+  CheStudioController(
+      {required this.audio,
+      required this.store,
+      Future<List<Float32List>> Function(CheRenderJob job)? render,
+      this.autosaveDelay = const Duration(milliseconds: 800),
+      this.undoCoalesce = const Duration(milliseconds: 700)})
       : _render = render ?? ((job) => Isolate.run(() => cheRenderMix(job)));
 
   final CheStudioAudio audio;
   final CheSongStore store;
   final Future<List<Float32List>> Function(CheRenderJob job) _render;
   final Duration autosaveDelay;
+
+  /// Changes closer together than this (a slider drag) are one undo step.
+  final Duration undoCoalesce;
+
+  /// Engineer Mode: punch-in by bar, undo, "bring me back" snapshots, the Beat Producer, recreated presets and
+  /// vocal analysis (che_engineer.dart).
+  late final CheEngineer engineer = CheEngineer(this);
+
+  /// Undo history: the song as it was before each change (JSON), newest last.
+  final List<String> _undo = [];
+  String? _baseline;
+  DateTime _lastUndoPush = DateTime.fromMillisecondsSinceEpoch(0);
+  bool _restoring = false;
 
   CheSong song = CheSong(title: 'New song');
   final Map<String, Float32List> sources = {};
@@ -109,7 +129,23 @@ class CheStudioController extends ChangeNotifier {
     return s;
   }
 
+  /// The song's state for undo, without the save timestamp (saving is not a change).
+  String _state() => jsonEncode(song.toJson()..remove('updated'));
+
   void _changed() {
+    if (!_restoring) {
+      final now = _state();
+      final base = _baseline;
+      if (base != null && now != base) {
+        final t = DateTime.now();
+        if (_undo.isEmpty || t.difference(_lastUndoPush) >= undoCoalesce) {
+          _undo.add(base);
+          if (_undo.length > 40) _undo.removeAt(0);
+        }
+        _lastUndoPush = t;
+      }
+      _baseline = now;
+    }
     if (monitoring) {
       final t = song.track(_takeTrack ?? '');
       if (t != null) unawaited(audio.updateMonitor(monitorEffects(t)));
@@ -155,8 +191,42 @@ class CheStudioController extends ChangeNotifier {
     playhead = 0;
     selectedTrack = s.tracks.where((t) => t.kind == 'vocal').firstOrNull?.id ?? s.tracks.firstOrNull?.id;
     selectedClip = null;
+    _undo.clear();
+    _baseline = _state();
     notifyListeners();
+    unawaited(engineer.load().then((_) => notifyListeners()));
   }
+
+  // ---- Undo and restore (Engineer Mode uses these) ----
+
+  bool get canUndo => _undo.isNotEmpty;
+
+  /// The state before the last change (removed from the history), or null.
+  String? popUndo() => _undo.isEmpty ? null : _undo.removeLast();
+
+  /// Puts [s] in place of the open song (same song, earlier state) and autosaves it. With [undoable], undo
+  /// returns to the state before this restore.
+  void restoreSong(CheSong s, {Map<String, Float32List> extra = const {}, bool undoable = false}) {
+    sources.addAll(extra);
+    song = s;
+    if (song.track(selectedTrack ?? '') == null) {
+      selectedTrack = s.tracks.where((t) => t.kind == 'vocal').firstOrNull?.id ?? s.tracks.firstOrNull?.id;
+    }
+    selectedClip = null;
+    _restoring = !undoable;
+    try {
+      _changed();
+    } finally {
+      _restoring = false;
+    }
+    _baseline = _state();
+  }
+
+  /// Shows (and returns) what CHE says about an action done outside this class.
+  String report(String sentence) => _say(sentence);
+
+  /// Marks the song changed (undo step, autosave) after an edit made outside this class.
+  void markChanged() => _changed();
 
   Future<String> newSong({String? title}) async {
     await stop();
@@ -457,6 +527,7 @@ class CheStudioController extends ChangeNotifier {
     }
     t.clips.add(c);
     t.clips.sort((a, b) => a.start.compareTo(b.start));
+    final punched = punch && song.punchIn != null && song.punchOut != null;
     selectedClip = c.id;
     _lastTakeClip = c.id;
     _changed();
@@ -464,7 +535,8 @@ class CheStudioController extends ChangeNotifier {
     final peak = chePeakDb(Float32List.sublistView(samples, math.min(skip, samples.length)));
     return _say('Take saved on ${t.name}: ${(c.length / cheStudioRate).toStringAsFixed(1)} seconds at ${cheClock(c.start)}, '
         'peak ${peak.toStringAsFixed(1)} dB${peak > -1 ? ' (it clipped; move back from the mic)' : peak < -30 ? ' (very quiet; move closer)' : ''}. '
-        'Lined up by ${(latency * 1000).round()} ms of measured delay.');
+        'Lined up by ${(latency * 1000).round()} ms of measured delay.'
+        '${punched ? ' The original take is kept: say undo to put it back, or bring me back for the last good mix.' : ''}');
   }
 
   /// Removes what is under from..to on [t] (punch-in replaces that part of the older takes).
@@ -850,6 +922,8 @@ class CheStudioController extends ChangeNotifier {
       }
       final file = await store.export(song, bytes, ext: ext);
       await saveNow();
+      // An exported mix is one the owner chose to keep: "bring me back" can return to it.
+      await engineer.snapshot('Exported mix', good: true);
       return _say('Exported "${song.title}" as ${ext == 'm4a' ? 'an M4A (AAC, 256 kbps)' : 'a WAV'}: ${cheClock(mix.first.length)}, '
           '${(bytes.length / 1048576).toStringAsFixed(1)} MB, in Files, On My iPhone, CHE, CHE Songs, Exports (${file.path.split('/').last}).$note');
     } catch (e) {
@@ -894,6 +968,10 @@ Future<String?> cheStudioVoice(CheStudioController c, String said,
 Future<String?> _studioVoice(CheStudioController c, String said, {void Function(int tab)? showTab, Future<void> Function(String prompt)? ask}) async {
   final s = said.toLowerCase().replaceAll(RegExp(r"[^a-z0-9 ']"), ' ').replaceAll(RegExp(r'\s+'), ' ').trim();
   bool has(String p) => RegExp(p).hasMatch(s);
+  // Engineer Mode, the Beat Producer, recreated presets and vocal analysis answer first: "punch in bars 3 to 4"
+  // must not fall to the plain punch toggle, nor "a trap beat at 140" to the tempo route.
+  final engineered = await cheEngineerVoice(c, said, showTab: showTab);
+  if (engineered != null) return engineered;
   final pct = RegExp(r'(\d{1,3})\s*(?:percent|%)').firstMatch(s);
   double amount(double d) => pct == null ? d : int.parse(pct.group(1)!) / 100;
 
