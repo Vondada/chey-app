@@ -22,6 +22,9 @@ extension _CheHomeSend on _CHEHomeState {
       }
     }
     if (appName == null || appName.isEmpty) return false;
+    // "Open music", "open studio", "open the music studio" name CHE's Music Studio room (owner, 2026-10-25), not the
+    // Apple Music app; "open Apple Music" still opens the app. _handleLocalNavigation opens the room.
+    if (cheIsMusicStudioName(appName)) return false;
     // "Use Grok and GPT together…" is an AI-layer command, not an app switch:
     // only short remainders name an app.
     if (appName.replaceAll(RegExp(r'[.!?]+$'), '').split(RegExp(r'\s+')).length > 3) return false;
@@ -266,9 +269,19 @@ extension _CheHomeSend on _CHEHomeState {
       _openAssistantHub(tab: 3);
       return true;
     }
+    // Music + Studio are one room tab (owner, 2026-10-25): "open the music studio", "open studio" and "open music"
+    // all land on the Music Studio tab (hub tab 4), which lists the Recording Studio's sections.
+    if (RegExp(r'^\W*(?:(?:che|chey|chay)[,:]?\s+)?(?:open|show|go to)\s+(?:the\s+|my\s+)?(?:music studio|music|studio)\W*$').hasMatch(lower)) {
+      final already = _assistantHubOpen && _selectedTab == 4;
+      // From another room the sheet closes and reopens on Music Studio, as the Workshop's room buttons do.
+      if (!already) _assistantHubOpen ? _switchHubRoom(4) : _openAssistantHub(tab: 4);
+      // The owner asked aloud, so CHE says where he is once the room is open (the room itself never speaks).
+      await speakText(already ? 'Music Studio is already open.' : 'Opened Music Studio.', record: false);
+      return true;
+    }
     // Music Studio's recording workspace (owner, 2026-10-24): "record my vocals", "open the beat maker", "my songs".
     if (CheRecordingStudio.voiceHandler == null) {
-      final rec = RegExp(r'\b(?:open|show|go to)\s+(?:the\s+|my\s+)?(recording studio|music studio|studio recorder|beat maker|my songs|mixer|mastering)\b').firstMatch(lower);
+      final rec = RegExp(r'\b(?:open|show|go to)\s+(?:the\s+|my\s+)?(recording studio|studio recorder|beat maker|my songs|mixer|mastering)\b').firstMatch(lower);
       final takeNow = RegExp(r'\b(record (my )?(vocals?|voice|a song|a take)|start recording (my )?(vocals?|a song)|new recording|make a beat|play the beat)\b').hasMatch(lower);
       if (rec != null || takeNow) {
         final name = rec?.group(1) ?? '';
@@ -803,6 +816,17 @@ extension _CheHomeSend on _CHEHomeState {
       if (reply != null) {
         if (mounted) _set(() => controller.clear());
         if (reply.isNotEmpty) await speakText(reply, record: false);
+        return;
+      }
+    }
+
+    // The Music Studio room, while it is in front, takes a section by number or name, "read aloud" and "help".
+    final musicRoomVoice = CheMusicStudioRoom.voiceHandler;
+    if (musicRoomVoice != null && _pendingAttachment == null) {
+      final reply = await musicRoomVoice(message);
+      if (reply != null) {
+        if (mounted) _set(() => controller.clear());
+        if (reply.isNotEmpty) await speakText(reply, record: false, show: true);
         return;
       }
     }

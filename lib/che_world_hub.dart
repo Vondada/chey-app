@@ -66,15 +66,15 @@ List<CheBuilding> cheCampusBuildings = [
   ),
   CheBuilding(
     tab: 4,
-    title: 'Music',
-    subtitle: 'Playlists & audio',
+    title: 'Music Studio',
+    subtitle: 'Record, beats, mix & master',
     icon: Icons.music_note_outlined,
     color: Color(0xFF9BFF9B),
   ),
   CheBuilding(
     tab: 5,
     title: 'Create',
-    subtitle: 'Creator Studio',
+    subtitle: 'Creation tools',
     icon: Icons.lightbulb_outline,
     color: Color(0xFFFF9E6F),
   ),

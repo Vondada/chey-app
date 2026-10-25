@@ -442,75 +442,19 @@ extension _CheHomeHubRooms on _CHEHomeState {
     );
   }
 
-  // No crew walks across the screen: agents appear where they do work (Office), not as decoration on Music.
-  Widget _hubMusicTab(bool active) => _hubMusicScene(active);
-
-  Widget _hubMusicScene(bool active) {
-    final musicReady = integrations['music'] == true;
-    final voiceReady = integrations['natural_voice'] == true;
-    return CheCreatorStudio(
-      speaking: _isSpeaking,
-      jobs: [
-        for (final j in backgroundJobs)
-          if (!cheIsCodingJob(j)) j,
-      ],
-      onOpenJob: (job) => unawaited(_openJob(job)),
-      musicScene: MusicStudioScene(
+  /// Music Studio (owner, 2026-10-25): the Music room and the old Studio view are one tab, purely music creation.
+  /// Every section opens the Recording Studio on its tab; nothing is spoken when the room opens. The render queue
+  /// moved to the Creation Room's Working now; voice + narration and podcast episodes moved to Film Studio's tools;
+  /// Apple Music and car audio are the Devices room's Speaker and Car.
+  Widget _hubMusicTab(bool active) => CheMusicStudioRoom(
         active: active,
-        musicConnected: musicReady,
-        carConnected: integrations['car'] == true,
-        onMusic: () => _runHubPrompt(
-          'Help me connect and control my music through CHE. Use the authorized music integration if connected.',
+        musicEngineConnected: integrations['music'] == true,
+        onOpenSection: (tab) => unawaited(_openRecordingStudio(tab: tab)),
+        onMakeSong: () => _runHubPrompt(
+          'Let\'s make a track. Ask only what you need (genre, mood, tempo, length, vocals), then create it with the connected music engine at the highest quality. If none is connected, write the full production brief and lyrics.',
         ),
-        onCar: () =>
-            _runHubPrompt('Help me connect my car audio to CHE. Use only supported authorized audio controls.'),
-      ),
-      actions: [
-        CheStudioAction(
-          icon: Icons.mic_rounded,
-          title: 'Recording Studio',
-          body: 'Record vocals, layer tracks, build beats, add effects, mix, master and export WAV, on this iPhone.',
-          connected: true,
-          connectorName: '',
-          onRun: () => unawaited(_openRecordingStudio()),
-        ),
-        CheStudioAction(
-          icon: Icons.music_note_rounded,
-          title: 'Make music',
-          body: 'Songs, beats, stems and lyrics at the connected engine\'s highest quality.',
-          connected: musicReady,
-          connectorName: 'Music engine (CHE_MUSIC_URL)',
-          onRun: () => _runHubPrompt(
-            'Let\'s make a track. Ask only what you need (genre, mood, tempo, length, vocals), then create it with the connected music engine at the highest quality. If none is connected, write the full production brief and lyrics.',
-          ),
-        ),
-        CheStudioAction(
-          icon: Icons.record_voice_over_rounded,
-          title: 'Voice + narration',
-          body: 'Voiceovers and narration in natural voices.',
-          connected: voiceReady,
-          connectorName: 'Natural voice (CHE_OPENAI_API_KEY or CHE_VOICE_URL)',
-          onRun: () => _runHubPrompt(
-            'Help me record a voiceover. Ask for the script and tone, then produce it with the connected voice engine.',
-          ),
-        ),
-        CheStudioAction(
-          icon: Icons.podcasts_rounded,
-          title: 'Podcast episode',
-          body: 'Outline, full script, show notes and chapter markers.',
-          connected: true,
-          connectorName: '',
-          background: true,
-          onRun: () => unawaited(
-            _startCloudJob(
-              'Podcast episode draft',
-              'Write a complete podcast episode package for the owner: working title, hook, segment outline, full conversational script, show notes and chapter markers. Base it on the owner\'s saved projects and interests if relevant; label assumptions.',
-            ),
-          ),
-        ),
-      ],
-    );
-  }
+        onRead: (text) => speakText(text, record: false, readOnDemand: true),
+      );
 
   /// The Music room's own recording workspace (lib/music/che_recording_studio.dart). [tab] opens a section (0 Record,
   /// 1 My Songs, 2 Beat Maker, 3 Mixer, 4 Effects, 5 Master); [say] runs the owner's words there ("record my vocals").
@@ -572,6 +516,31 @@ extension _CheHomeHubRooms on _CHEHomeState {
             'Build a presentation with me. Ask for the audience and goal, then produce slide-by-slide content with speaker notes.',
           ),
         ),
+        // Voice + narration and podcast episodes moved here from the Music room on 2026-10-25 (same handlers).
+        CheStudioAction(
+          icon: Icons.record_voice_over_rounded,
+          title: 'Voice + narration',
+          body: 'Voiceovers and narration in natural voices.',
+          connected: integrations['natural_voice'] == true,
+          connectorName: 'Natural voice (CHE_OPENAI_API_KEY or CHE_VOICE_URL)',
+          onRun: () => _runHubPrompt(
+            'Help me record a voiceover. Ask for the script and tone, then produce it with the connected voice engine.',
+          ),
+        ),
+        CheStudioAction(
+          icon: Icons.podcasts_rounded,
+          title: 'Podcast episode',
+          body: 'Outline, full script, show notes and chapter markers.',
+          connected: true,
+          connectorName: '',
+          background: true,
+          onRun: () => unawaited(
+            _startCloudJob(
+              'Podcast episode draft',
+              'Write a complete podcast episode package for the owner: working title, hook, segment outline, full conversational script, show notes and chapter markers. Base it on the owner\'s saved projects and interests if relevant; label assumptions.',
+            ),
+          ),
+        ),
         CheStudioAction(
           icon: Icons.videocam_rounded,
           title: 'Generate video',
@@ -606,6 +575,10 @@ extension _CheHomeHubRooms on _CHEHomeState {
           activity: [
             if (job != null && job.active && job.label.isNotEmpty)
               CheStudioActivity(title: 'Coding job', status: job.label, detail: job.speech, onTap: _openOfficeFloor),
+            // The render queue, moved here from the Music room on 2026-10-25: real cloud jobs (podcast drafts, renders),
+            // the running ones and the three newest finished ones, each opening its result.
+            for (final j in cheCreationQueue(backgroundJobs))
+              CheStudioActivity(title: '${j['title'] ?? 'Cloud job'}', status: '${j['status'] ?? 'queued'}', onTap: () => unawaited(_openJob(j))),
           ],
           // Creation projects, the Creation Engine's state and which kinds are built (creation_studio.js). GPU jobs and
           // Pair Colab moved to Settings, Connections, Cloud Computer.
@@ -619,7 +592,9 @@ extension _CheHomeHubRooms on _CHEHomeState {
             onNewVideo: () => unawaited(_openFilmStudio()),
             onOpenTheater: () => _switchHubRoom(8),
             onOpenMusic: _openMusicWorkspace,
-            onNewSong: _openMusicWorkspace,
+            // Not a second "open Music Studio" button: a new song starts in the Recording Studio (the open one is saved
+            // first) and the studio says the real result.
+            onNewSong: () => unawaited(_openRecordingStudio(say: 'new recording')),
             onNewApp: _openCodeWorkspace,
             onOpenCodeWorkspace: _openCodeWorkspace,
             onOpenProjectManager: _openProjectManager,

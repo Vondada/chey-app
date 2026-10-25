@@ -14,7 +14,7 @@ import 'package:chey/home/che_connections_screen.dart';
 import 'package:chey/home/screen_command.dart';
 import 'package:chey/main.dart';
 import 'package:chey/platform/che_platform_screens.dart';
-import 'package:chey/rooms/che_creator_studio.dart';
+import 'package:chey/rooms/che_music_studio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
@@ -147,22 +147,21 @@ void main() {
     expect(connections, contains('Controls: Back, Refresh verified connections'));
   });
 
-  testWidgets('screen reports: the rooms sheet, Trading, Creator Studio and the Brain with their selected tabs', (tester) async {
+  testWidgets('screen reports: the rooms sheet, Trading, Music Studio and the Brain with their selected tabs', (tester) async {
     await tester.pumpWidget(MaterialApp(
       theme: CheTheme.dark(),
       home: Scaffold(
         body: CheImmersiveHubShell(
           initialIndex: 1,
-          tabs: const [Tab(text: 'Brain'), Tab(text: 'Trading'), Tab(text: 'Music')],
+          tabs: const [Tab(text: 'Brain'), Tab(text: 'Trading'), Tab(text: 'Music Studio')],
           pages: [
             (_) => const CheTwoBrainsView(live: Text('constellation'), offline: SizedBox()),
             (_) => const Text('markets'),
-            (_) => CheCreatorStudio(speaking: false, jobs: const [], actions: const [], onOpenJob: (_) {}, musicScene: const SizedBox()),
+            (active) => CheMusicStudioRoom(active: active, onOpenSection: (_) {}),
           ],
         ),
       ),
     ));
-    // The studio's meters animate for ever: pump, never settle.
     Future<void> settle() async {
       for (var i = 0; i < 10; i++) {
         await tester.pump(const Duration(milliseconds: 100));
@@ -170,10 +169,10 @@ void main() {
     }
 
     await settle();
-    expect(CheScreenAwareness.describe(), startsWith('You are on the rooms sheet, Trading tab. Tabs: 1. Brain, 2. Trading, 3. Music.'));
-    await tester.tap(find.text('Music').first);
+    expect(CheScreenAwareness.describe(), startsWith('You are on the rooms sheet, Trading tab. Tabs: 1. Brain, 2. Trading, 3. Music Studio.'));
+    await tester.tap(find.text('Music Studio').first);
     await settle();
-    expect(CheScreenAwareness.describe(), startsWith('You are on Creator Studio, Studio tab. Tabs: 1. Studio, 2. Music. Studio ready, not on air. Render queue: nothing rendering.'));
+    expect(CheScreenAwareness.describe(), startsWith('You are on Music Studio. Music engine not connected. Sections: 1. Record, 2. Beat Maker, 3. My Songs,'));
     await tester.tap(find.text('Brain').first);
     await settle();
     expect(CheScreenAwareness.describe(), startsWith('You are on the Brain, Live tab.'));

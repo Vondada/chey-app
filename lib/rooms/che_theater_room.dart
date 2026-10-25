@@ -596,14 +596,7 @@ class _CheTheaterRoomState extends State<CheTheaterRoom> {
                   ),
           ),
         ),
-        if (web != null)
-          Padding(
-            padding: const EdgeInsets.fromLTRB(CheSpace.gutter, CheSpace.xs, CheSpace.gutter, 0),
-            child: SizedBox(
-              height: 160,
-              child: _Theater3DStage(runtime: widget.runtime, compact: true, onScreenTap: _openTheaterScreen),
-            ),
-          ),
+        // No 3D seat strip under a playing video (owner UI cleanup, 2026-10-25): the video gets the whole room.
       ]),
     );
   }
@@ -614,12 +607,10 @@ class _Theater3DStage extends StatelessWidget {
   const _Theater3DStage({
     required this.runtime,
     required this.onScreenTap,
-    this.compact = false,
   });
 
   final CheAgentRuntimeController runtime;
   final Future<void> Function() onScreenTap;
-  final bool compact;
 
   List<CheSceneEntity> _visitors() {
     final visitors = <CheSceneEntity>[
@@ -658,7 +649,7 @@ class _Theater3DStage extends StatelessWidget {
             mode: CheSceneMode.theater,
             quality: quality,
             entities: _visitors(),
-            height: compact ? 160 : 420,
+            height: 420,
             semanticsLabel: 'Immersive Theater with in-CHE TV',
             primarySurfaceLabel:
                 'CHE iWeb TV screen. Activate to play a video page inside CHE without leaving the app.',

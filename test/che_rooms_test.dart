@@ -10,7 +10,6 @@ import 'package:chey/che_ui/che_agent_chat.dart';
 import 'package:chey/che_ui/che_backend.dart';
 import 'package:chey/che_ui/che_brain.dart';
 import 'package:chey/rooms/che_art_studio.dart';
-import 'package:chey/rooms/che_creator_studio.dart';
 import 'package:chey/rooms/che_markets_room.dart';
 import 'package:chey/self_update/che_update_card.dart';
 import 'package:flutter/material.dart';
@@ -222,46 +221,6 @@ void main() {
     expect(find.text('Thought 1.2s'), findsOneWidget);
     await tester.tap(find.text('2 working'));
     expect(opened, isTrue);
-    await tester.pumpWidget(const SizedBox());
-  });
-
-  testWidgets('Creator Studio: ON AIR follows real activity and the render queue lists jobs', (tester) async {
-    _phone(tester);
-    Map<String, dynamic>? openedJob;
-    Widget studio({required bool speaking, required List<Map<String, dynamic>> jobs}) => MaterialApp(
-          home: Scaffold(
-            body: CheCreatorStudio(
-              speaking: speaking,
-              jobs: jobs,
-              onOpenJob: (job) => openedJob = job,
-              musicScene: const Text('music room'),
-              actions: [
-                CheStudioAction(
-                  icon: Icons.podcasts_rounded,
-                  title: 'Podcast episode',
-                  body: 'Script',
-                  connected: true,
-                  connectorName: '',
-                  background: true,
-                  onRun: () {},
-                ),
-              ],
-            ),
-          ),
-        );
-    await tester.pumpWidget(studio(speaking: false, jobs: const []));
-    await tester.pump();
-    expect(find.text('Studio ready'), findsOneWidget);
-    await tester.pumpWidget(studio(speaking: false, jobs: const [
-      {'id': 'j1', 'title': 'Podcast episode draft', 'status': 'running'},
-    ]));
-    await tester.pump();
-    expect(find.text('Rendering in the cloud'), findsOneWidget);
-    await tester.tap(find.text('Podcast episode draft'));
-    expect(openedJob?['id'], 'j1');
-    await tester.tap(find.text('Music'));
-    await tester.pump();
-    expect(find.text('music room'), findsOneWidget);
     await tester.pumpWidget(const SizedBox());
   });
 

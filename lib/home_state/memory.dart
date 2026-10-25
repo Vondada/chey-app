@@ -1360,7 +1360,8 @@ extension _CheHomeMemory on _CHEHomeState {
               Tab(icon: Icon(Icons.show_chart), text: 'Trading'),
               Tab(icon: Icon(Icons.business_center_outlined), text: 'Business'),
               Tab(icon: Icon(Icons.devices_other_outlined), text: 'Devices'),
-              Tab(icon: Icon(Icons.music_note_outlined), text: 'Music'),
+              // Music + Studio are one room (owner, 2026-10-25): music creation only.
+              Tab(icon: Icon(Icons.music_note_outlined), text: 'Music Studio'),
               Tab(icon: Icon(Icons.lightbulb_outline), text: 'Create'),
               Tab(icon: Icon(Icons.workspaces_outline), text: 'Office'),
               Tab(icon: Icon(Icons.apps_rounded), text: 'Apps'),
