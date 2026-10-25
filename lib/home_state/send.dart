@@ -868,6 +868,18 @@ extension _CheHomeSend on _CHEHomeState {
       }
     }
 
+    // CHE World population, while it is open (it sits above the Character Generator), takes read, refresh and the
+    // crowd viewer by voice or typing.
+    final populationVoice = CheWorldPopulationPanel.voiceHandler;
+    if (populationVoice != null && _pendingAttachment == null) {
+      final reply = await populationVoice(message);
+      if (reply != null) {
+        if (mounted) _set(() => controller.clear());
+        if (reply.isNotEmpty) await speakText(reply, record: false, show: true);
+        return;
+      }
+    }
+
     // The Character Generator, while it is open, takes every one of its actions and settings by voice or typing.
     final generatorVoice = CheCharacterGenerator.voiceHandler;
     if (generatorVoice != null && _pendingAttachment == null) {

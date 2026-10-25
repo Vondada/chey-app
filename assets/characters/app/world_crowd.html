@@ -1,0 +1,297 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>CHE World crowd</title>
+<link rel="icon" href="data:,">
+<!-- CHE World crowd viewer (world_population.js on the Worker; lib/world/che_world_population_panel.dart in the app).
+     It draws many CHE World residents from a few SHARED base models (one GLB per bucket: style x body x hair x clothing):
+       near  full skinned clone, animated every frame, face meshes on
+       mid   skinned clone, animated every 4th frame, face meshes hidden
+       far   one instanced low-poly figure per resident (a single draw call for all of them)
+     A bucket's GLB is requested from the app only when a resident using it comes within mid range (detail loaded as
+     needed), and each GLB is parsed once and cached; every resident clones it with its own colours and height.
+     The page never speaks. It posts quiet counts to the app (CheBridge): records in view, models loaded, active animated
+     characters, fps. All words and VoiceOver labels live in the app. -->
+<style>
+:root{color-scheme:dark;--bg:#050608;--fg:#f4f6f7;--dim:#9aa4aa}
+html,body{height:100%;margin:0;background:var(--bg);color:var(--fg);font:15px/1.4 system-ui,-apple-system,sans-serif;overflow:hidden}
+#stage{position:fixed;inset:0}
+#stage canvas{display:block;width:100%;height:100%;touch-action:none}
+#empty{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;padding:24px;text-align:center;color:var(--dim);font-size:16px;pointer-events:none}
+</style>
+</head>
+<body>
+<div id="stage" role="img" aria-label="CHE World crowd. No residents loaded yet."></div>
+<div id="empty">No residents loaded yet.</div>
+<script>
+window.addEventListener('error', function () {
+  document.getElementById('empty').textContent = 'The 3D renderer could not start. Close and reopen CHE World to retry.';
+  try { window.CheBridge.postMessage(JSON.stringify({ type: 'error', message: 'The 3D renderer could not start.' })); } catch (_) {}
+});
+</script>
+<script src="characters-vendor.js"></script>
+<script>
+const THREE = window.THREE;
+function tellApp(msg) { try { if (window.CheBridge) window.CheBridge.postMessage(JSON.stringify(msg)); } catch (_) {} }
+
+const stage = document.getElementById('stage');
+const empty = document.getElementById('empty');
+const renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: 'high-performance' });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.info.autoReset = false;
+stage.appendChild(renderer.domElement);
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x0a0d12);
+scene.fog = new THREE.Fog(0x0a0d12, 60, 160);
+const camera = new THREE.PerspectiveCamera(50, 1, 0.1, 400);
+scene.add(new THREE.HemisphereLight(0xdfe7ea, 0x1a1d22, 1.6));
+const sun = new THREE.DirectionalLight(0xffffff, 2.2); sun.position.set(20, 40, 15); scene.add(sun);
+const ground = new THREE.Mesh(new THREE.PlaneGeometry(600, 600), new THREE.MeshStandardMaterial({ color: 0x12161b, roughness: 1 }));
+ground.rotation.x = -Math.PI / 2; scene.add(ground);
+
+// ---------- settings (the app or the benchmark may change them with CHE.configure)
+const cfg = { lod: true, near: 14, mid: 34, maxNear: 24, maxMid: 80, midEvery: 4, spacing: 2.2, orbit: true };
+
+// ---------- SkeletonUtils.clone (three.js examples/jsm/utils/SkeletonUtils.js, MIT): clones a skinned hierarchy so the
+// clone has its own bones while sharing geometry with the source.
+function cloneSkinned(source) {
+  const srcLookup = new Map(), cloneLookup = new Map();
+  const clone = source.clone();
+  (function walk(a, b) { srcLookup.set(b, a); cloneLookup.set(a, b); for (let i = 0; i < a.children.length; i++) walk(a.children[i], b.children[i]); })(source, clone);
+  clone.traverse((node) => {
+    if (!node.isSkinnedMesh) return;
+    const src = srcLookup.get(node); const bones = src.skeleton.bones;
+    node.skeleton = src.skeleton.clone();
+    node.bindMatrix.copy(src.bindMatrix);
+    node.skeleton.bones = bones.map((b) => cloneLookup.get(b));
+    node.bind(node.skeleton, node.bindMatrix);
+  });
+  return clone;
+}
+
+// ---------- bucket models: requested only when needed, parsed once, cached
+const buckets = new Map();   // key -> {state: 'requested'|'loaded'|'missing', scene, clips, height, faceNames}
+const FACE = /^(brow|eye|glint|lash|mouth|nose|teeth|tongue)/i;
+function requestBucket(key) {
+  if (buckets.has(key)) return;
+  buckets.set(key, { state: 'requested', at: performance.now() });
+  tellApp({ type: 'need_bucket', bucket: key });
+}
+function provideBucket(key, b64) {
+  const entry = buckets.get(key) || { state: 'requested' };
+  buckets.set(key, entry);
+  if (!b64) { entry.state = 'missing'; return Promise.resolve(false); }
+  let bytes;
+  try { const bin = atob(b64); bytes = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i); }
+  catch (_) { entry.state = 'missing'; tellApp({ type: 'error', message: `Base model ${key} was not readable.` }); return Promise.resolve(false); }
+  return new Promise((resolve) => {
+    new THREE.GLTFLoader().parse(bytes.buffer, '', (gltf) => {
+      const root = gltf.scene;
+      const box = new THREE.Box3().setFromObject(root); const size = box.getSize(new THREE.Vector3());
+      entry.scene = root; entry.clips = gltf.animations; entry.height = size.y || 1.7; entry.minY = box.min.y;
+      entry.state = 'loaded'; entry.bytes = bytes.length; entry.materials = new Map();
+      resolve(true);
+    }, (err) => { entry.state = 'missing'; tellApp({ type: 'error', message: `Base model ${key} could not be read: ${String(err && err.message || err).slice(0, 100)}` }); resolve(false); });
+  });
+}
+
+/** A resident's materials: the bucket's own, with skin, hair and clothing recoloured; cached per colour set. */
+const tint = (m, hex) => { const c = m.clone(); c.color = new THREE.Color(hex); return c; };
+function materialsFor(entry, v) {
+  const k = `${v.skin}|${v.hair}|${v.outfit}`;
+  let set = entry.materials.get(k);
+  if (!set) {
+    set = new Map();
+    entry.scene.traverse((o) => {
+      if (!o.isMesh || set.has(o.material)) return;
+      const n = String(o.material.name || '').toLowerCase();
+      if (/skin|body/.test(n)) set.set(o.material, tint(o.material, v.skin));
+      else if (/hair/.test(n)) set.set(o.material, tint(o.material, v.hair));
+      else if (/cloth|outfit|top|shirt|jacket|hoodie|sweater/.test(n)) set.set(o.material, tint(o.material, v.outfit));
+    });
+    entry.materials.set(k, set);
+  }
+  return set;
+}
+
+// ---------- far tier: one instanced low-poly figure for every resident without a skinned clone
+const farGeo = (() => {
+  const body = new THREE.CylinderGeometry(0.2, 0.24, 1.25, 6, 1); body.translate(0, 0.62, 0);
+  const head = new THREE.IcosahedronGeometry(0.17, 0); head.translate(0, 1.42, 0);
+  return window.BGU ? window.BGU.mergeGeometries([body.toNonIndexed(), head.toNonIndexed()]) : body;
+})();
+const farMat = new THREE.MeshLambertMaterial({ color: 0xffffff });
+let far = null;
+function ensureFar(n) {
+  if (far && far.count >= n && far.instanceMatrix.count >= n) return;
+  if (far) { scene.remove(far); far.dispose(); }
+  far = new THREE.InstancedMesh(farGeo, farMat, Math.max(16, n));
+  far.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+  far.frustumCulled = false; scene.add(far);
+}
+
+// ---------- residents
+let residents = [];   // {seed, bucket, v, x, z, phase, tier, obj, mixer, lastUpdate}
+const tmpM = new THREE.Matrix4(), tmpQ = new THREE.Quaternion(), tmpS = new THREE.Vector3(), tmpP = new THREE.Vector3(), up = new THREE.Vector3(0, 1, 0);
+const colour = new THREE.Color();
+function frac(x) { return x - Math.floor(x); }
+function setPopulation(records) {
+  for (const r of residents) dropClone(r);
+  const list = Array.isArray(records) ? records : [];
+  residents = list.map((r, i) => {
+    // A sunflower spiral: dense near the centre, every resident at a stable place for its index.
+    const a = i * 2.39996323, d = cfg.spacing * Math.sqrt(i + 0.5);
+    return { seed: r.seed, bucket: r.bucket, v: r.variation || {}, x: Math.cos(a) * d, z: Math.sin(a) * d,
+      phase: frac(Math.sin(r.seed * 12.9898) * 43758.5453) * Math.PI * 2, tier: 'far', obj: null, mixer: null, lastUpdate: 0 };
+  });
+  ensureFar(residents.length);
+  empty.style.display = residents.length ? 'none' : 'flex';
+  stage.setAttribute('aria-label', `CHE World crowd with ${residents.length} residents.`);
+  return residents.length;
+}
+function makeClone(r) {
+  const entry = buckets.get(r.bucket);
+  const obj = cloneSkinned(entry.scene);
+  const mats = materialsFor(entry, r.v);
+  obj.traverse((o) => { if (o.isMesh) { const m = mats.get(o.material); if (m) o.material = m; o.frustumCulled = true; o.userData.face = FACE.test(o.name) || FACE.test(String(o.material.name || '')); } });
+  const s = (1.75 / entry.height) * (r.v.scale || 1);
+  obj.scale.setScalar(s); obj.position.y = -entry.minY * s;
+  const mixer = new THREE.AnimationMixer(obj);
+  const clip = entry.clips.find((c) => /walk/i.test(c.name)) || entry.clips.find((c) => /idle/i.test(c.name)) || entry.clips[0];
+  if (clip) { const act = mixer.clipAction(clip); act.time = (r.phase / (Math.PI * 2)) * clip.duration; act.play(); }
+  scene.add(obj); r.obj = obj; r.mixer = mixer;
+}
+function dropClone(r) {
+  if (!r.obj) return;
+  scene.remove(r.obj); r.mixer && r.mixer.stopAllAction(); r.obj = null; r.mixer = null;
+}
+function setFace(r, on) { r.obj.traverse((o) => { if (o.isMesh && o.userData.face) o.visible = on; }); }
+
+// ---------- camera: a slow orbit over the crowd; one finger turns it, pinch zooms (all words live in the app)
+const view = { yaw: 0.6, pitch: 0.42, dist: 26, target: new THREE.Vector3() };
+function placeCamera() {
+  camera.position.set(view.target.x + Math.cos(view.yaw) * Math.cos(view.pitch) * view.dist, view.dist * Math.sin(view.pitch) + 1.5,
+    view.target.z + Math.sin(view.yaw) * Math.cos(view.pitch) * view.dist);
+  camera.lookAt(view.target.x, 1.2, view.target.z);
+}
+let drag = null;
+renderer.domElement.addEventListener('pointerdown', (e) => { drag = { x: e.clientX, y: e.clientY }; cfg.orbit = false; });
+window.addEventListener('pointerup', () => { drag = null; });
+window.addEventListener('pointermove', (e) => { if (!drag) return; view.yaw += (e.clientX - drag.x) * 0.006; view.pitch = Math.min(1.3, Math.max(0.08, view.pitch + (e.clientY - drag.y) * 0.004)); drag = { x: e.clientX, y: e.clientY }; });
+renderer.domElement.addEventListener('wheel', (e) => { view.dist = Math.min(150, Math.max(4, view.dist * (1 + e.deltaY * 0.001))); }, { passive: true });
+
+function resize() {
+  const w = stage.clientWidth || window.innerWidth, h = stage.clientHeight || window.innerHeight;
+  renderer.setSize(w, h, false); camera.aspect = w / Math.max(1, h); camera.updateProjectionMatrix();
+}
+window.addEventListener('resize', resize); resize();
+
+// ---------- frame loop
+const frustum = new THREE.Frustum(), pv = new THREE.Matrix4(), sphere = new THREE.Sphere(new THREE.Vector3(), 1.2);
+let paused = false, frame = 0, lastT = performance.now(), fpsFrames = 0, fpsT = performance.now(), fps = 0, lastReport = 0;
+const stats = { in_view: 0, near: 0, mid: 0, far: 0, animated: 0 };
+let animatedThisSecond = new Set();
+function tick(now) {
+  requestAnimationFrame(tick);
+  if (paused || document.hidden) { lastT = now; return; }
+  const dt = Math.min(0.1, (now - lastT) / 1000); lastT = now; frame++;
+  if (cfg.orbit) view.yaw += dt * 0.05;
+  placeCamera();
+  camera.updateMatrixWorld();
+  pv.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse); frustum.setFromProjectionMatrix(pv);
+  const t = now / 1000;
+  // Each resident strolls on a small circle around its place.
+  const cam = camera.position;
+  const ranked = [];
+  stats.in_view = 0;
+  for (const r of residents) {
+    const ang = r.phase + t * 0.25;
+    r.px = r.x + Math.cos(ang) * 0.8; r.pz = r.z + Math.sin(ang) * 0.8; r.heading = -ang;
+    sphere.center.set(r.px, 0.9, r.pz);
+    r.visible = frustum.intersectsSphere(sphere);
+    if (r.visible) stats.in_view++;
+    r.dist = Math.hypot(r.px - cam.x, r.pz - cam.z, cam.y - 0.9);
+    ranked.push(r);
+  }
+  // Tiers: nearest visible residents get skinned clones, within caps; everyone else is a far instance.
+  let nNear = 0, nMid = 0;
+  if (cfg.lod) ranked.sort((a, b) => a.dist - b.dist);
+  for (const r of ranked) {
+    let want = 'far';
+    if (!cfg.lod) want = 'near';
+    else if (r.visible && r.dist < cfg.near && nNear < cfg.maxNear) want = 'near';
+    else if (r.visible && r.dist < cfg.mid && nMid < cfg.maxMid) want = 'mid';
+    if (want !== 'far') {
+      const entry = buckets.get(r.bucket);
+      if (!entry) requestBucket(r.bucket);
+      if (!entry || entry.state !== 'loaded') want = 'far';
+    }
+    if (want === 'near') nNear++; else if (want === 'mid') nMid++;
+    if (want === 'far') { if (r.obj) dropClone(r); }
+    else {
+      if (!r.obj) makeClone(r);
+      if (r.tier !== want) setFace(r, want === 'near');
+    }
+    r.tier = want;
+  }
+  stats.near = nNear; stats.mid = nMid; stats.far = residents.length - nNear - nMid;
+  // Update clones (near every frame, mid every Nth frame) and the far instances.
+  let fi = 0;
+  for (const r of residents) {
+    if (r.obj) {
+      r.obj.position.x = r.px; r.obj.position.z = r.pz; r.obj.rotation.y = r.heading;
+      r.obj.visible = r.visible || !cfg.lod;
+      const every = r.tier === 'mid' ? cfg.midEvery : 1;
+      if ((r.visible || !cfg.lod) && (frame + (r.seed % every)) % every === 0) {
+        r.mixer.update(dt * every); animatedThisSecond.add(r.seed);
+      }
+    } else {
+      tmpP.set(r.px, 0, r.pz); tmpQ.setFromAxisAngle(up, r.heading); const s = r.v.scale || 1; tmpS.set(s, s, s);
+      tmpM.compose(tmpP, tmpQ, tmpS); far.setMatrixAt(fi, tmpM);
+      far.setColorAt(fi, colour.set(r.v.outfit || '#8899aa'));
+      fi++;
+    }
+  }
+  if (far) { far.count = fi; far.instanceMatrix.needsUpdate = true; if (far.instanceColor) far.instanceColor.needsUpdate = true; }
+  renderer.info.reset();
+  renderer.render(scene, camera);
+  fpsFrames++;
+  if (now - fpsT >= 1000) {
+    fps = Math.round((fpsFrames * 1000) / (now - fpsT) * 10) / 10; fpsFrames = 0; fpsT = now;
+    stats.animated = animatedThisSecond.size; animatedThisSecond = new Set();
+    report();
+  }
+}
+
+function status() {
+  const loaded = [...buckets.values()].filter((b) => b.state === 'loaded');
+  const mem = performance.memory ? Math.round(performance.memory.usedJSHeapSize / 1048576) : null;
+  return {
+    type: 'status',
+    records_total: residents.length,           // (a) records the app handed this viewer
+    records_in_view: stats.in_view,
+    models_loaded: loaded.length,               // (b) shared bucket GLBs parsed and cached here
+    models_requested: [...buckets.values()].filter((b) => b.state === 'requested').length,
+    model_bytes: loaded.reduce((s, b) => s + (b.bytes || 0), 0),
+    active_animated: stats.animated,            // (c) characters whose skeletons moved in the last second
+    near: stats.near, mid: stats.mid, far: stats.far, lod: cfg.lod,
+    fps, draw_calls: renderer.info.render.calls, triangles: renderer.info.render.triangles, js_heap_mb: mem,
+  };
+}
+function report() { tellApp(status()); }
+
+window.CHE = window.CHE || {};
+window.CHE.setPopulation = setPopulation;
+window.CHE.provideBucket = provideBucket;
+window.CHE.configure = (o) => { Object.assign(cfg, o || {}); return { ...cfg }; };
+window.CHE.status = status;
+window.CHE.pause = (p) => { paused = !!p; };
+window.CHE.buckets = () => [...buckets.entries()].map(([k, b]) => ({ key: k, state: b.state }));
+requestAnimationFrame(tick);
+tellApp({ type: 'page_ready', webgl: !!renderer.getContext() });
+</script>
+</body>
+</html>

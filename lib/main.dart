@@ -83,6 +83,7 @@ import 'che_app_portal.dart';
 import 'che_video.dart';
 import 'che_creations.dart';
 import 'avatar/che_character_generator.dart';
+import 'world/che_world_population_panel.dart';
 import 'rooms/che_invention_studio.dart';
 import 'rooms/che_invention_viewer.dart';
 import 'che_ui/che_showroom.dart';
