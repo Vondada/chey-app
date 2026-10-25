@@ -77,6 +77,12 @@ Then, on GitHub:
 
 ## 2. Current position
 
+**Claude, 2026-10-25 ~13:30 UTC — `lane/modal-gpu` DONE and pushed (head `8824494a`, from `origin/claude/che-character-realism`). Not merged, not deployed, no PR.**
+- Owner spec PR #526 (`docs/CHE_MODAL_FREE_FIRST_USAGE_PRIVACY.md`) Stages 2-3 + acceptance 1-5 built into the EXISTING pool: `tools/modal/che_modal_app.py` (proxy-auth endpoint, allowlisted /health + /blender_preview, idempotent per key), `.github/workflows/che-modal-deploy.yml` (manual; skips without MODAL_TOKEN_ID/SECRET), `server/cloudflare/modal_gpu.js` (verified connect via authenticated /health; owner credit policy USER-ENTERED; monthly ESTIMATE stop line; `computeUsageLedger(storage,{month})` for the Usage Center lane), compute_pool wiring (Colab -> Kaggle -> Modal credit -> paid; GPU-only; cancel-by-key before failover), gpu_queue re-checks a Modal GLB's SHA-256 from the media store before COMPLETE.
+- No Command Center entries added (voice rides the existing /cloud-gpu budget path); no Dart change; worker.js untouched.
+- Verified: Worker 4070 pass / 0 fail (baseline 4061); `modal_gpu.test.mjs` 9; `tools/test_che_modal_app.py` 13. NOT verified: anything on real Modal (no account/token exists).
+- Next (owner-only): Modal account, $0 spend limit, GitHub secrets, run "CHE Modal deploy", Proxy Auth Token -> "CHE, connect Modal"; then merge/deploy go-ahead. The Status section in the spec doc lists open items.
+
 **Claude, 2026-10-25 ~11:00 UTC — `lane/rel-trust` DONE and pushed (head `f79f84c8`, from `claude/che-reliability` `0ec23ac`). Not merged, not deployed, no PR.**
 - Owner's six trust failures fixed offline: favorites asked together (food/drink/color, with sources); save → read-back receipt quoting full record id + stored time; "record ID and timestamp for X" read back with source; "what are my recent memories"; missions/projects/"worked together before" from data.objectives/projects/jobs/team_tasks; "what is Claude currently working on" from live che-mailbox thread + handoff (Brain import fallback). Typed outcomes on done lines (retrieved/no_match/stored/storage_failed/permission_denied/tool_unavailable); guests refused.
 - Salvaged the earlier lost attempt's uncommitted work (commit `ee330646`). Tests: `trust_memory_routing.test.mjs` 12 (all fail on base), replay cases `owner-trust-memory.json`/`owner-trust-history.json`, 12 new live-probe steps in `memory_probe.js`. Worker 3984 pass / 0 fail / 7 skipped; skills 19/19. Inventory: `docs/failure_inventory/trust_memory_routing.md`.
