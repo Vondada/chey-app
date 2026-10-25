@@ -52,7 +52,8 @@ class ChePaperBadge extends StatelessWidget {
           child: const Row(mainAxisSize: MainAxisSize.min, children: [
             Icon(Icons.science_outlined, size: 14, color: _gold),
             SizedBox(width: 4),
-            Text('$kChePaperLabel · SIMULATED', style: TextStyle(color: _gold, fontSize: 11.5, fontWeight: FontWeight.w800, letterSpacing: 0.8)),
+            // Flexible: on a narrow card or with large text the label wraps instead of overflowing.
+            Flexible(child: Text('$kChePaperLabel · SIMULATED', style: TextStyle(color: _gold, fontSize: 11.5, fontWeight: FontWeight.w800, letterSpacing: 0.8))),
           ]),
         ),
       );
@@ -343,7 +344,9 @@ class _ChePaperAccountPanelState extends State<ChePaperAccountPanel> {
       const SizedBox(height: 6),
       if (list.isEmpty)
         Text(
-          _filter == 'open' ? 'No open CHE paper positions. CHE opens one only from a READY or TRIGGERED setup on live Rithmic prices.' : 'No CHE paper positions here yet.',
+          _filter == 'open'
+              ? "No open positions in the CHE PAPER ACCOUNT (MNQ on this iPhone). CHE opens one only from a READY or TRIGGERED setup on live Rithmic prices. Orion's BTC and ETH paper positions are a separate account, in the Crypto section."
+              : 'No CHE PAPER ACCOUNT positions here yet.',
           key: const Key('paper_no_positions'),
           style: TextStyle(color: _dim, fontSize: 14),
         ),

@@ -69,14 +69,16 @@ void main() {
   testWidgets('shows each feed status as a word, the real counts, and "not enough data" under 30 trades', (tester) async {
     final s = _Server();
     await _pumpDesk(tester, s);
-    expect(find.text('LIVE'), findsWidgets);
+    // The Worker's polled 5-minute candles are never called LIVE on the desk (Trading Room v3, 2026-10-25).
+    expect(find.text('CURRENT 5M'), findsWidgets);
+    expect(find.text('LIVE'), findsNothing);
     expect(find.text('DELAYED'), findsOneWidget);
     expect(find.textContaining('101234.5'), findsOneWidget);
     expect(find.text('Closed 2'), findsOneWidget);
     expect(find.text('Not enough data: 2 of 30'), findsOneWidget);
     expect(find.textContaining('Paper only'), findsOneWidget);
     expect(find.textContaining('Funding rates: MISSING'), findsOneWidget);
-    expect(find.bySemanticsLabel(RegExp(r'BTC 5-minute feed LIVE, last close 101234\.5')), findsOneWidget);
+    expect(find.bySemanticsLabel(RegExp(r'BTC 5-minute candles current 5m, last close 101234\.5.*no trading account')), findsOneWidget);
   });
 
   testWidgets('an exchange outage reads DISCONNECTED with its reason', (tester) async {

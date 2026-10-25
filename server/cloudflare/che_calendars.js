@@ -24,6 +24,7 @@ import { cloudJobs } from './cloud_computer.js';
 import { ownerDayKey, ownerTimeZone } from './office_board.js';
 import { readCryptoPaperTrades } from './trade_evidence.js';
 import { readAlpacaFills, realizedClosesFromFills } from './broker_alpaca.js';
+import { accountsView, unifiedCalendar } from './trading_accounts.js';
 
 export const CALENDAR_SOURCE = 'che_calendars';
 export const TRADING_SOURCES = Object.freeze({
@@ -121,8 +122,13 @@ const tradeRow = (t, unit, day) => ({
 /**
  * GET /api/trading/calendar?month=YYYY-MM&source=sim|paper|broker[&basis=owner|cme]
  * GET /api/trading/calendar?day=YYYY-MM-DD&source=… — that day's trades, journal skips and per-strategy results.
+ * GET /api/trading/calendar?view=accounts | view=unified&market=all|futures|crypto — see trading_accounts.js.
  */
-export async function tradingCalendar(storage, { month = '', day = '', source = 'paper', basis = 'owner', env = {}, now = Date.now() } = {}) {
+export async function tradingCalendar(storage, { month = '', day = '', source = 'paper', basis = 'owner', view = '', market = 'all', env = {}, now = Date.now() } = {}) {
+  now = Number(now) || Date.now(); // a query string can name any key; only a number is a time
+  // Trading Room v3 (trading_accounts.js): the dashboard's account records and the unified ALL | FUTURES | CRYPTO calendar.
+  if (view === 'accounts') return accountsView(storage, { now });
+  if (view === 'unified') return unifiedCalendar(storage, { month, day, market, now });
   if (!TRADING_SOURCES[source]) return { ok: false, status: 400, detail: 'Choose a source: sim, paper or broker. They are never added together.' };
   const tz = ownerTimeZone(env);
   if (basis !== 'cme') basis = 'owner';

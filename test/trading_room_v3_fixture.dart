@@ -131,6 +131,29 @@ Map<String, dynamic> fixtureConnections() => {
       'permissions': {'live_orders': 'off'},
     };
 
+/// The crypto desk as the owner's recording showed it (2026-10-25 06:16): 37 closed, 16 open, net −$274.20.
+Map<String, dynamic> fixtureCryptoOwner() {
+  final d = fixtureCrypto();
+  d['feeds'] = [
+    {'coin': 'BTC', 'tf': '5m', 'product': 'BTC-USD', 'source': 'Coinbase Exchange', 'status': 'LIVE', 'last_bar': '2026-10-25T10:10:00Z', 'last_close': 80228, 'bars': 300},
+    {'coin': 'ETH', 'tf': '5m', 'product': 'ETH-USD', 'source': 'Coinbase Exchange', 'status': 'LIVE', 'last_bar': '2026-10-25T10:10:00Z', 'last_close': 2326.29, 'bars': 300},
+  ];
+  d['schedule'] = {'runs_on': 'the Worker alarm', 'last_run_at': '2026-10-25T10:15:20Z', 'next_at': '2026-10-25T10:20:20Z', 'runs_recorded': 900, 'model_calls': 0};
+  d['budget'] = {'requests': 322, 'limit': 3000};
+  d['simulated'] = {
+    'open_positions': [
+      for (var i = 0; i < 16; i++)
+        {'coin': i.isEven ? 'BTC' : 'ETH', 'tf': '5m', 'strategy': 'orb', 'side': 'long', 'entry_time': '2026-10-25T09:${(10 + i).toString().padLeft(2, '0')}:00Z', 'entry': i.isEven ? 80100.0 : 2320.0, 'stop': i.isEven ? 79900.0 : 2310.0, 'target': i.isEven ? 80500.0 : 2340.0, 'qty': 0.01},
+    ],
+    'closed_trades': 37, 'wins': 11, 'losses': 26, 'net_pnl': -274.2, 'expectancy_r': -6.5935, 'enough_data': true,
+    'recent': [
+      for (var i = 0; i < 10; i++)
+        {'coin': 'BTC', 'tf': '5m', 'strategy': 'orb', 'side': 'long', 'entry_time': '2026-10-25T0${i % 9}:00:00Z', 'entry': 80000 + i, 'exit_time': '2026-10-25T0${i % 9}:30:00Z', 'exit': 79950 + i, 'reason': 'stop', 'net_pnl': -7.4, 'costs': {'fees': 4.8, 'slippage': 0.3}, 'why': 'range break'},
+    ],
+  };
+  return d;
+}
+
 /// A fake Worker. [overrides] replaces the answer for a path; [seen] collects every request URL.
 http.Client fixtureWorker({bool empty = false, List<Uri>? seen, Map<String, Object> overrides = const {}}) => MockClient((r) async {
       seen?.add(r.url);

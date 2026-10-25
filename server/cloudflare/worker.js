@@ -8600,7 +8600,7 @@ export class CheState extends DurableObject {
       if ((path === '/api/trading/calendar' || path === '/api/trading/learning') && request.method === 'GET') {
         if (!ownerDevice) return tradingOwnerOnly();
         const q = new URL(request.url).searchParams;
-        const out = path.endsWith('learning') ? await learningWindows(this.ctx.storage) : await tradingCalendar(this.ctx.storage, { month: q.get('month') || '', day: q.get('day') || '', source: q.get('source') || 'paper', basis: q.get('basis') || 'owner', env: this.env });
+        const out = path.endsWith('learning') ? await learningWindows(this.ctx.storage) : await tradingCalendar(this.ctx.storage, { ...Object.fromEntries(q), env: this.env });
         return json(out, out.status || 200);
       }
       if (path === '/api/trading/visual' && request.method === 'GET') {

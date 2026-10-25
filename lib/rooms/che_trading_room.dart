@@ -416,7 +416,10 @@ class _CheTradingRoomState extends State<CheTradingRoom> {
   @override
   Widget build(BuildContext context) {
     return ListView(
-      key: const PageStorageKey('trading_room_list'),
+      // A plain key, never a PageStorageKey: under one, the list's saved scroll offset (a double) and every
+      // ExpansionTile inside it (which restores a bool) share one storage slot, so after a scroll the tile threw and a
+      // release build painted a flat gray box (owner recording, 2026-10-25). See che_trading_room_v3_test.dart.
+      key: const ValueKey('trading_room_list'),
       padding: const EdgeInsets.only(bottom: 32),
       children: [
         ?widget.header,
