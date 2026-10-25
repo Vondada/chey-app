@@ -136,6 +136,7 @@ import { ownToolPermissionProblems } from './flagstaff_reply_check.js';
 import { cachedCodeIndex } from './code_index.js';
 import { CHE_SELF_BRIEF, starredFocus, studyLesson } from './che_self_knowledge.js';
 import { connectServiceIntent, onboardingChatReply, onboardingIntent, onboardingRoute } from './service_onboarding.js';
+import { isPrivateRequest, privateDoneFields, privateRequestBody, privateToolBlock } from './private_voice.js';
 import { KEY_PROVIDERS, MEMORY_DB, hasStoredMemoryDatabase, memorySetupIntent, memorySetupSteps, removeMemoryDatabase, saveMemoryDatabase, removeKey, storedKeys, withStoredKeys, cachedAnswer, checkAllKeys, fileLetter, fileTech, forgetAnswer, isLockedDown, listLetters, looksLikeAttack, markLetter, nextLetter, rememberAnswer, resilienceIntent, runScout, saveKey, setLockdown, setupSteps, speakKeyHealth, speakMailboxSummary, speakTech, techItems } from './resilience.js';
 import { applyCorrections, correctedPrevious, correctionsContext, detectCorrection, learnCorrection, loadCorrections } from './speech_learning.js';
 import { applyModelReading, asksAboutScreen, clipKeepingLimits, interpretOwnerTurn, interpretWithModel } from './speech_intent.js';
@@ -258,7 +259,7 @@ import { CHE_TENANT, CHE_SECURITY, access as coreAccess, coreEvents, coreInciden
 import { securityVisibility, speakVisibility } from './security_visibility.js';
 import { securityChief, securityChiefIntent, speakChiefReport } from './security_chief.js';
 import { acquire as acquireCapability, applyPolicy as applyCapabilityPolicy, capabilityIntent, engineSummary as capabilityEngineSummary, learnFromOutcome, loadPolicy as loadCapabilityPolicy, populate as populateKnowledge, retrieve as retrieveKnowledge, rollbackTool, savePolicy as saveCapabilityPolicy, projectBlocked, speakCapabilities, speakLearned as speakLearnedKnowledge, useTool, LAST_USED_KEY as KNOWLEDGE_USED_KEY } from './capability_engine.js';
-import { EGRESS_KEY, SNAPSHOT_KEY, holdEgress, installEgressGuard, setEgressOwner, setEgressPolicy, storeEgressPolicy, SESSION_SCOPES, bump as securityBump, checkSession, createSession, dependencyAdvisories, detectThreats, issueNonce, loadSecurity, recordFindings, redact as redactSecretText, redactDeep, respondToIncident, restoreTrustedState, revokeSessions, saveSecurity, securityIntent, snapshotTrustedState, speakStatus as speakSecurityStatus } from './security_intelligence.js';
+import { EGRESS_KEY, SNAPSHOT_KEY, holdEgress, holdPrivateEgress, privateEgressHeld, installEgressGuard, setEgressOwner, setEgressPolicy, storeEgressPolicy, SESSION_SCOPES, bump as securityBump, checkSession, createSession, dependencyAdvisories, detectThreats, issueNonce, loadSecurity, recordFindings, redact as redactSecretText, redactDeep, respondToIncident, restoreTrustedState, revokeSessions, saveSecurity, securityIntent, snapshotTrustedState, speakStatus as speakSecurityStatus } from './security_intelligence.js';
 import { loadRegistry as loadCapabilityRegistry } from './capability_registry.js';
 import { BrainLedger, answerLedger, decidePending as decideBrainPending, installBrainLedger, ledgerApi, recordGraphConnections, ledgerIntent as brainLedgerIntent, DEFAULT_ZONE as LEDGER_DEFAULT_ZONE } from './brain_ledger.js';
 import { FilmStore, filmIntent, filmProgress, farmProviders, loadRates, loadUsage, speakFarm, speakPlan, speakStatus as speakFilmStatus } from './film_studio.js';
@@ -5563,11 +5564,38 @@ export class CheState extends DurableObject {
       }
     } catch (_) { projectHold = false; }
     if (projectHold) holdEgress(1);
+    // Private voice (private_voice.js): a chat turn the phone marked private is answered by Workers AI only, and no
+    // outbound call leaves for an outside host while it, or background work it starts, runs.
+    let privateHold = false;
+    if (request.method === 'POST' && new URL(request.url).pathname === '/api/chat') {
+      const peek = await request.clone().json().catch(() => null);
+      privateHold = isPrivateRequest(peek);
+    }
+    if (privateHold) {
+      holdPrivateEgress(1);
+      this.installPrivateWaitUntil();
+    }
     try {
       return await this.fetchInner(request);
     } finally {
       if (projectHold) holdEgress(-1);
+      if (privateHold) holdPrivateEgress(-1);
     }
+  }
+
+  // Background work started while a private turn runs (memory records, summaries) keeps the private hold until it
+  // settles, so the owner's words cannot reach an outside engine after the reply is sent.
+  installPrivateWaitUntil() {
+    const ctx = this.ctx;
+    if (!ctx?.waitUntil || ctx.waitUntil.chePrivate) return;
+    const original = ctx.waitUntil.bind(ctx);
+    const wrapped = (promise) => {
+      if (!privateEgressHeld()) return original(promise);
+      holdPrivateEgress(1);
+      return original(Promise.resolve(promise).finally(() => holdPrivateEgress(-1)));
+    };
+    wrapped.chePrivate = true;
+    try { ctx.waitUntil = wrapped; } catch (_) { /* a frozen ctx keeps the plain waitUntil */ }
   }
 
   async fetchInner(request) {
@@ -5586,6 +5614,10 @@ export class CheState extends DurableObject {
     if (isChat && response?.ok && OWNER_CHAT_REQUESTS.has(request)) {
       const understood = understoodAs(String((await sent)?.message || ''));
       if (understood) response = await withDoneFields(response, { understood_as: understood });
+    }
+    // A private turn's reply says it was answered on Workers AI only (shown as quiet text on the phone).
+    if (isChat && response?.ok && isPrivateRequest(await sent) && /ndjson/i.test(response.headers.get('Content-Type') || '')) {
+      response = await withDoneFields(response, privateDoneFields());
     }
     if (isChat && response?.ok && OWNER_CHAT_REQUESTS.has(request) && /ndjson/i.test(response.headers.get('Content-Type') || '')) {
       response = await withSoulRecord(response, await loadSoul(this.ctx.storage), this.ctx.storage);
@@ -10620,6 +10652,13 @@ export class CheState extends DurableObject {
         if (BROKER_KEY_RE.test(rawMessage)) {
           return ndjsonReply('I did not keep that, sir: it looks like an API key, and keys never go in chat. It may now be exposed, so regenerate it where it came from. A new Alpaca paper key goes in the Trading Room, straight to CHE\'s key store.', { source: 'che_secret_refused', ok: false, model_calls: 0 });
         }
+        // Private voice (private_voice.js): a request that only works with an outside service is refused up front,
+        // and the fields that hand work to plugins or research are cleared. Workers AI answers the rest.
+        if (isPrivateRequest(body)) {
+          const blocked = privateToolBlock(rawMessage, body);
+          if (blocked) return ndjsonReply(blocked.text, { source: 'che_private_voice', ok: false, model_calls: 0, private_blocked: blocked.kind, ...privateDoneFields() });
+          Object.assign(body, privateRequestBody(body));
+        }
         // A family/guest device never reaches the owner's chat routes below.
         if (!ownerDevice) return this.guestChat(body, rawMessage, activeTenant);
         // The owner's exact words are authoritative for a read-only, verified
@@ -13880,10 +13919,11 @@ export class CheState extends DurableObject {
           );
         }
 
-        const shouldResearch = requestedCapabilities.includes('web_research') ||
+        // A private turn never researches (its words would reach search engines) or asks a model panel.
+        const shouldResearch = !isPrivateRequest(body) && (requestedCapabilities.includes('web_research') ||
           requestedCapabilities.includes('innovation_mode') ||
-          /\b(research|latest|current|novel|prior art|feasib|humanly possible|artistically possible)\b/i.test(message);
-        const useModelPanel =
+          /\b(research|latest|current|novel|prior art|feasib|humanly possible|artistically possible)\b/i.test(message));
+        const useModelPanel = !isPrivateRequest(body) &&
           /\b(compare (?:models?|options?|sources?)|research|deep analysis|second opinion|cross.check)\b/i.test(message);
 
         // SPEED MODE: independent information sources run in one parallel batch.
