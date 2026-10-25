@@ -92,12 +92,12 @@ test('trading connections: each card says its real state; nothing reads connecte
     tradovate: { configured: false, conn: { connected: false } },
     alpaca: { state: 'not_configured' },
   });
-  assert.deepEqual(view.cards.map((c) => [c.id, c.state, c.mode]), [['che_paper', 'on', 'PAPER'], ['tradovate', 'not_configured', 'PAPER'], ['alpaca', 'not_configured', 'PAPER'], ['fundyouredge', 'unsupported', null]]);
+  assert.deepEqual(view.cards.map((c) => [c.id, c.state, c.mode]), [['che_paper', 'on', 'PAPER'], ['tradovate', 'not_configured', 'PAPER'], ['alpaca', 'not_configured', 'PAPER'], ['fundyouredge', 'unsupported', null], ['coinbase', 'public', null]]);
   assert.equal(view.cards[0].data.label, 'DELAYED');
   assert.equal(view.cards[0].data.lag_minutes, 11);
   assert.equal(view.cards[1].blocked_by.length, 4);
   assert.equal(view.permissions.live_orders, 'off');
-  assert.match(speakConnections(view), /^Your trading connections, sir: 1, CHE Paper: on, delayed Yahoo Finance chart \(public\) MNQ=F data\. 2, Tradovate \(NinjaTrader\): not set up\. 3, Alpaca \(stock paper\): not set up\. 4, FundYourEdge \(Rithmic\): not supported\. Trading mode: PAPER\. Live orders are off\.$/);
+  assert.match(speakConnections(view), /^Your trading connections, sir: 1, CHE Paper: on, delayed Yahoo Finance chart \(public\) MNQ=F data\. 2, Tradovate \(NinjaTrader\): not set up\. 3, Alpaca \(stock paper\): not set up\. 4, FundYourEdge \(Rithmic\): orders not supported\. 5, Coinbase \(public market data\): public data, no account\. Trading mode: PAPER\. Live orders are off\.$/);
   // The live kill switch: live orders read off even with live mode, a signed-in broker, limits and a chosen account.
   const live = tradingConnections({ desk: { mode: 'live', account: { sim: '', live: 'L1' }, risk_limits: { maxContracts: 1, maxRiskDollars: 100 } }, tradovate: { configured: true, conn: { connected: true } }, alpaca: null });
   assert.equal(live.permissions.live_orders, 'off');

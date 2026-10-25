@@ -4,6 +4,8 @@
 // card says its real state, so nothing reads "connected" until the provider proved it.
 
 import { liveOrderBlock } from './trading_environments.js';
+import { cryptoView } from './crypto_markets.js';
+import { tradingClock } from './trading_clock.js';
 
 export const MODE_LABEL = { paper: 'PAPER', sim: 'BROKER SIM', live: 'LIVE' };
 
@@ -109,12 +111,24 @@ const FUNDYOUREDGE = {
   state: 'unsupported',
   mode: null,
   money_at_risk: false,
-  detail: 'FundYourEdge trades on Rithmic, whose order API needs a licensed developer kit; CHE has no Rithmic connection. TradeSea inside CHE is a viewer only, and CHE never uses your Rithmic login as an API key.',
+  // Market data and orders are separate (owner recording, 2026-10-25: Rithmic status confusion). The iPhone reads
+  // Rithmic prices itself; orders through Rithmic stay unsupported.
+  detail: 'Orders: not supported. FundYourEdge trades on Rithmic, whose order API needs a licensed developer kit, so CHE places no orders there. Market data: your iPhone reads Rithmic prices itself (Market data feeds in the Trading Room); the login stays on the phone and never reaches CHE\'s server. TradeSea inside CHE is a viewer only.',
+};
+
+// Public BTC and ETH data never needs an exchange account (owner, 2026-10-25).
+const COINBASE = {
+  id: 'coinbase',
+  name: 'Coinbase (public market data)',
+  state: 'public',
+  mode: null,
+  money_at_risk: false,
+  detail: 'Public market data — no trading account. BTC and ETH prices and candles come from Coinbase\'s public feed; CHE has no Coinbase login, key or order path.',
 };
 
 /** The cards, the desk mode and what each permission currently allows. */
 export function tradingConnections({ paper = null, desk, tradovate = {}, alpaca = null }) {
-  const cards = [paperCard(paper), tradovateCard({ ...tradovate, desk }), alpacaCard(alpaca), FUNDYOUREDGE];
+  const cards = [paperCard(paper), tradovateCard({ ...tradovate, desk }), alpacaCard(alpaca), FUNDYOUREDGE, COINBASE];
   const signedIn = cards[1].state === 'signed_in';
   return {
     mode: MODE_LABEL[desk.mode] || 'PAPER',
@@ -129,7 +143,7 @@ export function tradingConnections({ paper = null, desk, tradovate = {}, alpaca 
   };
 }
 
-const SAY_STATE = { on: 'on', off: 'off', not_configured: 'not set up', configured: 'set up, not signed in', signed_in: 'signed in', expired: 'sign-in expired', verified: 'verified', rejected: 'key rejected', refused: 'live key refused', unavailable: 'could not be checked', unsupported: 'not supported' };
+const SAY_STATE = { on: 'on', off: 'off', not_configured: 'not set up', configured: 'set up, not signed in', signed_in: 'signed in', expired: 'sign-in expired', verified: 'verified', rejected: 'key rejected', refused: 'live key refused', unavailable: 'could not be checked', unsupported: 'orders not supported', public: 'public data, no account' };
 
 /** A numbered spoken list, one line per connection. */
 export function speakConnections(view) {
@@ -148,4 +162,59 @@ export function speakTradovateSteps({ configured = false, redirect = '' } = {}) 
   const steps = TRADOVATE_PREREQUISITES.map((step, i) => `${i + 1}, ${step}.`).join(' ');
   const where = redirect ? ` Tradovate registers the app with this redirect address: ${redirect}.` : '';
   return `Tradovate requires these steps before CHE can use its API, sir: ${steps}${where} ${TRADOVATE_BLOCKED_NOTE} To open an account: ${TRADOVATE_OPEN_ACCOUNT}`;
+}
+
+// ─── "Is the crypto feed live?" / "is the MNQ data live?" (Trading Room v3, owner 2026-10-25) ──────────────────
+// Answered only from the stored feed records, never by a model. LIVE is said only for data that is actually fresh:
+// a Rithmic minute the owner's iPhone recorded that closed within FRESH_MS. Signing in to Rithmic alone, or a delayed
+// Yahoo bar, is never called live. The crypto record on the Worker is Coinbase's public 5-minute candles (no account),
+// which are current or not, but are not a live trade stream; the phone's chart streams trades itself.
+const FRESH_MS = 3 * 60_000;
+const nyTime = (iso) => new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }).format(new Date(iso));
+const ago = (iso, now) => { const raw = (now - Date.parse(iso)) / 60_000; const m = Math.round(raw); return raw < 1 ? 'under a minute ago' : m < 120 ? `${m} minute${m === 1 ? '' : 's'} ago` : `${Math.round(m / 60)} hours ago`; };
+
+/** "Is the crypto feed live", "is the mnq data live", "is rithmic live": which feed, or null. */
+export function feedLiveIntent(message) {
+  const t = String(message || '').toLowerCase().replace(/[’']/g, "'");
+  if (!/\b(?:live|real[\s-]?time|fresh|current|delayed|streaming|working)\b/.test(t)) return null;
+  if (!/\b(?:is|are|isn't|whether)\b[\s\S]{0,40}\b(?:data|feed|prices?|quotes?|chart|stream|candles?)\b|\b(?:is|are)\s+(?:the\s+)?(?:rithmic|coinbase)\b/.test(t)) return null;
+  if (/\b(?:crypto|bitcoin|btc|eth|ethereum|coinbase)\b/.test(t)) return { kind: 'connections', feed: 'crypto' };
+  if (/\b(?:mnq|nq|mes|es|futures?|rithmic|micro)\b/.test(t)) return { kind: 'connections', feed: 'futures' };
+  return null;
+}
+
+async function newestRithmicMinute(storage) {
+  if (typeof storage.list !== 'function') return null;
+  const index = await storage.list({ prefix: 'rithmic_1m_index:' }).catch(() => new Map());
+  let best = null;
+  for (const [key, hours] of index) {
+    const symbol = key.slice('rithmic_1m_index:'.length);
+    const hour = Array.isArray(hours) ? [...hours].sort().at(-1) : null;
+    if (!hour || (best && hour < best.hour)) continue;
+    const rec = await storage.get(`rithmic_1m:${symbol}:${hour}`).catch(() => null);
+    const last = Object.values(rec?.candles || {}).sort((a, b) => String(a.t).localeCompare(String(b.t))).at(-1);
+    if (last && (!best || last.t > best.t)) best = { symbol, hour, t: last.t, close: last.c };
+  }
+  return best;
+}
+
+/** The spoken answer, from the feed records alone. [cryptoFeeds] is cryptoView().feeds; [futuresOpen] the CME clock. */
+export async function speakFeedLive(storage, feed, { now = Date.now(), cryptoFeeds = null, futuresOpen = tradingClock(now).futures.open } = {}) {
+  if (feed === 'crypto') {
+    const rows = (cryptoFeeds || (await cryptoView(storage, now).catch(() => ({ feeds: [] }))).feeds).filter((f) => f.tf === '5m');
+    if (!rows.some((f) => f.last_bar)) return 'No crypto market data has been read yet, sir: Orion\'s desk has not fetched a Coinbase candle. It uses Coinbase public market data, which needs no account.';
+    const lines = rows.map((f) => (f.last_bar
+      ? `${f.coin}: newest 5-minute candle ${f.status === 'LIVE' ? 'is current' : `is ${String(f.status).toLowerCase()}`}, closed ${nyTime(f.last_bar)} New York time (${ago(f.last_bar, now)}), last price ${f.last_close}`
+      : `${f.coin}: ${String(f.status || 'not read').toLowerCase()}${f.reason ? ` (${f.reason})` : ''}`));
+    return `Not a live stream on my side, sir. ${lines.join('. ')}. That is Coinbase public market data polled every 5 minutes, with no trading account. The Trading Room chart streams BTC and ETH trades on your phone and says LIVE only when a trade arrived in the last minute.`;
+  }
+  const minute = await newestRithmicMinute(storage);
+  const stored = (await storage.get('live_paper_feed').catch(() => null)) || {};
+  const closedAt = minute ? Date.parse(minute.t) + 60_000 : null;
+  const closedIso = closedAt == null ? '' : new Date(closedAt).toISOString();
+  const delayed = stored.last_bar_time ? ` My own MNQ record is ${stored.provider || 'a delayed source'}, ${String(stored.status || 'unknown').toLowerCase()}, last bar ${nyTime(stored.last_bar_time)} New York time; delayed data is never called live.` : '';
+  const hours = futuresOpen === false ? ' CME futures are closed right now (Sunday 6 PM to Friday 5 PM New York time, with a 5 to 6 PM break), so no trades are expected.' : '';
+  if (closedAt != null && now - closedAt <= FRESH_MS) return `Yes, sir: live Rithmic data. The newest ${minute.symbol} minute your iPhone recorded closed ${ago(closedIso, now)}, at ${minute.close}.${delayed}`;
+  if (minute) return `No, sir, the MNQ data is not live. The newest Rithmic minute your iPhone recorded, ${minute.symbol}, closed ${nyTime(closedIso)} New York time, ${ago(closedIso, now)}. Rithmic runs only while CHE is open on your phone.${hours}${delayed}`;
+  return `No, sir, there is no live MNQ data: no Rithmic minute has been recorded yet. Live futures data comes only from Rithmic on your iPhone, and being signed in is not the same as receiving trades.${hours}${delayed}`;
 }

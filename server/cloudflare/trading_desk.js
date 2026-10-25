@@ -10,6 +10,7 @@
 //          in trading_environments.js refuses the switch and every live order
 //          until the owner separately approves live trading and it is verified.
 
+import { feedLiveIntent } from './trading_connections.js';
 import { controlIntent } from './trading_controls.js';
 import { placeBracket, tick } from './broker_tradovate.js';
 import { withoutProhibitions } from './owner_action_gate.js';
@@ -157,6 +158,9 @@ export function deskIntent(message) {
   if (/\b(?:what|which|show|list|read|tell me|check|any)\b[\s\S]{0,30}\b(?:alpaca(?:\s+paper)?|paper)\s+orders?\b|^\s*(?:my\s+)?alpaca(?:\s+paper)?\s+orders\s*[?.!]*$|\b(?:did|has)\b[\s\S]{0,25}\b(?:alpaca(?:\s+paper)?|paper)\s+orders?\b[\s\S]{0,20}\bfill/.test(text)) return { kind: 'alpaca_orders' };
   // "What do I need for Tradovate?", "Tradovate steps": Tradovate's own requirements, read as a list.
   if (/\b(?:what|which)\b[\s\S]{0,30}\b(?:need|required|requirements?|steps?|prerequisites?|blocking|missing)\b[\s\S]{0,30}\b(?:tradovate|ninja\s?trader)\b|\b(?:tradovate|ninja\s?trader)(?:\s+api)?\s+(?:steps|requirements|prerequisites)\b|\bhow\s+(?:do|can)\s+i\s+get\b[\s\S]{0,20}\b(?:tradovate|ninja\s?trader)\b[\s\S]{0,15}\bapi\b/.test(text)) return { kind: 'tradovate_steps' };
+  // "Is the crypto feed live?", "is the mnq data live?": answered from the feed record (trading_connections.js).
+  const feed = feedLiveIntent(message);
+  if (feed) return feed;
   // A request to hear them, not a remark about a connection ("my trading connection keeps dropping").
   if (/\b(?:what|which|show|list|read|tell me|check)\b[\s\S]{0,25}\b(?:trading|broker(?:age)?)\s+(?:connections?|status)\b|^\s*(?:my\s+)?(?:trading|broker(?:age)?)\s+(?:connections|status)\s*[?.!]*$|\b(?:which|what)\s+brokers?\b[\s\S]{0,20}\bconnected\b/.test(text)) return { kind: 'connections' };
   // The whole sentence is the confirmation: "confirm live trading is still off?" is a question, not a yes.

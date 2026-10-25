@@ -86,13 +86,16 @@ test('ordinary conversation that mentions command words still goes to the model'
   }
 });
 
-// Known gap, owned by the trading lane (lane/rel-markets-studio): the owner's word order "is the MNQ data live" no
-// longer reaches the deployment check (fixed 2026-10-25), but it still goes to the model instead of a deterministic
-// feed-freshness answer. The truth guards keep the model's "live" claim out (e2e_owner_status_phrases.test.mjs).
-for (const phrase of ['is the mnq data live', 'is the crypto feed live']) {
-  test(`"${phrase}" is answered from the market feed record, not the model`, { todo: 'trading lane: deterministic feed-freshness route' }, async () => {
+// The owner's word order "is the MNQ data live" / "is the crypto feed live": a deterministic answer from the feed
+// records (trading_connections.speakFeedLive, Trading Room v3), never the model. With nothing recorded it says so;
+// it never calls signing in, or a delayed bar, live.
+for (const [phrase, words] of [['is the mnq data live', /no Rithmic minute has been recorded/], ['is the crypto feed live', /Coinbase/], ['chay is the btc chart real time', /Coinbase/], ['is the rithmic feed live', /Rithmic/]]) {
+  test(`"${phrase}" is answered from the market feed record, not the model`, async () => {
     const say = await owner();
     const out = await say(phrase);
     assert.equal(out.modelCalls, 0, `${out.route}: ${out.reply}`);
+    assert.equal(out.route, 'che_trading_desk', out.reply);
+    assert.match(out.reply, words);
+    assert.doesNotMatch(out.reply, /^Yes, sir: live/);
   });
 }

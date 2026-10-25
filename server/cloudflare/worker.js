@@ -115,7 +115,7 @@ import { governorAction, queueAllocationFollowUp, readDecisions, runGovernor, sp
 import { ICT_CONCEPTS, applyControlChange, controlsView, noteAuditEffect, readControls, strategyRegistry, resolveStep, speakControlResult, speakControlsView, speakSkipReasons, stockOrderProblem } from './trading_controls.js';
 import { cmeSession, frontMonth, loadIntraday, TradovateMarketStream, connectMarketSocket } from './market_feed.js';
 import { alpacaKeys, alpacaPaperDashboard, cancelAlpacaPaperOrder, haltAlpacaPaper, previewAlpacaPaperOrder, alpacaPaperOrders, alpacaPaperPositions, alpacaPaperEquity, alpacaStockBars, AlpacaStockStream, AlpacaOrderStream, alpacaStatus, speakAlpacaDashboard, liveKeyProblem, placeAlpacaPaperOrder, removeAlpacaPaperKeys, saveAlpacaPaperKeys } from './broker_alpaca.js';
-import { speakConnections, speakTradovateSteps, tradingConnections } from './trading_connections.js';
+import { speakConnections, speakTradovateSteps, tradingConnections, speakFeedLive } from './trading_connections.js';
 import { liveAnswer, liveIntent } from './trading_live_chat.js';
 import { ANALYSIS_SOURCE, LEDGER_SOURCE, analyzeStrategy, ledgerIntent, readLedgers, speakLedgers, strategyAnalysisIntent } from './trading_ledgers.js';
 import { TRADING_STATUS_SOURCE, newTradesIntent, tradingStatus } from './trading_status.js';
@@ -8581,8 +8581,7 @@ export class CheState extends DurableObject {
         const results = searchUniverse(universe, q.get('q') || '', { category: q.get('category') || '', limit: Math.min(100, Number(q.get('limit')) || 40) });
         return json({ ok: true, discovered_at: universe.discovered_at, problems: universe.problems, defaults: universe.defaults, intervals: universe.intervals, counts: { crypto: universe.crypto.length, futures: universe.futures.length }, results, last_ticker: (await this.ctx.storage.get('trading_market_last_ticker')) || null });
       }
-      // CHE's own forward-recorded Rithmic minutes (owner, 2026-10-23): closed 1-minute candles the owner's iPhone
-      // built from real Rithmic trades. Market data only; the Rithmic login never reaches the Worker.
+      // Rithmic 1-minute candles the owner's iPhone recorded (rithmic_dataset.js); the login stays on the phone.
       if (path === '/api/trading/rithmic/candles' && request.method === 'POST') {
         if (!ownerDevice) return tradingOwnerOnly();
         const saved = await storeRithmicCandles(this.ctx.storage, body.candles);
@@ -13230,6 +13229,7 @@ export class CheState extends DurableObject {
             return ndjsonReply(speakTradovateSteps({ configured: tradovateConfigured(this.keyEnv || this.env), redirect: `${new URL(request.url).origin}/broker/tradovate/callback` }), { source: 'che_trading_desk', ok: true, model_calls: 0 });
           }
           if (desk.kind === 'connections') {
+            if (desk.feed) return ndjsonReply(await speakFeedLive(this.ctx.storage, desk.feed), { source: 'che_trading_desk', ok: true });
             const view = await this.tradingConnectionsView();
             return ndjsonReply(speakConnections(view), { source: 'che_trading_desk', ok: true, trading_mode: view.mode });
           }

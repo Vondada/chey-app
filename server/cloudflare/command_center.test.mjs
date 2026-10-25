@@ -263,7 +263,7 @@ test('issue #350: /trade-connections and its plain question read the trading con
     const out = await che.say(said);
     assert.equal(out.route, 'che_trading_desk', said);
     assert.equal(out.modelCalls, 0, said);
-    assert.match(out.reply, /^Your trading connections, sir: 1, CHE Paper: off\. 2, Tradovate \(NinjaTrader\): not set up\. 3, Alpaca \(stock paper\): not set up\. 4, FundYourEdge \(Rithmic\): not supported\. Trading mode: PAPER\. Live orders are off\.$/, said);
+    assert.match(out.reply, /^Your trading connections, sir: 1, CHE Paper: off\. 2, Tradovate \(NinjaTrader\): not set up\. 3, Alpaca \(stock paper\): not set up\. 4, FundYourEdge \(Rithmic\): orders not supported\. 5, Coinbase \(public market data\): public data, no account\. Trading mode: PAPER\. Live orders are off\.$/, said);
   }
   assert.notEqual((await che.say('My trading connection keeps dropping.')).route, 'che_trading_desk', 'a remark is not a request to read them');
   assert.equal((che.saved.get('trading_desk') || { mode: 'paper' }).mode, 'paper', 'reading changed no mode');

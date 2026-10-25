@@ -3616,7 +3616,7 @@ test('trading connections: one view by voice and over HTTP, Alpaca paper keys ne
   const env = { CHE_PAIR_CODE: '123456', CHE_DISABLE_KEYLESS_AI: '1' };
   const { chat, api } = await pairedChat(env, saved);
   const say = async (m) => replyFromNdjson(await (await chat(m)).text());
-  assert.match(await say('what are my trading connections'), /^Your trading connections, sir: 1, CHE Paper: (?:on|off).* 2, Tradovate \(NinjaTrader\): not set up\. 3, Alpaca \(stock paper\): not set up\. 4, FundYourEdge \(Rithmic\): not supported\. Trading mode: PAPER\. Live orders are off\.$/);
+  assert.match(await say('what are my trading connections'), /^Your trading connections, sir: 1, CHE Paper: (?:on|off).* 2, Tradovate \(NinjaTrader\): not set up\. 3, Alpaca \(stock paper\): not set up\. 4, FundYourEdge \(Rithmic\): orders not supported\. 5, Coinbase \(public market data\): public data, no account\. Trading mode: PAPER\. Live orders are off\.$/);
   assert.match(await say('connect my Alpaca account'), /paper key; its ID starts with PK.*Never say or type them in chat.*refuses live keys/);
   const view = await (await worker.fetch(new Request('https://che.example/api/trading/connections'), env)).json();
   assert.equal(view.cards, undefined, 'no view without the paired owner');
