@@ -1,40 +1,146 @@
-# Character realism: persistent checklist (owner request 2026-10-25)
+# Character creation: requirements, progress and handoff (read this first after any restart)
 
-Owner ask: realistic, animated characters from the Create room, reference photos supported, free compute only (Blender,
-freely licensed models, CPU/GPU CHE already has), honest GPU detection with a CPU fallback, jobs that continue after the
-app closes, retries, finished files viewable in CHE, measured render times. No new keys, accounts or paid services.
+Branch: `claude/che-character-realism` (from main `afb8de1`). Lanes push to `lane/char-photo` (Python/Blender) and
+`lane/char-photo-app` (Worker + app). A box is ticked only with evidence: commit, test command + count, or run id.
 
-Branch: `claude/che-character-realism` (pushed after each milestone). Update this file at each step; a box is ticked
-only with evidence (commit, test command and count, or run id).
+## Owner requirements (recovered 2026-10-25 from this conversation, LIVE-HANDOFF and code; not invented)
+1. One Create button makes customizable characters in three styles: hyperrealistic, game-like, stylized.
+2. Inputs: text description, optional reference images, appearance, clothing, body, hair, style, voice (where supported).
+3. Real assets for CHE's animation workflow (rigged GLB with clips), preview, saved results, regeneration, reopen.
+4. Open-source tools and appropriately licensed models; available compute only. No new API keys, paid services,
+   accounts or ongoing manual setup. Preserve existing integrations and CHE's internal APIs.
+5. Detect whether a usable GPU exists; otherwise a working CPU fallback with its limits shown honestly.
+6. Jobs continue on the server when the app closes; progress saved; retries; finished files viewable in CHE.
+7. Measure render time; never promise minutes or photorealism without a produced, inspected sample.
+8. Voice-first owner (AGENTS.md): VoiceOver labels, voice/typed route for every action, passive screens silent.
+9. Reference photos only of the owner or fictional/generated images; never other real private people or minors
+   (owner's earlier photos of private people were declined on 2026-10-24 and are not stored).
+10. Flow to test end to end: Create → generate → customize → preview → animate → save → reopen. Real samples per style.
+11. Merge when required checks pass; report merge SHA, samples, deploy status, limits; iPhone kept separate.
 
-## Already true before this work (verified in code, 2026-10-25)
-- [x] Server-side queue keeps jobs after the app closes, with checkpoints and resume (`gpu_queue.js`, `che_creation_job.py` CHECKPOINT/RESUME).
-- [x] GPU detection: `nvidia-smi` + Cycles OptiX/CUDA probe; no silent CPU fallback on the GPU path (exit 3).
-- [x] Free CPU worker on GitHub Actions; live check `afb8de1` run 40153146586: full-body GLB in 1.4 min, 23,946 vertices, viewport played walk.
-- [x] Finished GLB viewable in CHE's Live Studio viewport (`assets/characters/app/studio.html`).
-- [x] `final` render profile: Cycles, adaptive sampling, OIDN, skin subsurface, procedural pores (`render_profiles.py`).
+12. Owner acceptance tests (2026-10-25), all through the real flow, never screenshots/placeholders/queued jobs:
+    A1 three distinct styles generated and shown; A2 a synthetic reference changes facial features beyond colours;
+    A3 hair, clothing, height, build each verified on the saved model (before/after); A4 play animation → save → close
+    viewer → reopen same character; A5 app closed mid-job, server finishes, result retrieved on reopen; A6 works without
+    this dev session, no new keys or notebook; A7 host, CPU/GPU, time, failures, files recorded; VoiceOver + spoken status.
+    Driver: `tools/creation_accept.mjs`, run by che-worker-deploy.yml input `character_accept`; samples pushed to the
+    `che-character-samples` branch (Actions artifacts are unreachable from this container).
+13. Quota-aware compute pool (2026-10-25): reuse only existing authorized connections and saved credentials; verify
+    Blender support per provider (film support is not proof); handoff, checkpoint recovery, quota cooldowns, bounded
+    retries, CPU fallback where compatible; preserve waiting jobs with a reason; $0. Prove handoff with real files.
+    Document providers that would need new keys/setup. Lane C `lane/char-pool`.
+14. CHE World population: reproducible seeded descriptions, shared rigs/assets, cached variations, detail on demand;
+    distinguish records vs generated models vs simultaneously active characters; benchmark generation, storage and
+    world performance; "millions per day" is an unverified target. Lane D `lane/char-world`.
 
-## Contract between the two workstreams
-- Job settings gain `REFERENCE` (JSON text): `{"url": "<Worker URL the worker fetches with its worker token>", "sha256": "<hex>", "bytes": n, "consent": "self"|"fictional"}`.
-- The person job's receipt gains `reference_fit`: `{sha256, method, landmarks, sliders:{...}, colors:{skin, hair, eyes}, fit_error, limits}`
-  and `device_summary`: `{kind: "GPU"|"CPU", name, threads, limits}`; stage seconds are measured, never estimated.
+15. Create Room demonstration (2026-10-25): playable video (not a still) + walkthrough of the finished experience:
+    describe/reference → Create → three styles → rig, expressions, lip-sync → walk, turn, sit, gesture, speak → change
+    hair/clothing/body/voice (say what preserves rig) → in CHE's Office → save, reopen, use. Every segment labelled
+    REAL / PROTOTYPE / NOT AT $0. Lane E `lane/char-demo`; doc `docs/CHE_CREATE_ROOM_DEMO.md`.
 
-## Workstream A: photo → character (Python/Blender), lane `lane/char-photo`
-- [ ] Reference photo → face landmarks with a freely licensed CPU model; refuse no-face / multi-face photos with the reason.
-- [ ] Landmarks → MPFB face sliders (reusing `face_fit.py`/`landmarks.py` ideas) + skin, hair and eye colours.
-- [ ] Wired into the person_model job; receipt `reference_fit`; resumable.
-- [ ] Synthetic fixtures with known sliders (no real people); recovery error measured.
-- [ ] Measured CPU timing for a full person job with the final profile; sample GLB + renders inspected.
+16. GPU Connect (2026-10-25): "Connect GPU" → CHE operates Colab Connect in its existing browser with the CHE Office
+    Google account preferred, session kept across screens; sign-in/confirmation steps handed to the owner then resumed.
+    Verify separately: right account, Colab GPU runtime, fresh worker heartbeat, a real test job completes and opens.
+    "GPU connected" only after the heartbeat. No promise of permanent Colab; jobs/checkpoints survive disconnects.
+    Lane F `lane/gpu-connect`; doc `docs/CHE_GPU_CONNECT.md`.
+17. Realism + cinematic (2026-10-25): one Create workflow → optimized interactive rigged model AND cinematic videos of the
+    same character. Blender/Cycles, MPFB2, existing skeleton (+Rigify/retarget only if needed), licensed mocap clips,
+    blending, foot contact, natural transitions; facial shape keys, blink, eyes, expressions, speech-driven mouth
+    (evaluate Rhubarb, MediaPipe); licensed skin/eye/hair/cloth/lighting assets (Poly Haven etc.); local ComfyUI/Wan2.2
+    only with a GPU, paid nodes disabled. First a real 15–20 s sample (walk in, turn, sit, gesture, speak, close-up,
+    skeleton overlay) + rigged model; honest comparison with the owner's two reference videos. AI video is never proof
+    of rig motion. Lane G `lane/char-realism`; doc `docs/CHE_REALISM_STACK.md`.
+    References received and inspected 2026-10-25: notes in `docs/CHE_REALISM_REFERENCES.md` (AI-generated drama
+    footage; the target for the cinematic path).
 
-## Workstream B: Worker + app plumbing, lane `lane/char-photo-app`
-- [ ] Upload a reference photo to a creation project (consent: me or fictional; size/type limits; stored by SHA-256).
-- [ ] Worker passes `REFERENCE` to the person job; worker fetch route authorised by the worker token only.
-- [ ] Create room shows the device (GPU or CPU), its limits and measured times; voice + VoiceOver routes.
-- [ ] Tests (Worker + Flutter).
+18. Master profile form filling (2026-10-25): "CHE, use my master profile" fills whole forms from approved Personal and
+    CHE Office profiles plus the on-device vault; passwords never leave the device; multi-page, dropdowns, dates,
+    remembered answers; never invent; CAPTCHA/verification handed to the owner with the form preserved; fill and submit
+    are separate; verify DOM values and report what is unfinished. Lane H `lane/master-profile`; doc
+    `docs/CHE_MASTER_PROFILE.md`.
+
+19. Service/AI-provider connect (2026-10-25): "connect <service>" → generated strong password into the on-device vault,
+    provider API key created where automation is supported, moved straight into its execution store (Worker key store
+    for AI providers) without entering model context/chat/logs/screenshots, validated with a free minimal test,
+    redacted status only; minimum scopes; reuse existing; keep the old key until the new one verifies; CAPTCHA/owner
+    auth handed over and resumed; $0. Lane H (extended).
+
+20. Automatic service onboarding (2026-10-25), "CHE, connect Hugging Face" first: check existing → owner session
+    (account creation owner-only where ToS require) → minimum-permission provider token → the store the consumer
+    actually reads (Worker runtime for the Worker; GitHub secret + workflow only when Actions need it) → auth +
+    capability test → "Connected" with what works. Separate outcomes: token created / secret configured / connection
+    verified. Idempotent retries (no duplicate tokens); preserve working connections; $0. Lane I
+    `lane/service-onboarding`; doc `docs/CHE_SERVICE_ONBOARDING.md`. Live run with the owner's account: iPhone only.
+
+21. GPU budget (2026-10-25): "I may put $20 toward GPUs; split it across GPUs, free ones first; I tell CHE to connect
+    and she's connected." CHE never pays or adds payment methods; the owner loads prepaid credit; paid GPUs only after
+    an explicit cap ("allow up to $20 for GPUs") recorded with time; never past the cap (margin, deadline); paid
+    machine deleted after its job; real runway, never "forever". Guided connect for Kaggle, RunPod, Vast.ai and Modal
+    with a free verification read. Lane J `lane/gpu-budget`; doc `docs/CHE_GPU_BUDGET.md`. Live accounts: not used.
+
+## Infrastructure facts (inspected, not assumed)
+- Cloudflare Worker: queue, storage, routing only. No GPU, no Blender.
+- Free GitHub Actions CPU worker (ubuntu, 4 cores, Blender 5.0.1, MPFB2): verified live. Run 40153146586 built a
+  full-body rigged GLB in 1.4 min (23,946 vertices, 5 clips).
+- GPU: none on the Worker, none on GitHub-hosted runners, none in this dev container (`nvidia-smi` absent). The owner's
+  Colab T4 joins only while its notebook is open. Free Colab cannot be started unattended (`docs/CHE_CLOUD_COMPUTER.md`).
+  Kaggle and Hugging Face need accounts and tokens, which the owner ruled out. So the CPU worker is the default.
+- Deploy run 40152765240 env: HF_TOKEN, CHE_COMPUTER_URL/TOKEN, CHE_VMWARE_TRAINING_*, CHE_HF_TRAINING_* are empty
+  repository secrets. A Kaggle token could only exist in the owner's in-app Keys; checked live by the pool probe.
+- The browser and WebView do no generation; the phone only views GLBs (three.js `studio.html`).
+
+## Already working before this branch (code verified)
+- [x] Server queue survives app close; checkpoints, resume and retries (`gpu_queue.js`, `che_creation_job.py`).
+- [x] Honest GPU detection, no silent CPU fallback on the GPU path (exit 3).
+- [x] Three styles in the identity (`avatar_identity.js` STYLES photoreal | hybrid | stylized; `identity.py`).
+- [x] Versions with undo/redo/save; Generate queues `person_model`; the Live Studio viewport plays clips.
+- [x] Rigged full body: 53 bones, idle/walk/run/wave/talk, verified on re-import.
+- [x] `final` render profile: subsurface skin, procedural pores, OIDN.
+
+## Gaps and status
+| # | Gap | Lane | Status |
+|---|---|---|---|
+| G1 | Reference photo → face shape + skin/hair/eye colours | A + B | B done `e6d71b4`/`ede954f` (upload, consent, REFERENCE, worker-only fetch, receipt surfaced, app UI); A pending |
+| G2 | Device + CPU-limits + measured time shown to the owner | A + B | B done `e6d71b4` (device_line from receipt.device_summary, CPU never GPU); needs A to send device_summary |
+| G3 | Only long_wavy hair has geometry (other 7 styles render bald) | A | in progress |
+| G4 | Body: only age (no gender, height, weight, muscle, proportions) | A + B | B done `789e155` (BODY_* settings, omitted at default); A must read them |
+| G5 | Free-text "describe a person" → one Create | B | done `789e155`, `ede954f` |
+| G6 | Voice per character from the existing voice catalog | B | done (on-device Kokoro list) `789e155`, `ede954f`; iPhone playback unverified |
+| G7 | Regenerate/variation; reopen from My Creations | B | done `789e155` (VARIATION seed + face variant, last_model), Flutter reopen test `6712d12` |
+| G8 | Real samples per style, inspected; measured CPU times | A | in progress |
+| G10 | Acceptance driver + publish job | me | pushed `6651850`; lane B accept routes merged |
+| G11 | Compute pool (providers, cooldowns, handoff) | C | merged (lane C `5de754f`); compute_pool 10/10, Worker 4001/0; live handoff with real files NOT yet proven; Kaggle token presence unknown |
+| G12 | World population + benchmarks | D | merged (lane D `8211d73`): records, 288 buckets, routes, /world-population, panel, crowd viewer; measured in docs/CHE_WORLD_POPULATION.md; iPhone not verified |
+| G13 | Create Room demo video + walkthrough | E | merged (tools/demo, docs/CHE_CREATE_ROOM_DEMO.md); 122.6 s labelled prototype sent to owner; close-ups show described skin tone/gender/hair not honoured (sent to lane A) |
+| G14 | "Open and display saved image <id>" listed all 26 media items | me | fixed `dfd3f48`: Worker 19/19 media tests, full Worker 3990/0; Flutter che_chat_image 2/2; iPhone display unverified |
+| G15 | GPU Connect flow with 4 separate verifications | F | merged `5d47937`: Flutter gpu_connect 12/12, Worker 4016/0; all live Google/Colab steps iPhone-only; Google likely refuses WebView sign-in → Safari fallback (account check then 'not verified') |
+| G16 | Realism stack + 15–20 s CHE sample | G | in progress |
+| G17 | Master profile form filling | H | merged `c851dc6`: Playwright fixtures 7/7, Flutter 15/15 + 16/16; no real site reachable from container; iPhone unverified; live voice sends spoken profile values to the realtime speech service (typing avoids it) |
+| G18 | Service/AI-provider connect adapters | I (moved from H) | in progress |
+| G19 | Hugging Face onboarding end to end + demo | I | in progress |
+| G9 | e2e server "k.startsWith" (research queue never ran in e2e) | me | done `4ad45c9`; e2e 2/2 |
+
+## Workstream A: photo → character (Python/Blender), lane `lane/char-photo` (kept from the lane's checklist)
+Contract: job settings `REFERENCE` = `{"url","sha256","bytes","consent":"self"|"fictional"}`; receipt `reference_fit`
+`{sha256, method, landmarks, sliders, colors:{skin,hair,eyes}, fit_error, limits}` and `device_summary`
+`{kind:"GPU"|"CPU", name, threads, limits}`; stage seconds measured, never estimated.
+- [x] Reference photo → face landmarks with a freely licensed CPU model (MediaPipe Face Landmarker, Apache-2.0); no-face / multi-face refused with the reason (`f3c8f6d`, `tools/test_photo_fit.py`).
+- [x] Landmarks → MPFB face sliders + skin, hair and eye colours (`photo_fit.py`, detector-response calibration).
+- [x] Wired into the person_model job; receipt `reference_fit`; cached fit (`983f348`, `tools/test_photo_reference_job.py`).
+- [x] Synthetic fixtures with known sliders (no real people); recovery error measured (`7b8aa5b`, `211d4d2`).
+- [x] Hair styles as meshes (8 styles) in the full-body GLB; HAIR_BUILT synced JS ↔ Python with HAIR_BUST_BUILT for the bust (`e34d634`, parity test).
+- [ ] Description → skin tone / age / gender / hair honoured; brows + lashes; three styles visibly distinct (Create Room demo defects, G13).
+- [ ] Measured CPU timing for a full person job with the final profile; sample GLB + renders inspected (needs the CI character_accept run).
 
 ## Integration and release
-- [ ] Both lanes merged into this branch; full Worker + Flutter suites green.
-- [ ] PR, required checks green on the exact head, merge, deploy verified live.
-- [ ] Live creation_check with a reference fixture: measured time, GLB + renders.
+- [ ] Merge lanes in dependency order (A then B); sync HAIR_BUILT in JS and Python (parity test).
+- [ ] Full Worker suite, full Flutter suite, Python suites, analyze: all green locally.
+- [ ] PR; required checks green on the exact head; review threads answered; merge.
+- [ ] Deploy verified live; creation_check run with this code; sample receipts.
 - [ ] Full IPA if native code changed (not expected).
 - [ ] iPhone: NOT VERIFIED until the owner tries it.
+
+## Log
+- 2026-10-25 lane B: Worker suite 3985 pass / 0 fail / 7 skipped; Flutter character + studio tests 62 pass; acceptance probe routes `7dfc2d0`.
+- 2026-10-25: acceptance tests + compute pool + world population added (req 12–14); lanes C and D started.
+- 2026-10-25: checklist + contract `b3b664b`; e2e storage fix `4ad45c9`; lanes A and B started and later extended to G3–G8.

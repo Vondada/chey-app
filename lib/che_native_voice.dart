@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'che_kokoro_voice.dart';
+import 'che_private_voice.dart';
 import 'che_speech_style.dart';
 import 'che_ui/che_ui_preferences.dart';
 
@@ -150,9 +151,32 @@ class CheNativeVoice {
   }
 
   static Future<bool> start() async {
+    if (!await _privateRecognitionAllowed()) return false;
     await _applyStoredSettings();
     _prepareInBackground();
     return (await _invoke<bool>('start')) ?? false;
+  }
+
+  /// Why the last [start] or [wake] did not open the microphone under Private
+  /// voice, or empty. Shown and spoken by the caller.
+  static String lastPrivateRefusal = '';
+
+  /// Private voice: the native recognizer may run only when Apple reports
+  /// on-device recognition for this iPhone and language. The Swift side sets
+  /// requiresOnDeviceRecognition whenever it is supported; when it is not, the
+  /// microphone stays closed instead of falling back to Apple's servers.
+  static Future<bool> _privateRecognitionAllowed() async {
+    lastPrivateRefusal = '';
+    if (!ChePrivateVoice.isOn) return true;
+    Map<String, dynamic> report = const {};
+    try {
+      final raw = await _methods.invokeMethod<dynamic>('status');
+      if (raw is Map) report = Map<String, dynamic>.from(raw);
+    } catch (_) {}
+    final refusal = ChePrivateVoice.recognitionRefusal(report);
+    if (refusal == null) return true;
+    lastPrivateRefusal = refusal;
+    return false;
   }
 
   static Future<bool> stop() async => (await _invoke<bool>('stop')) ?? false;
@@ -160,6 +184,7 @@ class CheNativeVoice {
   static Future<bool> sleep() async => (await _invoke<bool>('sleep')) ?? false;
 
   static Future<bool> wake() async {
+    if (!await _privateRecognitionAllowed()) return false;
     await _applyStoredSettings();
     _prepareInBackground();
     return (await _invoke<bool>('wake')) ?? false;
@@ -207,6 +232,19 @@ class CheNativeVoice {
       return false;
     }
   }
+
+  /// Loads the on-device Kokoro voice, waiting at most [timeout]. Private
+  /// voice speaks only with it, so a reply waits briefly for it to load.
+  static Future<bool> prepareNeural({Duration timeout = const Duration(seconds: 20)}) async {
+    if (_kokoro.isReady) return true;
+    try {
+      return await _kokoro.prepare().timeout(timeout, onTimeout: () => false);
+    } catch (_) {
+      return false;
+    }
+  }
+
+  static bool get neuralReady => _kokoro.isReady;
 
   static Future<Uint8List?> synthesizeNeural(String text) async {
     final clean = stripButler(text);

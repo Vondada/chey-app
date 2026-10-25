@@ -60,6 +60,7 @@ import 'che_speech_pipeline.dart';
 import 'che_notifications.dart';
 import 'platform/che_platform_client.dart';
 import 'platform/che_platform_screens.dart';
+import 'widgets/che_chat_image.dart';
 import 'widgets/che_render_bench.dart';
 import 'che_stream_batcher.dart';
 import 'che_spoken_text.dart';
@@ -76,6 +77,7 @@ import 'che_wake_match.dart';
 import 'che_voice_health.dart';
 import 'che_voice_state.dart';
 import 'che_local_voice_loop.dart';
+import 'che_private_voice.dart';
 import 'che_cloud_voice_picker.dart';
 import 'che_voice_studio.dart';
 import 'che_voice_ui.dart';
@@ -83,6 +85,7 @@ import 'che_app_portal.dart';
 import 'che_video.dart';
 import 'che_creations.dart';
 import 'avatar/che_character_generator.dart';
+import 'world/che_world_population_panel.dart';
 import 'rooms/che_invention_studio.dart';
 import 'rooms/che_invention_viewer.dart';
 import 'che_ui/che_showroom.dart';
@@ -101,6 +104,7 @@ import 'create/che_creative_studio.dart';
 import 'create/che_project_manager.dart';
 import 'create/che_creation_engine_page.dart';
 import 'create/che_gpu_browser.dart';
+import 'create/che_gpu_connect.dart';
 import 'create/che_live_studio.dart';
 import 'agents/che_agent_runtime.dart';
 import 'agents/che_office_floor_screen.dart';
@@ -170,9 +174,13 @@ import 'rooms/che_art_studio.dart';
 import 'rooms/che_theater_room.dart';
 import 'rooms/che_workshop_room.dart';
 import 'security/che_app_permissions.dart';
+import 'connect/che_service_onboarding.dart';
 import 'security/che_password_vault.dart';
 import 'security/che_vault_auth.dart';
 import 'browser/che_browser.dart' show CheBrowserActions, CheBrowserScreen;
+import 'browser/che_form_filler.dart' show CheFormFillVoice;
+import 'browser/che_master_profile.dart';
+import 'browser/che_master_profile_screen.dart';
 import 'browser/che_video_voice.dart';
 import 'browser/che_embedded_app_shell.dart' show CheEmbeddedAppAnnouncer;
 import 'brain/che_brain_space.dart' show CheBrainSpaceController;
@@ -1440,6 +1448,7 @@ OWNER AGENCY
     _screenToken = CheScreenAwareness.register(context, _shellScreenReport);
     unawaited(CheNotifications.requestPermission());
     unawaited(_syncUiVoicePrefs());
+    unawaited(ChePrivateVoice.load());
     CheUiPreferences.instance.addListener(_onUiPrefsChanged);
     WidgetsBinding.instance.addObserver(this);
     // No wake listening at launch: the mic opens only from the mic button,
@@ -1703,6 +1712,11 @@ OWNER AGENCY
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
+        // Private voice: one quiet line while it is on (never spoken by itself).
+        ChePrivateVoiceBanner(onTurnOff: () {
+          controller.text = 'turn off private voice';
+          unawaited(sendMessage());
+        }),
         ChePatchBanner(onSpeak: (text) => speakText(text, record: false, readOnDemand: true)),
         CheJobActivityBanner(
           fetch: (path, body) => _postAgentJson(path, body),
@@ -2266,6 +2280,11 @@ OWNER AGENCY
                 _isSpeaking = false;
               }());
             }
+          },
+          onPrivateVoiceChanged: (on) {
+            if (!mounted) return;
+            controller.text = on ? 'turn on private voice' : 'turn off private voice';
+            unawaited(sendMessage());
           },
           onVoiceVolumeChanged: (_) {
             unawaited(flutterTts.setVolume(CheUiPreferences.instance.voiceVolume));

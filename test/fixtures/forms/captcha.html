@@ -1,0 +1,15 @@
+<!doctype html>
+<html lang="en-US"><head><meta charset="utf-8"><title>Contact us</title></head>
+<body>
+<h1>Contact us</h1>
+<form id="f" onsubmit="event.preventDefault(); window.__submitted = (window.__submitted || 0) + 1;">
+  <label>Name <input name="name"></label>
+  <label>Email <input type="email" name="email"></label>
+  <label>Phone <input type="tel" name="phone"></label>
+  <!-- A stand-in for a reCAPTCHA widget: the same class and response field
+       names. Only the test harness (playing the owner) fills the response. -->
+  <div class="g-recaptcha" data-sitekey="test-key" style="width:300px;height:74px;border:1px solid #ccc">I'm not a robot</div>
+  <textarea name="g-recaptcha-response" id="g-recaptcha-response" style="display:none"></textarea>
+  <button type="submit">Send message</button>
+</form>
+</body></html>

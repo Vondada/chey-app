@@ -36,13 +36,13 @@ test('CHE photoreal settings are exactly what identity.py gives', () => {
   assert.deepEqual(Object.keys(toSettings(che())), Object.keys(toSettings(che())).sort(), 'keys sorted');
 });
 
-test('every built-in preset is valid in every look; unbuilt hair renders without strands; numbers print like Python', () => {
+test('every built-in preset is valid in every look; every hair style is built; numbers print like Python', () => {
   for (const p of BUILT_IN) {
     assert.deepEqual(validate(p), [], p.id);
     for (const s of STYLES) {
       const st = toSettings(p, s);
       assert.equal(st.STYLE, s);
-      assert.equal(st.NOHAIR === '1', p.hair.style !== 'long_wavy', `${p.id} NOHAIR`);
+      assert.equal('NOHAIR' in st, false, `${p.id}: every hair style is built in the full-body model, so no NOHAIR`);
       assert.equal('FIT_W' in st, Boolean(p.body.fit), `${p.id} FIT_W only with body.fit`);
     }
   }
@@ -82,7 +82,8 @@ test('GET lists built-in presets, the active preset per agent, sliders, hair sty
   assert.equal(data.active.che, 'che');
   assert.deepEqual(data.styles, STYLES);
   assert.equal(data.face_sliders.find((s) => s.id === 'face_round').min, 0);
-  assert.deepEqual(data.hair_built, ['long_wavy']);
+  assert.deepEqual(data.hair_built, ['long_wavy', 'wavy_medium', 'bun_high', 'bun_low', 'curly_short', 'afro', 'beanie', 'close_crop']);
+  assert.deepEqual(data.hair_bust_built, ['long_wavy']);
   assert.match(data.spoken, /10 built-in character presets and 0 saved presets/);
 });
 

@@ -135,6 +135,8 @@ import { jsRegexFlagProblems } from './flagstaff_code_check.js';
 import { ownToolPermissionProblems } from './flagstaff_reply_check.js';
 import { cachedCodeIndex } from './code_index.js';
 import { CHE_SELF_BRIEF, starredFocus, studyLesson } from './che_self_knowledge.js';
+import { connectServiceIntent, onboardingChatReply, onboardingIntent, onboardingRoute } from './service_onboarding.js';
+import { privateChatGate, privateTurn } from './private_voice.js';
 import { KEY_PROVIDERS, MEMORY_DB, hasStoredMemoryDatabase, memorySetupIntent, memorySetupSteps, removeMemoryDatabase, saveMemoryDatabase, removeKey, storedKeys, withStoredKeys, cachedAnswer, checkAllKeys, fileLetter, fileTech, forgetAnswer, isLockedDown, listLetters, looksLikeAttack, markLetter, nextLetter, rememberAnswer, resilienceIntent, runScout, saveKey, setLockdown, setupSteps, speakKeyHealth, speakMailboxSummary, speakTech, techItems } from './resilience.js';
 import { applyCorrections, correctedPrevious, correctionsContext, detectCorrection, learnCorrection, loadCorrections } from './speech_learning.js';
 import { applyModelReading, asksAboutScreen, clipKeepingLimits, interpretOwnerTurn, interpretWithModel } from './speech_intent.js';
@@ -261,9 +263,11 @@ import { EGRESS_KEY, SNAPSHOT_KEY, holdEgress, installEgressGuard, setEgressOwne
 import { loadRegistry as loadCapabilityRegistry } from './capability_registry.js';
 import { BrainLedger, answerLedger, decidePending as decideBrainPending, installBrainLedger, ledgerApi, recordGraphConnections, ledgerIntent as brainLedgerIntent, DEFAULT_ZONE as LEDGER_DEFAULT_ZONE } from './brain_ledger.js';
 import { FilmStore, filmIntent, filmProgress, farmProviders, loadRates, loadUsage, speakFarm, speakPlan, speakStatus as speakFilmStatus } from './film_studio.js';
-import { GpuQueue, gpuWorkerRoute, speakGpuSummary } from './gpu_queue.js';
+import { GpuQueue, gpuWorkerRoute, speakGpuConnect, speakGpuSummary } from './gpu_queue.js';
 import { CreationStudio, studioOwnerRoute } from './creation_studio.js';
+import { populationAnswer, worldPopulationIntent, worldRoute } from './world_population.js';
 import { creationProbeRoute } from './creation_probe.js';
+import { paidWakes, poolRoute, poolSay, reapPaid } from './compute_pool.js';
 import { projectAudit, projectLibraryRoute } from './project_library.js';
 import { FILM_ACTIVE_STATES, filmPlan, filmTick, filmTokenRoute, refreshValidation as refreshFilmValidation, remakeShot, setFilmState, startFilm } from './film_pipeline.js';
 import { performanceBanner, performanceIntent, performanceReport, recordTiming, routeKey as perfRouteKey, speakPerformance } from './perf_watch.js';
@@ -4343,6 +4347,7 @@ export class CheState extends DurableObject {
     // Film Studio: an active film asks for its next pass.
     const filmWake = Number(await this.ctx.storage.get('film:wake')) || 0;
     if (filmWake) times.push(Math.max(Date.now() + 250, filmWake));
+    times.push(...await paidWakes(this.ctx.storage));
     // While Flagstaff is open, do one cheap GitHub-head check every 30 seconds.
     // The AI only runs when a genuinely new message addressed to CHE appears.
     const flagstaffInitialized = Boolean(await this.ctx.storage.get('web_mailbox_code'));
@@ -4959,6 +4964,18 @@ export class CheState extends DurableObject {
     try { socket.close(code, 'closed'); } catch (_) { /* already closed */ }
   }
 
+  // The spoken/typed connect words and /connect-service (service_onboarding.js).
+  async onboardingChat(onboard, ownerDevice, extra = {}) {
+    await this.refreshKeyEnv();
+    const out = await onboardingChatReply(this.onboardingCtx(), onboard, { owner: ownerDevice });
+    return ndjsonReply(out.text, { ...out.meta, ...extra });
+  }
+
+  // Service onboarding's view: storage, Worker secrets (read only), the merged env consumers read.
+  onboardingCtx() {
+    return { storage: this.ctx.storage, env: this.env, keyEnv: () => this.keyEnv || this.env, refresh: () => this.refreshKeyEnv(), fetcher: (...args) => fetch(...args) };
+  }
+
   // Keys the owner saved in CHE's Keys tab count everywhere a Worker secret
   // would, so a pasted key "just works" for the Office crew too.
   async refreshKeyEnv() {
@@ -5548,8 +5565,9 @@ export class CheState extends DurableObject {
       }
     } catch (_) { projectHold = false; }
     if (projectHold) holdEgress(1);
+    const priv = await privateTurn(request, this);
     try {
-      return await this.fetchInner(request);
+      return await (priv || this).fetchInner(request);
     } finally {
       if (projectHold) holdEgress(-1);
     }
@@ -5914,6 +5932,12 @@ export class CheState extends DurableObject {
       if (!ask) return ndjsonReply('Say the length and the subject, for example "/film-make 10-minute movie about a lighthouse keeper".', { source: 'che_film_studio', ok: false, command: command.id, model_calls: 0 });
       return withDoneFields(await this.filmChat(request, ask), { command: command.id });
     }
+    // Master profile: form filling runs only on the owner's iPhone, in CHE's browser. The Worker never
+    // receives profile values or passwords, so it only says where to do it. Nothing is filled from here.
+    if (command.local === 'master_profile') {
+      return ndjsonReply('Form filling runs only on your iPhone, sir: open the form in CHE\'s browser there and say "use my master profile". Your profile and passwords never come to this server, so nothing was filled from here.',
+        { source: 'che_master_profile', ok: false, on_device_only: true, command: command.id, model_calls: 0 });
+    }
     // Recording Studio: an app screen; the Worker only says so and asks the app to open it.
     if (command.local === 'recording_studio') return ndjsonReply('Opening the Recording Studio, sir.', { source: 'che_recording_studio', ok: true, command: command.id, model_calls: 0, open_screen: 'recording_studio' });
     // Owner Improvements: the command's words go through the same intent the owner's chat uses.
@@ -5922,6 +5946,13 @@ export class CheState extends DurableObject {
       const ask = improvementIntent(String(input || '')) || startTaskIntent(String(input || '')) || (String(input || '').trim() ? null : { kind: 'list' });
       if (!ask) return ndjsonReply('Tell me what feels wrong, for example "/che-improve the chart is too big". Nothing was changed.', { source: 'che_owner_improvement', ok: false, command: command.id, model_calls: 0 });
       return withDoneFields(await this.improvementChat(body || {}, ask), { command: command.id });
+    }
+    // CHE World population: records, generated base models and (only the viewer knows) active characters, kept apart.
+    if (command.local === 'connect_service') return this.onboardingChat(connectServiceIntent(input), OWNER_CHAT_REQUESTS.has(request), { command: command.id, model_calls: 0 });
+    if (command.local === 'world_population') {
+      if (!OWNER_CHAT_REQUESTS.has(request)) return ndjsonReply('Only the CHE owner can read CHE World.', { source: 'che_world_population', ok: false, command: command.id, model_calls: 0 });
+      const out = await populationAnswer(this.ctx.storage, new GpuQueue(this.ctx.storage));
+      return ndjsonReply(out.spoken, { source: 'che_world_population', ok: out.ok, command: command.id, model_calls: 0, counts: out.counts || null, open_screen: 'world_population' });
     }
     if (String(command.local).startsWith('cloud_')) {
       if (!OWNER_CHAT_REQUESTS.has(request)) return ndjsonReply('Only the CHE owner can use the cloud computer. Nothing was started.', { source: CLOUD_SOURCE, ok: false, command: command.id, model_calls: 0 });
@@ -6047,6 +6078,12 @@ export class CheState extends DurableObject {
     if (command.local === 'cloud_open') {
       const view = await cloudView(this.ctx.storage, env);
       return reply(`Opening my cloud computer, sir. ${speakCloudSummary(view)}`, { open_screen: 'cloud_computer' });
+    }
+    if (command.local === 'cloud_gpu' && /^(?:pool|budget)\b/.test(String(input || ''))) return reply(...await poolSay(env, { storage: this.ctx.storage }, input));
+    // "Connect GPU": the app's Connect GPU flow opens the notebook and verifies the heartbeat; the Worker states the truth now.
+    if (command.local === 'cloud_gpu' && /^connect\b/.test(String(input || ''))) {
+      const view = await new GpuQueue(this.ctx.storage).view();
+      return reply(speakGpuConnect(view), { open_screen: 'gpu_connect' });
     }
     if (command.local === 'cloud_gpu') return reply(speakGpuSummary(await new GpuQueue(this.ctx.storage).view()));
     if (command.local === 'cloud_blender') {
@@ -6972,6 +7009,7 @@ export class CheState extends DurableObject {
       // The deploy's Creation Engine end-to-end check: only this deploy's probe token opens it (creation_probe.js).
       if (path.startsWith('/api/creations/probe/')) {
         if (!isMemoryProbeRequest(request, this.env)) return json({ detail: 'Not found.' }, 404);
+        if (path === '/api/creations/probe/pool') return poolRoute({ storage: this.ctx.storage, env: this.keyEnv || this.env }, path, request);
         return creationProbeRoute({ storage: this.ctx.storage, env: this.keyEnv || this.env }, path, request);
       }
       if (path === '/api/projects/probe/audit') return isMemoryProbeRequest(request, this.env) ? json(projectAudit(await this.loadData())) : json({ detail: 'Not found.' }, 404);
@@ -7693,7 +7731,14 @@ export class CheState extends DurableObject {
       }
       if (/^\/api\/(gpu|creations)(\/|$)/.test(path)) {
         if (!ownerDevice) return json({ detail: 'Only the CHE owner can use the GPU queue.' }, 403);
+        if (path.startsWith('/api/creations/pool')) return (await poolRoute({ storage: this.ctx.storage, env: this.keyEnv || this.env }, path, request, body)) || json({ detail: 'Not found.' }, 404);
         return (await studioOwnerRoute({ storage: this.ctx.storage, env: this.keyEnv || this.env }, path, request, body)) || json({ detail: 'Not found.' }, 404);
+      }
+      // CHE World population (world_population.js): seeded character records, shared base-model buckets. /api/world/scene stays below.
+      if (path !== '/api/world/scene' && path.startsWith('/api/world/')) {
+        if (!ownerDevice) return json({ detail: 'Only the CHE owner can read CHE World.' }, 403);
+        const studioEnv = this.keyEnv || this.env;
+        return (await worldRoute({ storage: this.ctx.storage, makeStudio: () => new CreationStudio(this.ctx.storage, () => Date.now(), { env: studioEnv }) }, path, request, body)) || json({ detail: 'Not found.' }, 404);
       }
       // Project manager (project_library.js): cards over data.projects, the crew's tasks and 3D creations; Roblox recovery.
       if (path.startsWith('/api/projects/')) {
@@ -8704,6 +8749,12 @@ export class CheState extends DurableObject {
         }
         const saved = await saveKey(this.ctx.storage, String(body.provider || ''), String(body.key || ''));
         return json(saved.ok ? { ok: true, provider: saved.provider, last4: saved.last4, status: saved.test.status } : { detail: saved.detail }, saved.ok ? 200 : 422);
+      }
+      // Service onboarding: owner-only; the token arrives once on /secret; only fingerprints come back.
+      if (path.startsWith('/api/onboarding/')) {
+        await this.refreshKeyEnv();
+        const routed = await onboardingRoute(this.onboardingCtx(), path, request.method, body, { owner: ownerDevice, lockedDown: await isLockedDown(this.ctx.storage), query: new URL(request.url).search });
+        if (routed) return json(routed.body, routed.status);
       }
       if (path === '/api/letters' && request.method === 'GET') {
         return json({ letters: (await listLetters(this.ctx.storage)).slice(-200).reverse() });
@@ -10571,6 +10622,8 @@ export class CheState extends DurableObject {
         if (BROKER_KEY_RE.test(rawMessage)) {
           return ndjsonReply('I did not keep that, sir: it looks like an API key, and keys never go in chat. It may now be exposed, so regenerate it where it came from. A new Alpaca paper key goes in the Trading Room, straight to CHE\'s key store.', { source: 'che_secret_refused', ok: false, model_calls: 0 });
         }
+        const privBlock = privateChatGate(rawMessage, body);
+        if (privBlock) return privBlock;
         // A family/guest device never reaches the owner's chat routes below.
         if (!ownerDevice) return this.guestChat(body, rawMessage, activeTenant);
         // The owner's exact words are authoritative for a read-only, verified
@@ -10724,6 +10777,12 @@ export class CheState extends DurableObject {
           // Cloud Computer: "open your cloud computer", "run your coding tests", "create a Blender animation",
           // "approve the cloud job"… Each runs its catalog command (command_catalog.js cloud-*), so the spoken and
           // slash forms share one handler. Before the coding-job cancel: "cancel cloud job …" is a cloud job.
+          // "How many characters live in CHE World?": the /world-population command (world_population.js), no model.
+          const worldAsk = body.attachment || body.workflow_step ? null : worldPopulationIntent(rawMessage);
+          if (worldAsk) {
+            const command = commandById(worldAsk.command);
+            return this.runSlashCommand(request, body, data, { name: command.id, command, input: '' }, { confirmed: false });
+          }
           const cloudAsk = body.attachment || body.workflow_step ? null : cloudIntent(rawMessage);
           if (cloudAsk) {
             await this.dropHeldActions();
@@ -10777,13 +10836,15 @@ export class CheState extends DurableObject {
             const items = await listMedia(this.ctx.storage);
             const id = openMedia.id || (openMedia.latest ? '' : String(body.last_media_id || '').trim().toLowerCase());
             const row = openMedia.latest ? mediaLatestOpenRow(items) : mediaOpenRow(items, id);
-            if (!row) return ndjsonReply(mediaOpenMissingReply(id), { source: 'che_media_store', ok: false, media_id: id || null });
+            const room = openMedia.room !== false;
+            if (!row) return ndjsonReply(mediaOpenMissingReply(id, { room }), { source: 'che_media_store', ok: false, media_id: id || null, media_retrieval: 'not_found' });
             const check = await verifyMediaFile(this.keyEnv || this.env, this.ctx.storage, row);
-            if (!check.ok) return ndjsonReply(`I could not open ID ${row.id} in your Creation Room, sir: ${check.reason || 'its file was not checked'}.`, { source: 'che_media_store', ok: false, media_id: row.id });
-            const opened = mediaOpenReply(row, { origin: new URL(request.url).origin });
+            if (!check.ok) return ndjsonReply(`I could not open ID ${row.id}${room ? ' in your Creation Room' : ''}, sir: ${check.reason || 'its file was not checked'}.`, { source: 'che_media_store', ok: false, media_id: row.id, media_retrieval: 'failed' });
+            const opened = mediaOpenReply(row, { origin: new URL(request.url).origin, room });
+            // media_retrieval is the Worker's part (bytes read back); display is reported only by the phone's image load.
             return ndjsonReply(opened.text, {
               source: 'che_media_store', ok: true, media_id: opened.media_id, media_type: opened.media_type,
-              media_url: opened.media_url, open_creation: true,
+              media_url: opened.media_url, media_retrieval: 'verified', ...(room ? { open_creation: true } : {}),
             });
           }
           // "Show me the last picture": the newest saved picture, its bytes read back first, returned as an image for the chat.
@@ -11844,6 +11905,9 @@ export class CheState extends DurableObject {
           // 503 → the app answers with CHE's on-phone brain instead.
           return json({ detail: 'Lockdown is on: remote engines are paused. Say "end lockdown" to resume.' }, 503);
         }
+        // "CHE, connect Hugging Face" / "is Hugging Face connected?": the onboarding state machine, no model.
+        const onboard = onboardingIntent(message);
+        if (onboard) return this.onboardingChat(onboard, ownerDevice);
         if (resil) {
           const st = this.ctx.storage;
           if (resil.kind === 'lockdown') {
@@ -13820,9 +13884,9 @@ export class CheState extends DurableObject {
           );
         }
 
-        const shouldResearch = requestedCapabilities.includes('web_research') ||
+        const shouldResearch = !body.private && (requestedCapabilities.includes('web_research') ||
           requestedCapabilities.includes('innovation_mode') ||
-          /\b(research|latest|current|novel|prior art|feasib|humanly possible|artistically possible)\b/i.test(message);
+          /\b(research|latest|current|novel|prior art|feasib|humanly possible|artistically possible)\b/i.test(message));
         const useModelPanel =
           /\b(compare (?:models?|options?|sources?)|research|deep analysis|second opinion|cross.check)\b/i.test(message);
 
@@ -14594,6 +14658,7 @@ export class CheState extends DurableObject {
       return;
     }
     await this.filmPass().catch((error) => console.error('Film Studio pass failed:', error?.message || error));
+    await reapPaid(this.env, { storage: this.ctx.storage }).catch(() => null);
     // Flagstaff stays responsive even when Office autonomy is paused. Incoming
     // AI messages are advice only and cannot authorize consequential actions.
     await this.processFlagstaffInbox().catch((error) => {

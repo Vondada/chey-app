@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:http/http.dart' as http;
 
+import 'che_private_voice.dart';
 import 'che_voice_state.dart';
 
 typedef CheRealtimeSnapshotCallback = void Function(CheVoiceSnapshot snapshot);
@@ -86,6 +87,9 @@ class CheRealtimeVoiceEngine {
 
   Future<void> connect() async {
     if (_disposed) throw StateError('Realtime voice engine was disposed.');
+    // Private voice: microphone audio never goes to OpenAI. Refused before any
+    // token request, audio session change or peer connection.
+    if (!ChePrivateVoice.allowsRealtime()) throw StateError(ChePrivateVoice.realtimeRefusal);
     await initialize();
     await disconnect(keepRenderer: true);
 

@@ -20,7 +20,8 @@ import { WORKFLOWS, drainOrder, engineCapacityState, planWorkflow, shouldSwitchE
 import { recordReliability } from './reliability_ledger.js';
 import { BUILTIN_PROVIDER_MANIFESTS } from './provider_registry.js';
 import { appendAudit, auditEntry } from './privacy_policy.js';
-import { guardModelInput, loadSecurity, recordFindings, saveSecurity } from './security_intelligence.js';
+import { guardModelInput, loadSecurity, privateEgressHeld, recordFindings, saveSecurity } from './security_intelligence.js';
+import { privateEngineError } from './private_voice.js';
 import { storedKeys, withStoredKeys } from './resilience.js';
 import { addTokens } from './usage_tracker.js';
 import { recordTiming } from './perf_watch.js';
@@ -623,8 +624,45 @@ function inputForProvider(engineInput, providerId, context) {
   return { input: { ...engineInput, messages }, provided, withheld };
 }
 
+// Private voice (private_voice.js): only the Worker's own Workers AI binding answers. No keyed or keyless engine is
+// tried, no model catalogue is fetched, and a failure says plainly that no outside AI was used.
+const PRIVATE_FALLBACK_MODEL = '@cf/meta/llama-3.1-8b-instruct-fp8';
+const PRIVATE_TURN_NOTE = 'PRIVATE VOICE IS ON for this turn: the owner asked that his words reach no outside service. You have no web search, research, news, other AIs, Office agents or coding crew this turn, and nothing was looked up. Answer from what you already know and from the memory in this conversation. If the answer needs live facts or an outside service, say so plainly and that he can say "turn off private voice" to allow it. Never claim you searched, asked another AI or delegated.';
+
+export function privateRouteActive(input) {
+  return input?.che_private === true || privateEgressHeld();
+}
+
+async function routePrivate(env, model, input, usageStorage) {
+  if (!env?.AI?.run) throw privateEngineError('this Worker has no Workers AI binding');
+  const quality = input?.che_route === 'quality';
+  const engineInput = compactEngineInput(input);
+  for (const key of Object.keys(engineInput)) if (key.startsWith('che_')) delete engineInput[key];
+  if (engineInput.response_format) delete engineInput.response_format;
+  if (quality) {
+    const firstConversation = engineInput.messages.findIndex((message) => message?.role !== 'system');
+    engineInput.messages.splice(firstConversation < 0 ? engineInput.messages.length : firstConversation, 0,
+      { role: 'system', content: CHE_VOICE_FIRST_POLICY },
+      { role: 'system', content: PRIVATE_TURN_NOTE });
+  }
+  // A provider-specific model name means nothing to Workers AI: use a Workers AI model instead.
+  const cfModel = /^@(?:cf|hf)\//.test(String(model || '')) ? model : (env.CHE_PRIVATE_MODEL || env.CHE_STRONG_MODEL || PRIVATE_FALLBACK_MODEL);
+  let out;
+  try {
+    out = await env.AI.run(cfModel, engineInput);
+  } catch (error) {
+    throw privateEngineError(error?.message || error);
+  }
+  if (!hasAnswer(out)) throw privateEngineError('it returned no text');
+  await addEstimatedUsage(env, usageStorage, 'cloudflare', estimateTotalTokens(engineInput, out)).catch(() => null);
+  return out && typeof out === 'object'
+    ? { ...out, engine: 'cloudflare', model: cfModel, private: true }
+    : { response: String(out), engine: 'cloudflare', model: cfModel, private: true };
+}
+
 // Runs a text model through the best engine that can answer.
 export async function routeText(env, model, input, fetcher = fetch, usageStorage = null) {
+  if (privateRouteActive(input)) return routePrivate(env, model, input, usageStorage);
   // Keys the owner added through CHE (Keys & Mailbox) join the rotation.
   env = withStoredKeys(env, await storedKeys(usageStorage).catch(() => ({})));
   const errors = [];
@@ -1045,6 +1083,7 @@ export async function routeText(env, model, input, fetcher = fetch, usageStorage
 // Calls one specific provider+model directly (candidate evaluation, paired
 // intelligence). Uses the same keys, headers and translation as routing.
 export async function callSpecificModel(env, providerId, modelName, messages, { maxTokens = 400, fetcher = fetch } = {}) {
+  if (privateEgressHeld()) throw privateEngineError(`${providerId} is an outside provider`);
   messages = guardModelInput({ messages }).input.messages;
   const provider = PROVIDERS.find((item) => item.id === providerId && !item.keyless);
   if (!provider || !providerEnabled(env, provider)) throw new Error(`${providerId} is not connected.`);

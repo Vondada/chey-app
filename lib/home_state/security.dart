@@ -894,6 +894,7 @@ extension _CheHomeSecurity on _CHEHomeState {
       final started = await _localVoice.runMicOp(() => CheNativeVoice.start());
       _nativeIosVoiceActive = started;
       if (!started) {
+        _reportPrivateMicRefusal();
         _voiceMachine.disconnected(reason ?? 'Voice engines unavailable.');
         _applyVoiceSnapshot(_voiceMachine.snapshot);
       }
@@ -1070,7 +1071,7 @@ extension _CheHomeSecurity on _CHEHomeState {
 
     _realtimeCancelRequested = false;
     // A password or vault surface on screen never opens live voice (its audio goes to OpenAI).
-    if (!cheUseLiveVoice(liveConfigured: integrations['openai_live_voice'] == true, skipUntil: _realtimeSkipUntil, now: DateTime.now(), passwordSurface: CheScreenCapture.blocked)) {
+    if (!cheUseLiveVoice(liveConfigured: integrations['openai_live_voice'] == true, skipUntil: _realtimeSkipUntil, now: DateTime.now(), passwordSurface: CheScreenCapture.blocked, privateVoice: !ChePrivateVoice.allowsRealtime())) {
       // Straight to the free native listener: live voice is not set up, or it
       // failed recently. Waking never waits on a paid provider.
       HapticFeedback.mediumImpact();
@@ -1089,6 +1090,7 @@ extension _CheHomeSecurity on _CHEHomeState {
         _localVoice.recordMicFailure('The iPhone speech recognizer did not start: $error');
         _nativeIosVoiceActive = false;
       }
+      if (!_nativeIosVoiceActive) _reportPrivateMicRefusal();
       if (!_nativeIosVoiceActive && _localVoice.lastMicFailure == null) {
         _localVoice.recordMicFailure('The iPhone speech recognizer did not start.');
       }
@@ -1263,6 +1265,11 @@ extension _CheHomeSecurity on _CHEHomeState {
       HapticFeedback.heavyImpact();
       await speakText(notice, record: false, show: true);
     }
+
+    // Master profile values ("set my business phone to ...") stay out of the
+    // live session's context too. Same residual limit as passwords: Realtime
+    // transcribed the audio before CHE saw the words.
+    if (cheIsProfileTurn(clean)) _realtimeVoice?.forgetUserItem(itemId);
 
     // Use the same intake, authorization, streaming guard and TTS as typing.
     // A typed/local turn can already own the HTTP request. Keep these exact

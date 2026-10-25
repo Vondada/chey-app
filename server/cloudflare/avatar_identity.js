@@ -33,9 +33,12 @@ export const FACE_TARGETS = [
 ];
 const SLIDERS = new Map(FACE_TARGETS.map(([k, p, n]) => [k, [p, n]]));
 export const RACES = ['african', 'asian', 'caucasian'];
-// Only long_wavy has strands today (CHE's own hair cards); the others render close-cropped until their strands exist.
+// Every style is built as a hair mesh in the full-body model (tools/avatar_body/mpfb_body.py hair_style, lane A
+// 2026-10-25). The head-and-shoulders bust (tools/avatar_face/mpfb_dress.py) has strands only for HAIR_BUST_BUILT and
+// shows the others close-cropped. Both lists match tools/avatar_face/identity.py (avatar_identity_parity.test.mjs).
 export const HAIR_STYLES = ['long_wavy', 'wavy_medium', 'bun_high', 'bun_low', 'curly_short', 'afro', 'beanie', 'close_crop'];
-export const HAIR_BUILT = ['long_wavy'];
+export const HAIR_BUILT = ['long_wavy', 'wavy_medium', 'bun_high', 'bun_low', 'curly_short', 'afro', 'beanie', 'close_crop'];
+export const HAIR_BUST_BUILT = ['long_wavy'];
 export const MAX_CUSTOM = 50;
 const HEX = /^#[0-9a-fA-F]{6}$/;
 const IDENT_KEY = 'gpu:identities';
@@ -197,7 +200,7 @@ export async function identityRoute(storage, queue, path, request, body) {
     const custom = v.presets.length - BUILT_IN.length;
     return json({
       ...v, styles: STYLES, face_sliders: FACE_TARGETS.map(([k, , neg]) => ({ id: k, min: neg === null ? 0 : -1, max: 1 })),
-      hair_styles: HAIR_STYLES, hair_built: HAIR_BUILT,
+      hair_styles: HAIR_STYLES, hair_built: HAIR_BUILT, hair_bust_built: HAIR_BUST_BUILT,
       spoken: `${BUILT_IN.length} built-in character presets and ${custom} saved preset${custom === 1 ? '' : 's'}. Each renders in three looks: photorealistic, hybrid and stylized.`,
     });
   }
@@ -229,6 +232,7 @@ export async function identityRoute(storage, queue, path, request, body) {
       const out = await queue.enqueue({
         title: `${preset.name || preset.id}, ${STYLE_LABELS[style]}: front, three-quarter and side`, kind: 'face_preview',
         views: b.views || [0, 45, 90], samples: b.samples ?? 64, res: b.res ?? 480, settings: toSettings(preset, style), queued_by: 'Character Generator',
+        priority: b.priority,   // Connect GPU's test job goes first (gpu_queue validates it; unknown values fall back to normal)
       });
       if (!out.ok) return json(out, 422);
       jobs.push({ style, job: out.job, duplicate: Boolean(out.duplicate) });

@@ -117,6 +117,8 @@ extension _CheHomeMicrophone on _CHEHomeState {
         if (started) {
           _localVoice.goListening();
           debugPrint('CHE voice: mic listening');
+        } else {
+          _reportPrivateMicRefusal();
         }
       }
       return;
@@ -573,6 +575,10 @@ extension _CheHomeMicrophone on _CHEHomeState {
           cancelOnError: true,
           autoPunctuation: true,
           listenMode: stt.ListenMode.dictation,
+          // Private voice: Apple's on-device recognizer only. The plugin
+          // reports an error instead of using Apple's servers when the iPhone
+          // cannot recognize this language on the phone.
+          onDevice: ChePrivateVoice.isOn,
           // Longer end-of-speech tolerance so mid-thought pauses are not cut.
           // Trailing fillers ("um", "and", "so...") still hold the turn open
           // via cheSoundsUnfinished; one turn can still run five minutes.
