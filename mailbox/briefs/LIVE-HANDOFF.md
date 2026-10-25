@@ -77,6 +77,16 @@ Then, on GitHub:
 
 ## 2. Current position
 
+
+<!-- codex-rithmic-repair-20261025:start -->
+**Codex, 2026-10-25T10:30:22.006Z — owner: “Just fix the problem” (Rithmic phone failures).**
+- PR #525 MERGED as `9ae2a1bb29574bc38f1a5222ec6a6b73be5f0715`; reviewed head `4e74f9b101fc99d05feda3210194562e7d9968c4`. Required full Flutter/UI analysis, Worker and render checks passed; no unresolved review threads. Post-merge checks passed too.
+- Reproduced a real local WebSocket defect before editing: heartbeat sent raw `98b64b12`, missing R | Protocol's four-byte length. Corrected transport sends `0000000498b64b12` and decodes incoming envelopes. Production discovery now uses `rprotocol.rithmic.com`, UAT only for an explicit Rithmic Test selection. Advanced system selection is resolved with its own gateway; stale errors/diagnostics are cleared. Tests cover actual socket framing, malformed lengths and production/UAT/system routing. Evidence: `docs/CHE_RITHMIC_CONNECTION_REPAIR.md`.
+- Automatic Shorebird patch run **40184513397**, job **121142346023**, is IN PROGRESS (patch compilation). Native IPA run **40184513385** skipped as expected for this Dart-only change. Do not claim publication/installation until verified. NEXT: inspect that run's result/log for patch number and target release, then have the phone reconnect.
+- TLS validation, registered app name/version and the on-device login are preserved. No order path changed. Actual account login/authorization is UNVERIFIED; a remaining code 13 is not proof of a bad password. Direct Rithmic-host checks in this container failed DNS. Local Flutter complete-suite tooling was blocked by an environment metadata-access restriction; safer dependency-free Dart checks and GitHub's full suite provided verification.
+- All code is saved on GitHub. Local git-only mirror/merge metadata differs from the API-created commit, but its complete tree matches main; there are no unpushed file changes. Preserve Claude's separate reliability/character work below.
+<!-- codex-rithmic-repair-20261025:end -->
+
 **Claude, 2026-10-25 ~06:00 UTC — two active lines of work; main still `afb8de1` (live).**
 - Reliability mission (owner's "MASTER FAILURE CLEANUP"): branch `claude/che-reliability` (from main) at `0ec23ac` (media "open saved image <id>" fix). Lanes `lane/rel-trust` (trust/memory/routing/coding), `lane/rel-markets-studio` (trading/crypto/studio/media), `lane/rel-infra-app` (voice/native, a11y, CI/deploy/IPA/Shorebird, recovery skill, ONE regression checklist). Inventory goes to `docs/failure_inventory/*.md`; ships as its own PR before the character PR.
 - Character/feature work: `claude/che-character-realism` (merged lanes B, C pool, D world, F GPU Connect; Worker 4016/0). Still running: lane/char-photo (A), lane/char-demo (E), lane/char-realism (G), lane/master-profile (H), lane/service-onboarding (I). Requirements + status: `docs/CHE_CHARACTER_REALISM_CHECKLIST.md` on that branch.
