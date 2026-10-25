@@ -218,3 +218,48 @@ test('the next learning tick is due an hour after the last one', async () => {
   m.set('trading_paper_book', { last_tick: '2026-10-04T10:00:00.000Z' });
   assert.equal(await nextTradingTickAt(storage), Date.parse('2026-10-04T11:00:00.000Z'));
 });
+
+// Owner reliability cleanup (2026-10-25): replay and paper trading must never use a bar that has not closed.
+test('replay without look-ahead: rewriting every bar after a point never changes a trade decided before it', () => {
+  const c = series(1500);
+  const cut = 1000;
+  // The future is replaced with a crash and a spike: nothing decided at or before bar `cut` may notice.
+  const future = c.map((k, i) => (i <= cut ? k : { ...k, o: k.o * (i % 2 ? 0.2 : 5), c: k.c * (i % 2 ? 5 : 0.2), h: k.h * 6, l: k.l * 0.1 }));
+  const ids = ['swing-breakout', 'pullback-reversal', 'trend-cross', ...SKILL_IDS];
+  const fullA = prepare(c);
+  const fullB = prepare(future);
+  for (const key of Object.keys(fullA)) {
+    assert.deepEqual(fullA[key].slice(0, cut + 1), fullB[key].slice(0, cut + 1), `indicator ${key} at or before the cut must not depend on later bars`);
+  }
+  for (const id of ids) {
+    const s = strategyById(id);
+    for (let i = 60; i <= cut; i++) assert.deepEqual(s.entry(c, i, fullA), s.entry(future, i, fullB), `${id} at bar ${i}`);
+    // Trades closed by the cut are identical whatever came after it, even with the whole-history context.
+    const a = backtest(c, id, { to: cut + 1, ctx: fullA });
+    const b = backtest(future, id, { to: cut + 1, ctx: fullB });
+    const sliced = backtest(c.slice(0, cut + 1), id);
+    assert.deepEqual(a.trades, b.trades, id);
+    assert.deepEqual(a.trades, sliced.trades, id);
+  }
+});
+
+test('paper trading never decides on the bar that is still forming', async () => {
+  const c = series(1500);
+  const last = c[c.length - 1];
+  const now = Date.parse(`${last.t}T12:00:00Z`); // halfway through the newest daily bar
+  const run = async (symbol, forming) => {
+    const m = new Map([['trading_paper_book', { watch: [symbol], futures_added: true }]]);
+    const storage = { get: async (k) => m.get(k), put: async (k, v) => m.set(k, v) };
+    const bars = [...c.slice(0, -1), forming];
+    const fetcher = async () => new Response(JSON.stringify(bars.map((k) => [Date.parse(k.t), k.o, k.h, k.l, k.c, 1])), { status: 200 });
+    const book = await paperTick(storage, { fetcher, force: true, now });
+    const open = book.open.map(({ id, symbol: _s, label, opened_at, ...rest }) => rest);
+    return { lab: book.lab[symbol]?.results, best: book.learned[symbol]?.best, open };
+  };
+  // The same closed history; the unfinished bar either spikes or collapses. (Distinct symbols: candles are cached.)
+  const spike = await run('SOLUSDT', { ...last, h: last.h * 3, c: last.c * 2.5 });
+  const crash = await run('ADAUSDT', { ...last, l: last.l * 0.1, c: last.c * 0.2 });
+  assert.ok(spike.lab, 'the closed history was learned from');
+  assert.deepEqual(spike, crash, 'an unfinished bar must not change what CHE learned or which paper trade she opened');
+  for (const t of spike.open) assert.ok(t.opened_bar < last.t, `opened on a closed bar, not ${t.opened_bar}`);
+});
