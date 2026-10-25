@@ -278,6 +278,24 @@ test('/world-population and "how many characters live in CHE World" read the pop
   }
 });
 
+test('/usage-center and the subscription commands run locally with no model call (usage_center.js)', async () => {
+  for (const [id, local] of [['usage-center', 'usage_center'], ['usage-subscription-add', 'usage_sub_add'], ['usage-subscription-remove', 'usage_sub_remove']]) {
+    const c = commandById(id);
+    assert.equal(c.route, 'che_usage_center', id);
+    assert.equal(c.local, local, id);
+    assert.equal(c.confirm, '', `${id}: removal asks through its own held question, naming the record`);
+    assert.equal(commandStatus(c, connectorStatus({})).status, 'available', id);
+  }
+  const che = await owner();
+  for (const said of ['/usage-center', "What's my usage?", '/usage-center subscriptions']) {
+    const out = await che.say(said);
+    assert.equal(out.route, 'che_usage_center', said);
+    assert.equal(out.modelCalls, 0, said);
+  }
+  assert.equal((await che.say('/usage-subscription-add my Claude subscription is 20 dollars a month')).route, 'che_usage_center');
+  assert.equal((await che.say('/usage-subscription-remove Claude')).route, 'held');
+});
+
 test('/master-profile routes to the on-device form filler: the Worker answers where to do it, calls no model, fills nothing and stores nothing', async () => {
   const c = commandById('master-profile');
   assert.equal(c.route, 'che_master_profile');

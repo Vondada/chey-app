@@ -33,7 +33,7 @@ export const SUBS_KEY = 'usage:subscriptions';
 export const MARKS_KEY = 'usage:balance_marks';
 export const ALERTS_KEY = 'usage:alerts';
 export const PROVENANCE = Object.freeze({ OBSERVED: 'OBSERVED', ESTIMATED: 'ESTIMATED', USER_ENTERED: 'USER_ENTERED', UNAVAILABLE: 'UNAVAILABLE' });
-export const STATUS = Object.freeze({ connected: 'connected', not_connected: 'not connected', needs_owner_sign_in: 'needs owner sign-in', unverified: 'key saved, not verified' });
+export const STATUS = Object.freeze({ connected: 'connected', not_connected: 'not connected', needs_owner_sign_in: 'needs owner sign-in', unverified: 'key saved, not verified', unknown: 'unknown: records unreadable' });
 export const ALERT_RATIO = 0.8;               // warn at 80% of a quota or a spending cap
 export const RENEWAL_ALERT_DAYS = 3;
 export const MAX_SUBSCRIPTIONS = 60;
@@ -69,9 +69,8 @@ function metricText(m) {
 const poolGpu = Object.fromEntries(POOL_PROVIDERS.map((p) => [p.id, p.gpu]));
 
 /** Normalized per-job compute receipts for one month: { provider, job, kind, gpu_seconds, cpu_seconds, estimated_cost, provenance, source }. */
-export async function computeReceipts(storage, { month, now = Date.now() } = {}) {
+export async function computeReceipts(storage, { month, now = Date.now(), ledger = computePool.computeUsageLedger || computeBudget.computeUsageLedger } = {}) {
   const m = month || monthOf(now);
-  const ledger = computePool.computeUsageLedger || computeBudget.computeUsageLedger;
   if (typeof ledger === 'function') {
     try {
       const out = await ledger(storage, { month: m });
@@ -79,7 +78,7 @@ export async function computeReceipts(storage, { month, now = Date.now() } = {})
       if (rows) return { source: 'computeUsageLedger', rows: rows.map((r) => normalizeReceipt(r)) };
     } catch (_) { /* fall back to the job records below */ }
   }
-  const jobs = await get(storage, 'gpu:jobs', []);
+  const jobs = (await storage.get('gpu:jobs')) ?? [];
   const rows = [];
   for (const j of Array.isArray(jobs) ? jobs : []) {
     for (const a of j?.pool?.attempts || []) {
@@ -166,8 +165,8 @@ export function parseSubscription(text, now = Date.now()) {
     renews, words, at: iso(now), provenance: PROVENANCE.USER_ENTERED } };
 }
 
-export async function loadSubscriptions(storage) {
-  const list = await get(storage, SUBS_KEY, []);
+export async function loadSubscriptions(storage, { strict = false } = {}) {
+  const list = strict ? ((await storage.get(SUBS_KEY)) ?? []) : await get(storage, SUBS_KEY, []);
   return Array.isArray(list) ? list.filter((s) => s && s.id && s.name) : [];
 }
 
@@ -238,12 +237,22 @@ const paidAiOn = (env) => ['1', 'true', 'yes'].includes(String(env?.CHE_ALLOW_PA
 const limitOf = (env, id) => { const v = Number(env[`CHE_${id.toUpperCase().replace(/[^A-Z0-9]+/g, '_')}_DAILY_TOKEN_LIMIT`] || 0); return Number.isFinite(v) && v > 0 ? Math.floor(v) : 0; };
 
 async function aiRows(env, storage, t) {
-  const keys = await storedKeys(storage).catch(() => ({}));
-  const health = await get(storage, 'key_health', {});
-  const calls = await get(storage, 'ai_health', {});
+  let keys; let health; let calls;
+  try {
+    keys = (await storage.get('provider_keys')) || {}; health = (await storage.get('key_health')) || {}; calls = (await storage.get('ai_health')) || {};
+  } catch (_) {
+    // Unreadable records: say so instead of reporting "not connected" or zero tokens.
+    return [...AI_IDS.filter((id) => KEY_PROVIDERS[id]).map((id) => KEY_PROVIDERS[id].name), 'Cloudflare Workers AI'].map((name) => ({
+      id: `ai:${name}`, group: 'ai', name, status: STATUS.unknown, status_id: 'unknown', evidence: 'CHE could not read her key and call records just now.', purpose: 'Language engine', scopes: '',
+      metrics: [unavailable('tokens_today', 'Tokens today', 'CHE could not read her token records just now.')], tokens_today: null, token_limit: null }));
+  }
+  if (!keys || typeof keys !== 'object') keys = await storedKeys(storage).catch(() => ({}));
   const rows = [];
   const tokensMetric = async (id, label) => {
-    const rec = await get(storage, `ai_usage:${id}`, null);
+    let rec;
+    try { rec = (await storage.get(`ai_usage:${id}`)) ?? null; } catch (_) {
+      return { used: null, reset: null, m: unavailable('tokens_today', `${label} tokens today`, 'CHE could not read this engine\'s token record just now.') };
+    }
     const live = rec && t < Number(rec.reset_at || 0);
     const used = live ? Math.max(0, Number(rec.estimated_tokens) || 0) : 0;
     return { used, reset: live ? Number(rec.reset_at) : null, m: metric('tokens_today', `${label} tokens today`, used, 'tokens', PROVENANCE.ESTIMATED,
@@ -304,7 +313,7 @@ async function computeRows(env, storage, t, receipts) {
   for (const id of COMPUTE_IDS) {
     const s = byId[id];
     const label = s?.label || POOL_PROVIDERS.find((p) => p.id === id)?.label || id;
-    if (!s) { rows.push({ id: `compute:${id}`, group: 'compute', name: label, status: 'unknown', status_id: 'unverified', evidence: 'The compute pool status could not be read just now.', purpose: PURPOSE[id], scopes: '', metrics: [unavailable('status', 'Status', 'The compute pool record could not be read.')] }); continue; }
+    if (!s) { rows.push({ id: `compute:${id}`, group: 'compute', name: label, status: STATUS.unknown, status_id: 'unknown', evidence: 'The compute pool status could not be read just now.', purpose: PURPOSE[id], scopes: '', metrics: [unavailable('status', 'Status', 'The compute pool record could not be read.')] }); continue; }
     const has = s.credential?.exists === true;
     const q = s.quota || {};
     let status = has ? 'unverified' : 'not_connected'; let evidence = s.reason || '';
@@ -313,9 +322,12 @@ async function computeRows(env, storage, t, receipts) {
     const gpuS = mine.reduce((a, r) => a + r.gpu_seconds, 0); const cpuS = mine.reduce((a, r) => a + r.cpu_seconds, 0);
     const jobsN = new Set(mine.map((r) => r.job)).size;
     const measured = { source: receipts.source === 'computeUsageLedger' ? 'compute ledger receipts' : "CHE's job records (claim to result wall time)" };
-    metrics.push(metric('jobs_month', 'Jobs this month', jobsN, 'jobs', PROVENANCE.OBSERVED, measured));
-    if (s.gpu === true) metrics.push(metric('gpu_seconds', 'GPU seconds this month', gpuS, 's', PROVENANCE.OBSERVED, measured));
-    else metrics.push(metric('cpu_hours', 'CPU hours this month', hours(cpuS), 'h', PROVENANCE.OBSERVED, measured));
+    if (receipts.source === 'unavailable') metrics.push(unavailable('jobs_month', 'Jobs and compute time this month', 'CHE could not read her job records just now.'));
+    else {
+      metrics.push(metric('jobs_month', 'Jobs this month', jobsN, 'jobs', PROVENANCE.OBSERVED, measured));
+      if (s.gpu === true) metrics.push(metric('gpu_seconds', 'GPU seconds this month', gpuS, 's', PROVENANCE.OBSERVED, measured));
+      else metrics.push(metric('cpu_hours', 'CPU hours this month', hours(cpuS), 'h', PROVENANCE.OBSERVED, measured));
+    }
     if (id === 'github_actions_cpu') {
       if (s.status === 'ready' || s.status === 'cooling_down') status = 'connected';
       metrics.push(q.public_repository === true
@@ -458,9 +470,11 @@ async function tokenTotals(storage, t) {
 export async function usageView(env = {}, { storage, now } = {}) {
   const t = clock(now)();
   const receipts = await computeReceipts(storage, { month: monthOf(t), now: t }).catch(() => ({ source: 'unavailable', rows: [] }));
+  const noReceipts = receipts.source === 'unavailable';
   const ai = await aiRows(env, storage, t).catch(() => []);
   const { rows: compute, pool } = await computeRows(env, storage, t, receipts).catch(() => ({ rows: [], pool: null }));
-  const subs = await loadSubscriptions(storage);
+  const read = await loadSubscriptions(storage, { strict: true }).catch(() => null);
+  const subs = read || [];
   const tokens = await tokenTotals(storage, t).catch(() => null);
   const rows = [...ai, ...compute, ...subs.map((s) => subscriptionRow(s, t))];
   const stored = await balanceAlerts(storage, pool, t).catch(() => []);
@@ -470,14 +484,17 @@ export async function usageView(env = {}, { storage, now } = {}) {
     tokens ? metric('tokens_today', 'CHE tokens today, all engines', tokens.today, 'tokens', PROVENANCE.ESTIMATED, { source: "CHE's router count (provider totals where reported, else characters ÷ 4)" })
       : unavailable('tokens_today', 'CHE tokens today', 'The token record could not be read.'),
     tokens ? metric('tokens_month', 'CHE tokens, last 30 days', tokens.month, 'tokens', PROVENANCE.ESTIMATED, { source: "CHE's router count" }) : unavailable('tokens_month', 'CHE tokens, last 30 days', 'The token record could not be read.'),
-    metric('gpu_seconds', 'GPU seconds this month, all providers', receipts.rows.reduce((a, r) => a + r.gpu_seconds, 0), 's', PROVENANCE.OBSERVED, { source: 'CHE\'s job records' }),
-    metric('cpu_hours', 'Cloud CPU hours this month', hours(receipts.rows.reduce((a, r) => a + r.cpu_seconds, 0)), 'h', PROVENANCE.OBSERVED, { source: 'CHE\'s job records' }),
-    subs.length
+    noReceipts ? unavailable('gpu_seconds', 'GPU seconds this month', 'CHE could not read her job records just now.')
+      : metric('gpu_seconds', 'GPU seconds this month, all providers', receipts.rows.reduce((a, r) => a + r.gpu_seconds, 0), 's', PROVENANCE.OBSERVED, { source: 'CHE\'s job records' }),
+    noReceipts ? unavailable('cpu_hours', 'Cloud CPU hours this month', 'CHE could not read her job records just now.')
+      : metric('cpu_hours', 'Cloud CPU hours this month', hours(receipts.rows.reduce((a, r) => a + r.cpu_seconds, 0)), 'h', PROVENANCE.OBSERVED, { source: 'CHE\'s job records' }),
+    !read ? unavailable('subscriptions_month', 'Subscriptions per month', 'CHE could not read the subscriptions you told her just now.')
+      : subs.length
       ? metric('subscriptions_month', 'Subscriptions you told me, per month', Math.round(monthly.filter((v) => v != null).reduce((a, v) => a + v, 0) * 100) / 100, 'usd', PROVENANCE.USER_ENTERED,
         { source: `sum of your ${monthly.filter((v) => v != null).length} entr${monthly.filter((v) => v != null).length === 1 ? 'y' : 'ies'} with a period; yearly ones ÷ 12${monthly.some((v) => v == null) ? `; ${monthly.filter((v) => v == null).length} without a period not counted` : ''}` })
       : unavailable('subscriptions_month', 'Subscriptions per month', 'You have not told me any subscriptions, and no connected provider reports them.'),
   ];
-  const view = { at: iso(t), rows, subscriptions: subs.map((s) => ({ id: s.id, name: s.name, amount_usd: s.amount_usd, period: s.period, renews: s.renews, words: s.words, at: s.at })),
+  const view = { at: iso(t), rows, subscriptions_readable: Boolean(read), subscriptions: subs.map((s) => ({ id: s.id, name: s.name, amount_usd: s.amount_usd, period: s.period, renews: s.renews, words: s.words, at: s.at })),
     alerts, totals, receipts: { source: receipts.source, count: receipts.rows.length },
     legend: { OBSERVED: 'read from a provider or measured by CHE', ESTIMATED: 'measured use × a published price, or CHE\'s own approximate count', USER_ENTERED: 'you told CHE (with your words and the time)', UNAVAILABLE: 'not known; the reason is given' } };
   view.spoken = speakUsageCenter(view);
@@ -489,7 +506,7 @@ export function speakUsageCenter(view, focus = '') {
   const svc = view.rows.filter((r) => r.group === 'ai' || r.group === 'compute');
   const count = (id) => svc.filter((r) => r.status_id === id);
   const subs = view.subscriptions || [];
-  const subLine = subs.length
+  const subLine = view.subscriptions_readable === false ? 'I could not read the subscriptions you told me just now, so I list none rather than guess.' : subs.length
     ? `Subscriptions you told me: ${subs.map((s, i) => `${i + 1}. ${s.name}, ${money(s.amount_usd)}${s.period ? ` a ${s.period}` : ', period not said'}${s.renews?.said ? `, renews ${s.renews.said}` : ''}`).join('. ')}. I have not checked these with the providers.`
     : 'You have not told me any subscriptions, and none of your connected providers reports subscriptions, so I list none. Say "add a subscription" to record one.';
   const alertLine = view.alerts.length ? `${view.alerts.length} alert${view.alerts.length === 1 ? '' : 's'}: ${view.alerts.map((a, i) => `${i + 1}. ${a.text}`).join(' ')}` : 'No usage alerts.';
@@ -503,12 +520,13 @@ export function speakUsageCenter(view, focus = '') {
     `Usage Center. ${count('connected').length} service${count('connected').length === 1 ? '' : 's'} connected${count('connected').length ? `: ${named(count('connected'))}` : ''}.`,
     count('needs_owner_sign_in').length ? `Needs your sign-in: ${named(count('needs_owner_sign_in'))}.` : '',
     count('unverified').length ? `Key saved but not verified: ${named(count('unverified'))}.` : '',
+    count('unknown').length ? `I could not read the records for ${count('unknown').length} service${count('unknown').length === 1 ? '' : 's'} just now.` : '',
     `${count('not_connected').length} not connected.`,
     alertLine,
     tk?.value != null ? `CHE used about ${Number(tk.value).toLocaleString('en-US')} tokens today; that count is an estimate.` : '',
     gpu ? (gpu.total_cap_usd > 0 ? `Paid GPU budget ${money(gpu.total_cap_usd)}, spent ${money(gpu.spent_usd)}${left ? `, ${money(left.value)} left after the safety margin` : ''}.` : 'Paid GPUs are off, so CHE spends nothing on GPUs.') : '',
     subLine,
-    'Provider invoices are unavailable: no billing account is connected.',
+    view.rows.some((r) => r.metrics?.some((m) => m.id === 'invoiced' && m.provenance === PROVENANCE.OBSERVED)) ? '' : 'Provider invoices are unavailable: no connected provider reports invoices to CHE.',
   ].filter(Boolean).join(' ');
 }
 
