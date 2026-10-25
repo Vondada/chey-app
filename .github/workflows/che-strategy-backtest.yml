@@ -2,13 +2,25 @@ name: CHE strategy backtest
 
 # Backtests every written intraday strategy on the same real (public, delayed) bars and posts the comparison
 # in the job summary. Informational: it never gates a merge, never trades and never changes stored records.
+#
+# Strategy Matrix (Trading Room V3, docs/CHE_TRADING_STRATEGY_V3.md): MNQ and NQ on CHE's own acquisition loop
+# (Yahoo Finance MNQ=F / NQ=F, public and DELAYED; Yahoo serves about 59 days of 5- and 15-minute bars and about 729
+# days of hourly bars), the V3 rolling walk-forward research. A manual run with commit_results=true commits the
+# results module the Worker's /api/trading/strategy-matrix serves to the branch it ran on. Never trades.
 on:
   workflow_dispatch:
+    inputs:
+      commit_results:
+        description: Commit the Strategy Matrix results module to this branch (true/false)
+        required: false
+        default: 'false'
   pull_request:
     paths:
       - server/cloudflare/trading_evidence.js
       - server/cloudflare/trading_research.js
+      - server/cloudflare/strategy_matrix.js
       - tools/che_strategy_backtest.mjs
+      - tools/che_strategy_matrix.mjs
 
 permissions:
   contents: read
@@ -32,3 +44,35 @@ jobs:
         with:
           name: backtest-${{ matrix.market }}
           path: backtest-${{ matrix.market }}.json
+
+  strategy-matrix:
+    name: Strategy Matrix research (real delayed futures bars, paper only)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    continue-on-error: true
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Fetch bars and run the walk-forward research
+        run: node tools/che_strategy_matrix.mjs --group futures --out server/cloudflare/strategy_matrix_futures.js --json strategy-matrix-futures.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: strategy-matrix-futures
+          path: strategy-matrix-futures.json
+          if-no-files-found: ignore
+          retention-days: 30
+      - name: Commit the results module to the dispatched branch
+        if: github.event_name == 'workflow_dispatch' && inputs.commit_results == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898283+github-actions[bot]@users.noreply.github.com"
+          git add server/cloudflare/strategy_matrix_futures.js
+          if git diff --cached --quiet; then echo "No results to commit."; exit 0; fi
+          git commit -m "Strategy Matrix futures results from run ${{ github.run_id }}"
+          for i in 1 2 3; do git pull --rebase origin "${{ github.ref_name }}" && git push origin "HEAD:${{ github.ref_name }}" && exit 0; sleep 5; done
+          exit 1

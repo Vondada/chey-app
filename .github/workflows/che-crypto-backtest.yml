@@ -4,6 +4,11 @@ name: CHE crypto backtest
 # sandbox cannot reach Coinbase or Kraken): fees and slippage, out-of-sample split, walk-forward folds and the
 # look-ahead audit, with the comparison in the job summary and the full JSON as an artifact. Informational only: it
 # never gates a merge, never trades and never changes stored records.
+#
+# Strategy Matrix (Trading Room V3, docs/CHE_TRADING_STRATEGY_V3.md): the same runner fetches longer Coinbase history
+# (default 90 days of 5-minute, 365 days of 15-minute and 1,095 days of hourly candles) and runs the V3 rolling
+# walk-forward research. A manual run with commit_results=true commits the results module the Worker's
+# /api/trading/strategy-matrix serves to the branch it ran on, with the run id inside. Never trades.
 on:
   workflow_dispatch:
     inputs:
@@ -11,11 +16,21 @@ on:
         description: Candles per series (most recent)
         required: false
         default: '3000'
+      matrix_days:
+        description: Strategy Matrix history per timeframe, in days
+        required: false
+        default: '5m=90,15m=365,1h=1095'
+      commit_results:
+        description: Commit the Strategy Matrix results module to this branch (true/false)
+        required: false
+        default: 'false'
   pull_request:
     paths:
       - server/cloudflare/crypto_markets.js
       - server/cloudflare/trading_evidence.js
+      - server/cloudflare/strategy_matrix.js
       - tools/che_crypto_backtest.mjs
+      - tools/che_strategy_matrix.mjs
       - .github/workflows/che-crypto-backtest.yml
 
 permissions:
@@ -40,3 +55,35 @@ jobs:
           path: crypto-backtest.json
           if-no-files-found: ignore
           retention-days: 14
+
+  matrix:
+    name: Strategy Matrix research (real Coinbase candles, paper only)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    continue-on-error: true
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Fetch candles and run the walk-forward research
+        run: node tools/che_strategy_matrix.mjs --group crypto --days "${{ inputs.matrix_days || '5m=30,15m=90,1h=365' }}" --out server/cloudflare/strategy_matrix_crypto.js --json strategy-matrix-crypto.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: strategy-matrix-crypto
+          path: strategy-matrix-crypto.json
+          if-no-files-found: ignore
+          retention-days: 30
+      - name: Commit the results module to the dispatched branch
+        if: github.event_name == 'workflow_dispatch' && inputs.commit_results == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898283+github-actions[bot]@users.noreply.github.com"
+          git add server/cloudflare/strategy_matrix_crypto.js
+          if git diff --cached --quiet; then echo "No results to commit."; exit 0; fi
+          git commit -m "Strategy Matrix crypto results from run ${{ github.run_id }}"
+          for i in 1 2 3; do git pull --rebase origin "${{ github.ref_name }}" && git push origin "HEAD:${{ github.ref_name }}" && exit 0; sleep 5; done
+          exit 1
