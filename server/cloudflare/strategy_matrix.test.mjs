@@ -194,6 +194,22 @@ test('selection: duplicates, exposure caps, demoted rows and priority order, eve
   assert.match(g2(pf('orb-15m', 'BTC'), { stage: 'signal', time: at }), new RegExp(`${PAPER_LIMITS.total} paper positions already open in total`));
 });
 
+test('Orion\'s crypto paper pass honours the selection gate: capped positions, every refusal logged', async () => {
+  const { stepSeries } = await import('./crypto_markets.js');
+  const bars = walk(3000, { start: '2026-10-17T00:00:00Z' }); // runs through Saturday and Sunday
+  const log = [];
+  const gate = selectionGate(null, { limits: { per_market: 1, total: 1 }, log });
+  const pfs = ['ema-pullback-5m', 'sweep-reclaim-5m', 'rsi-revert-5m', 'inside-bar-5m', 'fvg-retest-5m'].map((c) => {
+    const pf = newPortfolio(c, 'any', { contract: 'BTC', qty: 0.01, source: 'paper', resolution: '5m', costs: { spreadTicks: 0, slippageTicks: 0, commissionPerSide: 0, feePerSide: 0 } });
+    return Object.assign(pf, { signals: [], skips: [], last_bar_time: bars[2000].t });
+  });
+  stepSeries(pfs, 'BTC', '5m', bars, 'LIVE', gate);
+  assert.ok(log.some((d) => d.decision === 'allowed'), 'a paper entry proceeded');
+  assert.ok(log.some((d) => d.decision === 'refused' && /exposure cap/.test(d.reason)), 'the cap refused the rest');
+  assert.ok(log.every((d) => d.market === 'BTC' && d.reason));
+  assert.ok(pfs.filter((pf) => pf.open || pf.pending).length <= 1);
+});
+
 test('selection never reaches an order, broker or network path', async () => {
   for (const file of ['paper_selection.js', 'strategy_matrix.js']) {
     const src = readFileSync(new URL(`./${file}`, import.meta.url), 'utf8');
