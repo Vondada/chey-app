@@ -87,9 +87,9 @@ export const POOL_PROVIDERS = Object.freeze([
   // behind Modal proxy auth runs the same character worker on a T4. Used only for GPU-only jobs, after free GPUs, within
   // Modal's included credit, and only after the owner opted in and confirmed a $0 Modal spend limit (modal_gpu.js).
   { id: 'modal', label: 'Modal T4 GPU (included credit)', gpu: true, compatible: true, metered: true,
-    evidence: 'CHE\'s Modal app runs scripts/che_gpu_worker.py with Blender 5.0.1 (SHA-256 checked) and MPFB2 at the pinned commits on a T4, called over HTTPS through Modal proxy auth (modal.com/docs/guide/webhook-proxy-auth). Unverified until a character is built there.',
-    credential: 'A Modal Proxy Auth Token and the app endpoint (wk-ID:ws-SECRET@https://<workspace>--che-gpu.modal.run), saved through "CHE, connect Modal" (secure field, never chat)',
-    needs: 'Once: create a Modal account, set its spend limit to $0, add MODAL_TOKEN_ID and MODAL_TOKEN_SECRET as GitHub secrets, run the "CHE Modal deploy" workflow, create a Proxy Auth Token, say "CHE, connect Modal", then "use Modal\'s free credit" and "my Modal credit is 30 dollars" (your real figure).' },
+    evidence: 'CHE\'s Modal app runs scripts/che_gpu_worker.py with Blender 5.0.1 (SHA-256 checked) and MPFB2 at the pinned commits on a T4, called over HTTPS with a random access token the deploy workflow issues to both sides. Unverified until a character is built there.',
+    credential: 'The Worker secret MODAL_TOKEN (bearer:<token>@https://<workspace>--che-gpu.modal.run), written by the "CHE Modal deploy" workflow; a pasted Proxy Auth Token also works',
+    needs: 'Once: create a Modal account, set its spend limit to $0, add MODAL_TOKEN_ID and MODAL_TOKEN_SECRET as GitHub secrets, run the "CHE Modal deploy" workflow, say "CHE, connect Modal", then "use Modal\'s free credit" and "my Modal credit is 30 dollars" (your real figure).' },
   { id: 'hf_zerogpu', label: 'Hugging Face ZeroGPU Space', gpu: true, compatible: false,
     evidence: 'Hugging Face docs (hub-docs docs/hub/spaces-zerogpu.md, read 2026-10-25): "ZeroGPU Spaces are exclusively compatible with the Gradio SDK"; "a real GPU is only available inside @spaces.GPU functions" with "a PyTorch CUDA emulation mode" outside them; designed for "PyTorch-based GPU Spaces"; free accounts get 5 minutes of GPU a day and a 60 s default per call. Blender Cycles is not PyTorch and runs as its own process; nothing documents that a subprocess sees the GPU.',
     credential: 'HF_TOKEN (write access) saved in Keys or on the Worker', needs: 'Not usable for Blender even with a token.' },
@@ -468,8 +468,8 @@ export async function providerStatuses(env = {}, { storage, now, fetcher = fetch
   const mConnected = onb?.state === 'verified' && onb?.verification?.ok === true;
   const mGate = modalCreditGate(pool, t);
   let mSt; let mWhy;
-  if (!mc.exists) { mSt = 'no_credential'; mWhy = 'Modal is not connected: no Modal Proxy Auth Token is saved. Say "CHE, connect Modal" for the steps; never paste a key into chat.'; }
-  else if (!mc.cred) { mSt = 'no_credential'; mWhy = mc.deploy_token ? 'The saved Modal key is an API (deploy) token. CHE needs a Proxy Auth Token and the app endpoint instead; the API token belongs in GitHub secrets. Say "CHE, connect Modal" again.' : 'The saved Modal key is not a Proxy Auth Token with an endpoint. Say "CHE, connect Modal" again.'; }
+  if (!mc.exists) { mSt = 'no_credential'; mWhy = 'Modal is not connected: the "CHE Modal deploy" workflow has not connected me yet. Say "CHE, connect Modal" for the steps; never paste a key into chat.'; }
+  else if (!mc.cred) { mSt = 'no_credential'; mWhy = mc.deploy_token ? 'The saved Modal key is an API (deploy) token. The deploy workflow connects me instead; the API token belongs in GitHub secrets. Say "CHE, connect Modal" again.' : 'The saved Modal connection is not in a form I can use. Run the "CHE Modal deploy" workflow again.'; }
   else if (!mConnected) { mSt = 'offline'; mWhy = `Modal is saved but not verified${onb?.failure?.detail ? `: ${onb.failure.detail}` : ''}. Say "CHE, connect Modal" again after the deploy workflow ran.`; }
   else if (block) { mSt = 'offline'; mWhy = `Not used: ${block}.`; }
   else if (!mGate.ok) { mSt = 'offline'; mWhy = mGate.reason; }

@@ -1,4 +1,4 @@
-"""CHE's Modal app: two allowlisted web routes on one proxy-auth-protected endpoint (owner spec
+"""CHE's Modal app: two allowlisted web routes on one token-protected endpoint (owner spec
 docs/CHE_MODAL_FREE_FIRST_USAGE_PRIVACY.md, Stage 2).
 
 What it runs, and nothing else:
@@ -13,13 +13,19 @@ What it runs, and nothing else:
   POST /status           The state of the call for an idempotency key (and its measured GPU seconds when finished).
   POST /cancel           Cancels the call for an idempotency key (CHE does this before handing a job elsewhere).
 
+GPU check (not a web route): the function `gpu_check` renders Blender's default cube once with Cycles on the T4
+(256x256, 32 samples, no input) and returns the GPU name, the Cycles device used, render seconds and the PNG's SHA-256.
+The deploy workflow calls it by name with the deploy token when asked (input gpu_test), as the low-cost GPU test.
+
 Idempotency: one Modal Dict entry per idempotency key. A second /blender_preview with the same key returns the first
 call instead of starting another container, so a retried or duplicated request is billed once.
 
-Security: the endpoint is created with requires_proxy_auth=True, so Modal itself answers 401 to any request without
-a valid workspace Proxy Auth Token (Modal-Key / Modal-Secret headers) before a container starts
-(https://modal.com/docs/guide/webhook-proxy-auth). Containers scale to zero; SCALEDOWN_S keeps an idle container for
-at most a minute, and every GPU call has a hard timeout.
+Security: every route needs `Authorization: Bearer <token>`. The deploy workflow generates a random 256-bit token,
+stores it as the Modal secret `che-gpu-auth` and, in the same run, as the Worker secret CHE_MODAL_ENDPOINT_TOKEN
+(through the existing CLOUDFLARE_API_TOKEN), so no person ever sees or pastes it. The comparison is constant time and
+a missing or empty server token refuses everything. (Modal's proxy-auth tokens would also work, but they are created
+by hand in Modal's dashboard; this keeps setup to the two deploy secrets.) Containers scale to zero; SCALEDOWN_S keeps
+an idle container for at most a minute, and every GPU call has a hard timeout.
 
 Deploy: .github/workflows/che-modal-deploy.yml (workflow_dispatch, needs MODAL_TOKEN_ID / MODAL_TOKEN_SECRET).
 Tests: python3 -m unittest discover -s tools -p test_che_modal_app.py (no `modal` package needed).
@@ -32,6 +38,20 @@ import re
 import subprocess
 import sys
 import time
+
+import hmac
+
+AUTH_SECRET_NAME = "che-gpu-auth"
+AUTH_ENV = "CHE_GPU_ENDPOINT_TOKEN"
+
+
+def bearer_ok(header: str | None, expected: str | None) -> bool:
+    """True only for `Bearer <expected>` with a non-trivial expected token, compared in constant time."""
+    expected = (expected or "").strip()
+    if len(expected) < 32 or not header or not header.startswith("Bearer "):
+        return False
+    return hmac.compare_digest(header[7:].strip().encode(), expected.encode())
+
 
 try:  # The pure logic below is importable (and tested) without the Modal SDK.
     import modal  # type: ignore
@@ -153,6 +173,51 @@ def worker_env(args, base_env=None, root=ROOT):
     return env
 
 
+GPU_CHECK_SCRIPT = """
+import bpy, time, hashlib, json, sys
+prefs = bpy.context.preferences.addons['cycles'].preferences
+device = 'NONE'
+for kind in ('OPTIX', 'CUDA'):
+    try:
+        prefs.compute_device_type = kind
+        prefs.get_devices()
+        gpus = [d for d in prefs.devices if d.type == kind]
+        if gpus:
+            for d in prefs.devices:
+                d.use = d.type == kind
+            device = kind
+            break
+    except Exception:
+        pass
+scene = bpy.context.scene
+scene.render.engine = 'CYCLES'
+scene.cycles.device = 'GPU' if device != 'NONE' else 'CPU'
+scene.cycles.samples = 32
+scene.render.resolution_x = scene.render.resolution_y = 256
+scene.render.filepath = '/tmp/che_gpu_check.png'
+t = time.time()
+bpy.ops.render.render(write_still=True)
+secs = round(time.time() - t, 2)
+data = open('/tmp/che_gpu_check.png', 'rb').read()
+print('CHE_GPU_CHECK ' + json.dumps({'device': device, 'render_seconds': secs, 'png_bytes': len(data), 'png_sha256': hashlib.sha256(data).hexdigest()}))
+"""
+
+
+def gpu_check_argv(root=ROOT):
+    """A fixed Cycles render of Blender's default cube on the GPU (no user input reaches it)."""
+    return [f"{root}/blender/blender", "-b", "--factory-startup", "--python-expr", GPU_CHECK_SCRIPT]
+
+
+def parse_gpu_check(stdout: str):
+    for line in (stdout or "").splitlines():
+        if line.startswith("CHE_GPU_CHECK "):
+            try:
+                return json.loads(line[len("CHE_GPU_CHECK "):])
+            except ValueError:
+                return None
+    return None
+
+
 def plan_dispatch(existing):
     """'existing' when the key already has a call (the request is a repeat: never a second container), else 'new'."""
     return "existing" if isinstance(existing, dict) and existing.get("state") not in (None, "") else "new"
@@ -248,13 +313,29 @@ if modal is not None:  # pragma: no cover - runs on Modal, not in unit tests
         jobs[key] = entry
         return {"exit_code": code, "gpu_seconds": entry["gpu_seconds"], "gpu": gpu}
 
-    @app.function(image=web_image, scaledown_window=SCALEDOWN_S, timeout=60)
-    @modal.asgi_app(label=ENDPOINT_LABEL, requires_proxy_auth=True)
+    @app.function(image=gpu_image, gpu=GPU, timeout=600, scaledown_window=SCALEDOWN_S, max_containers=1, retries=0)
+    def gpu_check() -> dict:
+        """The low-cost connection test: one 256x256 Cycles render of the default cube on the T4 (about a minute)."""
+        started = time.time()
+        gpu = subprocess.run(["nvidia-smi", "--query-gpu=name,memory.total", "--format=csv,noheader"], capture_output=True, text=True).stdout.strip()[:120]
+        r = subprocess.run(gpu_check_argv(), capture_output=True, text=True, timeout=540)
+        out = parse_gpu_check(r.stdout) or {}
+        return {"ok": r.returncode == 0 and bool(out) and out.get("device") != "NONE", "gpu": gpu, "exit_code": r.returncode,
+                "container_seconds": round(time.time() - started, 1), **out}
+
+    @app.function(image=web_image, scaledown_window=SCALEDOWN_S, timeout=60, secrets=[modal.Secret.from_name(AUTH_SECRET_NAME)])
+    @modal.asgi_app(label=ENDPOINT_LABEL)
     def api():
         from fastapi import FastAPI, Request
         from fastapi.responses import JSONResponse
 
         web = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
+
+        @web.middleware("http")
+        async def require_bearer(request, call_next):
+            if not bearer_ok(request.headers.get("authorization"), os.environ.get(AUTH_ENV)):
+                return JSONResponse({"ok": False, "error": "unauthorized"}, status_code=401)
+            return await call_next(request)
 
         async def body_of(request):
             try:

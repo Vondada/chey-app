@@ -109,5 +109,26 @@ class Behaviour(unittest.TestCase):
         self.assertEqual(re.search(r"export const MODAL_APP_VERSION = '([^']+)'", js).group(1), m.APP_VERSION)
 
 
+class Auth(unittest.TestCase):
+    def test_bearer_must_match_a_real_token(self):
+        tok = "f" * 64
+        self.assertTrue(m.bearer_ok(f"Bearer {tok}", tok))
+        self.assertFalse(m.bearer_ok(f"Bearer {'e' * 64}", tok))
+        self.assertFalse(m.bearer_ok(tok, tok), "the Bearer scheme is required")
+        self.assertFalse(m.bearer_ok(None, tok))
+        self.assertFalse(m.bearer_ok("Bearer ", ""), "no server token refuses everything")
+        self.assertFalse(m.bearer_ok("Bearer short", "short"), "a trivial server token refuses everything")
+
+
+class GpuCheck(unittest.TestCase):
+    def test_argv_is_fixed_and_parse_reads_the_result_line(self):
+        argv = m.gpu_check_argv(root="/opt/che")
+        self.assertEqual(argv[:3], ["/opt/che/blender/blender", "-b", "--factory-startup"])
+        self.assertIn("CYCLES", argv[-1])
+        out = m.parse_gpu_check('noise\nCHE_GPU_CHECK {"device": "OPTIX", "render_seconds": 1.5, "png_bytes": 10, "png_sha256": "ab"}\n')
+        self.assertEqual(out["device"], "OPTIX")
+        self.assertIsNone(m.parse_gpu_check("no result"))
+
+
 if __name__ == "__main__":
     unittest.main()

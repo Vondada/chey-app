@@ -449,7 +449,7 @@ test('Modal is Connected only after its app answers an authenticated /health; a 
   assert.equal(said.done.onboarding.action, 'guided');
   assert.match(said.reply, /set the workspace spend limit to \$0/); assert.match(said.reply, /MODAL_TOKEN_ID and MODAL_TOKEN_SECRET/); assert.match(said.reply, /CHE Modal deploy/);
   const bad = await che.post('/api/onboarding/modal/secret', { token: 'not-a-modal-token-at-all' });
-  assert.match(bad.detail, /does not look like a Modal Proxy Auth Token/);
+  assert.match(bad.detail, /not a Modal connection CHE can use/);
   const deploy = await che.post('/api/onboarding/modal/secret', { token: 'ak-AbCdEf123456:as-ZyXwVu987654' });
   assert.match(deploy.detail, /Modal API token, the deploy key/);
   const cred = 'wk-AbCdEf123456:ws-ZyXwVu987654@https://ownerws--che-gpu.modal.run';
@@ -459,7 +459,7 @@ test('Modal is Connected only after its app answers an authenticated /health; a 
   globalThis.fetch = offline;
   assert.equal(m.state, 'verified', JSON.stringify(m));
   assert.equal(m.outcomes.connection_verified, true);
-  assert.match(m.speech, /^Connected: Modal accepted the Proxy Auth Token/);
+  assert.match(m.speech, /^Connected: CHE's Modal app accepted the access token/);
   assert.ok(!che.wire.join('\n').includes('ws-ZyXwVu987654'), 'the secret never comes back');
   const on = await che.say("CHE, use Modal's free credit");
   assert.equal(on.modelCalls, 0); assert.equal(on.done.command, 'cloud-gpu', JSON.stringify(on.done));

@@ -2,7 +2,7 @@
 //
 // Part of compute_pool.js (state lives in `pool:state` as `pool.modal`), not a second pool, queue or vault. CHE's
 // Modal app (tools/modal/che_modal_app.py, deployed by .github/workflows/che-modal-deploy.yml) exposes one endpoint
-// protected by Modal's proxy auth; the Worker calls it over HTTPS with the owner's Proxy Auth Token:
+// protected by a bearer token the deploy workflow issues to both sides (or a pasted Proxy Auth Token):
 //   GET /health  POST /blender_preview  POST /status  POST /cancel
 // The GPU call runs CHE's existing worker (scripts/che_gpu_worker.py) against CHE's existing queue with a scoped pool
 // token, so artifacts land in CHE's media store through the existing worker routes and are SHA-256 checked there.
@@ -55,23 +55,27 @@ export const creditStopUsd = (credit) => Math.max(0, Math.round((Number(credit |
 
 // ─── Credential: wk-ID:ws-SECRET@<endpoint> ──────────────────────────────────────────────────────────────────────
 /**
- * The saved credential, parsed: a Proxy Auth Token (id + secret) and the endpoint base URL of CHE's deployed app,
+ * The saved credential, parsed: a workflow-issued bearer token or a Proxy Auth Token (id + secret), and the endpoint base URL of CHE's deployed app,
  * pasted as `wk-…:ws-…@https://<workspace>--che-gpu.modal.run` (or `@<workspace>`). Only *.modal.run hosts of the
  * che-gpu label are accepted, so the token can never be sent anywhere else. Returns null when malformed.
  */
 export function parseModalCredential(raw) {
-  const m = /^(wk-[A-Za-z0-9_-]{6,128}):(ws-[A-Za-z0-9_-]{6,128})@(\S{1,200})$/.exec(String(raw || '').trim());
+  const text = String(raw || '').trim();
+  // `bearer:<token>@<endpoint>`: the form the "CHE Modal deploy" workflow writes into the Worker secret MODAL_TOKEN
+  // itself (a random token it also stores as the Modal secret che-gpu-auth), so no person handles it.
+  const b = /^bearer:([A-Za-z0-9_-]{32,128})@(\S{1,200})$/.exec(text);
+  const m = b ? [text, '', '', b[2]] : /^(wk-[A-Za-z0-9_-]{6,128}):(ws-[A-Za-z0-9_-]{6,128})@(\S{1,200})$/.exec(text);
   if (!m) return null;
   let base = m[3];
   if (/^[a-z0-9][a-z0-9-]{0,62}$/.test(base)) base = `https://${base}--che-gpu.modal.run`;
   let u;
   try { u = new URL(base); } catch (_) { return null; }
   if (u.protocol !== 'https:' || u.port || u.search || u.hash || u.username || (u.pathname && u.pathname !== '/') || !MODAL_HOST_RE.test(u.hostname)) return null;
-  return { id: m[1], secret: m[2], base: `https://${u.hostname}`, host: u.hostname };
+  return b ? { bearer: b[1], base: `https://${u.hostname}`, host: u.hostname } : { id: m[1], secret: m[2], base: `https://${u.hostname}`, host: u.hostname };
 }
 /** A Modal API token (ak-…:as-…) is the DEPLOY credential: it belongs in GitHub secrets, never in CHE's Worker. */
 export const isModalDeployToken = (raw) => /^ak-[A-Za-z0-9_-]{6,}:as-[A-Za-z0-9_-]{6,}$/.test(String(raw || '').trim());
-export const MODAL_FORMAT_HELP = 'Paste the Modal Proxy Auth Token and the endpoint the deploy workflow printed, as wk-ID:ws-SECRET@https://your-workspace--che-gpu.modal.run. An ak-…:as-… API token is the deploy key: it goes into GitHub secrets MODAL_TOKEN_ID and MODAL_TOKEN_SECRET, not into CHE.';
+export const MODAL_FORMAT_HELP = 'Nothing needs pasting: the "CHE Modal deploy" GitHub workflow connects me itself (it needs the GitHub Actions secrets MODAL_TOKEN_ID and MODAL_TOKEN_SECRET). A Modal Proxy Auth Token also works, pasted as wk-ID:ws-SECRET@https://your-workspace--che-gpu.modal.run. An ak-…:as-… API token is the deploy key: it belongs in GitHub secrets, not in CHE.';
 
 /** { exists, cred, deploy_token } from the owner's key store, else the Worker env. Never the value outward. */
 export async function modalCredential(env = {}, storage) {
@@ -85,7 +89,7 @@ export async function modalCredential(env = {}, storage) {
 export async function modalCall(cred, method, path, body = null, fetcher = fetch, timeout = 20000) {
   if (!cred?.base || !MODAL_HOST_RE.test(new URL(cred.base).hostname)) return { ok: false, status: 0, data: null, error: 'no valid Modal endpoint' };
   try {
-    const r = await fetcher(`${cred.base}${path}`, { method, headers: { 'Modal-Key': cred.id, 'Modal-Secret': cred.secret, Accept: 'application/json', ...(body ? { 'Content-Type': 'application/json' } : {}) },
+    const r = await fetcher(`${cred.base}${path}`, { method, headers: { ...(cred.bearer ? { Authorization: `Bearer ${cred.bearer}` } : { 'Modal-Key': cred.id, 'Modal-Secret': cred.secret }), Accept: 'application/json', ...(body ? { 'Content-Type': 'application/json' } : {}) },
       ...(body ? { body: JSON.stringify(body) } : {}), signal: AbortSignal.timeout(timeout) });
     const data = await r.json().catch(() => null);
     return { ok: r.ok, status: r.status, data };
@@ -101,7 +105,7 @@ export async function modalCall(cred, method, path, body = null, fetcher = fetch
 export async function modalHealth(cred, fetcher = fetch) {
   if (!cred) return { ok: false, auth: 'missing_info', detail: MODAL_FORMAT_HELP };
   const r = await modalCall(cred, 'GET', '/health', null, fetcher, 30000);
-  if (r.status === 401 || r.status === 403) return { ok: false, auth: 'invalid', detail: `Modal rejected the Proxy Auth Token (HTTP ${r.status}); token rejected. Create a new one in Modal settings and connect again` };
+  if (r.status === 401 || r.status === 403) return { ok: false, auth: 'invalid', detail: `CHE's Modal app rejected the access token (HTTP ${r.status}); token rejected. Run the "CHE Modal deploy" workflow again to issue a new one, then connect again` };
   if (r.status === 404) return { ok: false, auth: 'not_deployed', detail: `Nothing answers at ${cred.host} (HTTP 404): CHE's Modal app is not deployed there. Run the "CHE Modal deploy" GitHub workflow first (it needs the MODAL_TOKEN_ID and MODAL_TOKEN_SECRET repository secrets), then connect again` };
   if (r.status === 429) return { ok: false, auth: 'rate_limited', detail: 'Modal answered 429 (rate limit); try again in a minute' };
   if (r.status === 0) return { ok: false, auth: 'network', detail: `Modal could not be reached (${r.error || 'network'})` };
@@ -110,7 +114,7 @@ export async function modalHealth(cred, fetcher = fetch) {
     return { ok: false, auth: 'version_mismatch', detail: `The app at ${cred.host} is ${short(r.data?.app || 'unknown', 30)} version ${short(r.data?.version || 'unknown', 30)}, not che-gpu ${MODAL_APP_VERSION}. Run the "CHE Modal deploy" workflow again, then connect again` };
   }
   return { ok: true, auth: 'ok', version: r.data.version, gpu: short(r.data.gpu || MODAL_GPU, 20),
-    detail: `Modal accepted the Proxy Auth Token and CHE's app answered at ${cred.host} (che-gpu ${MODAL_APP_VERSION}, ${short(r.data.gpu || MODAL_GPU, 20)} GPU, scales to zero). The check ran one short CPU call, a fraction of a cent of Modal time` };
+    detail: `CHE's Modal app accepted the access token and answered at ${cred.host} (che-gpu ${MODAL_APP_VERSION}, ${short(r.data.gpu || MODAL_GPU, 20)} GPU, scales to zero). The check ran one short CPU call, a fraction of a cent of Modal time` };
 }
 
 // ─── The owner's included-credit policy (USER-ENTERED, with time and exact words) ────────────────────────────────
@@ -203,7 +207,7 @@ export async function modalDispatch({ cred, pool, job, base, t, fetcher = fetch,
   if ([401, 403, 404, 422].includes(r.status)) {
     call.state = 'not_started'; call.ended_ms = t; call.ended_at = iso(t);
     call.error = r.status === 404 ? 'CHE\'s Modal app is not deployed at the saved endpoint (HTTP 404); run the "CHE Modal deploy" workflow'
-      : r.status === 422 ? `Modal refused the job arguments (${short(r.data?.error || 'HTTP 422', 120)})` : `Modal rejected the Proxy Auth Token (HTTP ${r.status})`;
+      : r.status === 422 ? `Modal refused the job arguments (${short(r.data?.error || 'HTTP 422', 120)})` : `CHE's Modal app rejected the access token (HTTP ${r.status})`;
     if (pool.tokens?.modal) pool.tokens.modal.revoked = true;
     return { ok: false, call, error: call.error, cooldown: true };
   }

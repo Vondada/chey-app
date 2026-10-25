@@ -207,14 +207,13 @@ const GPU_ONCE = {
   kaggle: ['Sign in at kaggle.com (create the account yourself if you have none).', 'Verify your phone number in Kaggle settings: GPU sessions with internet need it.', 'In Settings, API, create a new token and copy it as username:token.', NEVER_CHAT],
   runpod: ['Sign in at runpod.io (create the account yourself if you have none).', 'Add prepaid credit yourself on the Billing page, for example 10 or 20 dollars. I never pay or add a card. RunPod needs one hour of credit to start a GPU.', 'In Settings, API Keys, create a key and copy it.', NEVER_CHAT, 'Then set a GPU budget: say "allow up to 20 dollars for GPUs". Until then I spend nothing.'],
   vast: ['Sign in at vast.ai (create the account yourself if you have none).', 'Add prepaid credit yourself on the Billing page. I never pay or add a card.', 'On the Keys page, create an API key and copy it.', NEVER_CHAT, 'Then set a GPU budget: say "allow up to 20 dollars for GPUs". Until then I spend nothing.'],
-  // Modal (docs/CHE_MODAL_FREE_FIRST_USAGE_PRIVACY.md): the API token deploys CHE's app from GitHub Actions; the Worker
-  // itself only ever holds a Proxy Auth Token for that app's endpoint (modal_gpu.js), verified by an authenticated /health.
+  // Modal (docs/CHE_MODAL_FREE_FIRST_USAGE_PRIVACY.md): the API token deploys CHE's app from GitHub Actions, and that
+  // run also writes the Worker secret MODAL_TOKEN (bearer:<random token>@<endpoint>), so no person handles a token.
   modal: ['Sign in at modal.com (create the account yourself if you have none; the Starter plan includes monthly compute credit).',
     'On Modal\'s Usage and Billing page, set the workspace spend limit to $0, so Modal stops work at the included credit instead of charging. I cannot see that setting; you tell me.',
     'In Modal Settings, API Tokens, create a token. Add its two parts as GitHub repository secrets MODAL_TOKEN_ID and MODAL_TOKEN_SECRET (GitHub, Settings, Secrets and variables, Actions). They never come to me.',
-    'Run the "CHE Modal deploy" workflow in GitHub Actions. It deploys my app and prints its endpoint, like https://your-workspace--che-gpu.modal.run.',
-    'In Modal Settings, Proxy Auth Tokens, create a token. Then say "CHE, connect Modal" and paste wk-ID:ws-SECRET@ and the endpoint into my secure field.', NEVER_CHAT,
-    'I call my app once to verify it; only then is Modal connected. To let me use the credit, say "use Modal\'s free credit", "I set Modal\'s spend limit to zero" and "my Modal credit is 30 dollars" with your real figure.'],
+    'Run the "CHE Modal deploy" workflow in GitHub Actions. It deploys my app and connects me to it by itself.',
+    'Then say "CHE, connect Modal": I call my app once to verify it; only then is Modal connected. To let me use the credit, say "use Modal\'s free credit", "I set Modal\'s spend limit to zero" and "my Modal credit is 30 dollars" with your real figure.'],
 };
 
 function gpuGuided(id) {
@@ -225,7 +224,7 @@ function gpuGuided(id) {
     ...base,
     capabilities: { default: { title: 'GPU', uses: `CHE's compute pool (character builds on a ${id === 'kaggle' ? 'free' : id === 'modal' ? 'Modal' : 'prepaid'} GPU)`, permissions: [], works: id === 'kaggle' ? 'use your free weekly Kaggle GPU quota for GPU jobs, before any paid GPU' : id === 'modal' ? 'send GPU-only character jobs to my Modal app after free GPUs, once you allow Modal\'s included credit' : `use ${plain} GPUs for GPU jobs no free GPU can take, only within the GPU budget you set`, destinations: ['worker'] } },
     validToken: id === 'modal' ? (t) => Boolean(parseModalCredential(t)) : base.validToken,
-    badTokenDetail: id === 'modal' ? (t) => `${isModalDeployToken(t) ? 'That is a Modal API token, the deploy key. ' : 'That does not look like a Modal Proxy Auth Token with an endpoint. '}${MODAL_FORMAT_HELP} Nothing was stored.` : null,
+    badTokenDetail: id === 'modal' ? (t) => `${isModalDeployToken(t) ? 'That is a Modal API token, the deploy key. ' : 'That is not a Modal connection CHE can use. '}${MODAL_FORMAT_HELP} Nothing was stored.` : null,
     plan: () => ({ kind: 'guided', url: p.page, steps: GPU_ONCE[id] }),
     async verify(token, _capability, { fetcher = fetch } = {}) {
       const works = this.capabilities.default.works;

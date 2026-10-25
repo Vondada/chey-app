@@ -12,7 +12,7 @@ import test from 'node:test';
 import { GpuQueue, gpuWorkerRoute } from './gpu_queue.js';
 import { ensureCapacity } from './creation_orchestrator.js';
 import { budgetCommand, loadPool, modalCommand, poolView, savePool, selectProvider, POOL_PROVIDERS } from './compute_pool.js';
-import { storeSecret, verifyOnboarding } from './service_onboarding.js';
+import { startOnboarding, storeSecret, verifyOnboarding } from './service_onboarding.js';
 import { cloudIntent } from './cloud_computer.js';
 import {
   MODAL_APP_VERSION, MODAL_RESERVE_MS, MODAL_USD_HR, callCostUsd, computeUsageLedger, creditStopUsd, modalIntent, modalStateOf, parseModalCredential,
@@ -60,14 +60,15 @@ const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2
  * A fake of CHE's Modal app (tools/modal/che_modal_app.py): proxy auth, /health, /blender_preview with per-key
  * de-duplication, /status, /cancel. `log` records every request (no secret values are asserted out of it).
  */
-function fakeModal({ deployed = true, version = MODAL_APP_VERSION, id = KEY_ID, secret = SECRET } = {}) {
+function fakeModal({ deployed = true, version = MODAL_APP_VERSION, id = KEY_ID, secret = SECRET, bearer = '' } = {}) {
   const calls = new Map(); const log = []; let spawns = 0;
   const ctl = { dropNextPostReply: false, statusDown: false, cancelDown: false };
   const fetcher = async (url, init = {}) => {
     const u = new URL(String(url)); const method = init.method || 'GET'; const body = init.body ? JSON.parse(init.body) : null;
     log.push({ host: u.host, path: u.pathname, method, body });
     if (!u.host.endsWith('.modal.run')) return new Response('{}', { status: 404 });
-    if (init.headers?.['Modal-Key'] !== id || init.headers?.['Modal-Secret'] !== secret) return new Response('missing credentials for proxy authorization', { status: 401 });
+    const authed = bearer ? init.headers?.Authorization === `Bearer ${bearer}` : init.headers?.['Modal-Key'] === id && init.headers?.['Modal-Secret'] === secret;
+    if (!authed) return new Response(bearer ? '{"ok":false,"error":"unauthorized"}' : 'missing credentials for proxy authorization', { status: 401 });
     if (!deployed) return new Response('modal-http: app not found', { status: 404 });
     if (method === 'GET' && u.pathname === '/health') return new Response(JSON.stringify({ ok: true, app: 'che-gpu', version, functions: ['health', 'blender_preview'], gpu: 'T4' }), { status: 200 });
     if (method === 'POST' && u.pathname === '/blender_preview') {
@@ -144,7 +145,7 @@ test('acceptance 2: Connected only after an authenticated /health with the expec
   const ok = await connect(s, fm);
   assert.equal(ok.state, 'verified', JSON.stringify(ok));
   assert.equal(ok.outcomes.connection_verified, true);
-  assert.match(ok.speech, /^Connected: Modal accepted the Proxy Auth Token and CHE's app answered at ownerws--che-gpu\.modal\.run \(che-gpu che-modal-1/);
+  assert.match(ok.speech, /^Connected: CHE's Modal app accepted the access token and answered at ownerws--che-gpu\.modal\.run \(che-gpu che-modal-1/);
   const health = fm.log.find((l) => l.path === '/health');
   assert.ok(health, 'the probe really ran');
   assert.ok(!JSON.stringify(ok).includes(SECRET), 'the secret is never in a reply');
@@ -389,4 +390,26 @@ test('voice: the owner\'s Modal phrases route to /cloud-gpu and are recorded USE
   assert.equal(m.spend_limit_zero.words, m.opt_in.words);
   assert.match(out.spoken, /Recorded at 12:00 UTC/); assert.match(out.spoken, /not told me your monthly credit/);
   assert.equal(callCostUsd({ state: 'not_started' }), 0, 'a call Modal never started costs nothing');
+});
+
+// The deploy workflow writes MODAL_TOKEN=bearer:<token>@<endpoint> into the Worker itself: "CHE, connect Modal" then
+// verifies that existing connection with no paste, and a wrong bearer is never Connected.
+test('workflow-issued bearer credential: connect verifies the existing Worker secret with no paste; a wrong token is rejected', async () => {
+  const TOKEN = 'a'.repeat(64);
+  const cred = `bearer:${TOKEN}@https://ownerws--che-gpu.modal.run`;
+  const parsed = parseModalCredential(cred);
+  assert.deepEqual(parsed, { bearer: TOKEN, base: 'https://ownerws--che-gpu.modal.run', host: 'ownerws--che-gpu.modal.run' });
+  assert.equal(parseModalCredential(`bearer:short@https://ownerws--che-gpu.modal.run`), null, 'a short token is refused');
+  assert.equal(parseModalCredential(`bearer:${TOKEN}@https://evil.example`), null, 'only the che-gpu modal.run host');
+  const s = setup(); const fm = fakeModal({ bearer: TOKEN });
+  const ctx = { ...onbCtx(s, fm.fetcher), env: { MODAL_TOKEN: cred }, keyEnv: () => ({ MODAL_TOKEN: cred }) };   // the Worker merges env + stored keys
+  const r = await startOnboarding(ctx, 'modal');
+  assert.equal(r.state, 'verified', JSON.stringify(r));
+  assert.equal(r.action, 'none');
+  assert.match(r.speech, /Connected/); assert.match(r.speech, /che-gpu/);
+  assert.ok(fm.log.some((l) => l.path === '/health'), 'the authenticated probe ran');
+  assert.ok(!JSON.stringify(r).includes(TOKEN), 'the token is never in a reply');
+  const s2 = setup(); const wrong = fakeModal({ bearer: 'b'.repeat(64) });
+  const r2 = await startOnboarding({ ...onbCtx(s2, wrong.fetcher), env: { MODAL_TOKEN: cred }, keyEnv: () => ({ MODAL_TOKEN: cred }) }, 'modal');
+  assert.notEqual(r2.state, 'verified');
 });
