@@ -56,7 +56,7 @@ def main():
                 print(f"WARN {seg['id']}: line '{ln['text'][:30]}' moved from {start} to {t_end + 0.2:.2f} (overlap)")
                 start = t_end + 0.2
             end = start + len(x) / sr
-            rec = {'who': ln['who'], 'sid': v['sid'], 'text': ln['text'], 'start': round(start, 3), 'end': round(end, 3)}
+            rec = {'who': ln['who'], 'sid': v['sid'], 'text': ln['text'], 'caption': ln.get('show', ln['text']), 'start': round(start, 3), 'end': round(end, 3)}
             if ln.get('lipsync'): rec['envelope'] = {'rate_hz': 30, 'values': envelope(x, sr)}
             lines.append(rec); clips.append((start, x)); t_end = end
         dur = max(seg['min'], t_end + seg['tail'])

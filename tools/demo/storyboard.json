@@ -152,7 +152,8 @@
     {
      "who": "che",
      "gap": 0.4,
-     "text": "Done. All three kept the same fifty-three bones and five clips, so every animation still plays."
+     "text": "Done. All three kept the same fifty-three bones and five clips, so every animation still plays.",
+     "show": "Done. Same 53 bones and 5 clips on all three, so every animation still plays."
     }
    ]
   },
@@ -209,7 +210,8 @@
     {
      "who": "che",
      "gap": 0.4,
-     "text": "Saved. Opening Ava from My Creations in Live Studio. Exports: a G L B file, and a Roblox R fifteen F B X."
+     "text": "Saved. Opening Ava from My Creations in Live Studio. Exports: a G L B file, and a Roblox R fifteen F B X.",
+     "show": "Saved. Opening Ava from My Creations in Live Studio. Exports: a GLB file and a Roblox R15 FBX."
     }
    ]
   },

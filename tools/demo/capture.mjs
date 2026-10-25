@@ -118,7 +118,7 @@ S.s02_create = {
   async frame({ page, seg }, t) {
     const o = this.owner, typed = Math.round(ramp(t, o.start, o.end - 0.3) * 1000);
     const che = seg.lines[1];
-    const n = t < che.start ? 0 : Math.min(15, Math.floor((t - che.start) * 2.4) + 1);
+    const n = t < o.end ? 0 : Math.min(15, Math.floor((t - o.end) * 4) + 1);
     await page.evaluate(([typed, pressed, n]) => {
       const s = window.__txt; document.getElementById('typed').textContent = s.slice(0, Math.round(s.length * typed / 1000)) + (typed < 1000 ? '▍' : '');
       document.getElementById('go').className = 'btn' + (pressed ? ' pressed' : '');
@@ -171,7 +171,7 @@ S.s05_face = {
     const fr = await studioFrames(ctx, [{ id: 'a', x: 0, y: 0, w: 1280, h: 720 }]);
     await loadInto(fr.a, 'photoreal', 'Ava (photoreal)');
     await cmd(fr.a, { action: 'stop' });
-    await fr.a.evaluate(() => { const b = new THREE.Box3().setFromObject(model, true); target.set(0, b.max.y - 0.1, 0); orbit.yaw = 0.25; orbit.pitch = 0.02; orbit.dist = 0.11; place(); dirty = true; });
+    await fr.a.evaluate(() => { const b = new THREE.Box3().setFromObject(model, true); target.set(0, b.max.y - 0.15, 0); orbit.yaw = 0.25; orbit.pitch = 0.02; orbit.dist = 0.23; place(); dirty = true; });
   },
   async frame({ frames }, t) {
     const v = { blink_l: pulse(t, 0.6, 1.7, 0.15), blink_r: pulse(t, 0.6, 1.7, 0.15), smile: pulse(t, 1.9, 3.3), brows_up: pulse(t, 3.4, 4.8), mouth_open: pulse(t, 5.0, 6.6) };
@@ -193,7 +193,7 @@ S.s06_move = {
   async frame({ frames }, t) {
     const want = t < 3.0 ? 'idle' : t < 7.5 ? 'walk' : t < 9.9 ? 'run' : 'wave';
     if (want !== this.state) { this.state = want; await cmd(frames.a, { action: 'animate', clip: want }); }
-    const yaw = Math.PI * ramp(t, 5.1, 6.9);   // the turn: the demo rotates the root while the walk clip plays
+    const yaw = 2 * Math.PI * ramp(t, 5.1, 7.4);   // the turn: the demo rotates the root while the walk clip plays
     await frames.a.evaluate((y) => { model.rotation.y = y; dirty = true; }, yaw);
     this.labels = t >= 5.0 && t < 7.4
       ? [['real', 'walk clip from the GLB'], ['proto', 'turning: the demo rotates the root over the walk clip; no turn clip is built yet']]
@@ -208,7 +208,7 @@ function speakSeg(model, voiceNote, protoNote) {
       await loadInto(fr.a, model, 'Ava');
       await cmd(fr.a, { action: 'animate', clip: 'idle' });
       await cmd(fr.a, { action: 'blink', on: true });
-      await fr.a.evaluate(() => { const b = new THREE.Box3().setFromObject(model, true); target.set(0, b.max.y - 0.32, 0); orbit.yaw = 0.3; orbit.pitch = 0.05; orbit.dist = 0.32; place(); dirty = true; });
+      await fr.a.evaluate(() => { const b = new THREE.Box3().setFromObject(model, true); target.set(0, b.max.y - 0.12, 0); orbit.yaw = 0.3; orbit.pitch = 0.05; orbit.dist = 0.3; place(); dirty = true; });
       this.started = false;
     },
     async frame({ frames, seg }, t) {
@@ -232,13 +232,13 @@ S.s08b_voice = speakSeg('hybrid', 'voice 7 bf_emma (CHE local voice list) · hyb
 S.s08_custom = {
   async setup(ctx) {
     const R = [['a', 'photoreal', 'Before'], ['b', 'hair_copper', 'Hair colour: copper'], ['c', 'outfit_navy', 'Outfit: blue top, sand trousers, brown shoes'], ['d', 'body_tall_strong', 'Body: taller, more muscle and weight']];
-    const fr = await studioFrames(ctx, R.map(([id], i) => ({ id, x: (i % 2) * 640, y: Math.floor(i / 2) * 360, w: 640, h: 360 })));
+    const fr = await studioFrames(ctx, R.map(([id], i) => ({ id, x: i * 320, y: 0, w: 320, h: 720 })));
     this.R = R;
-    for (const [id, name] of R) { await loadInto(fr[id], name, name); await cmd(fr[id], { action: 'animate', clip: 'idle' }); await fr[id].evaluate(() => { orbit.yaw = 0.5; orbit.dist = 1.1; place(); }); }
+    for (const [id, name] of R) { (this.H = this.H || {})[name] = (await loadInto(fr[id], name, name)).height_m; await cmd(fr[id], { action: 'animate', clip: 'idle' }); await fr[id].evaluate(() => { orbit.yaw = 0.5; orbit.dist = 1.8; target.y += 0.3; place(); }); }
     const tags = R.map(([id, name, txt], i) => {
       const e = EV[name];
-      return `<div style="position:absolute;left:${(i % 2) * 640 + 12}px;top:${Math.floor(i / 2) * 360 + (i < 2 ? 96 : 12)}px;padding:6px 10px;border-radius:8px;background:rgba(5,6,8,.8);font-size:14px;line-height:1.35">
-        <b>${txt}</b><br><span style="color:#9aa4aa">${e.bones} bones ${e.same_rig_as_photoreal ? '· same names and order ✓' : '✗'}<br>${Object.keys(e.clips).length} clips ${e.same_clips_as_photoreal ? '· same channels ✓' : '✗'}${e.max_joint_offset_m ? ` · joints moved ${e.max_joint_offset_m} m` : ''}</span></div>`;
+      return `<div style="position:absolute;left:${i * 320 + 8}px;top:126px;width:304px;padding:6px 10px;border-radius:8px;background:rgba(5,6,8,.8);font-size:14px;line-height:1.35">
+        <b>${txt}</b><br><span style="color:#9aa4aa">checked by inspect_glbs.py: ${e.bones} bones ${e.same_rig_as_photoreal ? '· same names and order ✓' : '✗'}<br>${Object.keys(e.clips).length} clips ${e.same_clips_as_photoreal ? '· same channels ✓' : '✗'}${e.max_joint_offset_m ? ` · joints moved ${e.max_joint_offset_m} m` : ''}<br>height ${this.H[name]} m (each view frames its own model)</span></div>`;
     }).join('');
     await ctx.page.evaluate((html) => document.getElementById('view').insertAdjacentHTML('beforeend', html), tags);
     this.state = 'idle';
@@ -248,7 +248,7 @@ S.s08_custom = {
     if (want !== this.state) { this.state = want; for (const [id] of this.R) await cmd(frames[id], { action: 'animate', clip: want }); }
   },
   labels: [['real', 'four separate job builds, each in its own Live Studio view, same clip at once'], ['proto', 'hair STYLE geometry (only a scalp cap today) and app body sliders: lane A/B in progress']],
-  info: '<h4>Checked in the files</h4>joint names + order, clip channels compared with the photoreal GLB (inspect_glbs.py)',
+  info: '',
 };
 
 S.s09_office = {
@@ -278,7 +278,7 @@ S.s10_save = {
         <div class="row"><img src="${t2}"><div><b style="font-size:20px">2. Ava (game-like)</b><br><span class="muted">Person · hybrid · saved just now</span></div></div></div>
         <iframe id="a" src="../../../assets/characters/app/studio.html" style="left:0;top:0;width:1280px;height:720px;visibility:hidden"></iframe>`);
     }, [thumb, thumb2]);
-    const f = await (await ctx.page.waitForSelector('#a')).contentFrame();
+    const f = await (await ctx.page.waitForSelector('#a', { state: 'attached' })).contentFrame();
     await f.waitForFunction(() => window.__che && window.__che.find((m) => m.type === 'page_ready'), null, { timeout: 60000 });
     ctx.frames = { a: f }; this.opened = false;
   },
@@ -289,6 +289,7 @@ S.s10_save = {
       this.opened = true;
       this.model = await loadInto(frames.a, 'photoreal', 'Ava (from My Creations)');
       await cmd(frames.a, { action: 'animate', clip: 'wave' });
+      await frames.a.evaluate(() => { orbit.dist = 1.45; target.y += 0.15; place(); dirty = true; });
       await page.evaluate(() => { document.getElementById('sheet').style.display = 'none'; document.getElementById('a').style.visibility = 'visible'; });
     }
     if (this.opened) {
@@ -352,7 +353,7 @@ async function main() {
       for (const f of Object.values(ctx.frames)) await f.evaluate((ms) => window.__step(ms), DT);
       const sp = speechAt(seg, t);
       await page.evaluate(([labels, info, who, text, s]) => { SH.labels(labels); SH.info(info); SH.caption(who, text); SH.seg(s); },
-        [def.labels || [], def.info || '', sp?.who || '', sp?.text || '', `${i + 1}/${TL.segments.length} · ${seg.id}`]);
+        [def.labels || [], def.info || '', sp?.who || '', sp?.caption || sp?.text || '', `${i + 1}/${TL.segments.length} · ${seg.id}`]);
       await page.screenshot({ path: path.join(dir, String(k).padStart(5, '0') + '.jpg'), type: 'jpeg', quality: 90 });
     }
     times[seg.id] = { frames: n, seconds: Math.round((Date.now() - t0) / 100) / 10 };
