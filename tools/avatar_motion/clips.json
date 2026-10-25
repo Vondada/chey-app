@@ -1,0 +1,169 @@
+{
+ "note": "Licensed movement clips for CHE's MPFB game_engine skeleton. Source frames are 120 fps; frame 0 of every CMU BVH file is the converter's added T-pose and is used only as the retargeting reference. Files are downloaded at build time from the pinned commit below, verified by sha256 and cached (CHE_MOTION_CACHE); they are not stored in the repository.",
+ "sources": {
+  "cmu": {
+   "name": "CMU Graphics Lab Motion Capture Database, BVH conversion by Bruce Hahne (2010 MotionBuilder-friendly release)",
+   "mirror": "https://raw.githubusercontent.com/una-dinosauria/cmu-mocap/09a07f54f3bbb58797325f009282d0b2048a2871/data/",
+   "licence": "CMU: 'This data is free for use in research and commercial projects worldwide' (quoted in the release's READMEFIRST.txt v1.1, 2010, with B. Hahne adding no restrictions). The current mocap.cs.cmu.edu FAQ (not reachable from this container, from memory, unverified live) adds that the data may be included in commercially-sold products but not resold directly, even converted; CHE ships retargeted motion inside its characters and never redistributes the raw files.",
+   "credit": "The data used in this project was obtained from mocap.cs.cmu.edu. The database was created with funding from NSF EIA-0196217.",
+   "readme_sha256": "8e6fe2e640b3728ef2e43e722cb5ae9cdf0010028c0517c4226ed165f9037930",
+   "source_fps": 120
+  }
+ },
+ "files": {
+  "16_17": {
+   "source": "cmu",
+   "path": "016/16_17.bvh",
+   "sha256": "91f57b476b9c678239b1d1353bb752acbfc91fa9e564082ccd57b5ab40124619",
+   "bytes": 390154,
+   "description": "walk, 90-degree left turn"
+  },
+  "13_04": {
+   "source": "cmu",
+   "path": "013/13_04.bvh",
+   "sha256": "e3170b370d5615604448ed7b5caa2e9f3733a323d71ae383fe5f8f9ad6d4c8b1",
+   "bytes": 3598126,
+   "description": "sit on stepstool, chin in hand"
+  },
+  "18_08": {
+   "source": "cmu",
+   "path": "018/18_08.bvh",
+   "sha256": "b57e6ba15cf2bde4e6e4233da53425dde6d91952fb2bff17a89c5fce18a1a0ce",
+   "bytes": 1567012,
+   "description": "conversation - explain with hand gestures"
+  },
+  "86_15": {
+   "source": "cmu",
+   "path": "086/86_15.bvh",
+   "sha256": "fa86202e17ee0c6b14f242ffc0a4fe3dc9d70f03b88960c9ddda88a47f0f41c5",
+   "bytes": 5354933,
+   "description": "walking, sitting, hand motions"
+  },
+  "77_02": {
+   "source": "cmu",
+   "path": "077/77_02.bvh",
+   "sha256": "d6eef8f4ab182bef1bb5db0c46cbec0261b81a63ce1720b8a19777b7e79887a9",
+   "bytes": 705155,
+   "description": "standing"
+  },
+  "69_18": {
+   "source": "cmu",
+   "path": "069/69_18.bvh",
+   "sha256": "aca4dc92e5bf4b72c3b60d0208e4c5b54708d487031f4147d9fb59f57a9420c8",
+   "bytes": 791250,
+   "description": "turn in place (opposite direction)"
+  }
+ },
+ "clips": {
+  "walk_in_turn": {
+   "file": "16_17",
+   "frames": [
+    1,
+    518
+   ],
+   "kind": "locomotion",
+   "loop": false,
+   "description": "walks forward about 1.8 m and turns 90 degrees to her left",
+   "foot_lock": true
+  },
+  "walk_turn_sit": {
+   "file": "86_15",
+   "frames": [
+    880,
+    1650
+   ],
+   "kind": "transition",
+   "loop": false,
+   "description": "walks a short arc, turns around and sits down on a chair-height seat (same take as seated_gesture)",
+   "foot_lock": true
+  },
+  "sit_down": {
+   "file": "13_04",
+   "frames": [
+    150,
+    450
+   ],
+   "kind": "transition",
+   "loop": false,
+   "description": "stands, lowers onto a low stool (seat about 0.45 m) and settles; knees apart",
+   "foot_lock": true
+  },
+  "seated_idle": {
+   "file": "13_04",
+   "frames": [
+    450,
+    900
+   ],
+   "kind": "idle",
+   "loop": true,
+   "description": "seated, hands on the lap, small posture shifts",
+   "foot_lock": true
+  },
+  "stand_up": {
+   "file": "13_04",
+   "frames": [
+    930,
+    1110
+   ],
+   "kind": "transition",
+   "loop": false,
+   "description": "rises from the seat",
+   "foot_lock": true
+  },
+  "talk_gesture": {
+   "file": "18_08",
+   "frames": [
+    1150,
+    1750
+   ],
+   "kind": "gesture",
+   "loop": false,
+   "description": "explains with both hands while standing (upper body is layered over other clips)",
+   "foot_lock": true
+  },
+  "seated_gesture": {
+   "file": "86_15",
+   "frames": [
+    2950,
+    3850
+   ],
+   "kind": "gesture",
+   "loop": false,
+   "description": "seated (same seat as walk_turn_sit), talks with both hands",
+   "foot_lock": true
+  },
+  "stand_idle": {
+   "file": "77_02",
+   "frames": [
+    1,
+    937
+   ],
+   "kind": "idle",
+   "loop": true,
+   "description": "standing, natural weight shifts",
+   "foot_lock": true
+  },
+  "turn_in_place": {
+   "file": "69_18",
+   "frames": [
+    1,
+    1054
+   ],
+   "kind": "locomotion",
+   "loop": false,
+   "description": "turns on the spot one way and back",
+   "foot_lock": true
+  },
+  "seated_rest": {
+   "file": "86_15",
+   "frames": [
+    1650,
+    2900
+   ],
+   "kind": "idle",
+   "loop": true,
+   "description": "seated after walk_turn_sit, small posture shifts",
+   "foot_lock": true
+  }
+ }
+}
