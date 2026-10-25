@@ -55,6 +55,8 @@ class _CheRecordingStudioState extends State<CheRecordingStudio> with SingleTick
   CheStudioController? _c;
   late final TabController _tabs = TabController(length: CheRecordingStudio.tabs.length, vsync: this, initialIndex: widget.initialTab);
   Timer? _tick;
+  // The live input level while recording, 0..1, newest last (owner: see the waveform while recording).
+  final List<double> _levelHistory = <double>[];
   final _peaks = <String, Float32List>{};
   Future<String?> _voice(String words) async {
     final c = _c;
@@ -81,7 +83,14 @@ class _CheRecordingStudioState extends State<CheRecordingStudio> with SingleTick
     await c.open();
     if (c.song.tracks.isEmpty) await c.newSong();
     _tick = Timer.periodic(const Duration(milliseconds: 200), (_) {
-      if (mounted && (c!.playing || c.recording)) setState(() {});
+      if (!mounted) return;
+      if (c!.recording && c.inputLevel != null) {
+        _levelHistory.add(((c.inputLevel! + 60) / 60).clamp(0, 1).toDouble());
+        if (_levelHistory.length > 160) _levelHistory.removeAt(0);
+      } else if (!c.recording && _levelHistory.isNotEmpty) {
+        _levelHistory.clear();
+      }
+      if (c.playing || c.recording) setState(() {});
     });
     final say = widget.say;
     if (say != null && say.trim().isNotEmpty) {
@@ -247,7 +256,15 @@ class _CheRecordingStudioState extends State<CheRecordingStudio> with SingleTick
                 const SizedBox(width: 8),
                 Text(c.transport == CheTransport.countIn ? 'COUNT-IN' : 'REC', style: const TextStyle(color: Colors.redAccent, fontWeight: FontWeight.w800)),
                 const SizedBox(width: 8),
-                SizedBox(width: 80, child: LinearProgressIndicator(value: c.inputLevel == null ? 0 : ((c.inputLevel! + 60) / 60).clamp(0, 1).toDouble())),
+                Semantics(
+                  label: 'Live input waveform while recording',
+                  child: SizedBox(
+                    key: const ValueKey('studio-live-waveform'),
+                    width: 160,
+                    height: 28,
+                    child: CustomPaint(painter: _LiveWaveformPainter(List<double>.of(_levelHistory), const Color(0xFFFF5A5A))),
+                  ),
+                ),
               ],
               if (c.busy) const Padding(padding: EdgeInsets.only(left: 8), child: SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2))),
             ]),
@@ -892,4 +909,28 @@ class _WavePainter extends CustomPainter {
 
   @override
   bool shouldRepaint(_WavePainter old) => true;
+}
+
+/// The recent input levels as bars, newest on the right. Drawn only while recording, so it costs nothing at rest.
+class _LiveWaveformPainter extends CustomPainter {
+  _LiveWaveformPainter(this.levels, this.color);
+  final List<double> levels;
+  final Color color;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()..color = color..strokeWidth = 2..strokeCap = StrokeCap.round;
+    final mid = size.height / 2;
+    final slots = 80;
+    final step = size.width / slots;
+    final start = levels.length > slots ? levels.length - slots : 0;
+    for (var i = start; i < levels.length; i++) {
+      final x = (i - start) * step + step / 2;
+      final h = math.max(1.0, levels[i] * size.height);
+      canvas.drawLine(Offset(x, mid - h / 2), Offset(x, mid + h / 2), paint);
+    }
+  }
+
+  @override
+  bool shouldRepaint(_LiveWaveformPainter old) => true;
 }

@@ -5,7 +5,6 @@ import 'package:http/http.dart' as http;
 import '../browser/che_browser.dart';
 import '../che_gpu_jobs.dart' show cheGpuWorkerOnline;
 import 'che_gpu_connect.dart';
-import 'che_live_studio.dart' show cheColabNotebookUrl;
 
 /// One retained session in CHE's existing browser. This never starts or keeps a Colab runtime alive.
 class CheGpuBrowser extends StatefulWidget {

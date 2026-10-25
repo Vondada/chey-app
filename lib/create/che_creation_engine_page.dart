@@ -5,13 +5,11 @@
 // two cloud settings), Pair Colab (the worker token, shown once), the job queue with its real states and pictures, and
 // the notebook link.
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 
 import '../che_gpu_jobs.dart';
 import 'che_creative_studio.dart' show CheStudioColors;
 import 'che_engine_status.dart';
-import 'che_gpu_browser.dart';
 
 class CheCreationEnginePage extends StatelessWidget {
   const CheCreationEnginePage({super.key, required this.baseUrl, required this.headers, this.onRead, this.client});
@@ -73,38 +71,6 @@ class CheCreationEnginePage extends StatelessWidget {
                 border: Border.all(color: CheStudioColors.stroke),
               ),
               child: CheEngineStatusCard(baseUrl: baseUrl, headers: headers, onRead: onRead, client: client),
-            ),
-            const SizedBox(height: 20),
-            Semantics(
-              header: true,
-              child: const Text(
-                'Your Colab GPU (optional)',
-                style: TextStyle(color: CheStudioColors.text, fontSize: 17, fontWeight: FontWeight.w800),
-              ),
-            ),
-            const SizedBox(height: 8),
-            const Text(_steps, style: TextStyle(color: CheStudioColors.silver, fontSize: 15, height: 1.45)),
-            const SizedBox(height: 14),
-            Semantics(
-              button: true,
-              label: 'Open the Colab notebook',
-              excludeSemantics: true,
-              child: FilledButton.icon(
-                key: const ValueKey('engine-open-notebook'),
-                style: FilledButton.styleFrom(
-                  backgroundColor: CheStudioColors.teal,
-                  foregroundColor: Colors.black,
-                  minimumSize: const Size.fromHeight(54),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                ),
-                onPressed: () async {
-                  HapticFeedback.selectionClick();
-                  await Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) =>
-                    CheGpuBrowser(baseUrl: baseUrl, headers: headers, onRead: onRead, client: client)));
-                },
-                icon: const Icon(Icons.open_in_new_rounded),
-                label: const Text('Open the Colab notebook'),
-              ),
             ),
             const SizedBox(height: 20),
             Container(

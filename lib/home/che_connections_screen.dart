@@ -11,6 +11,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../che_ui/che_hud.dart';
 import '../che_ui/che_screen_awareness.dart';
 import '../che_ui/che_theme.dart';
+import '../create/che_gpu_connect.dart';
 
 /// Spoken control for the Connections page while it is the open route.
 class CheConnectionsVoice {
@@ -45,6 +46,7 @@ class CheConnectionsScreen extends StatefulWidget {
     this.onSpeak,
     this.autoConnect = '',
     this.onCloudComputer,
+    this.onColabGpu,
   });
 
   final String baseUrl;
@@ -58,6 +60,9 @@ class CheConnectionsScreen extends StatefulWidget {
 
   /// Opens Cloud Computer (the Creation Engine's workers, Pair Colab, GPU jobs, settings) inside CHE.
   final VoidCallback? onCloudComputer;
+
+  /// Opens the GPU Browser to connect Colab. The row is shown only until the GPU is connected.
+  final VoidCallback? onColabGpu;
 
   @override
   State<CheConnectionsScreen> createState() => _CheConnectionsScreenState();
@@ -466,6 +471,27 @@ class _CheConnectionsScreenState extends State<CheConnectionsScreen> {
             const CheChromeText('One app. Real connections.', style: TextStyle(fontSize: 23, fontWeight: FontWeight.w800))
           else
             const Text('One app. Real connections.', style: TextStyle(fontSize: 23, fontWeight: FontWeight.w800)),
+          const SizedBox(height: 6),
+          if (widget.onColabGpu != null)
+            AnimatedBuilder(
+              animation: CheGpuConnect.instance,
+              builder: (context, _) {
+                // Connected: the row leaves this list straight away. "Needs connection" stays until it is.
+                if (CheGpuConnect.instance.phase == CheGpuPhase.connected) return const SizedBox.shrink();
+                return Semantics(
+                  button: true,
+                  label: 'Colab GPU: needs connection. Double tap to connect',
+                  excludeSemantics: true,
+                  child: ListTile(
+                    key: const ValueKey('connections-colab-gpu'),
+                    leading: const Icon(Icons.memory_rounded),
+                    title: const Text('Colab GPU'),
+                    subtitle: const Text('Needs connection'),
+                    trailing: FilledButton(onPressed: widget.onColabGpu, child: const Text('Connect')),
+                  ),
+                );
+              },
+            ),
           const SizedBox(height: 6),
           Text('CHE verifies status with her Worker. A configured API key is not proof of a signed-in account. Account passwords stay with their providers.',
             style: TextStyle(color: CheColors.textDim)),

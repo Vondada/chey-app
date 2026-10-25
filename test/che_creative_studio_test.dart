@@ -248,9 +248,10 @@ void main() {
     ));
     await tester.pumpAndSettle();
     expect(find.text('Cloud Computer'), findsOneWidget);
-    expect(find.byKey(const ValueKey('engine-open-notebook')), findsOneWidget);
+    // The Colab GPU connection now lives in More > Connections, not in Create.
+    expect(find.byKey(const ValueKey('engine-open-notebook')), findsNothing);
     expect(find.byType(CheGpuJobsCard), findsOneWidget);
-    expect(find.textContaining('CHE_GPU_TOKEN'), findsOneWidget);
+    expect(find.textContaining('CHE_GPU_TOKEN'), findsNothing);
   });
 
   testWidgets('the six choices: real statuses, honest not-built answers, and each reaches its handler', (tester) async {
