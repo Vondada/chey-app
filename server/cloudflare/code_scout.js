@@ -419,6 +419,18 @@ const CODE_SUBJECT = new RegExp([
 const CODING = /\b(?:coding|opencode|self[- ]development)\b/i;
 const RECENT_RECORD = /\b(?:most\s+recent|latest|last|newest|current)\s+(?:coding|opencode|self[- ]development)\s+(?:jobs?|runs?|sessions?)\b/i;
 const RECORD_ID_ASK = /\b(?:job|run)\s+ids?\b/i;
+// Words that ask about a record's own facts (state, engine, run, result), never an action on it.
+const RECORD_FACET_WORDS = new Set(['its', 'their', 'the', 'a', 'an', 'and', 'or', 'also', 'with', 'of', 'for', 'on', 'what', 'which', 'is', 'was', 'did', 'has', 'any',
+  'current', 'latest', 'last', 'assigned', 'engine', 'model', 'models', 'execution', 'event', 'events', 'github', 'workflow', 'run', 'runs', 'status', 'state', 'result', 'results',
+  'progress', 'pass', 'passed', 'fail', 'failed', 'failure', 'log', 'logs', 'pr', 'pull', 'request', 'files', 'changed', 'step', 'steps', 'error', 'errors', 'job', 'id', 'time', 'long', 'done']);
+function RECORD_FACETS_ONLY(body) {
+  const words = String(body || '').toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter(Boolean);
+  return words.length > 0 && words.length <= 16 && words.every((w) => RECORD_FACET_WORDS.has(w) || /^[0-9a-f]{8}$/.test(w));
+}
+const NAMED_VERB = /^(?:show|retrieve|check|get|tell|read|give|pull|fetch|find|look\s+up|open)\b/i;
+
+// One named job by its short ID ("coding job f1a27d86"): a particular record, so it is definite.
+const NAMED_JOB = /\b(?:coding|opencode)\s+(?:jobs?|runs?)\s+(?:id\s+|number\s+|#\s*)?[0-9a-f]{8}\b/i;
 const RUNTIME_PLACE = /\b(?:coding|opencode)\s+(?:runtime|runner|pipeline)\b/gi;
 // A coding run, job or session: the record a history question is about.
 const WORK = '(?:coding|opencode|self[- ]development)\\s+(?:jobs?|runs?|sessions?|attempts?|executions?|tasks?|work)';
@@ -527,6 +539,8 @@ function questionEnd(clause, { coding, text }) {
   ];
   if (coding) {
     anchors.push(
+      // "the status of coding job f1a27d86": one named record, asked about in any words (owner, 2026-10-25).
+      new RegExp(NAMED_JOB.source, 'gi'),
       /\bhow\s+far\s+(?:did|has|have)\s+(?:che|chey|chay|shay|she|it|the\s+(?:job|run|session))\b[\s\S]{0,20}\b(?:get|gotten|got|come)\b/gi,
       /\bhow\s+far\s+(?:along\s+(?:is|are)\s+)?(?:the|my|that|your|ur)\s+(?:coding|opencode)\s+(?:job|run|session)\b(?:\s+(?:got|has\s+gotten|has\s+come|came))?/gi,
       /\b(?:latest|last|most\s+recent|recent|newest|previous|current)\s+(?:coding|opencode|self[- ]development)\s+(?:execution\s+|run\s+|job\s+|session\s+|attempt\s+)?(?:history|runs?|jobs?|sessions?|attempts?|logs?|results?|status|executions?|state)\b(?:['’]s)?(?:\s+(?:execution\s+)?(?:history|status|state|results?|logs?|outcome|progress))?/gi,
@@ -585,7 +599,9 @@ const HEAD_WORDS = new Set(('the an my your ur its me us to about on of for with
   + 'tell show give check read explain describe summarize summarise report inspect look review examine list walk through fill '
   + 'bring speed pull that this also quick question real honest brief short detailed full complete current latest last recent '
   + 'newest previous most own whole entire exact precise regarding concerning what which why how when where happened going doing '
-  + 'went wrong far long many sir che chay chey shay').split(' '));
+  + 'went wrong far long many sir che chay chey shay '
+  // Record-status words only (owner, 2026-10-25: "retrieve the status of coding job …, its assigned engine and GitHub workflow run").
+  + 'retrieve fetch status state progress assigned engine workflow github').split(' '));
 function okHead(head, body) {
   // The opening phrase ("can you check", "I want to know") is one unit, even when the question's
   // anchor begins inside it; after it, only the head words may stand before the question.
@@ -623,16 +639,20 @@ export function codingHistoryIntent(message, history = []) {
   if (CODE_SUBJECT.test(text)) return false;
   const coding = CODING.test(text);
   // One particular record, not coding jobs in general.
-  if (coding && !DEFINITE.test(text)) return false;
+  if (coding && !DEFINITE.test(text) && !NAMED_JOB.test(text)) return false;
   // Every clause must be the question, a "don't change anything" aside, or a follow-up about the
   // same record; anything else in the turn is another request, and its own route takes the whole turn.
   let asked = false;
+  const namedRecord = NAMED_JOB.test(text);
   for (const part of text.split(CLAUSE_BREAK)) {
     const body = part.replace(OPENING_ASIDE, '').trim();
     if (!body || FILLER.test(body) || NEGATION_CLAUSE.test(body)) continue;
+    // With one named job, a clause made only of record facets ("its assigned engine, last execution event
+    // and GitHub workflow run") is a further question about that same record. Any other word refuses it.
+    if (namedRecord && RECORD_FACETS_ONLY(body)) { asked = true; continue; }
     const { start, end } = questionEnd(body, { coding, text });
     if (end >= 0) {
-      if (!QUESTION_OPENING.test(body) && !NOUN_OPENING.test(body)) return false;
+      if (!QUESTION_OPENING.test(body) && !NOUN_OPENING.test(body) && !(namedRecord && NAMED_VERB.test(body))) return false;
       if (!okHead(body.slice(0, start), body)) return false;
       const tail = body.slice(end);
       if (!okTail(tail) && !followUp(tail.trim()) && !NEGATION_CLAUSE.test(tail.trim())) return false;

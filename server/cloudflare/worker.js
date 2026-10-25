@@ -144,7 +144,7 @@ import { applyModelReading, asksAboutScreen, clipKeepingLimits, interpretOwnerTu
 import { intentFrame, understoodAs } from './intent_frame.js';
 import { replyHijacksOwnerRequest, usageIntent, usageReport, speakUsage } from './usage_tracker.js';
 import { newestStarredIntent, speakNewestStarred, autoImproveScan, analyticalRepositoryQuestion, chatOnlyResponseIntent, currentTurnActionPolicy, codeScoutIntent, fetchRepoFile, inspectReferenceRepo, inspirationUpgradeContext, listOwnerStarredRepos, readRepoSource, referenceSourceBlock, codingFollowupKind, codingHistoryIntent, codingTimingNote, hypotheticalChange, repositoryImplementationIntent, repositoryInspectionIntent, scoutCode, selectStudyRepos, speakScout, speakStarredRepos, starredRepoIntent, starredStudyList, studySelectionIntent } from './code_scout.js';
-import { agentReportTurn, codingHistoryReceipt, completedWorkProof, otherAgentWorkAsk, otherAgentWorkReply, proofAsked } from './coding_history.js';
+import { agentReportTurn, codingHistoryReceipt, completedWorkProof, namedJobAnswer, otherAgentWorkAsk, otherAgentWorkReply, proofAsked } from './coding_history.js';
 import { inventionFollowUpAllowed, inventionIntent, inventionReply, planInvention, refusalReply } from './invention_studio.js';
 import { continuingInvention, inventionVisualIntent, inventionVisualRoute, makeConcept, visualTurn } from './invention_visuals.js';
 import { matchShowroom, showroomIntent, showroomReply, showroomView } from './capability_showroom.js';
@@ -12572,6 +12572,10 @@ export class CheState extends DurableObject {
             } else if (activeJob) subject = { kind: 'job', job: activeJob, unreadRun: { sessionId, status } };
             else subject = { kind: 'runtime', sessionId, status };
           }
+          // A job the owner names ("coding job f1a27d86") is answered from its own record, or said to be missing.
+          const named = namedJobAnswer(followupWords || message, selfJobs, sessionId);
+          if (named.reply) return ndjsonReply(named.reply, { source: 'che_coding_history', ok: true, model_calls: 0, background_job_id: null });
+          if (named.job) subject = { kind: 'job', job: named.job };
           const stale = subject.job?.status === 'running' && Date.parse(subject.job.updated_at || 0) <= Date.now() - jobStaleMs(subject.job);
           // "How long will that take?": the record's own timestamps come first; no estimate is invented.
           const timing = codingFollowupKind(followupWords || message) === 'duration' ? codingTimingNote({ ...subject, acceptedAt: runtimeAt }) : '';

@@ -58,6 +58,33 @@ function jobState(job, stale) {
   return `The latest coding job status is ${terminal}, sir.${checkpoint}`;
 }
 
+// The short job ID the owner names ("coding job f1a27d86"); '' when none is named.
+export function namedJobId(message) {
+  const m = /\b(?:coding|opencode)\s+(?:jobs?|runs?)\s+(?:id\s+|number\s+|#\s*)?([0-9a-f]{8})\b/i.exec(String(message || ''));
+  return m ? m[1].toLowerCase() : '';
+}
+
+// The stored job whose ID starts with the named short ID. Returns null when none matches (never the newest job).
+export function jobForShortId(jobs, shortId) {
+  if (!shortId) return null;
+  return (Array.isArray(jobs) ? jobs : []).find((job) => String(job?.id || '').toLowerCase().startsWith(shortId)) || null;
+}
+
+// The named job answers the question, never the newest one. Returns { job } for a stored job,
+// { reply } when the ID matches nothing (said plainly), or {} when no job ID was named.
+export function namedJobAnswer(message, jobs = [], sessionId = '') {
+  const shortId = namedJobId(message);
+  if (!shortId) return {};
+  const job = jobForShortId(jobs, shortId);
+  if (job) return { job };
+  if (String(sessionId || '').toLowerCase().startsWith(shortId)) return {};
+  return { reply: missingJobReply(shortId) };
+}
+
+export function missingJobReply(shortId) {
+  return `I have no coding job ${shortId} in my records, sir. Nothing was started or changed. Ask for "my last coding job" to see the newest one.`;
+}
+
 // A built-in job keeps its outcome as result and error text, which is read back as written.
 function jobReceipt(job, stale, unread, olderActive) {
   const id = clip(job.id).slice(0, 12);
