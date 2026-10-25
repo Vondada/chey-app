@@ -261,7 +261,7 @@ import { EGRESS_KEY, SNAPSHOT_KEY, holdEgress, installEgressGuard, setEgressOwne
 import { loadRegistry as loadCapabilityRegistry } from './capability_registry.js';
 import { BrainLedger, answerLedger, decidePending as decideBrainPending, installBrainLedger, ledgerApi, recordGraphConnections, ledgerIntent as brainLedgerIntent, DEFAULT_ZONE as LEDGER_DEFAULT_ZONE } from './brain_ledger.js';
 import { FilmStore, filmIntent, filmProgress, farmProviders, loadRates, loadUsage, speakFarm, speakPlan, speakStatus as speakFilmStatus } from './film_studio.js';
-import { GpuQueue, gpuWorkerRoute, speakGpuSummary } from './gpu_queue.js';
+import { GpuQueue, gpuWorkerRoute, speakGpuConnect, speakGpuSummary } from './gpu_queue.js';
 import { CreationStudio, studioOwnerRoute } from './creation_studio.js';
 import { populationAnswer, worldPopulationIntent, worldRoute } from './world_population.js';
 import { creationProbeRoute } from './creation_probe.js';
@@ -6058,6 +6058,11 @@ export class CheState extends DurableObject {
     }
     // "Which computers can build characters" / "why is my character waiting": the compute pool (compute_pool.js).
     if (command.local === 'cloud_gpu' && /^pool\b/.test(String(input || ''))) return reply(speakPool(await poolView(env, { storage: this.ctx.storage })));
+    // "Connect GPU": the app's Connect GPU flow opens the notebook and verifies the heartbeat; the Worker states the truth now.
+    if (command.local === 'cloud_gpu' && /^connect\b/.test(String(input || ''))) {
+      const view = await new GpuQueue(this.ctx.storage).view();
+      return reply(speakGpuConnect(view), { open_screen: 'gpu_connect' });
+    }
     if (command.local === 'cloud_gpu') return reply(speakGpuSummary(await new GpuQueue(this.ctx.storage).view()));
     if (command.local === 'cloud_blender') {
       const plan = selectProvider('blender_render', { env });

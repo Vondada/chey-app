@@ -207,6 +207,22 @@ test('"which computers can build characters" and "why is my character waiting" r
   assert.match((await che.say('What are my GPU jobs?')).reply, /^GPU jobs:/, 'the plain GPU question keeps its answer');
 });
 
+// Connect GPU (lib/create/che_gpu_connect.dart): the same /cloud-gpu entry with input "connect". The Worker never
+// claims a connection without a fresh GPU heartbeat; it tells the app to open its Connect GPU flow.
+test('"Connect GPU", "connect the GPU" and "start my GPU" reach /cloud-gpu (connect) with no model and open the flow', async () => {
+  const che = await owner({ env: READY_ENV });
+  for (const said of ['Connect GPU', 'CHE, connect the GPU', 'start my GPU', '/cloud-gpu connect']) {
+    const out = await che.say(said);
+    assert.equal(out.route, 'che_cloud_computer', said);
+    assert.equal(out.modelCalls, 0, said);
+    assert.equal(out.done.command, 'cloud-gpu', said);
+    assert.equal(out.done.open_screen, 'gpu_connect', said);
+    assert.match(out.reply, /^GPU not connected yet: no Colab GPU worker has checked in/, said);
+    assert.doesNotMatch(out.reply, /^GPU connected/, 'never connected without a heartbeat');
+  }
+  assert.doesNotMatch((await che.say('Can you connect the GPU?')).done.open_screen || '', /gpu_connect/, 'a question does not open it');
+});
+
 // ─── 3. Slash commands and natural-language equivalents ───────────────────
 
 test('3. a slash command and its plain-English request reach the same handler', async () => {

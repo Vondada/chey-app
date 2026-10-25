@@ -320,6 +320,22 @@ extension _CheHomeSend on _CHEHomeState {
       await speakText(said, record: false);
       return true;
     }
+    // Connect GPU (owner, 2026-10-25): CHE opens the notebook in her browser and verifies the GPU from her Worker.
+    // The owner's own words are the permission to open Colab; CheGpuConnect.start enforces and records it.
+    final gpuConnect = CheGpuConnect.instance;
+    if (cheGpuConnectCommand(message) || (gpuConnect.waitingForOwner && cheGpuContinueCommand(message))) {
+      _configureGpuConnect();
+      final said = cheGpuConnectCommand(message) ? gpuConnect.start(message) : gpuConnect.ownerContinue();
+      await _showGpuBrowser();
+      await speakText(said, record: false, show: true);
+      return true;
+    }
+    final gpuAccount = cheGpuAccountFromWords(message);
+    if (gpuAccount != null) {
+      await CheGpuAccount.save(gpuAccount);
+      await speakText('Saved. CHE uses $gpuAccount for Colab.', record: false, show: true);
+      return true;
+    }
     if (RegExp('$wake(?:open|show)(?: my| the)? gpu browser\\W*\$').hasMatch(lower)) {
       unawaited(Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) =>
         CheGpuBrowser(baseUrl: cheAgentBaseUrl, headers: _authHeaders,
@@ -1781,5 +1797,23 @@ extension _CheHomeSend on _CHEHomeState {
     }
     unawaited(say('Opening ${cheMeetingName(m)}, sir. It is ${cheMeetingStatusSpoken(m)}.'));
     if (mounted) unawaited(open(m.id));
+  }
+
+  /// Connect GPU's real ports: CHE's browser session and her Worker. Speech only for required steps and results.
+  void _configureGpuConnect() {
+    CheGpuConnect.instance.configure(
+      worker: CheGpuHttpWorker(baseUrl: cheAgentBaseUrl, headers: _authHeaders),
+      browser: CheGpuSessionBrowser(front: _showGpuBrowser),
+      speak: (text) => unawaited(speakText(text, record: false, show: true)),
+    );
+  }
+
+  /// Brings the GPU Browser (and its retained notebook) to the front without stacking a second copy.
+  Future<void> _showGpuBrowser() async {
+    if (!mounted || CheGpuBrowser.openCount > 0) return;
+    unawaited(Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) =>
+      CheGpuBrowser(baseUrl: cheAgentBaseUrl, headers: _authHeaders,
+        onRead: (text) => speakText(text, record: false, readOnDemand: true)))));
+    await Future<void>.delayed(const Duration(milliseconds: 600));
   }
 }

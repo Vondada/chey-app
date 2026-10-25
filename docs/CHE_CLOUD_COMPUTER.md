@@ -91,6 +91,9 @@ The Creation Engine's workers are part of this one Cloud Computer, not a second 
 **What the app does:**
 - In ordinary use the app never opens Colab. "Connect", "create a person" and "continue creating" stay inside CHE.
 - The only Colab link is the explicit setup button in Settings → Connections → Cloud Computer.
+- **Connect GPU (2026-10-25).** When the owner says "Connect GPU" (his explicit permission, recorded in code), CHE opens
+  the notebook in her own browser, hands him any Google sign-in or confirmation, and says "GPU connected" only once the
+  Worker has a fresh GPU heartbeat; then a small test job must complete and open. See [CHE_GPU_CONNECT.md](CHE_GPU_CONNECT.md).
 
 **Live proof.** The deploy workflow's `creation_check` input runs Generate on the live Worker. It waits for the real worker, checks the GLB against its receipt, and opens it in the Live Studio viewport (`creation_probe.js`, `tools/creation_open_in_studio.mjs`).
 

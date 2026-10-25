@@ -875,6 +875,13 @@ export function speakGpuSummary(view) {
   return `GPU jobs: ${parts.length ? parts.join(', ') : 'none yet'}. ${gpu}${view.worker_paired ? '' : ' The Colab worker is not paired yet.'} It costs nothing.`;
 }
 
+/** "Connect GPU" (/cloud-gpu connect): what is true now. Connected only with a fresh GPU heartbeat (< ONLINE_MS). */
+export function speakGpuConnect(view) {
+  const gpu = view.workers.filter((w) => w.online && w.class !== 'github_cpu' && isGpuName(w.gpu));
+  if (gpu.length) return `GPU connected: CHE's worker has a fresh heartbeat from ${gpu[0].gpu} (last seen ${gpu[0].last_seen}). Colab can end the runtime at any time; jobs then resume from their checkpoints.`;
+  return `GPU not connected yet: no Colab GPU worker has checked in during the last ${ONLINE_MS / 1000} seconds. Opening Connect GPU in the app: it opens your notebook in CHE's browser, hands you any Google sign-in or confirmation, and says GPU connected only when this heartbeat arrives.${view.worker_paired ? '' : ' Colab is not paired yet: use Pair Colab once and save the token in Colab Secrets as CHE_GPU_TOKEN.'}`;
+}
+
 /**
  * The worker's routes (/api/gpu/worker/*), opened only by the paired worker token in X-CHE-GPU-Token. Reads its own
  * body (previews are binary), so it runs before the JSON body is parsed. Returns null for other paths.

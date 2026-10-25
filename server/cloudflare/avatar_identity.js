@@ -229,6 +229,7 @@ export async function identityRoute(storage, queue, path, request, body) {
       const out = await queue.enqueue({
         title: `${preset.name || preset.id}, ${STYLE_LABELS[style]}: front, three-quarter and side`, kind: 'face_preview',
         views: b.views || [0, 45, 90], samples: b.samples ?? 64, res: b.res ?? 480, settings: toSettings(preset, style), queued_by: 'Character Generator',
+        priority: b.priority,   // Connect GPU's test job goes first (gpu_queue validates it; unknown values fall back to normal)
       });
       if (!out.ok) return json(out, 422);
       jobs.push({ style, job: out.job, duplicate: Boolean(out.duplicate) });

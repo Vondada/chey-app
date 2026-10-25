@@ -1082,11 +1082,11 @@ export const COMMANDS = Object.freeze([
   // GPU on demand (owner, 2026-10-24; $0): CHE's render queue worked by the owner's Colab T4 while his notebook is open.
   C('cloud-gpu', 'office', 'EXPLORE', 'Read my GPU render jobs.', {
     title: 'GPU jobs',
-    does: 'Says how many GPU jobs are queued, rendering, paused, completed or failed, and whether your Colab T4 worker is online. With "pool" (or "which computers can build characters", "why is my character waiting") it reads the compute pool: each computer that can build characters, its status, cooldown and quota, and why a waiting character waits. The pictures are in the Creation Room. It costs nothing; Colab works only while your notebook is open.',
+    does: 'Says how many GPU jobs are queued, rendering, paused, completed or failed, and whether your Colab T4 worker is online. With "pool" (or "which computers can build characters", "why is my character waiting") it reads the compute pool: each computer that can build characters, its status, cooldown and quota, and why a waiting character waits. The pictures are in the Creation Room. With "connect" ("Connect GPU", "start my GPU") the app opens your notebook in CHE\'s browser, hands you any Google sign-in or confirmation, and says GPU connected only when the Worker has a fresh heartbeat from the Colab GPU, then runs a small test job. It costs nothing; Colab works only while your notebook is open.',
     needs: [], route: 'che_cloud_computer', local: 'cloud_gpu', handler: 'gpu_queue.GpuQueue.view + speakGpuSummary; compute_pool.poolView + speakPool',
-    input: null, examples: ['What are my GPU jobs?', 'Which computers can build characters?', 'Why is my character waiting?'],
+    input: null, examples: ['What are my GPU jobs?', 'Which computers can build characters?', 'Why is my character waiting?', 'Connect GPU'],
     prompt: 'What are my GPU jobs?', produces: 'GPU queue status', evidence: 'The queue and worker heartbeats stored in the Worker.',
-    cost: 'Free: no AI engine is used.', keywords: ['gpu', 'colab', 'render queue', 'face preview', 'compute pool', 'character waiting'],
+    cost: 'Free: no AI engine is used.', keywords: ['gpu', 'colab', 'render queue', 'face preview', 'compute pool', 'character waiting', 'connect gpu'],
   }),
   // CHE World population (owner, 2026-10-25): seeded character records over 288 shared base models (world_population.js).
   C('world-population', 'office', 'EXPLORE', 'How many characters live in CHE World.', {
