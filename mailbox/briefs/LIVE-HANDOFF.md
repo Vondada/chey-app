@@ -77,6 +77,11 @@ Then, on GitHub:
 
 ## 2. Current position
 
+**Claude, 2026-10-25 ~06:00 UTC — two active lines of work; main still `afb8de1` (live).**
+- Reliability mission (owner's "MASTER FAILURE CLEANUP"): branch `claude/che-reliability` (from main) at `0ec23ac` (media "open saved image <id>" fix). Lanes `lane/rel-trust` (trust/memory/routing/coding), `lane/rel-markets-studio` (trading/crypto/studio/media), `lane/rel-infra-app` (voice/native, a11y, CI/deploy/IPA/Shorebird, recovery skill, ONE regression checklist). Inventory goes to `docs/failure_inventory/*.md`; ships as its own PR before the character PR.
+- Character/feature work: `claude/che-character-realism` (merged lanes B, C pool, D world, F GPU Connect; Worker 4016/0). Still running: lane/char-photo (A), lane/char-demo (E), lane/char-realism (G), lane/master-profile (H), lane/service-onboarding (I). Requirements + status: `docs/CHE_CHARACTER_REALISM_CHECKLIST.md` on that branch.
+- Next: merge reliability lanes → PR → green → merge [worker-deploy] → verify → then merge main into the character branch.
+
 **Claude, 2026-10-25 — character creation work in progress on `claude/che-character-realism`.** Read `docs/CHE_CHARACTER_REALISM_CHECKLIST.md` on that branch first (requirements, infrastructure facts, gap table). Lanes: `lane/char-photo` (Python/Blender: photo fit, body, hair, per-style samples) and `lane/char-photo-app` (Worker + app: reference upload, describe-a-person, body/voice/regenerate). Main is `afb8de1` (PR #524, live).
 
 
