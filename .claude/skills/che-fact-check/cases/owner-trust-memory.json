@@ -1,0 +1,73 @@
+{
+  "about": "Owner live test 2026-10-25 (docs/failure_inventory/trust_memory_routing.md), memory half: favorites asked together with sources, a save with a real write receipt, its id/time/source read back, recent memories. The model always answers wrongly here.",
+  "owner": true,
+  "model": {
+    "rules": [
+      {
+        "when": "worked together|collaboration",
+        "reply": "I can't find any record of previous collaboration between us."
+      },
+      {
+        "when": "missions|projects|working on",
+        "reply": "I don't have access to mission history or job records."
+      },
+      {
+        "when": "Silver Falcon",
+        "reply": "I've saved that for you and I'll remember it."
+      },
+      {
+        "when": "record ID|timestamp",
+        "reply": "I stored it, but I can't retrieve a record ID or timestamp."
+      }
+    ],
+    "default": "Noted, sir."
+  },
+  "turns": [
+    "My favorite drink is Strawberry Sprite",
+    "My favorite food is lasagna",
+    "My favorite color is teal",
+    {
+      "message": "What are my favorite food, drink and color?",
+      "expect": {
+        "route": "che_personal_recall",
+        "model_calls": 0,
+        "match": "favorite food is lasagna[\\s\\S]*favorite drink is Strawberry Sprite[\\s\\S]*favorite color is teal[\\s\\S]*Source: your own words in chat",
+        "not": "no record"
+      }
+    },
+    {
+      "message": "Where did you get my favorite drink from?",
+      "expect": {
+        "route": "che_personal_recall",
+        "model_calls": 0,
+        "match": "Strawberry Sprite[\\s\\S]*source: your own words in chat"
+      }
+    },
+    {
+      "message": "Save the phrase Silver Falcon 27",
+      "expect": {
+        "route": "che_memory",
+        "model_calls": 0,
+        "match": "^I’ll remember that, sir\\. Saved \"Phrase: Silver Falcon 27\" as record [0-9a-f-]{36} on \\d{4}-\\d{2}-\\d{2} at \\d{2}:\\d{2} UTC, and read it back from storage\\.$"
+      }
+    },
+    {
+      "message": "What is the record ID and timestamp for Silver Falcon 27?",
+      "expect": {
+        "route": "che_memory_search",
+        "model_calls": 0,
+        "match": "stored \\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2} UTC, record [0-9a-f-]{36}, source: your own words in chat",
+        "not": "can't retrieve"
+      }
+    },
+    {
+      "message": "What are my recent memories?",
+      "expect": {
+        "route": "che_memory_search",
+        "model_calls": 0,
+        "match": "Silver Falcon 27[\\s\\S]*record [0-9a-f-]{36}",
+        "not": "don't have a record of your recent memories"
+      }
+    }
+  ]
+}

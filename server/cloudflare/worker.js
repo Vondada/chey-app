@@ -70,7 +70,7 @@ import { externalGrounding } from './external_grounding.js';
 import { answerEvidenceReceipt, cachedResearch, evidenceReferenceFollowup, factKey, forgetKnowledge, invalidateKnowledge, knownAnswer, LAST_ANSWER_EVIDENCE_KEY, ownerFactQuestion, markPureResearch, rememberOwnerFact, researchHit, researchKey } from './knowledge_cache.js';
 import { claimMatcher, disprovenContext, downgradeDisproven, externalCorrection, guardCitations, loadDisproven, newsQuestion, newsResearch, reopenArticles, recheckExternalClaim, recordDisproven, verifiedSourcesContext } from './source_verification.js';
 import { recordReliability, reliabilityIntent, reliabilitySummary, speakReliability } from './reliability_ledger.js';
-import { answerOwnerMemoryQuestion, auditMemoryProvenance, evidenceQuestion, evidenceReferent, evidenceRequestSplit, explainEvidenceFor, findAnswerEvidence, brainRecordForProvenance, guardOwnerAttributions, guardRememberBlock, guardSpeakerAttributions, latestAnswerEvidence, loadRetractions, memoryPromptContext, ownerFactCorrection, ownerMemoryQuestion, ownerWords, recordAnswerEvidence, recordRetractions, storedSpeaker, storyRequested } from './memory_provenance.js';
+import { answerOwnerMemoryQuestion, auditMemoryProvenance, evidenceQuestion, evidenceReferent, evidenceRequestSplit, explainEvidenceFor, findAnswerEvidence, brainRecordForProvenance, guardOwnerAttributions, guardRememberBlock, guardSpeakerAttributions, latestAnswerEvidence, loadRetractions, RECALL_OUTCOMES, readOutcome, memoryPromptContext, ownerFactCorrection, ownerMemoryQuestion, ownerWords, recordAnswerEvidence, recordRetractions, storedSpeaker, storyRequested } from './memory_provenance.js';
 import { condenseHistory, ownerNotificationPolicy } from './workflow_governor.js';
 import { analyze as tradeAnalyze, backtestAll, candleSpan, loadCandles, paperTick, readBook, speakAnalysis, speakBacktest, speakBook, speakLearning, nextTradingTickAt, tradingIntent, watchSymbol, STRATEGIES } from './trading_lab.js';
 import { intelligenceIntent, intelligenceReport, intelligenceView, speakIntelligence, startStudy, studyAlarm, studyStep } from './historical_intelligence.js';
@@ -141,11 +141,11 @@ import { applyModelReading, asksAboutScreen, clipKeepingLimits, interpretOwnerTu
 import { intentFrame, understoodAs } from './intent_frame.js';
 import { replyHijacksOwnerRequest, usageIntent, usageReport, speakUsage } from './usage_tracker.js';
 import { newestStarredIntent, speakNewestStarred, autoImproveScan, analyticalRepositoryQuestion, chatOnlyResponseIntent, currentTurnActionPolicy, codeScoutIntent, fetchRepoFile, inspectReferenceRepo, inspirationUpgradeContext, listOwnerStarredRepos, readRepoSource, referenceSourceBlock, codingFollowupKind, codingHistoryIntent, codingTimingNote, hypotheticalChange, repositoryImplementationIntent, repositoryInspectionIntent, scoutCode, selectStudyRepos, speakScout, speakStarredRepos, starredRepoIntent, starredStudyList, studySelectionIntent } from './code_scout.js';
-import { codingHistoryReceipt, completedWorkProof, otherAgentWorkAsk, otherAgentWorkReply, proofAsked } from './coding_history.js';
+import { agentReportTurn, codingHistoryReceipt, completedWorkProof, otherAgentWorkAsk, otherAgentWorkReply, proofAsked } from './coding_history.js';
 import { inventionFollowUpAllowed, inventionIntent, inventionReply, planInvention, refusalReply } from './invention_studio.js';
 import { continuingInvention, inventionVisualIntent, inventionVisualRoute, makeConcept, visualTurn } from './invention_visuals.js';
 import { matchShowroom, showroomIntent, showroomReply, showroomView } from './capability_showroom.js';
-import { activityReceipt, activityStatusIntent } from './activity_status.js';
+import { activityReceipt, activityStatusIntent, workHistoryIntent, workHistoryReceipt } from './activity_status.js';
 import { webAppPage } from './web_app.js';
 import { learnedSkillsContext, learnedSkillsIntent, learnSkillIntent, attachmentText, condenseSkills, loadLearnedSkills, READ_FOR_SKILLS, redactSensitive, saveLearnedSkills, speakLearned, speakSkillList } from './self_skills.js';
 import { APPROVED_SKILLS, handleInstalledSkill, installedSkillIntent, installedSkillsContext } from './installed_skills.js';
@@ -171,7 +171,7 @@ import { githubWorkshopPieces, workshopAvatar, workshopAvatarIntent, workshopSna
 import { flushOutbox, handleWebMailbox, isOpen as flagstaffOpen, lockMailbox, openMailbox, transcript as flagstaffTranscript, mailboxCode, mailboxLink, postWebMail, readWebMail, rotateMailboxCode } from './web_mailbox.js';
 import { CheLibrary, fetchReadable, libraryContext, libraryIntent } from './library.js';
 import { KnowledgeLibrary, knowledgeIntent, knowledgeReply, knowledgeTaskContext } from './knowledge_library.js';
-import { answerPersonalFact, answerStoredStatement, factCorrectionReply, groundedReply, isQuestionLike, needsStrongEngine, ownerFactTurn, personalFactQuestion, recallPersonalFact, storedStatementQuestion } from './personal_recall.js';
+import { answerPersonalFact, answerStoredStatement, explicitMemorySave, factCorrectionReply, groundedReply, isQuestionLike, needsStrongEngine, ownerFactTurn, personalFactQuestion, recallPersonalFact, storedStatementQuestion } from './personal_recall.js';
 import { brainRecordIntent, chatgptHistoryIntent, importChatgptBatch, inspectMemory, memoryInspectIntent, ownerMemorySearchIntent, ownerSearchTurn, ownerStatementCandidates, phoneBrainNotes, speakBrainRecord, speakChatgptHistory, speakMemoryInspection } from './owner_recall.js';
 import { adRequest, adStatusLines, assetTruthReply } from './asset_truth.js';
 import { dropAgentTaskTurns, replyRepeatsAgentTask } from './agent_task_guard.js';
@@ -188,7 +188,7 @@ import {
 import { FYE_STATUS, fundyouredgeDraft, fundyouredgeDraftReply, fundyouredgeIntent, fundyouredgeReply } from './fundyouredge.js';
 import { CheCodingRuntime, codingRuntimeEnabled, ownerRequiresMergeApproval, recoverableRuntimeFailure, runtimeState, runtimeStateClass, speakRuntimeStatus } from './coding_runtime.js';
 import { newMissionAction, RESUME_LIMIT, resumeAction, resumeDecision } from './coding_failover.mjs';
-import { handoffIntent, readLiveHandoff, latestHandoff, unseenReplies, relayText, listThreads, mailboxHead, mailboxIntent, readAllMail, readThread, sendMail, speakThreads } from './mailbox.js';
+import { handoffIntent, hasGitHubMailbox, readLiveHandoff, latestHandoff, unseenReplies, relayText, listThreads, mailboxHead, mailboxIntent, readAllMail, readThread, sendMail, speakThreads } from './mailbox.js';
 import { officeToday, ownerDayKey, ownerTimeZone } from './office_board.js';
 import { LA_AGENCIA_ROLES, agentActionGuard, ensureLaAgenciaRoster, isLaAgenciaAgent, officeToolBlocker, splitGoal } from './office_company.js';
 import {
@@ -4422,17 +4422,28 @@ export class CheState extends DurableObject {
   async rememberOwnerStatement(data, text) {
     const added = addOwnerMemory(data, text, { source: 'owner_chat', category: 'Memory', scope: 'owner', confidence: 1 });
     const record = added.record || (data.memory_records || []).find((r) => r.active !== false && r.text?.toLowerCase() === String(text).trim().toLowerCase());
-    if (!record) return ndjsonReply('I could not save that as a safe memory, sir. Nothing was confirmed stored.', { source: 'che_memory', ok: false, model_calls: 0 });
+    if (!record) return ndjsonReply('I could not save that as a safe memory, sir. Nothing was confirmed stored.', { source: 'che_memory', ok: false, model_calls: 0, outcome: RECALL_OUTCOMES.STORAGE_FAILED });
     try {
       if (added.added || added.replaced?.length) await this.saveChatData(data);
       const persisted = await this.ctx.storage.get('che');
       const verified = persisted?.memory_records?.find((r) => r.id === record.id && r.text === record.text && r.active !== false);
       if (!verified) throw new Error('memory read-back did not match');
       const hash = await this.recordMemorySaved(verified);
-      return ndjsonReply('I’ll remember that, sir.', { source: 'che_memory', ok: true, model_calls: 0,
-        memory_receipt: { record_id: verified.id, store: 'che.memory_records', status: 'stored', recorded_at: verified.created_at || null, checked_at: new Date().toISOString(), text_sha256_16: hash } });
+      // The reply quotes the write receipt read back from storage: full record id and stored time (owner, 2026-10-25).
+      const at = Date.parse(String(verified.created_at || ''));
+      const stamp = Number.isFinite(at) ? new Date(at).toISOString().slice(0, 16).replace('T', ' at ') + ' UTC' : 'an unrecorded time';
+      const quote = String(verified.text).replace(/\s+/g, ' ').trim();
+      const quoted = `"${quote.length > 120 ? `${quote.slice(0, 119)}…` : quote}"`;
+      // A repeat is not a new write: it gives the original record and time.
+      const fresh = Boolean(added.added || added.replaced?.length);
+      const reply = fresh
+        ? `I’ll remember that, sir. Saved ${quoted} as record ${verified.id} on ${stamp}, and read it back from storage.`
+        : `I’ll remember that, sir. I already had it saved: ${quoted}, record ${verified.id}, stored ${stamp}; I read it back from storage just now.`;
+      await recordAnswerEvidence(this.ctx.storage, reply, answerEvidenceReceipt({ ownerAttested: true }), { records: [verified.id] }).catch(() => null);
+      return ndjsonReply(reply, { source: 'che_memory', ok: true, model_calls: 0, outcome: RECALL_OUTCOMES.STORED,
+        memory_receipt: { record_id: verified.id, store: 'che.memory_records', status: fresh ? 'stored' : 'already_stored', recorded_at: verified.created_at || null, checked_at: new Date().toISOString(), text_sha256_16: hash } });
     } catch (_) {
-      return ndjsonReply('I could not verify the memory write, sir. It is not confirmed saved; please try again.', { source: 'che_memory', ok: false, model_calls: 0 });
+      return ndjsonReply('I could not verify the memory write, sir. It is not confirmed saved; please try again.', { source: 'che_memory', ok: false, model_calls: 0, outcome: RECALL_OUTCOMES.STORAGE_FAILED });
     }
   }
 
@@ -5765,6 +5776,10 @@ export class CheState extends DurableObject {
     if (cancelOrderIntent(message)) return ndjsonReply('Only the CHE owner can cancel Alpaca PAPER orders. Nothing was cancelled.', { source: 'che_trading_chart', ok: false, model_calls: 0, order_cancelled: false });
     if (GUEST_OWNER_ACTION.test(message)) {
       return ndjsonReply('Only the CHE owner can do that. Nothing was changed. I can still talk it through with you.', { source: 'che_guest', ok: false, model_calls: 0 });
+    }
+    // The owner's records: refused, not the model's "no access".
+    if (workHistoryIntent(message) || ownerMemorySearchIntent(message)) {
+      return ndjsonReply('Only the CHE owner can read his mission, project, job and memory records. Nothing was read.', { source: 'che_guest', ok: false, model_calls: 0, outcome: RECALL_OUTCOMES.PERMISSION_DENIED });
     }
     // The Flagstaff correspondence is the owner's: a guest's model has none of it and must not guess it.
     if (outsideCorrespondenceIntent(message)) {
@@ -12176,6 +12191,17 @@ export class CheState extends DurableObject {
           await recordAnswerEvidence(this.ctx.storage, text, { kind: 'tool_result', tools: ['brain/status', 'memory_records'] }).catch(() => null);
           return ndjsonReply(text, { source: 'che_memory_inspection', model_calls: 0, ok: Boolean(report.brain), memory_inspection: report });
         }
+        // "Show my last five missions", "Have we worked together before?": the stored missions, projects, jobs and Office
+        // tasks, each store counted (activity_status.js), before the memory search.
+        const workHistoryAsk = !body.attachment && !memoryQuestion ? workHistoryIntent(rawMessage) : null;
+        if (workHistoryAsk && !ownerDevice) {
+          return ndjsonReply('Only the CHE owner can read mission, project and job history, sir.', { source: 'che_work_history', ok: false, model_calls: 0, outcome: RECALL_OUTCOMES.PERMISSION_DENIED });
+        }
+        if (workHistoryAsk) {
+          const workHistory = workHistoryReceipt({ ...workHistoryAsk, data });
+          await recordAnswerEvidence(this.ctx.storage, workHistory.text, { kind: workHistory.record_ids.length ? 'tool_result' : 'none', tools: ['objectives', 'projects', 'jobs', 'team_tasks'] }, { records: workHistory.record_ids }).catch(() => null);
+          return ndjsonReply(workHistory.text, { source: 'che_work_history', model_calls: 0, history: workHistoryAsk.kind, records: workHistory.record_ids.length, record_ids: workHistory.record_ids, stores_read: workHistory.stores, outcome: readOutcome({ records: workHistory.record_ids }) });
+        }
         const ownerSearch = ownerDevice && !body.attachment ? ownerMemorySearchIntent(rawMessage) : null;
         if (ownerSearch) {
           let store = null;
@@ -12269,6 +12295,12 @@ export class CheState extends DurableObject {
           const savedFact = rememberFact ? await rememberOwnerFact(this.ctx.storage, rememberFact[1]).catch(() => null) : null;
           if (savedFact) {
             return this.rememberOwnerStatement(data, rememberFact[1].trim().slice(0, 500));
+          }
+          // "Store the code phrase Silver Falcon 27": the authorized memory write, confirmed only by its read-back.
+          const explicitSave = explicitMemorySave(rawMessage);
+          if (explicitSave) {
+            await rememberOwnerFact(this.ctx.storage, explicitSave).catch(() => null);
+            return this.rememberOwnerStatement(data, explicitSave);
           }
           // "Where did you learn that?" needs the record's date and source, which the personal recall below gives.
           // A personal question with a dated owner record is answered by the personal recall below, which quotes the
@@ -12505,13 +12537,20 @@ export class CheState extends DurableObject {
         // the model is never asked (it invented speakers and authors). Handoffs, mailbox and consultations keep their routes.
         const otherAgent = body.attachment || handoffIntent(message) || mailboxIntent(message) || consultIntent(message) ? '' : otherAgentWorkAsk(message);
         if (otherAgent) {
-          if (!ownerDevice) return ndjsonReply('Only the CHE owner can read coding job status, sir.', { source: 'che_coding_history', ok: false });
-          return ndjsonReply(otherAgentWorkReply(otherAgent, (await this.loadData()).jobs || [], this.env.CHE_GITHUB_REPO || ''), { source: 'che_coding_history', model_calls: 0 });
+          if (!ownerDevice) return ndjsonReply('Only the CHE owner can read coding job status, sir.', { source: 'che_coding_history', ok: false, outcome: RECALL_OUTCOMES.PERMISSION_DENIED });
+          // Its own newest report: the live che-mailbox, else the Brain's imported copy (coding_history.agentReportTurn).
+          const { text: correspondence, records, outcome } = await agentReportTurn(otherAgent, {
+            live: hasGitHubMailbox(this.env) ? (peer) => Promise.all([readThread(this.env, peer).catch((error) => ({ error: String(error?.message || error) })), readLiveHandoff(this.env).catch(() => null)]) : null,
+            brain: (peer) => answerCorrespondenceQuestion(new CheBrainStore(this.ctx.storage), { peer, direction: 'from', topic: '' }, { limit: 2 }),
+          });
+          const reply = otherAgentWorkReply(otherAgent, (await this.loadData()).jobs || [], this.env.CHE_GITHUB_REPO || '', { correspondence });
+          await recordAnswerEvidence(this.ctx.storage, reply, { kind: records.length ? 'outside_correspondence' : 'none', tools: ['mailbox/thread', 'mailbox/live_handoff', 'brain/outside_correspondence', 'jobs'] }, { records }).catch(() => null);
+          return ndjsonReply(reply, { source: 'che_coding_history', model_calls: 0, records: records.length, record_ids: records, outcome });
         }
         // "Is it done yet?" / "how long will that take?" after CHE accepted or reported a coding job: the same
         // record route, read through the follow-up's own words and the recent turns (subject-loss audit, 2026-10-24).
         if (!body.attachment && codingHistoryIntent(followupWords || message, ownerHistory) && !handoffIntent(message) && !mailboxIntent(message) && !consultIntent(message)) {
-          if (!ownerDevice) return ndjsonReply('Only the CHE owner can read coding job status, sir.', { source: 'che_coding_history', ok: false });
+          if (!ownerDevice) return ndjsonReply('Only the CHE owner can read coding job status, sir.', { source: 'che_coding_history', ok: false, outcome: RECALL_OUTCOMES.PERMISSION_DENIED });
           const jobs = (await this.loadData()).jobs || [];
           // The owner asks for the last completed work and its proof: CHE's own job records answer it, never another agent's work.
           if (proofAsked(message)) {
@@ -14277,6 +14316,9 @@ export class CheState extends DurableObject {
           // The newest Brain turns plus the ones that mention the asked words, so an old statement is never out of reach.
           const brainStatements = ownerStatementCandidates(store, rawMessage);
           const answer = personal ? answerPersonalFact(data, personal, brainStatements, phoneBrainNotes(body.brain_context)) : answerStoredStatement(data, statementAsk, brainStatements);
+          // A miss while the Brain could not be read is a failed read, said as such, never "no record" alone.
+          const brainUnreadable = Boolean(brainStatements.unreadable);
+          if (answer && answer.kind === 'none' && brainUnreadable) answer.answer = `${answer.answer} I couldn't read my Brain store just now, so a record there may exist that I can't see.`;
           if (answer) {
             const receipt = answerEvidenceReceipt({ ownerAttested: answer.kind === 'owner_attested' });
             await Promise.resolve().then(() => this.ctx.storage.put(LAST_ANSWER_EVIDENCE_KEY, receipt)).catch(() => null);
@@ -14287,7 +14329,9 @@ export class CheState extends DurableObject {
             if (r) await recordReliability(this.ctx.storage, { kind: 'retrieval', workflow: 'instant_answer', outcome: 'answered_from_memory', tokens_saved: 1500 });
             return ndjsonReply(answer.answer, {
               source: 'che_personal_recall', model_calls: 0, records: answer.records.length, record_ids: answer.records,
+              outcome: readOutcome({ failed: answer.kind === 'none' && brainUnreadable, records: answer.records.length ? answer.records : (r ? [r] : []) }),
               recall_receipt: r ? { record_id: r.id || null, stored_at: r.created_at || null, store, owner_attested: !r.legacy && !r.phone } : null,
+              ...(answer.receipts ? { recall_receipts: answer.receipts } : {}),
             });
           }
         }

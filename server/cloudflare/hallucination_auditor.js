@@ -16,10 +16,12 @@ export const AUDIT_LABELS = Object.freeze(['VERIFIED', 'INFERRED', 'UNVERIFIED',
 export const PRICE_FRESH_MS = 15 * 60_000;
 
 const PAST = String.raw`(?:have\s+|just\s+|already\s+|successfully\s+)*`;
-const SUBJECT = String.raw`(?:I|CHE|she|we)\s+`;
+// "I've saved …" is "I have saved …" (owner live test, 2026-10-25: "I've saved that for you and I'll remember it" passed
+// every guard with nothing written).
+const SUBJECT = String.raw`(?:I|CHE|she|we)(?:'ve|’ve)?\s+`;
 // A claim is a completed, real action stated as fact. Questions, denials and hedges are judged separately.
 export const CLAIMS = Object.freeze([
-  { kind: 'memory_saved', re: new RegExp(String.raw`\b${SUBJECT}${PAST}(?:saved|stored|written|recorded)\b[^.!?\n]{0,60}\b(?:memory|memories|note)\b`, 'i') },
+  { kind: 'memory_saved', re: new RegExp(String.raw`\b${SUBJECT}${PAST}(?:saved|stored|written|recorded)\b[^.!?\n]{0,60}\b(?:memory|memories|note)\b|\b${SUBJECT}${PAST}(?:saved|stored|noted|memori[sz]ed)\s+(?:that|it|this|them)(?:\s+(?:for\s+you|away|safely|now))?\b|\bI(?:'ll|’ll|\s+will)\s+(?:always\s+|definitely\s+)?remember\s+(?:that|it|this|them)\b|\b(?:it|that)(?:'s|’s|\s+is|\s+has\s+been|\s+was)\s+(?:now\s+)?(?:saved|stored)\b[^.!?\n]{0,30}\b(?:memory|memories|for\s+you)\b`, 'i') },
   { kind: 'pr_merged', re: new RegExp(String.raw`\b(?:${SUBJECT}|Claude\s+|Codex\s+|ChatGPT\s+|it\s+)${PAST}merged\b[^.!?\n]{0,40}\b(?:PR|pull\s+request)\b|\b(?:PR|pull\s+request)\b[^.!?\n]{0,30}\bmerged\b`, 'i') },
   { kind: 'worker_deployed', re: new RegExp(String.raw`\b${SUBJECT}${PAST}deployed\b[^.!?\n]{0,40}\b(?:Worker|worker|production|backend|server)\b|\b(?:the\s+)?(?:Worker|worker|deployment)\s+(?:was\s+|is\s+)?(?:now\s+)?deployed\b`, 'i') },
   { kind: 'iphone_installed', re: /\b(?:installed|updated)\b[^.!?\n]{0,40}\b(?:on\s+(?:your|the|my)\s+)?(?:iPhone|phone|IPA)\b|\b(?:iPhone|phone)\b[^.!?\n]{0,30}\b(?:now\s+has|has)\b[^.!?\n]{0,20}\b(?:the\s+)?(?:new\s+)?(?:update|build)\b/i },
@@ -47,6 +49,12 @@ const CORRECTION = Object.freeze({
   code_executed: 'No execution record exists for this answer, so I did not run that code.',
   book_read: 'I have not read that book, so I cannot say what it contains.',
 });
+
+// A denial that CHE keeps, or can read, her own memory, mission, project, job or conversation records. Those stores exist
+// and have deterministic readers; a model that answers without them is guessing.
+const STORE_WORDS = String.raw`(?:mission|missions|objective|project|projects|job|jobs|coding|memory|memories|conversation|chat|collaboration|work|task)\s*(?:history|records?|logs?|database|ledgers?|ids?)?`;
+export const RECORDS_DENIAL = new RegExp(String.raw`\b(?:I|CHE)\s+(?:do\s+not|don't|don’t|cannot|can't|can’t|have\s+no|lack)\s+(?:have\s+)?(?:any\s+)?(?:access\s+to|a\s+way\s+to\s+(?:see|read|access)|(?:see|read|access))\s+(?:your\s+|my\s+|our\s+|the\s+|any\s+)?${STORE_WORDS}|\bno\s+(?:mission|project|job|memory)\s+(?:database|history|records?)\s+exists?\b|\bI\s+(?:can't|can’t|cannot|couldn't|could\s+not)\s+find\s+any\s+record\s+of\s+(?:our\s+)?(?:previous|past|earlier|prior)\s+(?:collaboration|work|projects?)`, 'i');
+const RECORDS_DENIAL_LINE = 'I keep mission, project, job and memory records and can read them: ask "show my last five missions", "what were our last three projects" or "search my memory for" a topic, and I will answer from the records themselves.';
 
 function splitSentences(text) {
   return String(text || '').split(/(?<=[.!?])\s+|\n+/).map((s) => s.trim()).filter(Boolean);
@@ -121,6 +129,15 @@ export function auditReply(reply, { evidence = null, requestId = '', now = Date.
   const entries = [];
   let sawClaim = false;
   for (const sentence of splitSentences(source)) {
+    // A model's "I don't have access to mission history" is a claim about CHE's stores it never read: removed, and the
+    // owner is told the words that read them (owner live test, 2026-10-25).
+    if (RECORDS_DENIAL.test(sentence)) {
+      sawClaim = true;
+      claims.push({ kind: 'records_denied', label: 'CONTRADICTED' });
+      if (!corrections.includes(RECORDS_DENIAL_LINE)) corrections.push(RECORDS_DENIAL_LINE);
+      entries.push({ at: new Date(now).toISOString(), request_id: String(requestId || ''), claim_type: 'records_denied', evidence_refs: [], verdict: 'CONTRADICTED', contradiction: 'records_denied', correction: RECORDS_DENIAL_LINE, outcome: 'removed' });
+      continue;
+    }
     const hits = /\?\s*$/.test(sentence) || NEGATED.test(sentence) ? [] : CLAIMS.filter((c) => c.re.test(sentence));
     if (!hits.length) { kept.push(sentence); continue; }
     sawClaim = true;
