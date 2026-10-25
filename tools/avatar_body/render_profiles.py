@@ -98,9 +98,43 @@ def _micro_normal(m, p, scale, strength, stretch=None):
     return True
 
 
-def upgrade_materials(objects):
+def toon_materials(objects):
+    """The stylized look's shading (character_style.py shading 'toon'): every material except the eyes becomes a
+    two-band toon diffuse (Cycles Toon BSDF, size 0.6, smooth 0.06) in its own colour plus a small emission of that
+    colour, so light falls off in bands instead of the soft gradients of skin and cloth. Returns the changes."""
+    done, seen = [], set()
+    for o in objects:
+        if o.type != 'MESH': continue
+        for slot in o.material_slots:
+            m = slot.material
+            if not m or m.name in seen: continue
+            seen.add(m.name); p = _principled(m); low = m.name.lower()
+            if not p or ('eye' in low and 'brow' not in low): continue
+            nt = m.node_tree
+            out = next((n for n in nt.nodes if n.type == 'OUTPUT_MATERIAL'), None)
+            if out is None: continue
+            toon = nt.nodes.new('ShaderNodeBsdfToon'); toon.component = 'DIFFUSE'
+            toon.inputs['Size'].default_value = 0.6; toon.inputs['Smooth'].default_value = 0.06
+            emit = nt.nodes.new('ShaderNodeEmission'); emit.inputs['Strength'].default_value = 0.18
+            base = p.inputs['Base Color']
+            for dst in (toon.inputs['Color'], emit.inputs['Color']):
+                if base.is_linked: nt.links.new(base.links[0].from_socket, dst)
+                else: dst.default_value = base.default_value
+            add = nt.nodes.new('ShaderNodeAddShader')
+            nt.links.new(toon.outputs[0], add.inputs[0]); nt.links.new(emit.outputs[0], add.inputs[1])
+            nt.links.new(add.outputs[0], out.inputs['Surface'])
+            done.append(f'{m.name}: toon diffuse (2 bands) + 0.18 emission')
+    print('MATERIALS', json.dumps(done), flush=True)
+    return done
+
+
+def upgrade_materials(objects, shading='subsurface'):
     """Final-profile materials on the imported GLB (glTF keeps only base colour, roughness and specular, so the
-    detail is added at render time, the same way for every view). Returns the list of changes for the receipt."""
+    detail is added at render time, the same way for every view). Returns the list of changes for the receipt.
+    shading (the GLB's che_character.style_spec.shading): subsurface (hyperrealistic, the default), game (game-like:
+    no subsurface or oil coat, a faint pore normal, light sheen) or toon (stylized: toon_materials)."""
+    if shading == 'toon': return toon_materials(objects)
+    game = shading == 'game'
     done = []
     seen = set()
     for o in objects:
@@ -113,6 +147,10 @@ def upgrade_materials(objects):
             if low.startswith('skin'):
                 # Human skin: red light scatters furthest (radius in metres, Blender's skin default ratio), scale for a
                 # 1.7 m figure; a fine pore normal so the face is not plastic.
+                if game:   # game-like: plain PBR skin, as a real-time engine shades it
+                    _micro_normal(m, p, 900.0, 0.03)
+                    done.append(f'{m.name}: game PBR (no subsurface), faint pore micro-normal')
+                    continue
                 p.inputs['Subsurface Weight'].default_value = 0.35
                 p.inputs['Subsurface Radius'].default_value = (1.0, 0.2, 0.1)
                 p.inputs['Subsurface Scale'].default_value = 0.008
@@ -122,7 +160,7 @@ def upgrade_materials(objects):
             elif low.startswith(('top', 'trousers')):
                 # Sheen tinted by the cloth's own colour: a white sheen made dark trousers read as shiny leggings in
                 # the first benchmark (2026-10-24).
-                p.inputs['Sheen Weight'].default_value = 0.25; p.inputs['Sheen Roughness'].default_value = 0.5
+                p.inputs['Sheen Weight'].default_value = 0.1 if game else 0.25; p.inputs['Sheen Roughness'].default_value = 0.5
                 _tint(p)
                 _micro_normal(m, p, 420.0, 0.12, stretch=(1.0, 1.0, 6.0))
                 done.append(f'{m.name}: cloth sheen, woven micro-normal')

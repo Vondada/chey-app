@@ -337,6 +337,10 @@ extension _CheHomeVoice on _CHEHomeState {
     // (owner, 2026-10-14): no iPhone voice and no free server voice. A clip
     // neither could speak stays silent, with its words and the reason on screen.
     final premiumOnly = !kIsWeb && defaultTargetPlatform == TargetPlatform.iOS;
+    // Private voice (che_private_voice.dart): only the on-device Kokoro voice
+    // speaks. ElevenLabs and Fish never get the text (CheEdgeVoice also refuses),
+    // and a clip Kokoro cannot make stays silent with its words on screen.
+    final privateVoice = ChePrivateVoice.isOn;
     final outcome = CheVoiceTurnOutcome();
     // One voice for the whole reply (owner, 2026-10-18): the first clip's
     // voice is locked for every later clip; a failure partway stops the voice
@@ -349,8 +353,18 @@ extension _CheHomeVoice on _CHEHomeState {
     String? playFailure;
     late final CheSpeechPipeline<CheVoiceClip> turn;
     turn = CheSpeechPipeline<CheVoiceClip>(
-      ready: _prepareSpeechOutput(),
+      ready: privateVoice
+          ? Future.wait<Object?>([_prepareSpeechOutput(), CheNativeVoice.prepareNeural()]).then((_) {})
+          : _prepareSpeechOutput(),
       synthesize: (text) async {
+        if (privateVoice) {
+          final bytes = await CheNativeVoice.synthesizeNeural(text);
+          if (bytes == null || bytes.isEmpty) {
+            silentReasons[text] = 'Private voice is on and my on-device voice is not loaded yet';
+            return null;
+          }
+          return CheVoiceClip(bytes, 'kokoro-on-device', text: text);
+        }
         if (!premiumOnly) return null;
         final made = await voice.synthesize(text);
         final edge = made.result;
@@ -383,6 +397,11 @@ extension _CheHomeVoice on _CHEHomeState {
         return played;
       },
       fallback: (text) {
+        if (privateVoice) {
+          final why = silentReasons.remove(text) ?? playFailure ?? 'Private voice is on and my on-device voice could not speak';
+          playFailure = null;
+          return _staySilent(text, why, outcome);
+        }
         if (!premiumOnly) return _speakFallbackChunk(text);
         final why = silentReasons.remove(text) ?? playFailure ?? 'neither ElevenLabs nor Fish sent audio';
         playFailure = null;
@@ -401,7 +420,7 @@ extension _CheHomeVoice on _CHEHomeState {
           ..gapsMs = List.of(turn.gapsMs)
           ..synthMs = List.of(turn.synthMs)
           ..firstAudioMs = turn.firstPlaybackMs;
-        if (premiumOnly && outcome.chunks > 0) {
+        if (premiumOnly && !privateVoice && outcome.chunks > 0) {
           _lastSpokenReply = outcome.summary();
           unawaited(CheEdgeVoice.report(outcome.toReport()));
         }
@@ -607,6 +626,14 @@ extension _CheHomeVoice on _CHEHomeState {
   }
 
   Future<void> _fallbackSpeechOnce(String reason) async {
+    // Private voice kept the native recognizer closed (no on-device
+    // recognition here): no other recognizer is tried, and this passive path
+    // only records why (the mic button says it aloud).
+    if (ChePrivateVoice.isOn && CheNativeVoice.lastPrivateRefusal.isNotEmpty) {
+      _localVoice.recordMicFailure(CheNativeVoice.lastPrivateRefusal);
+      CheNativeVoice.lastPrivateRefusal = '';
+      return;
+    }
     _localVoice.recordMicFailure('iPhone recognizer: $reason');
     debugPrint('CHE speech error: native: $reason');
     await _localVoice.runMicOp(() async {
@@ -863,5 +890,56 @@ extension _CheHomeVoice on _CHEHomeState {
       await _fallbackSpeech(message);
     }
   }
-}
 
+  /// Private voice by voice or typing (che_private_voice.dart): "turn on
+  /// private voice", "turn off private voice", "is my voice private?". Runs on
+  /// the phone; the reply is spoken, shown as large text, with a haptic.
+  Future<bool> _runPrivateVoiceTurn(String message) async {
+    final command = ChePrivateVoice.parse(message);
+    if (command == null) return false;
+    if (mounted) _set(() => controller.clear());
+    String reply;
+    switch (command) {
+      case ChePrivateVoiceCommand.on:
+        final saved = await ChePrivateVoice.setEnabled(true);
+        // Live voice to OpenAI ends now; the iPhone recognizer takes over only
+        // when it can recognize on the phone (CheNativeVoice.start checks).
+        if (_realtimeVoice != null) await _fallbackAfterRealtimeLoss(ChePrivateVoice.realtimeRefusal);
+        unawaited(CheNativeVoice.prepareNeural());
+        reply = ChePrivateVoice.changedReply(true, saved: saved);
+        if (_localVoice.lastMicFailure == ChePrivateVoice.unsupportedRecognitionReply) {
+          reply = '$reply ${ChePrivateVoice.unsupportedRecognitionReply}';
+        }
+      case ChePrivateVoiceCommand.off:
+        final saved = await ChePrivateVoice.setEnabled(false);
+        reply = ChePrivateVoice.changedReply(false, saved: saved);
+      case ChePrivateVoiceCommand.status:
+        Map<String, dynamic> report = const {};
+        try {
+          report = await CheNativeVoice.status().timeout(const Duration(seconds: 3));
+        } catch (_) {}
+        final onDevice = report['on_device_recognition'];
+        reply = ChePrivateVoice.dataFlowReply(
+          on: ChePrivateVoice.isOn,
+          onDeviceRecognition: onDevice is bool ? onDevice : null,
+          kokoroReady: CheNativeVoice.neuralReady,
+          liveVoiceConfigured: integrations['openai_live_voice'] == true,
+        );
+    }
+    if (mounted) _set(() {});
+    unawaited(_statusHaptic(command == ChePrivateVoiceCommand.status ? 1 : 3));
+    await speakText(reply, record: false, show: true);
+    return true;
+  }
+
+  /// When Private voice kept the microphone closed (no on-device recognition
+  /// on this iPhone or language), CHE says why: spoken, large text, haptic.
+  void _reportPrivateMicRefusal() {
+    final why = CheNativeVoice.lastPrivateRefusal;
+    if (why.isEmpty) return;
+    CheNativeVoice.lastPrivateRefusal = '';
+    _localVoice.recordMicFailure(why);
+    unawaited(_statusHaptic(4));
+    unawaited(speakText(why, record: false, show: true));
+  }
+}

@@ -1055,6 +1055,18 @@ export const COMMANDS = Object.freeze([
     examples: ['Check my keys'],
     prompt: 'Check my keys', produces: 'setup steps', keywords: ['connect', 'integration', 'keys', 'setup', 'api key'],
   }),
+  // Service onboarding (owner, 2026-10-25): one entry over service_onboarding.js.
+  C('connect-service', 'office', 'BUILD', 'Connect a service end to end and verify it.', {
+    title: 'Connect a Service',
+    does: 'Checks the connection CHE already has first and keeps it if it works. Otherwise creates a Hugging Face token with the fewest permissions in CHE\'s browser using your sign-in, or opens the page for guided providers. Stores it in the place CHE really reads and says "Connected" only after real checks pass.',
+    needs: [], route: 'che_onboarding', local: 'connect_service', handler: 'service_onboarding.startOnboarding / storeSecret / verifyOnboarding',
+    input: { name: 'service', required: true, hint: 'Hugging Face, Groq, Gemini…' },
+    examples: ['CHE, connect Hugging Face', 'Connect Hugging Face for film studio', 'Is Hugging Face connected?'],
+    prompt: 'Connect {input}', produces: 'connection status',
+    evidence: 'Three separate outcomes: token created, secret configured (where), connection verified (the provider\'s own checks). Fingerprints only, never a key.',
+    cost: 'Free. Verification makes no paid calls; nothing is bought.',
+    keywords: ['connect', 'hugging face', 'onboarding', 'token', 'connected', 'set up service'],
+  }),
   C('voice-test', 'office', 'EXPLORE', "Test CHE's actual voice systems.", {
     does: 'Checks which of CHE\'s voices answer right now (ElevenLabs, Fish) and reports real results. Hearing it on your phone is the final test.',
     needs: ['voice'], route: 'che_voice_test', local: 'voice_test', handler: 'voiceProbe (one real ElevenLabs call) + fishAudioKeyStatus',
@@ -1082,11 +1094,20 @@ export const COMMANDS = Object.freeze([
   // GPU on demand (owner, 2026-10-24; $0): CHE's render queue worked by the owner's Colab T4 while his notebook is open.
   C('cloud-gpu', 'office', 'EXPLORE', 'Read my GPU render jobs.', {
     title: 'GPU jobs',
-    does: 'Says how many GPU jobs are queued, rendering, paused, completed or failed, and whether your Colab T4 worker is online. The pictures are in the Creation Room. It costs nothing; Colab works only while your notebook is open.',
-    needs: [], route: 'che_cloud_computer', local: 'cloud_gpu', handler: 'gpu_queue.GpuQueue.view + speakGpuSummary',
-    input: null, examples: ['What are my GPU jobs?'],
+    does: 'Says how many GPU jobs are queued, rendering, paused, completed or failed, and whether your Colab T4 worker is online. With "pool" (or "which computers can build characters", "why is my character waiting") it reads the compute pool: each computer that can build characters, its status, cooldown and quota, and why a waiting character waits. The pictures are in the Creation Room. With "connect" ("Connect GPU", "start my GPU") the app opens your notebook in CHE\'s browser, hands you any Google sign-in or confirmation, and says GPU connected only when the Worker has a fresh heartbeat from the Colab GPU, then runs a small test job. It costs nothing; Colab works only while your notebook is open. With "budget" ("allow up to 20 dollars for GPUs", "limit GPUs to 5 dollars a month", "stop paid GPUs", "how long will my GPU money last", "what GPUs can CHE use") it sets or stops your paid-GPU cap, which is your spending approval, recorded with its time; paid prepaid GPUs (RunPod, Vast.ai) then run only for GPU jobs no free GPU can take, cheapest first, deleted after the job, never past the cap. CHE never pays or adds credit.',
+    needs: [], route: 'che_cloud_computer', local: 'cloud_gpu', handler: 'gpu_queue.GpuQueue.view + speakGpuSummary; compute_pool.poolView + speakPool; compute_pool.budgetCommand',
+    input: null, examples: ['What are my GPU jobs?', 'Which computers can build characters?', 'Why is my character waiting?', 'Connect GPU', 'How long will my GPU money last?', 'Allow up to 20 dollars for GPUs', 'Stop paid GPUs'],
     prompt: 'What are my GPU jobs?', produces: 'GPU queue status', evidence: 'The queue and worker heartbeats stored in the Worker.',
-    cost: 'Free: no AI engine is used.', keywords: ['gpu', 'colab', 'render queue', 'face preview'],
+    cost: 'Free: no AI engine is used. Paid GPUs only within the GPU budget you set (default $0).', keywords: ['gpu', 'colab', 'render queue', 'face preview', 'compute pool', 'character waiting', 'connect gpu', 'gpu budget', 'runpod', 'paid gpu'],
+  }),
+  // CHE World population (owner, 2026-10-25): seeded character records over 288 shared base models (world_population.js).
+  C('world-population', 'office', 'EXPLORE', 'How many characters live in CHE World.', {
+    title: 'CHE World population',
+    does: 'Says how many character records CHE World holds (seeded descriptions, not models), how many of the 288 shared base models are really generated or building, and that the active on-screen count is known only while the world viewer is open. Nothing is built.',
+    needs: [], route: 'che_world_population', local: 'world_population', handler: 'world_population.populationAnswer',
+    input: null, examples: ['How many characters live in CHE World?'],
+    prompt: 'How many characters live in CHE World?', produces: 'population counts', evidence: 'The stored world range and the GPU queue job states of the bucket models.',
+    cost: 'Free: no AI engine is used.', keywords: ['che world', 'population', 'characters', 'crowd', 'residents'],
   }),
   C('cloud-blender', 'office', 'BUILD', 'Create a Blender animation on the cloud computer.', {
     does: 'Checks every environment for Blender. None has it today, so CHE says so, names what she already has (the bpy character pipeline) and the smallest addition that would make it work. Nothing is started.',
@@ -1139,6 +1160,17 @@ export const COMMANDS = Object.freeze([
     examples: ['Approve the cloud job', 'Stop cloud job 1a2b3c4d', 'Retry cloud job 1a2b3c4d'],
     prompt: 'Cloud job control: {input}', produces: 'status', evidence: 'The job record read back after the change.',
     cost: 'Free; an approved test run uses GitHub Actions minutes.', keywords: ['approve cloud job', 'stop cloud job', 'retry cloud job'],
+  }),
+  // Master profile form fill (owner, 2026-10-25): runs ONLY on the iPhone (lib/browser/che_form_filler.dart).
+  // The Worker routes the command name; profile values and passwords never come here.
+  C('master-profile', 'office', 'BUILD', 'Fill the open form from your approved profiles.', {
+    title: 'Master Profile',
+    does: 'Fills the form open in CHE\'s iPhone browser from your approved Personal or CHE Office profile, remembered answers and the on-device password vault, then reads back each field. It never submits: say "submit it" separately, and paying needs your yes.',
+    needs: [], route: 'che_master_profile', local: 'master_profile', handler: 'app: CheFormFiller (lib/browser/che_form_filler.dart) + assets/browser/che_form_fill.js',
+    input: { name: 'profile', required: false, hint: 'personal, business, or everything for all pages' },
+    examples: ['CHE, use my master profile', 'Fill this with my business profile', 'Fill everything with my personal profile'],
+    prompt: 'Use my master profile {input}', produces: 'filled form', evidence: 'Each field\'s value read back from the page on the phone; the report names fields, never values.',
+    cost: 'Free. Runs on the iPhone; nothing is sent to a model.', keywords: ['master profile', 'fill this form', 'fill out the form', 'autofill', 'business profile', 'personal profile'],
   }),
 ]);
 

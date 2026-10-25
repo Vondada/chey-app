@@ -959,6 +959,19 @@ extension _CheHomeHubRooms on _CHEHomeState {
     );
   }
 
+  /// CHE World population (lib/world/che_world_population_panel.dart): records, generated models, active now. Opening
+  /// it speaks nothing; Read aloud speaks the counts.
+  Future<void> _openWorldPopulation() async {
+    HapticFeedback.selectionClick();
+    await Navigator.of(context).push(
+      CheWorldPopulationPanel.route(
+        baseUrl: cheAgentBaseUrl,
+        headers: _authHeaders,
+        onRead: (text) => speakText(text, record: false, readOnDemand: true),
+      ),
+    );
+  }
+
   /// The Capability Showroom's real states, from the Worker (owner device token; nothing is spoken).
   /// The Capability Showroom, reachable from the Creation Room and More. Opening it speaks nothing.
   void _openShowroom() {

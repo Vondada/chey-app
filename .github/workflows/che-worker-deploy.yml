@@ -20,6 +20,10 @@ on:
         description: Also run the Creation Engine end to end on the live Worker (Generate, CHE starts the free cloud worker, Blender builds a full-body GLB, CHE's viewport opens it)
         type: boolean
         default: false
+      character_accept:
+        description: Also run the character acceptance test on the live Worker (three styles, a synthetic reference face, hair/clothing/height/build edits, reopen) and publish the outputs to the che-character-samples branch
+        type: boolean
+        default: false
       rea_check:
         description: Also run the REA acceptance investigations (public repository, web page, CHE comparison, private iOS app) on the live Worker
         type: boolean
@@ -60,7 +64,7 @@ jobs:
     # changes. Do not add a commit-message gate here: follow-up fixes can merge
     # without a marker and must still deploy the exact green main commit.
     runs-on: ubuntu-latest
-    timeout-minutes: ${{ inputs.creation_check && 75 || (inputs.video_check || inputs.rea_check) && 30 || 15 }}
+    timeout-minutes: ${{ inputs.character_accept && 100 || inputs.creation_check && 75 || (inputs.video_check || inputs.rea_check) && 30 || 15 }}
     env:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: c49b395e8f1138b5fae36ab88222542c
@@ -201,7 +205,7 @@ jobs:
       - name: Deploy
         working-directory: server/cloudflare
         # Deploy after secret sync so the final live version retains its SHA tag.
-        run: npx --yes wrangler@4 deploy --tag "${GITHUB_SHA::12}" --message "deploy ${GITHUB_SHA::12}"
+        run: npx --yes wrangler@4 deploy --tag "${GITHUB_SHA::12}" --message "deploy ${GITHUB_SHA::12}" --var "CHE_POOL_COMMIT:${GITHUB_SHA}"
 
       - name: Verify live deployed commit
         env:
@@ -583,6 +587,33 @@ jobs:
           path: che-creation-check/
           if-no-files-found: ignore
           retention-days: 14
+
+      - name: Character acceptance on the live Worker (three styles, reference face, edits, reopen)
+        if: inputs.character_accept
+        timeout-minutes: 80
+        run: |
+          npm install --no-save --no-audit --no-fund playwright@1.56.1 > /dev/null
+          npx playwright install --with-deps chromium > /dev/null
+          set +e
+          mkdir -p che-character-accept
+          node tools/creation_accept.mjs che-character-accept --minutes 75 | tee che-character-accept/run.log
+          code=${PIPESTATUS[0]}
+          # Each saved GLB opened in CHE's own Live Studio viewport with its walk playing (the app's viewer page).
+          for glb in che-character-accept/*.glb; do
+            [ -e "$glb" ] || continue
+            node tools/creation_open_in_studio.mjs "$glb" "${glb%.glb}__studio.png" walk > "${glb%.glb}__studio.json" || code=1
+          done
+          node -e 'const s=require("./che-character-accept/summary.json");for(const c of s.checks){console.log(`${c.ok?"PASS":"FAIL"} ${c.name}: ${c.detail}`)}' | tee -a "$GITHUB_STEP_SUMMARY" || true
+          exit $code
+
+      - name: Keep the character acceptance files
+        if: always() && inputs.character_accept
+        uses: actions/upload-artifact@v4
+        with:
+          name: che-character-accept
+          path: che-character-accept/
+          if-no-files-found: ignore
+          retention-days: 30
 
       - name: Check CHE's Command Center through the live Worker
         run: |
@@ -1010,3 +1041,30 @@ jobs:
           path: che-fish-samples/*.mp3
           if-no-files-found: ignore
           retention-days: 14
+
+  # The owner reads acceptance samples from git (Actions artifacts are not reachable from every client): this job has
+  # write access only to push the files to the che-character-samples branch, never to main or any other branch.
+  publish-character-samples:
+    needs: deploy
+    if: always() && inputs.character_accept
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: che-character-accept
+          path: accept
+      - name: Push the samples to che-character-samples
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git init -q samples && cd samples
+          git config user.name "github-actions[bot]"; git config user.email "41898729+github-actions[bot]@users.noreply.github.com"
+          git remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          if git fetch -q --depth 1 origin che-character-samples; then git checkout -q -B che-character-samples FETCH_HEAD; else git checkout -q --orphan che-character-samples; fi
+          dir="runs/${GITHUB_RUN_ID}"; mkdir -p "$dir"; cp -r ../accept/. "$dir/"
+          echo "${GITHUB_RUN_ID} ${GITHUB_SHA} $(date -u +%FT%TZ)" >> runs/index.txt
+          git add -A && git commit -qm "Character acceptance samples, run ${GITHUB_RUN_ID} (${GITHUB_SHA::12})" && git push -q origin HEAD:che-character-samples
+          echo "::notice title=Character samples::branch che-character-samples, folder $dir"

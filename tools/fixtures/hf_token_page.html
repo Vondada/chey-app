@@ -1,0 +1,56 @@
+<!doctype html>
+<!-- A reconstruction of Hugging Face's "Create new Access Token" page for CHE's
+     onboarding tests. NOT a copy of the real page: labels follow Hugging Face's
+     docs and its fine-grained form; the real DOM is exercised only on the
+     owner's iPhone. The form posts to the local fake (tools/fake_huggingface.mjs). -->
+<html lang="en"><head><meta charset="utf-8"><title>Create new Access Token</title></head>
+<body>
+<header><nav><a href="/">Hugging Face</a> <a href="/{{USER}}"><img alt="{{USER}}" src="data:image/gif;base64,R0lGODlhAQABAAAAACw=" width="24" height="24"></a></nav></header>
+<main>
+  <h1>Create new Access Token</h1>
+  <div role="tablist">
+    <button role="tab" aria-selected="false" id="tab-fg" type="button">Fine-grained</button>
+    <button role="tab" aria-selected="true" id="tab-read" type="button">Read</button>
+    <button role="tab" aria-selected="false" id="tab-write" type="button">Write</button>
+  </div>
+  <form id="f" onsubmit="return false">
+    <label for="name">Token name</label>
+    <input id="name" type="text" placeholder="Token name">
+    <section id="perms" hidden>
+      <h2>User permissions ({{USER}})</h2>
+      <h3>Repositories</h3>
+      <label><input type="checkbox" checked> Read access to contents of all repos under your personal namespace</label>
+      <label><input type="checkbox"> Read access to contents of all public gated repos you can access</label>
+      <label><input type="checkbox"> Write access to contents/settings of all repos under your personal namespace</label>
+      <h3>Inference</h3>
+      <label><input type="checkbox"> Make calls to Inference Providers</label>
+      <label><input type="checkbox"> Make calls to your Inference Endpoints</label>
+      <label><input type="checkbox"> Manage your Inference Endpoints</label>
+      <h3>Webhooks</h3>
+      <label><input type="checkbox"> Access webhooks data</label>
+    </section>
+    <button type="button" id="create">Create token</button>
+  </form>
+  <div id="modal" hidden role="dialog" aria-label="Save your Access Token">
+    <h2>Save your Access Token</h2>
+    <p>Save your token value somewhere safe. You will not be able to see it again after you close this modal.</p>
+    <input id="value" readonly type="text">
+    <button type="button" id="done">Done</button>
+  </div>
+  <div id="err" role="alert"></div>
+</main>
+<script>
+  const fg = document.getElementById('tab-fg');
+  fg.addEventListener('click', () => { fg.setAttribute('aria-selected', 'true'); document.getElementById('tab-read').setAttribute('aria-selected', 'false'); document.getElementById('perms').hidden = false; });
+  document.getElementById('create').addEventListener('click', async () => {
+    const name = document.getElementById('name').value.trim();
+    if (!name) { document.getElementById('err').textContent = 'Token name is required'; return; }
+    const permissions = Array.from(document.querySelectorAll('#perms label')).filter((l) => l.querySelector('input').checked).map((l) => l.textContent.trim());
+    const r = await fetch('/settings/tokens/new', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, permissions, type: fg.getAttribute('aria-selected') === 'true' ? 'fineGrained' : 'read' }) });
+    const body = await r.json();
+    if (!r.ok) { document.getElementById('err').textContent = body.error || 'failed'; return; }
+    document.getElementById('value').value = body.token;
+    document.getElementById('modal').hidden = false;
+  });
+</script>
+</body></html>

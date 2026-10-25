@@ -4765,6 +4765,46 @@
    "optional_missing": []
   },
   {
+   "id": "connect-service",
+   "category": "office",
+   "title": "Connect a Service",
+   "summary": "Connect a service end to end and verify it.",
+   "does": "Checks the connection CHE already has first and keeps it if it works. Otherwise creates a Hugging Face token with the fewest permissions in CHE's browser using your sign-in, or opens the page for guided providers. Stores it in the place CHE really reads and says \"Connected\" only after real checks pass.",
+   "mode": "BUILD",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": {
+    "name": "service",
+    "required": true,
+    "hint": "Hugging Face, Groq, Gemini…"
+   },
+   "examples": [
+    "CHE, connect Hugging Face",
+    "Connect Hugging Face for film studio",
+    "Is Hugging Face connected?"
+   ],
+   "needs": [],
+   "optional": [],
+   "handler": "service_onboarding.startOnboarding / storeSecret / verifyOnboarding",
+   "route": "che_onboarding",
+   "produces": "connection status",
+   "evidence": "Three separate outcomes: token created, secret configured (where), connection verified (the provider's own checks). Fingerprints only, never a key.",
+   "cost": "Free. Verification makes no paid calls; nothing is bought.",
+   "keywords": [
+    "connect",
+    "hugging face",
+    "onboarding",
+    "token",
+    "connected",
+    "set up service"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
    "id": "voice-test",
    "category": "office",
    "title": "Voice Test",
@@ -4881,7 +4921,7 @@
    "category": "office",
    "title": "GPU jobs",
    "summary": "Read my GPU render jobs.",
-   "does": "Says how many GPU jobs are queued, rendering, paused, completed or failed, and whether your Colab T4 worker is online. The pictures are in the Creation Room. It costs nothing; Colab works only while your notebook is open.",
+   "does": "Says how many GPU jobs are queued, rendering, paused, completed or failed, and whether your Colab T4 worker is online. With \"pool\" (or \"which computers can build characters\", \"why is my character waiting\") it reads the compute pool: each computer that can build characters, its status, cooldown and quota, and why a waiting character waits. The pictures are in the Creation Room. With \"connect\" (\"Connect GPU\", \"start my GPU\") the app opens your notebook in CHE's browser, hands you any Google sign-in or confirmation, and says GPU connected only when the Worker has a fresh heartbeat from the Colab GPU, then runs a small test job. It costs nothing; Colab works only while your notebook is open. With \"budget\" (\"allow up to 20 dollars for GPUs\", \"limit GPUs to 5 dollars a month\", \"stop paid GPUs\", \"how long will my GPU money last\", \"what GPUs can CHE use\") it sets or stops your paid-GPU cap, which is your spending approval, recorded with its time; paid prepaid GPUs (RunPod, Vast.ai) then run only for GPU jobs no free GPU can take, cheapest first, deleted after the job, never past the cap. CHE never pays or adds credit.",
    "mode": "EXPLORE",
    "approval": {
     "required": false,
@@ -4889,20 +4929,65 @@
    },
    "input": null,
    "examples": [
-    "What are my GPU jobs?"
+    "What are my GPU jobs?",
+    "Which computers can build characters?",
+    "Why is my character waiting?",
+    "Connect GPU",
+    "How long will my GPU money last?",
+    "Allow up to 20 dollars for GPUs",
+    "Stop paid GPUs"
    ],
    "needs": [],
    "optional": [],
-   "handler": "gpu_queue.GpuQueue.view + speakGpuSummary",
+   "handler": "gpu_queue.GpuQueue.view + speakGpuSummary; compute_pool.poolView + speakPool; compute_pool.budgetCommand",
    "route": "che_cloud_computer",
    "produces": "GPU queue status",
    "evidence": "The queue and worker heartbeats stored in the Worker.",
-   "cost": "Free: no AI engine is used.",
+   "cost": "Free: no AI engine is used. Paid GPUs only within the GPU budget you set (default $0).",
    "keywords": [
     "gpu",
     "colab",
     "render queue",
-    "face preview"
+    "face preview",
+    "compute pool",
+    "character waiting",
+    "connect gpu",
+    "gpu budget",
+    "runpod",
+    "paid gpu"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
+   "id": "world-population",
+   "category": "office",
+   "title": "CHE World population",
+   "summary": "How many characters live in CHE World.",
+   "does": "Says how many character records CHE World holds (seeded descriptions, not models), how many of the 288 shared base models are really generated or building, and that the active on-screen count is known only while the world viewer is open. Nothing is built.",
+   "mode": "EXPLORE",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": null,
+   "examples": [
+    "How many characters live in CHE World?"
+   ],
+   "needs": [],
+   "optional": [],
+   "handler": "world_population.populationAnswer",
+   "route": "che_world_population",
+   "produces": "population counts",
+   "evidence": "The stored world range and the GPU queue job states of the bucket models.",
+   "cost": "Free: no AI engine is used.",
+   "keywords": [
+    "che world",
+    "population",
+    "characters",
+    "crowd",
+    "residents"
    ],
    "status": "available",
    "missing": [],
@@ -5161,6 +5246,46 @@
     "approve cloud job",
     "stop cloud job",
     "retry cloud job"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
+   "id": "master-profile",
+   "category": "office",
+   "title": "Master Profile",
+   "summary": "Fill the open form from your approved profiles.",
+   "does": "Fills the form open in CHE's iPhone browser from your approved Personal or CHE Office profile, remembered answers and the on-device password vault, then reads back each field. It never submits: say \"submit it\" separately, and paying needs your yes.",
+   "mode": "BUILD",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": {
+    "name": "profile",
+    "required": false,
+    "hint": "personal, business, or everything for all pages"
+   },
+   "examples": [
+    "CHE, use my master profile",
+    "Fill this with my business profile",
+    "Fill everything with my personal profile"
+   ],
+   "needs": [],
+   "optional": [],
+   "handler": "app: CheFormFiller (lib/browser/che_form_filler.dart) + assets/browser/che_form_fill.js",
+   "route": "che_master_profile",
+   "produces": "filled form",
+   "evidence": "Each field's value read back from the page on the phone; the report names fields, never values.",
+   "cost": "Free. Runs on the iPhone; nothing is sent to a model.",
+   "keywords": [
+    "master profile",
+    "fill this form",
+    "fill out the form",
+    "autofill",
+    "business profile",
+    "personal profile"
    ],
    "status": "available",
    "missing": [],

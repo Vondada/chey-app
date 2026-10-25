@@ -163,7 +163,7 @@ test('edits make versions; undo, redo and save move through them; view commands 
 
   const outfit = await call(`/api/creations/${p.id}/edit`, 'POST', { text: 'Change the outfit' });
   assert.equal(outfit.body.changed, true);
-  assert.match(outfit.body.applied[0], /^Outfit colour changed to .*do not show clothes yet/);
+  assert.match(outfit.body.applied[0], /^Outfit colour changed to .*The full-body model's top uses this colour/);
   assert.notEqual(outfit.body.project.params.outfit.color, p.params.outfit.color);
 
   const photo = await call(`/api/creations/${p.id}/edit`, 'POST', { text: 'make it stylized' });
@@ -226,8 +226,8 @@ test('the edit vocabulary maps plain sentences to valid preset changes, and refu
   assert.deepEqual(parseEdit('side view', che, 'photoreal').viewport, { action: 'view', deg: 90 });
   // CHE's hair is already the longest style.
   assert.match(parseEdit('make the hair longer', che, 'photoreal').unsupported[0], /already as long/);
-  // A not-built style says so honestly.
-  assert.match(parseEdit('make the hair shorter', che, 'photoreal').applied[0], /not built yet, so the model and previews show it close-cropped/);
+  // A style the bust has no strands for says so honestly (the full-body model builds every style).
+  assert.match(parseEdit('make the hair shorter', che, 'photoreal').applied[0], /full-body model has it; the head-and-shoulders preview shows it close-cropped/);
   // Lighter skin until the renderer's albedo limit: refused, never saved invalid.
   let p = BUILT_IN.find((x) => x.id === 'iris');
   let refused = false;

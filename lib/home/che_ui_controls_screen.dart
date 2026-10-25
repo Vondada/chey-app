@@ -5,6 +5,7 @@ import 'package:flutter/semantics.dart';
 import 'package:flutter/services.dart';
 
 import '../che_native_voice.dart';
+import '../che_private_voice.dart';
 import '../che_ui/che_palettes.dart';
 import '../che_ui/che_theme.dart';
 import '../che_ui/che_ui_preferences.dart';
@@ -16,11 +17,16 @@ class CheUiControlsScreen extends StatelessWidget {
     super.key,
     this.onVoiceEnabledChanged,
     this.onVoiceVolumeChanged,
+    this.onPrivateVoiceChanged,
   });
 
   /// Optional hook so the home shell can mirror voiceResponsesEnabled live.
   final ValueChanged<bool>? onVoiceEnabledChanged;
   final ValueChanged<double>? onVoiceVolumeChanged;
+
+  /// The home shell turns Private voice on or off through the same route as
+  /// the spoken command, so it is confirmed aloud and live voice ends at once.
+  final ValueChanged<bool>? onPrivateVoiceChanged;
 
   @override
   Widget build(BuildContext context) {
@@ -132,6 +138,47 @@ class CheUiControlsScreen extends StatelessWidget {
                           },
                         ),
                       ],
+                    ),
+                    const SizedBox(height: CheSpace.md),
+                    // Private voice (che_private_voice.dart): also by voice, "turn on private voice".
+                    ValueListenableBuilder<bool>(
+                      valueListenable: ChePrivateVoice.enabled,
+                      builder: (context, privateOn, _) => Row(
+                        children: [
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text('Private voice', style: CheType.label.copyWith(color: cheTextOf(context))),
+                                Text(
+                                  privateOn
+                                      ? 'On: your voice audio stays on this iPhone and replies use the on-device voice. Your words still go as text to CHE\'s own Cloudflare AI; no other AI company gets them.'
+                                      : 'Off: live voice may stream your audio to OpenAI, and replies use ElevenLabs or Fish.',
+                                  style: CheType.caption.copyWith(color: cheTextDimOf(context)),
+                                ),
+                              ],
+                            ),
+                          ),
+                          Semantics(
+                            label: privateOn ? 'Private voice is on. Turn off private voice' : 'Private voice is off. Turn on private voice',
+                            toggled: privateOn,
+                            excludeSemantics: true,
+                            child: Switch.adaptive(
+                              value: privateOn,
+                              activeThumbColor: CheColors.accent,
+                              onChanged: (v) async {
+                                HapticFeedback.selectionClick();
+                                final route = onPrivateVoiceChanged;
+                                if (route != null) {
+                                  route(v);
+                                } else {
+                                  await ChePrivateVoice.setEnabled(v);
+                                }
+                              },
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
                     const SizedBox(height: CheSpace.md),
                     Text(

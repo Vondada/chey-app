@@ -19,10 +19,67 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
+import 'package:image_picker/image_picker.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
+import '../che_native_voice.dart' show CheNativeVoice;
 import '../rooms/che_crew_states.dart' show cheCrewModelIds;
-import 'che_creative_studio.dart' show CheStudioColors;
+import 'che_creative_studio.dart' show CheStudioColors, cheSpokenChoice;
+
+/// The largest reference photo the Worker accepts (creation_studio.js MAX_REFERENCE_BYTES).
+const cheMaxReferenceBytes = 8 * 1024 * 1024;
+
+/// The consent question for a reference photo, read as a numbered list.
+const cheReferenceChoices = 'Who is in the photo? 1. This is me. 2. Fictional or generated.';
+const cheReferenceRule =
+    'CHE builds characters only from your own photo or from fictional or generated images, never from photos of other '
+    'real private people or of children.';
+
+/// image/jpeg or image/png from a photo's first bytes; image/heic for an iPhone HEIC file; null for anything else.
+String? cheImageType(Uint8List b) {
+  if (b.length >= 3 && b[0] == 0xff && b[1] == 0xd8 && b[2] == 0xff) return 'image/jpeg';
+  if (b.length >= 8 && b[0] == 0x89 && b[1] == 0x50 && b[2] == 0x4e && b[3] == 0x47) return 'image/png';
+  if (b.length >= 12 && String.fromCharCodes(b.sublist(4, 8)) == 'ftyp') return 'image/heic';
+  return null;
+}
+
+/// Spoken or typed consent while CHE asks who is in the photo: self, fictional, refuse (someone else, a child), or null.
+String? cheReferenceConsent(String words) {
+  final t = words.trim().toLowerCase().replaceAll(RegExp(r'[.!?]+$'), '');
+  if (RegExp(r'\b(?:friend|someone|somebody|another person|other person|my (?:son|daughter|wife|husband|girlfriend|boyfriend|mom|mother|dad|father|brother|sister|kid|child|partner|boss|neighbou?r)|child|kid|baby|celebrity|stranger)\b')
+      .hasMatch(t)) {
+    return 'refuse';
+  }
+  final n = cheSpokenChoice(t);
+  if (n == 1 || RegExp(r"^(?:this is me|it'?s me|me|myself|that'?s me|my (?:own )?(?:face|photo|selfie)|self)$").hasMatch(t)) return 'self';
+  if (n == 2 || RegExp(r'^(?:fictional|generated|fictional or generated|made up|ai generated|not a real person)$').hasMatch(t)) return 'fictional';
+  return null;
+}
+
+/// The phone's photo picker, asking for a JPEG at most 2048 pixels: image_picker re-encodes a compressed pick as JPEG,
+/// so an iPhone HEIC photo arrives as JPEG (the app still checks the bytes and refuses anything else).
+Future<Uint8List?> cheDefaultPickReference(String source) async {
+  final f = await ImagePicker().pickImage(
+    source: source == 'camera' ? ImageSource.camera : ImageSource.gallery,
+    maxWidth: 2048,
+    maxHeight: 2048,
+    imageQuality: 90,
+    requestFullMetadata: false,
+  );
+  return f == null ? null : await f.readAsBytes();
+}
+
+/// A character voice sample through CHE's existing on-device Kokoro voice (CheNativeVoice): the chosen speaker for this
+/// one sentence, then CHE's own voice setting is put back. False when the voice pack is not installed or ready.
+Future<bool> cheDefaultVoiceSample(int speakerId, String text) async {
+  final before = await CheNativeVoice.voiceSettings();
+  await CheNativeVoice.configureVoice(speakerId: speakerId);
+  try {
+    return await CheNativeVoice.speakNeural(text);
+  } finally {
+    await CheNativeVoice.configureVoice(speakerId: before['speakerId'] as int?);
+  }
+}
 
 const cheColabNotebookUrl =
     'https://colab.research.google.com/github/Vondada/chey-app/blob/main/notebooks/CHE_GPU_Face_Preview.ipynb';
@@ -334,7 +391,13 @@ class CheLiveStudio extends StatefulWidget {
     this.client,
     this.viewport,
     this.loadBundled,
+    this.pickReference,
+    this.playVoiceSample,
   });
+
+  /// Tests: the photo picker (source camera | library) and the voice sample player; null uses the phone's own.
+  final Future<Uint8List?> Function(String source)? pickReference;
+  final Future<bool> Function(int speakerId, String text)? playVoiceSample;
 
   final String baseUrl;
   final Map<String, String> headers;
@@ -527,9 +590,11 @@ class CheLiveStudioState extends State<CheLiveStudio> with WidgetsBindingObserve
       final r =
           await (method == 'GET'
                   ? _http.get(uri, headers: widget.headers)
+                  : method == 'DELETE'
+                  ? _http.delete(uri, headers: widget.headers)
                   : _http.post(uri, headers: _json, body: jsonEncode(body ?? const {})))
-              .timeout(const Duration(seconds: 15));
-      final d = jsonDecode(r.body);
+              .timeout(Duration(seconds: body != null && body.containsKey('image_base64') ? 60 : 15));
+      final d = jsonDecode(utf8.decode(r.bodyBytes, allowMalformed: true)); // the Worker sends JSON with no charset
       if (d is! Map) return null;
       return {...Map<String, dynamic>.from(d), '_status': r.statusCode};
     } catch (_) {
@@ -578,6 +643,23 @@ class CheLiveStudioState extends State<CheLiveStudio> with WidgetsBindingObserve
   Future<void> _showBest() async {
     final j = job;
     final m = j?['model'] is Map ? Map<String, dynamic>.from(j!['model'] as Map) : null;
+    // Reopened from My Creations on a version with no model of its own: the newest model the project has (an earlier
+    // version's), labelled with its version, never as this version's.
+    final lm = project['last_model'] is Map ? Map<String, dynamic>.from(project['last_model'] as Map) : null;
+    if ((m == null || '${m['url'] ?? ''}'.isEmpty) && lm != null && '${lm['url'] ?? ''}'.isNotEmpty && shown.source != 'generated') {
+      final key = '${lm['job_id']}:${lm['sha256']}';
+      try {
+        final r = await _http.get(Uri.parse('${widget.baseUrl}${lm['url']}'), headers: widget.headers).timeout(const Duration(seconds: 40));
+        if (r.statusCode != 200 || r.bodyBytes.length < 20) throw StateError('status ${r.statusCode}');
+        final label = 'Version ${lm['version']} model, the newest one built. Version ${project['version']} has no model yet: '
+            'say generate to build it.';
+        await _viewport.load(r.bodyBytes, label);
+        if (mounted) setState(() => shown = CheShownModel(source: 'generated', label: label, key: key));
+        return;
+      } catch (_) {
+        if (mounted) _report(false, 'The saved 3D model exists but could not be downloaded. Use Refresh to try again.');
+      }
+    }
     if (m != null && '${m['url'] ?? ''}'.isNotEmpty) {
       final key = '${j!['id']}:${m['sha256']}';
       if (shown.key == key) return;
@@ -732,9 +814,9 @@ class CheLiveStudioState extends State<CheLiveStudio> with WidgetsBindingObserve
     return msg;
   }
 
-  Future<String> _post(String path, [Map<String, dynamic>? body]) async {
+  Future<String> _post(String path, [Map<String, dynamic>? body, String method = 'POST']) async {
     setState(() => busy = true);
-    final d = await _call('POST', path, body);
+    final d = await _call(method, path, body);
     if (!mounted) return '';
     setState(() => busy = false);
     if (d == null) {
@@ -757,9 +839,126 @@ class CheLiveStudioState extends State<CheLiveStudio> with WidgetsBindingObserve
         said = '${r['note']}';
       }
     }
+    if (d['play_voice'] is Map) {
+      // "Play the voice": a short sample in the character's chosen voice, through CHE's own on-device voice, only
+      // because the owner asked. Its real outcome is reported.
+      final v = Map<String, dynamic>.from(d['play_voice'] as Map);
+      final play = widget.playVoiceSample ?? cheDefaultVoiceSample;
+      final played = await play((v['id'] as num?)?.toInt() ?? 0, '${v['text'] ?? ''}').catchError((_) => false);
+      if (!mounted) return '';
+      if (!played) {
+        done = false;
+        said = 'The ${v['name']} voice could not play: the on-device voice pack is not installed or not ready yet. '
+            'It installs from Settings, Voice.';
+      }
+    }
     _say(done, said);
     if (ok) await refresh();
     return said;
+  }
+
+  // ── Reference photo (character realism) ─────────────────────────────────────────────────────────────────────────
+  /// null | consent (CHE asked who is in the photo) | source (camera or library).
+  String? refStep;
+  String? refConsent;
+
+  Map<String, dynamic>? get reference =>
+      project['reference'] is Map ? Map<String, dynamic>.from(project['reference'] as Map) : null;
+
+  /// "Use a reference photo" / Add reference photo: the consent question first, as a numbered list.
+  Future<String> startReference() async {
+    HapticFeedback.selectionClick();
+    if (kind != 'person') {
+      const msg = 'Reference photos are for Create Person characters.';
+      _say(false, msg);
+      return msg;
+    }
+    setState(() {
+      refStep = 'consent';
+      refConsent = null;
+    });
+    const msg = '$cheReferenceChoices Say 1 or 2. $cheReferenceRule';
+    _say(true, msg);
+    return msg;
+  }
+
+  /// The owner's consent answer: self or fictional goes on to the photo; anyone else is refused with the reason.
+  Future<String> chooseConsent(String consent) async {
+    HapticFeedback.selectionClick();
+    if (consent != 'self' && consent != 'fictional') {
+      setState(() {
+        refStep = null;
+        refConsent = null;
+      });
+      const msg = 'No photo was added. $cheReferenceRule';
+      _say(false, msg);
+      return msg;
+    }
+    setState(() {
+      refConsent = consent;
+      refStep = 'source';
+    });
+    final msg = '${consent == 'self' ? 'This is you.' : 'Fictional or generated.'} Where is the photo? '
+        '1. Take a photo with the camera. 2. Choose from the photo library.';
+    _say(true, msg);
+    return msg;
+  }
+
+  void cancelReference() {
+    setState(() {
+      refStep = null;
+      refConsent = null;
+    });
+    _say(true, 'Cancelled. No photo was added.');
+  }
+
+  /// Picks the photo (JPEG from the phone's picker), checks it here, and sends it with the consent; the Worker's own
+  /// answer is reported.
+  Future<String> pickReferencePhoto(String source) async {
+    final consent = refConsent;
+    if (consent == null) return startReference();
+    Uint8List? bytes;
+    try {
+      bytes = await (widget.pickReference ?? cheDefaultPickReference)(source);
+    } catch (_) {
+      bytes = null;
+    }
+    if (!mounted) return '';
+    setState(() {
+      refStep = null;
+      refConsent = null;
+    });
+    if (bytes == null || bytes.isEmpty) {
+      const msg = 'No photo was chosen, so nothing was added.';
+      _say(false, msg);
+      return msg;
+    }
+    final type = cheImageType(bytes);
+    if (type != 'image/jpeg' && type != 'image/png') {
+      final msg = type == 'image/heic'
+          ? 'That photo is HEIC and the phone could not convert it to JPEG, so it was not sent. Try another photo.'
+          : 'That file is not a JPEG or PNG photo, so it was not sent.';
+      _say(false, msg);
+      return msg;
+    }
+    if (bytes.length > cheMaxReferenceBytes) {
+      const msg = 'That photo is larger than 8 MB, so it was not sent. Try another photo.';
+      _say(false, msg);
+      return msg;
+    }
+    return _post('/api/creations/${widget.projectId}/reference', {'image_base64': base64Encode(bytes), 'consent': consent});
+  }
+
+  /// "Remove the reference photo": a new version without it (undo brings it back). purge: "delete it completely".
+  Future<String> removeReference({bool purge = false}) =>
+      _post('/api/creations/${widget.projectId}/reference${purge ? '?purge=1' : ''}', null, 'DELETE');
+
+  /// "What device built it": the receipt's device, limits and measured time, or which compute is there now.
+  String get deviceSummary {
+    final line = '${project['device_line'] ?? ''}'.trim();
+    final fit = '${project['reference_line'] ?? ''}'.trim();
+    if (line.isEmpty) return 'No device has built this version yet. ${engine.label}. ${engine.detail}'.trim();
+    return [line, if (fit.isNotEmpty) fit].join(' ');
   }
 
   Future<String> generate() => _post('/api/creations/${widget.projectId}/generate');
@@ -881,8 +1080,15 @@ class CheLiveStudioState extends State<CheLiveStudio> with WidgetsBindingObserve
       return '$title, version $v of $n${what.isEmpty ? '' : ': $what'}. ${engine.label}. ${shown.label} $work$pics$measured '
           'Say a change like ${cheEditChips[kind]!.take(3).join(', ').toLowerCase()}, or rotate, zoom in, undo, redo, save, generate.';
     }
-    return '$title, version $v of $n. ${engine.label}. ${shown.label} $work$pics '
-        'Say a change like make the hair longer, or rotate, zoom in, undo, redo, save, generate.';
+    final r = reference;
+    final ref = r == null
+        ? ' No reference photo; say use a reference photo to add one.'
+        : ' Reference photo: ${r['consent'] == 'self' ? 'this is you' : 'fictional or generated'}.';
+    final device = '${project['device_line'] ?? ''}'.trim();
+    final fit = '${project['reference_line'] ?? ''}'.trim();
+    return '$title, version $v of $n. ${engine.label}. ${shown.label} $work$pics'
+        '${device.isEmpty ? '' : ' $device'}${fit.isEmpty ? '' : ' $fit'}$ref '
+        'Say a change like make the hair longer, taller, a black hoodie, or rotate, zoom in, undo, redo, save, generate, make another one.';
   }
 
   /// Voice and typed control while the studio is on screen.
@@ -915,6 +1121,12 @@ class CheLiveStudioState extends State<CheLiveStudio> with WidgetsBindingObserve
     ).hasMatch(t)) {
       return lipSyncTest();
     }
+    // The character's voice ("choose voice 2", "play the voice", "what voices are there") and "make another one" go to
+    // the Worker's edit words, which answer and, for a sample, tell this screen to play it.
+    if (_personMode && kind == 'person' && (RegExp(r'\bvoices?\b').hasMatch(t) ||
+        RegExp(r'^(?:make another(?: one)?|regenerate(?: it)?|another (?:one|variation|version)|make a (?:new )?variation|new variation|try another(?: one)?)$').hasMatch(t))) {
+      return applyEdit(words);
+    }
     final play = RegExp(
       r'^(?:animate(?: (?:the|this|my))?(?: character| model| it)?|play(?: the)?(?: (\w+))?(?: animation| clip)?)$',
     ).firstMatch(t);
@@ -926,6 +1138,39 @@ class CheLiveStudioState extends State<CheLiveStudio> with WidgetsBindingObserve
     if (RegExp(r'^connect(?: the)?(?: creation)? engine$|^connect$|^open (?:the )?(?:colab )?notebook$').hasMatch(t)) {
       await connectEngine();
       return banner;
+    }
+    if (_personMode && kind == 'person') {
+      // While CHE waits for the consent answer or the photo's source, numbers and short answers are for that question.
+      if (refStep != null && RegExp(r'^(?:cancel|stop|never ?mind|no)$').hasMatch(t)) {
+        cancelReference();
+        return 'Cancelled. No photo was added.';
+      }
+      if (refStep == 'consent') {
+        final c = cheReferenceConsent(t);
+        if (c != null) return chooseConsent(c);
+      }
+      if (refStep == 'source') {
+        final n = cheSpokenChoice(t);
+        if (n == 1 || RegExp(r'\b(?:camera|take (?:a )?(?:photo|picture|selfie))\b').hasMatch(t)) return pickReferencePhoto('camera');
+        if (n == 2 || RegExp(r'\b(?:library|photos|gallery|camera roll|choose (?:a )?(?:photo|picture))\b').hasMatch(t)) {
+          return pickReferencePhoto('library');
+        }
+      }
+      if (RegExp(r'^(?:use|add|attach|upload|give it|start from)(?: a| my| the)? (?:reference )?(?:photo|picture|selfie)(?: of me)?(?: as (?:a |the )?reference)?$|^(?:use|add)(?: a| the)? reference(?: photo| picture)?$')
+          .hasMatch(t)) {
+        return startReference();
+      }
+      if (RegExp(r'^(?:delete|erase)(?: the)? (?:reference )?(?:photo|picture)(?: completely| entirely| for good| everywhere)$').hasMatch(t)) {
+        return removeReference(purge: true);
+      }
+      if (RegExp(r'^(?:remove|delete|drop|take off|take away)(?: the| my)? reference(?: photo| picture)?$|^(?:remove|delete)(?: the| my)? (?:reference )?(?:photo|picture)$')
+          .hasMatch(t)) {
+        return removeReference();
+      }
+      if (RegExp(r'^(?:what|which) (?:device|computer|machine|gpu|worker)(?: built| made| rendered| is building| will build)? (?:it|this|her|him|the model|the character)$|^(?:what|which) (?:device|computer|gpu) (?:was|is) (?:it )?(?:built|used) on$|^(?:what|which) built it$')
+          .hasMatch(t)) {
+        return deviceSummary;
+      }
     }
     if (!_personMode || !cheLooksLikeEdit(t)) return null;
     if (RegExp(
@@ -1214,6 +1459,12 @@ class CheLiveStudioState extends State<CheLiveStudio> with WidgetsBindingObserve
           label: Text(jobActive ? 'Model in progress' : 'Generate 3D model'),
         ),
       ),
+      if (kind == 'person') ...[
+        const SizedBox(height: 10),
+        _small2('Make another one', Icons.autorenew, busy || project.isEmpty ? null : () => applyEdit('make another one'),
+            semantics: 'Make another one: a new variation of this character, built at once'),
+      ],
+      if (kind == 'person') ..._referencePanel(),
       const SizedBox(height: 22),
       // ── Progress (the job's own history) ───────────────────────────────────────────
       const _Label('PROGRESS'),
@@ -1333,6 +1584,148 @@ class CheLiveStudioState extends State<CheLiveStudio> with WidgetsBindingObserve
           key: const ValueKey('live-model-file'),
           style: const TextStyle(color: CheStudioColors.silver, fontSize: 14),
         ),
+      ],
+      // Device, limits and measured time, and the reference fit: quiet text from the receipt (never spoken by itself;
+      // say "what device built it" or use Read aloud).
+      if (kind == 'person' && '${project['device_line'] ?? ''}'.trim().isNotEmpty) ...[
+        const SizedBox(height: 14),
+        const _Label('DEVICE'),
+        const SizedBox(height: 6),
+        Text(
+          '${project['device_line']}',
+          key: const ValueKey('live-device'),
+          style: const TextStyle(color: CheStudioColors.dim, fontSize: 14, height: 1.4),
+        ),
+      ],
+      if (kind == 'person' && '${project['reference_line'] ?? ''}'.trim().isNotEmpty) ...[
+        const SizedBox(height: 10),
+        Text(
+          '${project['reference_line']}',
+          key: const ValueKey('live-fit'),
+          style: const TextStyle(color: CheStudioColors.dim, fontSize: 14, height: 1.4),
+        ),
+      ],
+      if (kind == 'person' && project['voice'] is Map) ...[
+        const SizedBox(height: 10),
+        Text(
+          'Voice: ${(project['voice'] as Map)['name']}. Say play the voice to hear it.',
+          key: const ValueKey('live-voice'),
+          style: const TextStyle(color: CheStudioColors.dim, fontSize: 14, height: 1.4),
+        ),
+      ],
+    ];
+  }
+
+  /// A full-width outlined action with its own VoiceOver label.
+  Widget _small2(String label, IconData icon, Future<String> Function()? onTap, {String? semantics}) => Semantics(
+    button: true,
+    enabled: onTap != null,
+    label: semantics ?? label,
+    excludeSemantics: true,
+    child: OutlinedButton.icon(
+      key: ValueKey('live-$label'),
+      style: OutlinedButton.styleFrom(
+        foregroundColor: CheStudioColors.text,
+        side: const BorderSide(color: CheStudioColors.stroke),
+        minimumSize: const Size.fromHeight(48),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+      ),
+      onPressed: onTap == null ? null : () => unawaited(onTap()),
+      icon: Icon(icon, size: 20, color: CheStudioColors.teal),
+      label: Text(label),
+    ),
+  );
+
+  /// Reference photo: Add (consent as a numbered list, then camera or library), the thumbnail with its VoiceOver
+  /// label, and Remove. Nothing here speaks unless the owner acts.
+  List<Widget> _referencePanel() {
+    final r = reference;
+    final consentLabel = r == null ? '' : (r['consent'] == 'self' ? 'this is you' : 'fictional or generated');
+    final kb = r == null ? 0 : (((r['bytes'] as num?) ?? 0) / 1024).round();
+    final type = r == null ? '' : ('${r['content_type']}' == 'image/png' ? 'PNG' : 'JPEG');
+    return [
+      const SizedBox(height: 18),
+      const _Label('REFERENCE PHOTO'),
+      const SizedBox(height: 8),
+      if (r != null)
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Semantics(
+              key: const ValueKey('live-ref-thumb'),
+              container: true,
+              image: true,
+              excludeSemantics: true,
+              label: 'Reference photo, $consentLabel, $kb KB $type, added ${_clock('${r['at']}')}. '
+                  'Used for an approximate likeness, not an exact copy.',
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(12),
+                child: Image.network(
+                  '${widget.baseUrl}${r['url']}',
+                  headers: widget.headers,
+                  width: 96,
+                  height: 96,
+                  fit: BoxFit.cover,
+                  errorBuilder: (_, _, _) => Container(
+                    width: 96,
+                    height: 96,
+                    color: CheStudioColors.card,
+                    alignment: Alignment.center,
+                    child: const Icon(Icons.image_outlined, color: CheStudioColors.dim),
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Consent: $consentLabel. $kb KB $type.',
+                    key: const ValueKey('live-ref-line'),
+                    style: const TextStyle(color: CheStudioColors.silver, fontSize: 14, height: 1.35),
+                  ),
+                  const SizedBox(height: 6),
+                  _small2('Remove photo', Icons.delete_outline_rounded, busy ? null : () => removeReference(),
+                      semantics: 'Remove the reference photo from this character. Undo brings it back.'),
+                ],
+              ),
+            ),
+          ],
+        )
+      else if (refStep == null)
+        _small2('Add reference photo', Icons.add_photo_alternate_outlined, busy || project.isEmpty ? null : startReference,
+            semantics: 'Add a reference photo: your own photo, or a fictional or generated image'),
+      if (refStep == 'consent') ...[
+        const SizedBox(height: 4),
+        const Text(cheReferenceChoices, key: ValueKey('live-ref-question'), style: TextStyle(color: CheStudioColors.text, fontSize: 16, height: 1.35)),
+        const SizedBox(height: 4),
+        const Text(cheReferenceRule, style: TextStyle(color: CheStudioColors.dim, fontSize: 13, height: 1.35)),
+        const SizedBox(height: 8),
+        _small2('1. This is me', Icons.person_outline_rounded, () => chooseConsent('self'), semantics: 'Choice 1: this is me'),
+        const SizedBox(height: 6),
+        _small2('2. Fictional or generated', Icons.auto_awesome_rounded, () => chooseConsent('fictional'),
+            semantics: 'Choice 2: fictional or generated'),
+        const SizedBox(height: 6),
+        _small2('Cancel', Icons.close_rounded, () async {
+          cancelReference();
+          return '';
+        }, semantics: 'Cancel adding a reference photo'),
+      ],
+      if (refStep == 'source') ...[
+        const Text('Where is the photo? 1. Take a photo with the camera. 2. Choose from the photo library.',
+            key: ValueKey('live-ref-source'), style: TextStyle(color: CheStudioColors.text, fontSize: 16, height: 1.35)),
+        const SizedBox(height: 8),
+        _small2('1. Take a photo', Icons.photo_camera_rounded, () => pickReferencePhoto('camera'), semantics: 'Choice 1: take a photo with the camera'),
+        const SizedBox(height: 6),
+        _small2('2. Choose from library', Icons.photo_library_outlined, () => pickReferencePhoto('library'),
+            semantics: 'Choice 2: choose a photo from the library'),
+        const SizedBox(height: 6),
+        _small2('Cancel', Icons.close_rounded, () async {
+          cancelReference();
+          return '';
+        }, semantics: 'Cancel adding a reference photo'),
       ],
     ];
   }

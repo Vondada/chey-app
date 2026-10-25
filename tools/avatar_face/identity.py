@@ -39,10 +39,13 @@ FACE_TARGETS = {
     'brow_height': ('eyebrows/eyebrows-trans-up', 'eyebrows/eyebrows-trans-down'),
 }
 RACES = ('african', 'asian', 'caucasian')
-# Hair styles from the character sheets. Only long_wavy has strands today (CHE's own hair cards); the others render
-# close-cropped (dark scalp, no strands) and the receipt says so, until their strand sets are built.
 HAIR_STYLES = ('long_wavy', 'wavy_medium', 'bun_high', 'bun_low', 'curly_short', 'afro', 'beanie', 'close_crop')
-HAIR_BUILT = ('long_wavy',)
+# Hair styles from the character sheets. Every one is built as a hair mesh in the full-body model (mpfb_body.py
+# hair_style, 2026-10-25); the head-and-neck bust (mpfb_dress.py) has strands only for long_wavy and shows the others
+# close-cropped. server/cloudflare/avatar_identity.js keeps the same list (server/cloudflare/avatar_identity_parity.test.mjs checks parity).
+HAIR_BUILT = ('long_wavy', 'wavy_medium', 'bun_high', 'bun_low', 'curly_short', 'afro', 'beanie', 'close_crop')
+# Styles the head-and-neck bust (mpfb_dress.py BUST_NOHAIR) builds strands for; the others show close-cropped there.
+HAIR_BUST_BUILT = ('long_wavy',)
 HEX = re.compile(r'^#[0-9a-fA-F]{6}$')
 
 

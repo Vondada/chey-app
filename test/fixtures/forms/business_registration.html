@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en-US"><head><meta charset="utf-8"><title>Vendor registration - Example Supply</title></head>
+<body>
+<h1>Register your business</h1>
+<form id="f" onsubmit="event.preventDefault(); window.__submitted = (window.__submitted || 0) + 1;">
+  <label>Legal business name <input name="company"></label>
+  <label>Employer Identification Number (EIN) <input name="ein" placeholder="12-3456789"></label>
+  <label>Business email <input type="email" name="work_email"></label>
+  <label>Business phone <input type="tel" name="work_phone"></label>
+  <label>Website <input type="url" name="site"></label>
+  <label>Your job title <input name="jobtitle"></label>
+  <label>Contact first name <input name="contact_first"></label>
+  <label>Contact last name <input name="contact_last"></label>
+  <fieldset><legend>Entity type</legend>
+    <label><input type="radio" name="entity" value="llc"> LLC</label>
+    <label><input type="radio" name="entity" value="corp"> Corporation</label>
+    <label><input type="radio" name="entity" value="sole"> Sole proprietor</label>
+  </fieldset>
+  <label id="stl">State of formation</label>
+  <div role="combobox" aria-labelledby="stl" aria-controls="stlist" aria-expanded="false" id="stcombo" tabindex="0" style="border:1px solid #888;padding:4px;min-height:20px;width:200px">
+    <input id="stinput" aria-labelledby="stl" style="width:190px">
+  </div>
+  <ul role="listbox" id="stlist" hidden></ul>
+  <label>Business license upload <input type="file" name="license"></label>
+  <canvas id="sig" width="200" height="60" aria-label="Signature"></canvas>
+  <button type="submit">Submit registration</button>
+</form>
+<script>
+var states = ['Arizona', 'Arkansas', 'California', 'Colorado'];
+var inp = document.getElementById('stinput'), list = document.getElementById('stlist');
+inp.addEventListener('input', function () {
+  list.innerHTML = '';
+  var q = inp.value.toLowerCase();
+  // Options appear after a short delay, like a real async combobox.
+  setTimeout(function () {
+    states.filter(function (s) { return !q || s.toLowerCase().indexOf(q.slice(0, 2)) === 0; }).forEach(function (s) {
+      var li = document.createElement('li'); li.setAttribute('role', 'option'); li.textContent = s;
+      li.addEventListener('click', function () { inp.value = s; window.__stateChosen = s; li.setAttribute('aria-selected', 'true'); list.hidden = true; });
+      list.appendChild(li);
+    });
+    list.hidden = false;
+  }, 120);
+});
+</script>
+</body></html>
