@@ -117,6 +117,8 @@ async function main() {
   const t0 = Date.now();
   const refPath = 'test/fixtures/character/synthetic_face.png';
   const body = existsSync(refPath) ? { reference_b64: readFileSync(refPath).toString('base64') } : {};
+  // The compute pool's view before the run: which providers can build characters now, and why the others cannot.
+  writeFileSync(join(out, 'pool_before.json'), JSON.stringify(await call('/pool').catch((e) => ({ ok: false, detail: String(e) })), null, 2));
   const start = await call('/accept/start', body);
   writeFileSync(join(out, 'start.json'), JSON.stringify(start, null, 2));
   if (!start.ok) throw new Error(`accept start failed: ${start.detail || start.status}`);
@@ -148,6 +150,7 @@ async function main() {
   for (const it of status?.items || []) {
     const r = { key: it.key, project_id: it.project_id, job_id: it.job_id, version: it.version, state: it.state, worker: it.worker_name || 'unknown worker',
       device: it.receipt?.device_summary || it.receipt?.device || null, cores: it.receipt?.cores || null, wall_s: it.receipt?.timing?.total_s ?? it.receipt?.elapsed_s ?? null,
+      provider: it.receipt?.provider || it.worker_class || null, attempts: it.receipt?.attempts ?? null,
       reference_fit: it.receipt?.reference_fit || null, error: it.error || '', history: it.history, checks: {} };
     if (it.state === 'completed') {
       const res = await fetch(`${base}/model.glb?job=${it.job_id}`, { headers, signal: AbortSignal.timeout(120000) });
@@ -210,6 +213,7 @@ async function main() {
   const reopenOk = reopen.ok && (reopen.items || []).length > 0 && reopen.items.every((x) => x.model_sha256 && results.some((r) => r.glb?.sha256 === x.model_sha256));
   check('saved characters reopen from storage with the same GLB', reopenOk, (reopen.items || []).map((x) => `${x.key}: v${x.saved_version} ${String(x.model_sha256 || 'none').slice(0, 12)}`).join(', ') || reopen.detail);
 
+  writeFileSync(join(out, 'pool_after.json'), JSON.stringify(await call('/pool').catch((e) => ({ ok: false, detail: String(e) })), null, 2));
   const summary = { run_id: run, minutes: +((Date.now() - t0) / 60000).toFixed(1), results, checks, passed: checks.every((c) => c.ok) };
   writeFileSync(join(out, 'summary.json'), JSON.stringify(summary, null, 2));
   return summary;

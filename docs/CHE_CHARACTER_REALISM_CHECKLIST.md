@@ -18,6 +18,26 @@ Branch: `claude/che-character-realism` (from main `afb8de1`). Lanes push to `lan
 10. Flow to test end to end: Create → generate → customize → preview → animate → save → reopen. Real samples per style.
 11. Merge when required checks pass; report merge SHA, samples, deploy status, limits; iPhone kept separate.
 
+12. Owner acceptance tests (2026-10-25), all through the real flow, never screenshots/placeholders/queued jobs:
+    A1 three distinct styles generated and shown; A2 a synthetic reference changes facial features beyond colours;
+    A3 hair, clothing, height, build each verified on the saved model (before/after); A4 play animation → save → close
+    viewer → reopen same character; A5 app closed mid-job, server finishes, result retrieved on reopen; A6 works without
+    this dev session, no new keys or notebook; A7 host, CPU/GPU, time, failures, files recorded; VoiceOver + spoken status.
+    Driver: `tools/creation_accept.mjs`, run by che-worker-deploy.yml input `character_accept`; samples pushed to the
+    `che-character-samples` branch (Actions artifacts are unreachable from this container).
+13. Quota-aware compute pool (2026-10-25): reuse only existing authorized connections and saved credentials; verify
+    Blender support per provider (film support is not proof); handoff, checkpoint recovery, quota cooldowns, bounded
+    retries, CPU fallback where compatible; preserve waiting jobs with a reason; $0. Prove handoff with real files.
+    Document providers that would need new keys/setup. Lane C `lane/char-pool`.
+14. CHE World population: reproducible seeded descriptions, shared rigs/assets, cached variations, detail on demand;
+    distinguish records vs generated models vs simultaneously active characters; benchmark generation, storage and
+    world performance; "millions per day" is an unverified target. Lane D `lane/char-world`.
+
+15. Create Room demonstration (2026-10-25): playable video (not a still) + walkthrough of the finished experience:
+    describe/reference → Create → three styles → rig, expressions, lip-sync → walk, turn, sit, gesture, speak → change
+    hair/clothing/body/voice (say what preserves rig) → in CHE's Office → save, reopen, use. Every segment labelled
+    REAL / PROTOTYPE / NOT AT $0. Lane E `lane/char-demo`; doc `docs/CHE_CREATE_ROOM_DEMO.md`.
+
 ## Infrastructure facts (inspected, not assumed)
 - Cloudflare Worker: queue, storage, routing only. No GPU, no Blender.
 - Free GitHub Actions CPU worker (ubuntu, 4 cores, Blender 5.0.1, MPFB2): verified live. Run 40153146586 built a
@@ -25,6 +45,8 @@ Branch: `claude/che-character-realism` (from main `afb8de1`). Lanes push to `lan
 - GPU: none on the Worker, none on GitHub-hosted runners, none in this dev container (`nvidia-smi` absent). The owner's
   Colab T4 joins only while its notebook is open. Free Colab cannot be started unattended (`docs/CHE_CLOUD_COMPUTER.md`).
   Kaggle and Hugging Face need accounts and tokens, which the owner ruled out. So the CPU worker is the default.
+- Deploy run 40152765240 env: HF_TOKEN, CHE_COMPUTER_URL/TOKEN, CHE_VMWARE_TRAINING_*, CHE_HF_TRAINING_* are empty
+  repository secrets. A Kaggle token could only exist in the owner's in-app Keys; checked live by the pool probe.
 - The browser and WebView do no generation; the phone only views GLBs (three.js `studio.html`).
 
 ## Already working before this branch (code verified)
@@ -38,14 +60,18 @@ Branch: `claude/che-character-realism` (from main `afb8de1`). Lanes push to `lan
 ## Gaps and status
 | # | Gap | Lane | Status |
 |---|---|---|---|
-| G1 | Reference photo → face shape + skin/hair/eye colours | A + B | in progress |
-| G2 | Device + CPU-limits + measured time shown to the owner | A + B | in progress |
+| G1 | Reference photo → face shape + skin/hair/eye colours | A + B | B done `e6d71b4`/`ede954f` (upload, consent, REFERENCE, worker-only fetch, receipt surfaced, app UI); A pending |
+| G2 | Device + CPU-limits + measured time shown to the owner | A + B | B done `e6d71b4` (device_line from receipt.device_summary, CPU never GPU); needs A to send device_summary |
 | G3 | Only long_wavy hair has geometry (other 7 styles render bald) | A | in progress |
-| G4 | Body: only age (no gender, height, weight, muscle, proportions) | A + B | in progress |
-| G5 | Free-text "describe a person" → one Create | B | in progress |
-| G6 | Voice per character from the existing voice catalog | B | in progress |
-| G7 | Regenerate/variation; reopen from My Creations | B | in progress |
+| G4 | Body: only age (no gender, height, weight, muscle, proportions) | A + B | B done `789e155` (BODY_* settings, omitted at default); A must read them |
+| G5 | Free-text "describe a person" → one Create | B | done `789e155`, `ede954f` |
+| G6 | Voice per character from the existing voice catalog | B | done (on-device Kokoro list) `789e155`, `ede954f`; iPhone playback unverified |
+| G7 | Regenerate/variation; reopen from My Creations | B | done `789e155` (VARIATION seed + face variant, last_model), Flutter reopen test `6712d12` |
 | G8 | Real samples per style, inspected; measured CPU times | A | in progress |
+| G10 | Acceptance driver + publish job | me | pushed `6651850`; lane B accept routes merged |
+| G11 | Compute pool (providers, cooldowns, handoff) | C | in progress |
+| G12 | World population + benchmarks | D | in progress |
+| G13 | Create Room demo video + walkthrough | E | in progress |
 | G9 | e2e server "k.startsWith" (research queue never ran in e2e) | me | done `4ad45c9`; e2e 2/2 |
 
 ## Integration and release
@@ -57,4 +83,6 @@ Branch: `claude/che-character-realism` (from main `afb8de1`). Lanes push to `lan
 - [ ] iPhone: NOT VERIFIED until the owner tries it.
 
 ## Log
+- 2026-10-25 lane B: Worker suite 3985 pass / 0 fail / 7 skipped; Flutter character + studio tests 62 pass; acceptance probe routes `7dfc2d0`.
+- 2026-10-25: acceptance tests + compute pool + world population added (req 12–14); lanes C and D started.
 - 2026-10-25: checklist + contract `b3b664b`; e2e storage fix `4ad45c9`; lanes A and B started and later extended to G3–G8.
