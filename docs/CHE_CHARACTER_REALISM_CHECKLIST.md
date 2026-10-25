@@ -104,7 +104,7 @@ Branch: `claude/che-character-realism` (from main `afb8de1`). Lanes push to `lan
 | G8 | Real samples per style, inspected; measured CPU times | A | in progress |
 | G10 | Acceptance driver + publish job | me | pushed `6651850`; lane B accept routes merged |
 | G11 | Compute pool (providers, cooldowns, handoff) | C | merged (lane C `5de754f`); compute_pool 10/10, Worker 4001/0; live handoff with real files NOT yet proven; Kaggle token presence unknown |
-| G12 | World population + benchmarks | D | in progress |
+| G12 | World population + benchmarks | D | merged (lane D `8211d73`): records, 288 buckets, routes, /world-population, panel, crowd viewer; measured in docs/CHE_WORLD_POPULATION.md; iPhone not verified |
 | G13 | Create Room demo video + walkthrough | E | in progress |
 | G14 | "Open and display saved image <id>" listed all 26 media items | me | fixed `dfd3f48`: Worker 19/19 media tests, full Worker 3990/0; Flutter che_chat_image 2/2; iPhone display unverified |
 | G15 | GPU Connect flow with 4 separate verifications | F | in progress |

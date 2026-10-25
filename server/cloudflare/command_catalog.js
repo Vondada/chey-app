@@ -1088,6 +1088,15 @@ export const COMMANDS = Object.freeze([
     prompt: 'What are my GPU jobs?', produces: 'GPU queue status', evidence: 'The queue and worker heartbeats stored in the Worker.',
     cost: 'Free: no AI engine is used.', keywords: ['gpu', 'colab', 'render queue', 'face preview', 'compute pool', 'character waiting'],
   }),
+  // CHE World population (owner, 2026-10-25): seeded character records over 288 shared base models (world_population.js).
+  C('world-population', 'office', 'EXPLORE', 'How many characters live in CHE World.', {
+    title: 'CHE World population',
+    does: 'Says how many character records CHE World holds (seeded descriptions, not models), how many of the 288 shared base models are really generated or building, and that the active on-screen count is known only while the world viewer is open. Nothing is built.',
+    needs: [], route: 'che_world_population', local: 'world_population', handler: 'world_population.populationAnswer',
+    input: null, examples: ['How many characters live in CHE World?'],
+    prompt: 'How many characters live in CHE World?', produces: 'population counts', evidence: 'The stored world range and the GPU queue job states of the bucket models.',
+    cost: 'Free: no AI engine is used.', keywords: ['che world', 'population', 'characters', 'crowd', 'residents'],
+  }),
   C('cloud-blender', 'office', 'BUILD', 'Create a Blender animation on the cloud computer.', {
     does: 'Checks every environment for Blender. None has it today, so CHE says so, names what she already has (the bpy character pipeline) and the smallest addition that would make it work. Nothing is started.',
     needs: [], route: 'che_cloud_computer', local: 'cloud_blender', handler: 'cloud_computer.selectProvider (blender_render template)',

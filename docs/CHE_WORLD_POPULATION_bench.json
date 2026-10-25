@@ -1,0 +1,256 @@
+{
+ "records_schema2": {
+  "method": "expandRecord(seed) for 300,000 consecutive seeds, 3 runs, one Node thread",
+  "per_sec_median": 202307,
+  "per_sec_best": 205650,
+  "per_day_one_thread": 17479324800,
+  "per_day_all_cores_projected": 69917299200,
+  "runs": [
+   {
+    "per_sec": 202307,
+    "load_avg_1m": 11.4
+   },
+   {
+    "per_sec": 187953,
+    "load_avg_1m": 11.4
+   },
+   {
+    "per_sec": 205650,
+    "load_avg_1m": 11.4
+   }
+  ],
+  "stored_bytes_per_record_in_range": 0,
+  "stored_bytes_whole_population": 77,
+  "stored_bytes_per_edited_record": 46,
+  "expanded_json_bytes_avg": 1317
+ },
+ "records_schema1": {
+  "method": "expandRecord(seed) for 300,000 consecutive seeds, 3 runs, one Node thread",
+  "per_sec_median": 209874,
+  "per_sec_best": 216851,
+  "per_day_one_thread": 18133113600,
+  "per_day_all_cores_projected": 72532454400,
+  "runs": [
+   {
+    "per_sec": 204651,
+    "load_avg_1m": 19.1
+   },
+   {
+    "per_sec": 216851,
+    "load_avg_1m": 19.1
+   },
+   {
+    "per_sec": 209874,
+    "load_avg_1m": 18.6
+   }
+  ],
+  "stored_bytes_per_record_in_range": 0,
+  "stored_bytes_whole_population": 77,
+  "stored_bytes_per_edited_record": 46,
+  "expanded_json_bytes_avg": 1035
+ },
+ "machine_records_schema2": {
+  "cpu": "Intel(R) Xeon(R) Processor @ 2.80GHz",
+  "cores": 4,
+  "node": "v22.22.0",
+  "platform": "linux 6.18.44-fc-v153",
+  "load_avg_at_start": [
+   11.4,
+   11.9,
+   11.2
+  ]
+ },
+ "machine_crowd": {
+  "cpu": "Intel(R) Xeon(R) Processor @ 2.80GHz",
+  "cores": 4,
+  "node": "v22.22.0",
+  "platform": "linux 6.18.44-fc-v153",
+  "load_avg_at_start": [
+   19.1,
+   16.6,
+   9.3
+  ]
+ },
+ "storage": {
+  "crew_glb_bytes_avg": 2572807,
+  "crew_glb_bytes_min": 2303124,
+  "crew_glb_bytes_max": 2997240,
+  "person_model_glb_bytes": 1959512,
+  "all_buckets_bytes": 564339456,
+  "one_glb_per_record_for_default_world_bytes": 195951200000
+ },
+ "models": {
+  "job_minutes_measured": 1.4,
+  "per_worker_per_day_upper_bound": 1028,
+  "default_max_cloud_workers": 3,
+  "setting_max": 10,
+  "github_free_concurrent_jobs": 20,
+  "per_day_at_3_workers": 3084,
+  "per_day_at_10_workers": 10280,
+  "per_day_at_20_jobs_ceiling": 20560,
+  "all_288_buckets_hours_at_3_workers": 2.2,
+  "all_288_buckets_hours_at_10_workers": 0.7,
+  "caveats": "Upper bounds: they assume back-to-back jobs, no runner start-up (about 1 min per dispatch), no failures, no queue limit (MAX_WAITING 500), and that GitHub keeps the repository on free unlimited public-repo minutes. The orchestrator caps max_cloud_workers at 10, so 20 is a ceiling only if that setting were raised."
+ },
+ "crowd": {
+  "renderer": "headless Chromium, SwiftShader software WebGL on the CPU (no GPU); viewport 390x844 at 1x",
+  "rows": [
+   {
+    "residents": 10,
+    "lod": true,
+    "fps": 1.5,
+    "active_animated": 4.4,
+    "near": 0,
+    "mid": 9,
+    "far": 1,
+    "in_view": 9,
+    "models_loaded": 10,
+    "buckets_served": 10,
+    "draw_calls": 155,
+    "triangles": 545416,
+    "js_heap_mb": 44,
+    "load_seconds": 30.4,
+    "samples": 5,
+    "load_avg_1m": 18.6,
+    "errors": []
+   },
+   {
+    "residents": 10,
+    "lod": false,
+    "fps": 1.1,
+    "active_animated": 10,
+    "near": 10,
+    "mid": 0,
+    "far": 0,
+    "in_view": 9,
+    "models_loaded": 10,
+    "buckets_served": 10,
+    "draw_calls": 259,
+    "triangles": 618952,
+    "js_heap_mb": 44,
+    "load_seconds": 29.1,
+    "samples": 5,
+    "load_avg_1m": 18.3,
+    "errors": []
+   },
+   {
+    "residents": 50,
+    "lod": true,
+    "fps": 1,
+    "active_animated": 6.3,
+    "near": 0,
+    "mid": 13,
+    "far": 37,
+    "in_view": 24,
+    "models_loaded": 25,
+    "buckets_served": 25,
+    "draw_calls": 210,
+    "triangles": 761838,
+    "js_heap_mb": 98,
+    "load_seconds": 103.7,
+    "samples": 4,
+    "load_avg_1m": 14.1,
+    "errors": []
+   },
+   {
+    "residents": 50,
+    "lod": false,
+    "fps": 0.6,
+    "active_animated": 50,
+    "near": 50,
+    "mid": 0,
+    "far": 0,
+    "in_view": 25,
+    "models_loaded": 46,
+    "buckets_served": 46,
+    "draw_calls": 658,
+    "triangles": 1728266,
+    "js_heap_mb": 106,
+    "load_seconds": 395.1,
+    "samples": 4,
+    "load_avg_1m": 16.1,
+    "errors": []
+   },
+   {
+    "residents": 200,
+    "lod": true,
+    "fps": 2.5,
+    "active_animated": 11.8,
+    "near": 0,
+    "mid": 16,
+    "far": 184,
+    "in_view": 50,
+    "models_loaded": 27,
+    "buckets_served": 27,
+    "draw_calls": 248,
+    "triangles": 970814,
+    "js_heap_mb": 105,
+    "load_seconds": 90.5,
+    "samples": 5,
+    "load_avg_1m": 10.6,
+    "errors": []
+   },
+   {
+    "residents": 200,
+    "lod": false,
+    "fps": 0.7,
+    "active_animated": 200,
+    "near": 200,
+    "mid": 0,
+    "far": 0,
+    "in_view": 52,
+    "models_loaded": 140,
+    "buckets_served": 140,
+    "draw_calls": 1279,
+    "triangles": 3458262,
+    "js_heap_mb": 221,
+    "load_seconds": 850.5,
+    "samples": 5,
+    "load_avg_1m": 4.8,
+    "errors": []
+   },
+   {
+    "residents": 1000,
+    "lod": true,
+    "fps": 2.1,
+    "active_animated": 13.8,
+    "near": 0,
+    "mid": 19,
+    "far": 981,
+    "in_view": 135,
+    "models_loaded": 31,
+    "buckets_served": 31,
+    "draw_calls": 279,
+    "triangles": 1178430,
+    "js_heap_mb": 149,
+    "load_seconds": 69.4,
+    "samples": 4,
+    "load_avg_1m": 4.5,
+    "errors": []
+   },
+   {
+    "residents": 1000,
+    "lod": false,
+    "fps": 0.1,
+    "active_animated": 1000,
+    "near": 1000,
+    "mid": 0,
+    "far": 0,
+    "in_view": 130,
+    "models_loaded": 275,
+    "buckets_served": 275,
+    "draw_calls": 3553,
+    "triangles": 8849932,
+    "js_heap_mb": 319,
+    "load_seconds": 4667.7,
+    "samples": 1,
+    "load_avg_1m": 12.4,
+    "errors": []
+   }
+  ]
+ },
+ "notes": [
+  "Measured 2026-10-25 on a shared 4-core cloud dev container while other agents ran (see load_avg). Not the iPhone.",
+  "The crowd rows used schema-1 records; schema 2 keeps the same 288 bucket axes, so bucket spread and costs are the same."
+ ]
+}

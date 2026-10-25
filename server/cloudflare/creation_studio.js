@@ -161,13 +161,13 @@ const round3 = (v) => Math.round(v * 1000) / 1000;
 const HAIR_LADDER = ['close_crop', 'curly_short', 'wavy_medium', 'long_wavy'];
 const HAIR_WORDS = { close_crop: 'close-cropped', curly_short: 'short curly', wavy_medium: 'shoulder-length wavy', long_wavy: 'long wavy',
   bun_high: 'high bun', bun_low: 'low bun', afro: 'afro', beanie: 'under a beanie' };
-const COLOURS = {
+export const COLOURS = {
   black: '#16110e', 'jet black': '#0e0b0a', dark: '#241812', 'dark brown': '#2a1a12', brown: '#4a2c1c', 'light brown': '#7a5236', chestnut: '#5a2e1a',
   auburn: '#6a2e1a', red: '#8a2a16', ginger: '#b0521e', blonde: '#d8b46a', blond: '#d8b46a', 'platinum blonde': '#e6d6b0', grey: '#8a8580',
   gray: '#8a8580', silver: '#b8b8b8', white: '#e8e6e0', purple: '#8d64d6', violet: '#8d64d6', pink: '#d67ea8', blue: '#3a6ec8',
   green: '#3c7a4a', teal: '#1f6f78', navy: '#1d2b4a', orange: '#e8732e', yellow: '#d8b030', gold: '#c8a040', beige: '#d8c4a0', cream: '#e9dcc8',
 };
-const EYE_COLOURS = { brown: '#5a3a22', 'dark brown': '#3e2616', 'light brown': '#7a5232', hazel: '#7a6a3a', amber: '#a8742a', green: '#4f7a4a',
+export const EYE_COLOURS = { brown: '#5a3a22', 'dark brown': '#3e2616', 'light brown': '#7a5232', hazel: '#7a6a3a', amber: '#a8742a', green: '#4f7a4a',
   blue: '#4f7fb5', 'light blue': '#7aa6d6', grey: '#6f7a80', gray: '#6f7a80', black: '#241812' };
 const OUTFIT_PALETTE = ['#1f6f78', '#1d2b4a', '#4a525c', '#e8732e', '#d89a2a', '#56603e', '#b79be6', '#e9dcc8', '#3e5f86', '#7a2a2a'];
 const colourName = (hex) => Object.entries(COLOURS).find(([, h]) => h === hex)?.[0] || { '#3e5f86': 'denim blue' }[hex] || hex;
@@ -459,7 +459,7 @@ export function describePerson(text, presets = BUILT_IN) {
     ...Object.keys(SKIN_TONES).flatMap((k) => k.split(' '))]);
   const understood = (w) => vocab.has(w) || KNOWN_PART.test(w) || HAIR_PART.test(w) || OUTFIT_PART.test(w) || TOPS.some(([, re]) => re.test(w))
     || DESCRIBE_BODY.some(([re]) => re.test(w)) || BODY_WORDS.some(([re]) => re.test(w)) || hairStyleIn(w) || NOT_BUILT.some(([re]) => re.test(w))
-    || Boolean(styleIn(w)) || /^(?:curly|wavy|straight|buzz|cut|crew|shaved|cropped|bun|afro|beanie|denim|leather|athletic|muscular|broad|shouldered|masculine|feminine|tanned|olive)$/.test(w);
+    || Boolean(styleIn(w)) || /^(?:curly|wavy|straight|buzz|cut|crew|shaved|cropped|bun|low|afro|beanie|denim|leather|athletic|muscular|broad|shouldered|masculine|feminine|tanned|olive)$/.test(w);
   const unused = [...new Set(t.replace(/[^a-z0-9\s'-]/g, ' ').split(/\s+/).filter(Boolean).filter((w) => !understood(w)))].slice(0, 8);
   return { ok: true, base: base.id, params: edit.params, style, shape: edit.shape, applied, unsupported, unused };
 }
