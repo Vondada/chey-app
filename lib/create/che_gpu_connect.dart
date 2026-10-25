@@ -752,9 +752,9 @@ class _CheGpuConnectPanelState extends State<CheGpuConnectPanel> {
 
   static const _icons = {
     CheGpuCheckState.pending: (Icons.radio_button_unchecked, Colors.white54),
-    CheGpuCheckState.running: (Icons.hourglass_top_rounded, Colors.amberAccent),
+    CheGpuCheckState.running: (Icons.hourglass_top, Colors.amberAccent),
     CheGpuCheckState.passed: (Icons.check_circle_rounded, Colors.greenAccent),
-    CheGpuCheckState.failed: (Icons.cancel_rounded, Colors.redAccent),
+    CheGpuCheckState.failed: (Icons.cancel, Colors.redAccent),
     CheGpuCheckState.unverified: (Icons.help_outline_rounded, Colors.orangeAccent),
   };
 
