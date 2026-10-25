@@ -380,7 +380,8 @@ test('routing words: explicit saves, recent memories, history questions and mult
   assert.equal(explicitMemorySave('Please save Silver Falcon 27 to your memory.'), 'Silver Falcon 27');
   assert.equal(explicitMemorySave('Store the code phrase Silver Falcon 27'), 'Code phrase: Silver Falcon 27');
   assert.equal(explicitMemorySave('Save the phrase Silver Falcon 27'), 'Phrase: Silver Falcon 27');
-  for (const no of ['save the file', 'add milk to the shopping list', 'Remember my password is hunter2', 'Can you remember what I said?', 'Store the car in the garage']) {
+  assert.equal(explicitMemorySave('Keep this in mind: I prefer short replies'), 'I prefer short replies');
+  for (const no of ['save the file', 'add milk to the shopping list', 'Add a note: buy milk', 'Log my workout: ran 3 miles', 'Remember my password is hunter2', 'Can you remember what I said?', 'Store the car in the garage']) {
     assert.equal(explicitMemorySave(no), null, no);
   }
   assert.deepEqual(ownerMemorySearchIntent('What are my recent memories?'), { recent: true, term: '', limit: 5 });

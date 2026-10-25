@@ -162,10 +162,11 @@ export function personalFactQuestion(message) {
 // memory" and "Store the code phrase Silver Falcon 27" reached the model, which said "I've saved that" while nothing was
 // written. Every form here goes to the one authorized memory write (worker.js rememberOwnerStatement), which confirms
 // only after reading the record back from storage.
-const SAVE_VERB = String.raw`(?:remember|memori[sz]e|keep\s+in\s+mind|save|store|keep|note(?:\s+down)?|record|log|add|write\s+down|commit)`;
-const ALWAYS_SAVE = /^(?:remember|memori[sz]e|keep\s+in\s+mind)$/i;
+const SAVE_VERB = String.raw`(?:remember|memori[sz]e|keep\s+(?:this\s+|that\s+)?in\s+mind|save|store|keep|note(?:\s+down)?|record|log|add|write\s+down|commit)`;
+const ALWAYS_SAVE = /^(?:remember|memori[sz]e|keep\s+(?:this\s+|that\s+)?in\s+mind)$/i;
 const MEMORY_PLACE = String.raw`(?:(?:to|in|into|on)\s+(?:(?:your|my|the)\s+)?(?:long[- ]term\s+)?(?:memory|memories|brain|records?|notes))`;
-const NAMED_ITEM = /^(?:the\s+|this\s+|a\s+|my\s+)?(?:(?:code|secret|test|key|magic|safe)\s+)?(?:phrase|word|code ?word|fact|note|detail|number)\b/i;
+// "a note" is left out: "add a note: buy milk" belongs to notes, not to CHE's memory.
+const NAMED_ITEM = /^(?:the\s+|this\s+|a\s+|my\s+)?(?:(?:code|secret|test|key|magic|safe)\s+)?(?:phrase|word|code ?word|fact|detail|number)\b/i;
 
 /**
  * The statement an explicit save request asks CHE to store, or null. "Remember …" always counts; any other verb needs
@@ -195,7 +196,7 @@ export function explicitMemorySave(message) {
     if (value) {
       const label = named[0].replace(/^(?:the|this|a|my)\s+/i, '').trim();
       // "the code phrase X" keeps its label (the words alone say nothing); "this test fact: X" is just X.
-      body = /\b(?:fact|note|detail)$/i.test(label) ? value : `${label[0].toUpperCase()}${label.slice(1)}: ${value}`;
+      body = /\b(?:fact|detail)$/i.test(label) ? value : `${label[0].toUpperCase()}${label.slice(1)}: ${value}`;
     }
   }
   if (!body || isQuestionLike(body)) return null;
