@@ -65,6 +65,13 @@ Branch: `claude/che-character-realism` (from main `afb8de1`). Lanes push to `lan
     redacted status only; minimum scopes; reuse existing; keep the old key until the new one verifies; CAPTCHA/owner
     auth handed over and resumed; $0. Lane H (extended).
 
+20. Automatic service onboarding (2026-10-25), "CHE, connect Hugging Face" first: check existing → owner session
+    (account creation owner-only where ToS require) → minimum-permission provider token → the store the consumer
+    actually reads (Worker runtime for the Worker; GitHub secret + workflow only when Actions need it) → auth +
+    capability test → "Connected" with what works. Separate outcomes: token created / secret configured / connection
+    verified. Idempotent retries (no duplicate tokens); preserve working connections; $0. Lane I
+    `lane/service-onboarding`; doc `docs/CHE_SERVICE_ONBOARDING.md`. Live run with the owner's account: iPhone only.
+
 ## Infrastructure facts (inspected, not assumed)
 - Cloudflare Worker: queue, storage, routing only. No GPU, no Blender.
 - Free GitHub Actions CPU worker (ubuntu, 4 cores, Blender 5.0.1, MPFB2): verified live. Run 40153146586 built a
@@ -103,7 +110,8 @@ Branch: `claude/che-character-realism` (from main `afb8de1`). Lanes push to `lan
 | G15 | GPU Connect flow with 4 separate verifications | F | in progress |
 | G16 | Realism stack + 15–20 s CHE sample | G | in progress |
 | G17 | Master profile form filling | H | in progress |
-| G18 | Service/AI-provider connect adapters | H | in progress |
+| G18 | Service/AI-provider connect adapters | I (moved from H) | in progress |
+| G19 | Hugging Face onboarding end to end + demo | I | in progress |
 | G9 | e2e server "k.startsWith" (research queue never ran in e2e) | me | done `4ad45c9`; e2e 2/2 |
 
 ## Integration and release
