@@ -53,6 +53,12 @@ Branch: `claude/che-character-realism` (from main `afb8de1`). Lanes push to `lan
     References received and inspected 2026-10-25: notes in `docs/CHE_REALISM_REFERENCES.md` (AI-generated drama
     footage; the target for the cinematic path).
 
+18. Master profile form filling (2026-10-25): "CHE, use my master profile" fills whole forms from approved Personal and
+    CHE Office profiles plus the on-device vault; passwords never leave the device; multi-page, dropdowns, dates,
+    remembered answers; never invent; CAPTCHA/verification handed to the owner with the form preserved; fill and submit
+    are separate; verify DOM values and report what is unfinished. Lane H `lane/master-profile`; doc
+    `docs/CHE_MASTER_PROFILE.md`.
+
 ## Infrastructure facts (inspected, not assumed)
 - Cloudflare Worker: queue, storage, routing only. No GPU, no Blender.
 - Free GitHub Actions CPU worker (ubuntu, 4 cores, Blender 5.0.1, MPFB2): verified live. Run 40153146586 built a
@@ -90,6 +96,7 @@ Branch: `claude/che-character-realism` (from main `afb8de1`). Lanes push to `lan
 | G14 | "Open and display saved image <id>" listed all 26 media items | me | fixed `dfd3f48`: Worker 19/19 media tests, full Worker 3990/0; Flutter che_chat_image 2/2; iPhone display unverified |
 | G15 | GPU Connect flow with 4 separate verifications | F | in progress |
 | G16 | Realism stack + 15–20 s CHE sample | G | in progress |
+| G17 | Master profile form filling | H | in progress |
 | G9 | e2e server "k.startsWith" (research queue never ran in e2e) | me | done `4ad45c9`; e2e 2/2 |
 
 ## Integration and release
