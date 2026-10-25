@@ -390,6 +390,85 @@ extension _CheHomeSend on _CHEHomeState {
         .toList();
   }
 
+  /// True when [message] was a master profile or form-fill turn (handled here, on the phone).
+  Future<bool> _runMasterProfileTurn(String message) async {
+    final command = CheProfileCommand.parse(message);
+    final fill = CheFormFillVoice.handler;
+    Future<void> reply(String text) async {
+      if (mounted) _set(() => controller.clear());
+      HapticFeedback.mediumImpact();
+      await speakText(text, record: false, show: true);
+    }
+
+    if (command != null) {
+      final store = CheMasterProfileStore.instance;
+      switch (command.kind) {
+        case 'set':
+          final label = cheProfileFieldLabels[command.field] ?? command.field;
+          final errors = <String>[];
+          final value = cheNormalizeProfileValue(command.field, command.value, error: errors);
+          if (value == null) {
+            await reply(errors.isEmpty ? 'I didn\'t save that, sir.' : '${errors.first} Nothing was saved.');
+            return true;
+          }
+          await store.setField(command.profile!, command.field, value);
+          await reply('Saved your ${command.profile!.spoken} $label on this iPhone and approved it for forms, sir.');
+          return true;
+        case 'clear':
+          final label = cheProfileFieldLabels[command.field] ?? command.field;
+          // Removing anything needs the owner's yes first (owner rule).
+          final sure = await showDialog<bool>(
+            context: context,
+            builder: (dialogContext) => AlertDialog(
+              title: Text('Remove your ${command.profile!.spoken} $label?'),
+              actions: [
+                TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('No, keep it')),
+                FilledButton(onPressed: () => Navigator.pop(dialogContext, true), child: const Text('Yes, remove')),
+              ],
+            ),
+          );
+          if (sure != true) {
+            await reply('Kept your ${command.profile!.spoken} $label, sir.');
+            return true;
+          }
+          final had = await store.clearField(command.profile!, command.field);
+          await reply(had ? 'Removed your ${command.profile!.spoken} $label, sir.' : 'Your ${command.profile!.spoken} profile had no $label saved, sir.');
+          return true;
+        case 'show':
+          final p = await store.load();
+          final kind = command.profile ?? CheProfileKind.personal;
+          final approved = p.approvedCount(kind);
+          // Spoken: field names only. On screen: masked values.
+          final names = [for (final e in cheProfileFieldLabels.entries) if (p.of(kind)[e.key]?.approved == true) e.value];
+          if (mounted) _showSpokenReply(cheProfileMaskedSummary(p, kind));
+          await speakText(
+            approved == 0
+                ? 'Your ${kind.spoken} profile has no approved fields yet, sir. Say "open my master profile" to fill it in.'
+                : 'Your ${kind.spoken} profile has $approved approved fields: ${names.join(', ')}. The values are on screen, partly hidden.',
+            record: false,
+          );
+          if (mounted) _set(() => controller.clear());
+          return true;
+        case 'open':
+          if (mounted) _set(() => controller.clear());
+          await speakText('Opening your master profile, sir.', record: false, show: true);
+          if (!mounted) return true;
+          await Navigator.of(context).push<void>(MaterialPageRoute(builder: (_) => const CheMasterProfileScreen()));
+          return true;
+        case 'use':
+          if (fill == null) {
+            await reply('Open the form\'s page in CHE\'s browser first, sir, then say "use my master profile". I only fill forms on the page that is open.');
+            return true;
+          }
+      }
+    }
+    if (fill == null) return false;
+    final answer = await fill(message);
+    if (answer == null) return false;
+    await reply(answer);
+    return true;
+  }
+
   Future<void> _runVaultCommand(CheVaultCommand command) async {
     final vault = CheVault.instance;
     var shown = '';
@@ -749,6 +828,11 @@ extension _CheHomeSend on _CHEHomeState {
       await _runVaultCommand(vaultCommand);
       return;
     }
+
+    // Master profile (che_master_profile.dart / che_form_filler.dart): profile
+    // edits and form filling run on the phone. Replies are spoken and shown but
+    // not recorded, so nothing reaches the Worker, a model, chat history or memory.
+    if (_pendingAttachment == null && await _runMasterProfileTurn(message)) return;
 
     // Security Intelligence: a password, key or token typed or spoken into ordinary chat never leaves the phone.
     if (_pendingAttachment == null && cheChatLooksSecret(message)) {

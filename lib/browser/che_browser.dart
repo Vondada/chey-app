@@ -15,6 +15,7 @@ import '../che_app_portal.dart' show cheAppForName, cheIsTradeSeaUrl, cheTradeSe
 import '../security/che_password_vault.dart';
 import '../security/che_vault_auth.dart';
 import 'che_embedded_app_shell.dart';
+import 'che_form_filler.dart';
 import 'che_tradesea_check.dart';
 
 typedef ChePageCallback = Future<void> Function(String title, String url, String pageText);
@@ -396,6 +397,8 @@ class _CheBrowserScreenState extends State<CheBrowserScreen> {
     }
     CheBrowserActions.voice = _voiceCommand;
     CheBrowserActions.openUrl = _loadUrl;
+    // "Use my master profile" (che_form_filler.dart): Chat calls this before anything can reach the Worker.
+    CheFormFillVoice.handler = _formFiller.handle;
     _addressFocus.addListener(() {
       if (!_addressFocus.hasFocus) _syncAddress();
       if (mounted) setState(() {});
@@ -415,10 +418,23 @@ class _CheBrowserScreenState extends State<CheBrowserScreen> {
       }
     }
     if (CheBrowserActions.voice == _voiceCommand) CheBrowserActions.voice = null;
+    if (CheFormFillVoice.handler == _formFiller.handle) CheFormFillVoice.handler = null;
     _address.dispose();
     _addressFocus.dispose();
     super.dispose();
   }
+
+  // ─── Master profile form fill (on-device; additive) ─────────────────────
+  CheFormPage get _formPage => _BrowserFormPage(this);
+  static String? _formEngineCache;
+  static Future<String> _formEngine() async =>
+      _formEngineCache ??= await rootBundle.loadString('assets/browser/che_form_fill.js');
+  late final CheFormFiller _formFiller = CheFormFiller(
+    page: _formPage,
+    engineSource: _formEngine,
+    // Reuses a valid Face ID vault session (CheVaultAuth.sessionTtl), like "sign me in".
+    unlockVault: (reason) => CheVaultAuth.instance.ensureUnlocked(reason: reason),
+  );
 
   // ─── Voice navigation (voice-first use) ─────────────────────────────────
   Future<void> _loadUrl(String url) => _tab.load(url);
@@ -1396,4 +1412,14 @@ class _ReaderScreen extends StatelessWidget {
       ),
     );
   }
+}
+
+/// The open tab as a [CheFormPage] for the master profile filler.
+class _BrowserFormPage implements CheFormPage {
+  _BrowserFormPage(this._state);
+  final _CheBrowserScreenState _state;
+  @override
+  String get url => _state._tabs.isEmpty ? '' : _state._tab.url;
+  @override
+  Future<String> eval(String js) => _state._js(js);
 }
