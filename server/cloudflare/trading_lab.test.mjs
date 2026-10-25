@@ -243,6 +243,42 @@ test('replay without look-ahead: rewriting every bar after a point never changes
   }
 });
 
+// Strategy V3 (owner, 2026-10-25): the same rewrite-the-future replay for every intraday strategy the Strategy Matrix
+// researches, the V3 additions included, on 5-minute bars with real timestamps and through the costed engine.
+test('replay without look-ahead: every intraday and V3 strategy ignores a rewritten future', async () => {
+  const { INTRADAY_CANDIDATES, V3_CANDIDATES, intradayContext, newPortfolio, stepPortfolio } = await import('./trading_evidence.js');
+  const t0 = Date.parse('2026-03-02T00:00:00Z');
+  const c = [];
+  let p = 20000;
+  for (let i = 0; i < 2400; i++) {
+    const noise = ((Math.sin(i * 12.9898) * 43758.5453) % 1);
+    const o = p; const cl = o + Math.sin(i / 7) * 9 + Math.sin(i / 41) * 6 + noise * 8;
+    c.push({ t: new Date(t0 + i * 300000).toISOString(), o, c: cl, h: Math.max(o, cl) + 3 + Math.abs(noise) * 4, l: Math.min(o, cl) - 3 - Math.abs(noise) * 4, v: 100 + i % 50 });
+    p = cl;
+  }
+  const cut = 1700;
+  const future = c.map((k, i) => (i <= cut ? k : { ...k, o: k.o * (i % 2 ? 0.8 : 1.2), c: k.c * (i % 2 ? 1.2 : 0.8), h: Math.max(k.o * 1.2, k.c * 1.2) * 1.01, l: Math.min(k.o * 0.8, k.c * 0.8) * 0.99 }));
+  const xa = intradayContext(c); const xb = intradayContext(future);
+  for (const key of ['ema20', 'ema50', 'vwap', 'hh20', 'll20', 'er20', 'bbMid', 'bbSd', 'bwRank', 'atr14', 'orHigh', 'pdh']) {
+    assert.deepEqual(xa[key].slice(0, cut + 1), xb[key].slice(0, cut + 1), `indicator ${key} at or before the cut must not depend on later bars`);
+  }
+  const all = { ...INTRADAY_CANDIDATES, ...V3_CANDIDATES };
+  let signals = 0;
+  for (const [id, cand] of Object.entries(all)) {
+    for (let i = 5; i <= cut; i++) {
+      const a = cand.entry(c, i, xa);
+      if (a) signals += 1;
+      assert.deepEqual(a, cand.entry(future, i, xb), `${id} at bar ${i}`);
+    }
+    const run = (bars, x) => stepPortfolio(newPortfolio(id, 'any', { contract: 'MNQ', source: 'backtest', resolution: '5m' }), bars, x).filter((t) => t.exit.time <= c[cut].t);
+    assert.deepEqual(run(c, xa), run(future, xb), `${id}: trades closed by the cut`);
+  }
+  assert.ok(signals > 50, `the fixture produces real signals (${signals})`);
+  for (const id of Object.keys(V3_CANDIDATES)) {
+    assert.ok(!(id in INTRADAY_CANDIDATES), `${id} stays out of the futures live-paper set`);
+  }
+});
+
 test('paper trading never decides on the bar that is still forming', async () => {
   const c = series(1500);
   const last = c[c.length - 1];

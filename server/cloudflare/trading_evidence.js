@@ -346,7 +346,27 @@ export function intradayContext(candles, { swingN = 3 } = {}) {
     if (j - swingN >= 0 && isSwingHigh(candles, j, swingN)) confirmedHigh = candles[j].h;
     lastHigh[i] = confirmedHigh;
   }
-  return { ...base, ema20, ema50, rsi14, lastHigh, day, td, et, vwap, vwapSd, sessionBars, orHigh, orLow, pdh, pdl, onHigh, onLow, nyOpen };
+  // Strategy V3 inputs (docs/CHE_TRADING_STRATEGY_V3.md), each from bar i and earlier bars only: the prior 20-bar
+  // high and low (bar i excluded), the 20-bar efficiency ratio, Bollinger(20, 2σ) of closes and how the band width
+  // ranks against its previous 100 values (0 = the narrowest of them).
+  const hh20 = new Array(n).fill(null); const ll20 = new Array(n).fill(null); const er20 = new Array(n).fill(null);
+  const bbMid = new Array(n).fill(null); const bbSd = new Array(n).fill(null); const bwRank = new Array(n).fill(null);
+  const bw = new Array(n).fill(null);
+  for (let i = 20; i < n; i++) {
+    let hi = -Infinity; let lo = Infinity; let path = 0; let sum = 0; let sq = 0;
+    for (let j = i - 20; j < i; j++) { hi = Math.max(hi, candles[j].h); lo = Math.min(lo, candles[j].l); }
+    for (let j = i - 19; j <= i; j++) { path += Math.abs(candles[j].c - candles[j - 1].c); sum += candles[j].c; sq += candles[j].c * candles[j].c; }
+    hh20[i] = hi; ll20[i] = lo;
+    er20[i] = path ? Math.abs(candles[i].c - candles[i - 20].c) / path : 0;
+    bbMid[i] = sum / 20; bbSd[i] = Math.sqrt(Math.max(0, sq / 20 - bbMid[i] * bbMid[i]));
+    bw[i] = bbMid[i] ? (4 * bbSd[i]) / bbMid[i] : null;
+    if (i >= 70) {
+      let below = 0; let seen = 0;
+      for (let j = Math.max(20, i - 100); j < i; j++) if (bw[j] != null) { seen += 1; if (bw[j] < bw[i]) below += 1; }
+      bwRank[i] = seen ? below / seen : null;
+    }
+  }
+  return { ...base, ema20, ema50, rsi14, lastHigh, day, td, et, vwap, vwapSd, sessionBars, orHigh, orLow, pdh, pdl, onHigh, onLow, nyOpen, hh20, ll20, er20, bbMid, bbSd, bwRank };
 }
 // Risk bounds in index points: below the floor, costs are most of the risk (MNQ's round
 // trip is about 2.5 points); above the ceiling, one trade risks too much of a small account.
@@ -643,12 +663,87 @@ export const INTRADAY_CANDIDATES = Object.freeze({
     },
   },
 });
+// ─── Strategy V3 additions (owner, 2026-10-25): docs/CHE_TRADING_STRATEGY_V3.md ───
+// The same entry contract and the same engine (stepPortfolio, fills, costs) as INTRADAY_CANDIDATES. Kept in their own
+// registry so the futures live-paper loop, its research record (bounded to 120 KB) and the owner's per-strategy
+// controls keep exactly the strategies they had; the Strategy Matrix research and Orion's crypto paper desk run them.
+export const V3_CANDIDATES = Object.freeze({
+  'breakout-retest-5m': {
+    name: 'trend breakout and retest', family: 'Breakout',
+    rules: 'Breakout: within the last 10 bars, a close above the high of the 20 bars before it (long) or below their low (short), with no close back inside since. Entry: a later bar trades back to the broken level (within 0.25 ATR) and closes beyond it in the breakout direction; market order at the next open. Stop: 1 tick beyond the retest bar. Target: the R multiple of the portfolio.',
+    entry(c, i, x) {
+      if (i < 25 || x.atr14[i] == null) return null;
+      const near = 0.25 * x.atr14[i];
+      for (let k = i - 2; k >= Math.max(21, i - 10); k--) {
+        const up = x.hh20[k]; const dn = x.ll20[k];
+        if (up != null && c[k].c > up && c[k - 1].c <= up && !c.slice(k + 1, i).some((b) => b.c <= up)) {
+          if (c[i].l <= up + near && c[i].c > up && c[i].c > c[i].o) return sized({ side: 'long', ref: c[i].c, stop: c[i].l - 0.25, why: `retested the broken 20-bar high ${r2(up)} and held` });
+          return null;
+        }
+        if (dn != null && c[k].c < dn && c[k - 1].c >= dn && !c.slice(k + 1, i).some((b) => b.c >= dn)) {
+          if (c[i].h >= dn - near && c[i].c < dn && c[i].c < c[i].o) return sized({ side: 'short', ref: c[i].c, stop: c[i].h + 0.25, why: `retested the broken 20-bar low ${r2(dn)} and rejected it` });
+          return null;
+        }
+      }
+      return null;
+    },
+  },
+  'momentum-cont-5m': {
+    name: 'momentum continuation', family: 'Trend',
+    rules: 'Long: 20 EMA above the 50 EMA and rising; the previous bar is an up displacement (body at least 1.5 ATR, close in the top quarter of its range); this bar closes above the displacement high. Short: mirror. Stop: 1 tick beyond the displacement bar\'s far end. Target: the R multiple of the portfolio.',
+    entry(c, i, x) {
+      if (i < 5 || x.ema50[i] == null || x.atr14[i - 1] == null) return null;
+      const d = c[i - 1]; const range = d.h - d.l;
+      if (!(range > 0) || Math.abs(d.c - d.o) < 1.5 * x.atr14[i - 1]) return null;
+      const e = x.ema20[i];
+      if (d.c > d.o && (d.c - d.l) / range >= 0.75 && e > x.ema50[i] && e > x.ema20[i - 3] && c[i].c > d.h) {
+        return sized({ side: 'long', ref: c[i].c, stop: d.l - 0.25, why: `closed above an up displacement bar ${r2(d.h)} in an uptrend` });
+      }
+      if (d.c < d.o && (d.h - d.c) / range >= 0.75 && e < x.ema50[i] && e < x.ema20[i - 3] && c[i].c < d.l) {
+        return sized({ side: 'short', ref: c[i].c, stop: d.h + 0.25, why: `closed below a down displacement bar ${r2(d.l)} in a downtrend` });
+      }
+      return null;
+    },
+  },
+  'range-reject-5m': {
+    name: 'range rejection', family: 'Mean reversion',
+    rules: 'Range: the 20-bar efficiency ratio is 0.25 or less (choppy). Long: the bar trades into the bottom 10% of the prior 20-bar range and closes up, in the upper half of its own range, below the range midpoint. Short: mirror at the top. Stop: 1 tick beyond the bar or the range edge, whichever is further. Target: the range midpoint.',
+    entry(c, i, x) {
+      if (i < 21 || x.er20[i] == null || x.er20[i] > 0.25) return null;
+      const hi = x.hh20[i]; const lo = x.ll20[i]; const w = hi - lo; const k = c[i]; const kr = k.h - k.l;
+      if (!(w > 0) || !(kr > 0)) return null;
+      const mid = (hi + lo) / 2;
+      if (k.l <= lo + 0.1 * w && k.c > k.o && (k.c - k.l) / kr >= 0.5 && k.c < mid) {
+        return sized({ side: 'long', ref: k.c, stop: Math.min(k.l, lo) - 0.25, target: r2(mid), why: `rejected the bottom of the 20-bar range ${r2(lo)}–${r2(hi)}` });
+      }
+      if (k.h >= hi - 0.1 * w && k.c < k.o && (k.h - k.c) / kr >= 0.5 && k.c > mid) {
+        return sized({ side: 'short', ref: k.c, stop: Math.max(k.h, hi) + 0.25, target: r2(mid), why: `rejected the top of the 20-bar range ${r2(lo)}–${r2(hi)}` });
+      }
+      return null;
+    },
+  },
+  'vol-squeeze-5m': {
+    name: 'volatility contraction then expansion', family: 'Volatility',
+    rules: 'Contraction: the previous bar\'s Bollinger(20, 2σ) band width is in the narrowest 10% of its last 100 values. Expansion: this bar closes outside the band with a true range of at least 1.2 ATR; above is long, below is short. Stop: the band middle (20-bar average). Target: the R multiple of the portfolio.',
+    entry(c, i, x) {
+      if (i < 72 || x.bwRank[i - 1] == null || x.bwRank[i - 1] > 0.1 || x.atr14[i] == null) return null;
+      const tr = Math.max(c[i].h - c[i].l, Math.abs(c[i].h - c[i - 1].c), Math.abs(c[i].l - c[i - 1].c));
+      if (tr < 1.2 * x.atr14[i]) return null;
+      const up = x.bbMid[i] + 2 * x.bbSd[i]; const dn = x.bbMid[i] - 2 * x.bbSd[i];
+      if (c[i].c > up) return sized({ side: 'long', ref: c[i].c, stop: x.bbMid[i], why: `expanded above the band ${r2(up)} after a squeeze` });
+      if (c[i].c < dn) return sized({ side: 'short', ref: c[i].c, stop: x.bbMid[i], why: `expanded below the band ${r2(dn)} after a squeeze` });
+      return null;
+    },
+  },
+});
 export const INTRADAY_FILTERS = Object.freeze({
   any: { name: 'any trend', ok: () => true },
   trend: { name: 'with the 50 EMA trend', ok: (c, i, x, side) => x.ema50[i] != null && x.ema50[i - 3] != null
     && (side === 'short' ? c[i].c < x.ema50[i] && x.ema50[i] < x.ema50[i - 3] : c[i].c > x.ema50[i] && x.ema50[i] > x.ema50[i - 3]) },
 });
-const candidateOf = (id) => CANDIDATES[id] || INTRADAY_CANDIDATES[id];
+/** An intraday strategy by id, from the original set or the V3 additions. */
+export const intradayCandidate = (id) => INTRADAY_CANDIDATES[id] || V3_CANDIDATES[id] || null;
+const candidateOf = (id) => CANDIDATES[id] || intradayCandidate(id);
 const filterOf = (id) => FILTERS[id] || INTRADAY_FILTERS[id];
 
 function conditionOf(c, k, x) {
