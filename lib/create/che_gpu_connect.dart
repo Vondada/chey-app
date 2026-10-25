@@ -62,6 +62,10 @@ bool cheValidEmail(String s) => RegExp(r'^[^\s@<>,;"]+@[^\s@<>,;"]+\.[a-z]{2,}$'
 String cheGpuNotebookUrl(String email) =>
     email.isEmpty ? cheColabNotebookUrl : '$cheColabNotebookUrl?authuser=${Uri.encodeQueryComponent(email)}';
 
+/// What CHE says for the signed-in Colab account. Only a real address is spoken. A page initial, a name or an empty
+/// value becomes "your CHE Office account", never a guess (owner, 2026-10-25: the default must not show a letter).
+String cheGpuAccountLabel(String shown) => cheValidEmail(shown) ? shown : 'your CHE Office account';
+
 /// The owner's preferred Google account for Colab (his CHE Office account). An address only, kept on this iPhone.
 class CheGpuAccount {
   CheGpuAccount._();
@@ -445,7 +449,7 @@ class CheGpuConnect extends ChangeNotifier {
       }
       if (email.isEmpty) {
         _check(account, CheGpuCheckState.unverified,
-            'Colab is signed in as $shown, but no preferred account is set. Say "my CHE Office Google account is" and the address.');
+            'Colab is signed in, but no CHE Office Google account is set, so I cannot check which account it is. Say "my CHE Office Google account is" and the address.');
         return p;
       }
       if (shown == email) {
@@ -456,13 +460,13 @@ class CheGpuConnect extends ChangeNotifier {
         // Google's account chooser for the preferred address, then back to the notebook. The owner picks or signs in.
         switched = true;
         await b.open('https://accounts.google.com/AccountChooser?Email=${Uri.encodeQueryComponent(email)}&continue=${Uri.encodeQueryComponent(url)}');
-        final ok = await _askOwner(b, 'Colab is signed in as $shown, not your CHE Office account $email. Google\'s account chooser is open: choose $email, or sign in to it. Say continue when you are done.',
+        final ok = await _askOwner(b, 'Colab is signed in as ${cheGpuAccountLabel(shown)}, not your CHE Office account $email. Google\'s account chooser is open: choose $email, or sign in to it. Say continue when you are done.',
             cleared: (q) => '${q['account'] ?? ''}' == email || q['blocked'] == true);
         if (!ok) return _fail(account, 'Colab stayed on $shown instead of $email.');
         continue;
       }
-      _check(account, CheGpuCheckState.failed, 'Colab is signed in as $shown, not $email.');
-      _set(CheGpuPhase.failed, 'Colab is still signed in as $shown, not your CHE Office account $email. I stopped before connecting.');
+      _check(account, CheGpuCheckState.failed, 'Colab is signed in as ${cheGpuAccountLabel(shown)}, not $email.');
+      _set(CheGpuPhase.failed, 'Colab is still signed in as ${cheGpuAccountLabel(shown)}, not your CHE Office account $email. I stopped before connecting.');
       _say(status);
       _cancelled = true;
       return p;
