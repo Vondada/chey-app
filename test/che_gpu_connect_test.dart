@@ -326,8 +326,8 @@ void _accountLabelTests() {
     });
 
     test('Colab opens with the CHE Office account by default', () {
-      expect(cheGpuDefaultAccount, 'chaytheoffice@gmail.com');
-      expect(cheGpuNotebookUrl(cheGpuDefaultAccount), contains('authuser=chaytheoffice%40gmail.com'));
+      expect(cheGpuDefaultAccount, 'chetheoffice@gmail.com');
+      expect(cheGpuNotebookUrl(cheGpuDefaultAccount), contains('authuser=chetheoffice%40gmail.com'));
     });
   });
 }

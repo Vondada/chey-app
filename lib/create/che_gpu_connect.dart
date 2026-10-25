@@ -63,7 +63,7 @@ String cheGpuNotebookUrl(String email) =>
     email.isEmpty ? cheColabNotebookUrl : '$cheColabNotebookUrl?authuser=${Uri.encodeQueryComponent(email)}';
 
 /// The Google account Colab opens with unless the owner sets another (owner, 2026-10-25: his CHE Office account).
-const cheGpuDefaultAccount = 'chaytheoffice@gmail.com';
+const cheGpuDefaultAccount = 'chetheoffice@gmail.com';
 
 /// What CHE says for the signed-in Colab account. A real address is spoken as written. A page initial or name that
 /// CHE cannot match to an address is never spoken as the account; it is said as an unreadable account.
