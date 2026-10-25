@@ -37,15 +37,17 @@ void main() {
     CheActivePalette.current = kCheHudPalette;
   });
 
-  // Each scene: whether the Office is empty, and how far down the page it is scrolled.
-  const scenes = <(String, bool, double)>[
-    ('1_top', false, 0),
-    ('2_middle', false, 900),
-    ('3_lower', false, 1800),
-    ('4_bottom', false, 2700),
-    ('5_empty_office', true, 0),
+  // Each scene: whether the Office is empty, how far down the page it is scrolled, and a zone opened by voice.
+  const scenes = <(String, bool, double, String?)>[
+    ('1_top', false, 0, null),
+    ('2_middle', false, 900, null),
+    ('3_lower', false, 1800, null),
+    ('4_bottom', false, 2700, null),
+    ('5_empty_office', true, 0, null),
+    ('6_end', false, 99999, null),
+    ('7_zone_sheet', false, 0, 'creative'),
   ];
-  for (final (name, empty, offset) in scenes) {
+  for (final (name, empty, offset, zone) in scenes) {
     testWidgets('screenshot $name', (tester) async {
       await tester.binding.setSurfaceSize(const Size(440, 956));
       addTearDown(() => tester.binding.setSurfaceSize(null));
@@ -66,7 +68,14 @@ void main() {
               child: Scaffold(
                 backgroundColor: Colors.transparent,
                 body: SafeArea(
-                  child: CheOfficeFloorScreen(client: cheFixtureClient(empty: empty), embedded: true),
+                  child: CheOfficeFloorScreen(
+                    client: cheFixtureClient(empty: empty),
+                    embedded: true,
+                    initialZone: zone,
+                    onOpenRoom: (_) {},
+                    projects: empty ? const [] : cheFixtureProjects,
+                    onOpenProjects: () {},
+                  ),
                 ),
               ),
             ),

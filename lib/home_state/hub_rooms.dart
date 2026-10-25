@@ -248,16 +248,51 @@ extension _CheHomeHubRooms on _CHEHomeState {
       return s.contains('block') || s.contains('fail') || s == 'proposal' || s == 'review';
     }).length;
     final paymentsOn = integrations['payments'] == true;
+    // Business overview (owner UI cleanup, 2026-10-25): real counts, the active business work by name, and what the
+    // Office crew is doing right now. Empty states say so plainly.
+    _ensureOfficeRuntime();
+    final activeWork = [...businesses, ...deals]
+        .where((i) => !RegExp(r'complete|done|shipped|cancel|archiv|lost|failed').hasMatch(i.statusLabel.toLowerCase()))
+        .toList();
+    final crewWorking = _officeRuntime.agents.where((p) => p.working).length;
     return _hubList('Business', 'What you can do here, and what is connected.', [
       Card(
         child: Padding(
           padding: const EdgeInsets.all(14),
-          child: Text(
-            businesses.isEmpty && deals.isEmpty
-                ? 'No business or deals yet. Start one below and it appears here.'
-                : '${businesses.length} ${businesses.length == 1 ? 'business' : 'businesses'} · ${deals.length} ${deals.length == 1 ? 'deal' : 'deals'} · ${attention == 0 ? 'nothing waiting on you' : '$attention waiting on you'}',
-            style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
-          ),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Semantics(header: true, child: const Text('BUSINESS OVERVIEW', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w800, letterSpacing: 1.4))),
+            const SizedBox(height: 8),
+            Semantics(
+              label: '${businesses.length} businesses, ${deals.length} deals, $attention waiting on you.',
+              excludeSemantics: true,
+              child: Row(children: [
+                for (final (label, n) in [('Businesses', businesses.length), ('Deals', deals.length), ('Waiting on you', attention)])
+                  Expanded(
+                    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                      Text('$n', style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w800)),
+                      Text(label, style: const TextStyle(fontSize: 13)),
+                    ]),
+                  ),
+              ]),
+            ),
+            const SizedBox(height: 10),
+            if (activeWork.isEmpty)
+              const Text('No active business work yet. Start one below and it appears here.', style: TextStyle(fontSize: 15))
+            else
+              for (final item in activeWork.take(3))
+                Padding(
+                  padding: const EdgeInsets.only(top: 4),
+                  child: Text('${item.title} · ${item.statusLabel} · ${(item.progress.clamp(0.0, 1.0) * 100).round()}%',
+                      style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
+                ),
+            const SizedBox(height: 8),
+            Text(
+              _officeRuntime.agents.isEmpty
+                  ? 'Office crew: no agents yet.'
+                  : 'Office crew: $crewWorking of ${_officeRuntime.agents.length} working.',
+              style: const TextStyle(fontSize: 14),
+            ),
+          ]),
         ),
       ),
       _businessRow(

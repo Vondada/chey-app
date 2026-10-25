@@ -17,7 +17,7 @@ Map<String, dynamic> _agent(String id, String name, String role, String status, 
       'specialty': specialty,
       'status': status,
       'color': '#$color',
-      if (task != null) 'task': task,
+      'task': ?task,
       if (dept.isNotEmpty) 'department': {'id': dept.toLowerCase(), 'title': dept},
       if (latest != null) 'latest_assignment': {'id': 't-$id', 'task': task ?? 'Earlier task', 'status': latest},
     };
