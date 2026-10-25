@@ -163,7 +163,7 @@ test('edits make versions; undo, redo and save move through them; view commands 
 
   const outfit = await call(`/api/creations/${p.id}/edit`, 'POST', { text: 'Change the outfit' });
   assert.equal(outfit.body.changed, true);
-  assert.match(outfit.body.applied[0], /^Outfit colour changed to .*do not show clothes yet/);
+  assert.match(outfit.body.applied[0], /^Outfit colour changed to .*The full-body model's top uses this colour/);
   assert.notEqual(outfit.body.project.params.outfit.color, p.params.outfit.color);
 
   const photo = await call(`/api/creations/${p.id}/edit`, 'POST', { text: 'make it stylized' });

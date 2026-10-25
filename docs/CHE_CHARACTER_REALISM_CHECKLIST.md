@@ -60,15 +60,15 @@ Branch: `claude/che-character-realism` (from main `afb8de1`). Lanes push to `lan
 ## Gaps and status
 | # | Gap | Lane | Status |
 |---|---|---|---|
-| G1 | Reference photo → face shape + skin/hair/eye colours | A + B | in progress |
-| G2 | Device + CPU-limits + measured time shown to the owner | A + B | in progress |
+| G1 | Reference photo → face shape + skin/hair/eye colours | A + B | B done `e6d71b4`/`ede954f` (upload, consent, REFERENCE, worker-only fetch, receipt surfaced, app UI); A pending |
+| G2 | Device + CPU-limits + measured time shown to the owner | A + B | B done `e6d71b4` (device_line from receipt.device_summary, CPU never GPU); needs A to send device_summary |
 | G3 | Only long_wavy hair has geometry (other 7 styles render bald) | A | in progress |
-| G4 | Body: only age (no gender, height, weight, muscle, proportions) | A + B | in progress |
-| G5 | Free-text "describe a person" → one Create | B | in progress |
-| G6 | Voice per character from the existing voice catalog | B | in progress |
-| G7 | Regenerate/variation; reopen from My Creations | B | in progress |
+| G4 | Body: only age (no gender, height, weight, muscle, proportions) | A + B | B done `789e155` (BODY_* settings, omitted at default); A must read them |
+| G5 | Free-text "describe a person" → one Create | B | done `789e155`, `ede954f` |
+| G6 | Voice per character from the existing voice catalog | B | done (on-device Kokoro list) `789e155`, `ede954f`; iPhone playback unverified |
+| G7 | Regenerate/variation; reopen from My Creations | B | done `789e155` (VARIATION seed + face variant, last_model), Flutter reopen test `6712d12` |
 | G8 | Real samples per style, inspected; measured CPU times | A | in progress |
-| G10 | Acceptance driver + publish job | me | pushed `6651850`; needs lane B accept routes |
+| G10 | Acceptance driver + publish job | me | pushed `6651850`; lane B accept routes merged |
 | G11 | Compute pool (providers, cooldowns, handoff) | C | in progress |
 | G12 | World population + benchmarks | D | in progress |
 | G13 | Create Room demo video + walkthrough | E | in progress |
@@ -83,5 +83,6 @@ Branch: `claude/che-character-realism` (from main `afb8de1`). Lanes push to `lan
 - [ ] iPhone: NOT VERIFIED until the owner tries it.
 
 ## Log
+- 2026-10-25 lane B: Worker suite 3985 pass / 0 fail / 7 skipped; Flutter character + studio tests 62 pass; acceptance probe routes `7dfc2d0`.
 - 2026-10-25: acceptance tests + compute pool + world population added (req 12–14); lanes C and D started.
 - 2026-10-25: checklist + contract `b3b664b`; e2e storage fix `4ad45c9`; lanes A and B started and later extended to G3–G8.

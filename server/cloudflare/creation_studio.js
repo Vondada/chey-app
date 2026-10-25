@@ -19,8 +19,9 @@
 // until it was measured moving.
 import { ASSUMPTIONS, PROFILES, estimateVideo, scenarios } from './capacity_model.js';
 import { r2Status } from './object_storage.js';
-import { BUILT_IN, HAIR_BUILT, STYLES, STYLE_LABELS, listIdentities, skinOk, toSettings, validate } from './avatar_identity.js';
-import { GpuQueue, VIEW_NAMES, engineRecord, engineSettingsOf, gpuOwnerRoute, rigLine } from './gpu_queue.js';
+import { BUILT_IN, HAIR_BUILT, STYLES, STYLE_LABELS, generateVariant, listIdentities, skinOk, toSettings, validate } from './avatar_identity.js';
+import { GpuQueue, VIEW_NAMES, engineRecord, engineSettingsOf, gpuOwnerRoute, referenceKey, rigLine } from './gpu_queue.js';
+import { mediaStore, sha256Hex } from './che_media_store.js';
 import { cloudUsable, engineRoute, ensureCapacity } from './creation_orchestrator.js';
 import { CREATION_PROFILES, profileSettings } from './creation_profiles.js';
 import * as OBJ from './creation_objects.js';
@@ -94,6 +95,63 @@ export function renderSettings(r) {
     SUBDIV: String(q.subdiv), TEXTURE_PX: String(q.texture_px), STRANDS: String(q.strands) };
 }
 
+// ── Reference photos (character realism, Workstream B) ───────────────────────────────────────────────────────────
+// A Create Person version may carry one reference photo: JPEG or PNG, at most 8 MB, stored once by SHA-256 in CHE's
+// media store (che_media_store.js) and named on the version, so undo and redo bring it back with the rest. Generate
+// sends it to the person job as settings.REFERENCE; the worker fetches the bytes with its own worker credential
+// (gpu_queue.js /api/gpu/worker/reference), never with the owner's device token.
+export const MAX_REFERENCE_BYTES = 8 * 1024 * 1024;
+export const REFERENCE_CONSENTS = { self: 'this is me', fictional: 'fictional or generated' };
+export const REFERENCE_RULE = 'CHE builds characters only from your own photo or from fictional or generated images, never from photos of other real private people or of children.';
+export const REFERENCE_CHOICES = 'Who is in the photo? 1. This is me. 2. Fictional or generated.';
+const ascii = (b) => String.fromCharCode(...b);
+
+/** image/jpeg, image/png or image/heic from the file's own first bytes (never its name or a claimed type), else null. */
+export function imageTypeOf(bytes) {
+  if (bytes?.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return 'image/jpeg';
+  if (bytes?.length >= 8 && ascii(bytes.subarray(0, 8)) === '\x89PNG\r\n\x1a\n') return 'image/png';
+  if (bytes?.length >= 12 && ascii(bytes.subarray(4, 8)) === 'ftyp' && /^(?:heic|heix|hevc|hevx|heim|heis|mif1|msf1)$/.test(ascii(bytes.subarray(8, 12)))) return 'image/heic';
+  return null;
+}
+
+function decodeBase64(text) {
+  const s = String(text || '').replace(/^data:[^,]*,/, '').replace(/\s+/g, '');
+  if (!/^[A-Za-z0-9+/]*={0,2}$/.test(s)) return null;
+  const bin = atob(s); const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i += 1) out[i] = bin.charCodeAt(i);
+  return out;
+}
+
+// Character voices: CHE's existing on-device Kokoro voices (lib/che_native_voice.dart localVoiceOptions, same ids and
+// names; a Flutter test checks they match). No new provider: the app plays a sample through its own TTS path.
+export const CHARACTER_VOICES = [
+  { id: 0, name: 'Chaze — Signature (Local)', speaker: 'af' },
+  { id: 1, name: 'American Feminine — Bella', speaker: 'af_bella' },
+  { id: 2, name: 'American Feminine — Nicole', speaker: 'af_nicole' },
+  { id: 3, name: 'American Feminine — Sarah', speaker: 'af_sarah' },
+  { id: 4, name: 'American Feminine — Sky', speaker: 'af_sky' },
+  { id: 5, name: 'American Masculine — Adam', speaker: 'am_adam' },
+  { id: 6, name: 'American Masculine — Michael', speaker: 'am_michael' },
+  { id: 7, name: 'British Feminine — Emma', speaker: 'bf_emma' },
+  { id: 8, name: 'British Feminine — Isabella', speaker: 'bf_isabella' },
+  { id: 9, name: 'British Masculine — George', speaker: 'bm_george' },
+  { id: 10, name: 'British Masculine — Lewis', speaker: 'bm_lewis' },
+];
+export const REGENERATE = /^(?:make another(?: one)?|regenerate(?: it)?|another (?:one|variation|version)|make a (?:new )?variation|new variation|try another(?: one)?)$/;
+
+/** OUTFIT_SRGB / OUTFIT_TOP from the version's outfit, and VARIATION when this version is a variation. */
+export function personExtras(v) {
+  const o = v.params?.outfit || {}; const out = {};
+  if (/^#[0-9a-f]{6}$/i.test(String(o.color || ''))) out.OUTFIT_SRGB = [1, 3, 5].map((i) => String(parseInt(o.color.slice(i, i + 2), 16))).join(',');
+  if (o.top && TOPS.some(([k]) => k === o.top)) out.OUTFIT_TOP = o.top;
+  if (Number(v.variation) > 0) out.VARIATION = String(Math.trunc(Number(v.variation)));
+  return out;
+}
+
+const refView = (p, r) => (r ? { sha256: r.sha256, bytes: r.bytes, content_type: r.content_type, consent: r.consent,
+  consent_label: REFERENCE_CONSENTS[r.consent] || r.consent, at: r.at, url: `/api/creations/${p.id}/reference` } : null);
+const kb = (n) => `${Math.max(1, Math.round(n / 1024))} KB`;
+
 const iso = (ms) => new Date(ms).toISOString();
 const json = (data, status = 200) => new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json' } });
 const clone = (x) => JSON.parse(JSON.stringify(x));
@@ -104,7 +162,7 @@ const HAIR_LADDER = ['close_crop', 'curly_short', 'wavy_medium', 'long_wavy'];
 const HAIR_WORDS = { close_crop: 'close-cropped', curly_short: 'short curly', wavy_medium: 'shoulder-length wavy', long_wavy: 'long wavy',
   bun_high: 'high bun', bun_low: 'low bun', afro: 'afro', beanie: 'under a beanie' };
 const COLOURS = {
-  black: '#16110e', 'jet black': '#0e0b0a', 'dark brown': '#2a1a12', brown: '#4a2c1c', 'light brown': '#7a5236', chestnut: '#5a2e1a',
+  black: '#16110e', 'jet black': '#0e0b0a', dark: '#241812', 'dark brown': '#2a1a12', brown: '#4a2c1c', 'light brown': '#7a5236', chestnut: '#5a2e1a',
   auburn: '#6a2e1a', red: '#8a2a16', ginger: '#b0521e', blonde: '#d8b46a', blond: '#d8b46a', 'platinum blonde': '#e6d6b0', grey: '#8a8580',
   gray: '#8a8580', silver: '#b8b8b8', white: '#e8e6e0', purple: '#8d64d6', violet: '#8d64d6', pink: '#d67ea8', blue: '#3a6ec8',
   green: '#3c7a4a', teal: '#1f6f78', navy: '#1d2b4a', orange: '#e8732e', yellow: '#d8b030', gold: '#c8a040', beige: '#d8c4a0', cream: '#e9dcc8',
@@ -112,7 +170,7 @@ const COLOURS = {
 const EYE_COLOURS = { brown: '#5a3a22', 'dark brown': '#3e2616', 'light brown': '#7a5232', hazel: '#7a6a3a', amber: '#a8742a', green: '#4f7a4a',
   blue: '#4f7fb5', 'light blue': '#7aa6d6', grey: '#6f7a80', gray: '#6f7a80', black: '#241812' };
 const OUTFIT_PALETTE = ['#1f6f78', '#1d2b4a', '#4a525c', '#e8732e', '#d89a2a', '#56603e', '#b79be6', '#e9dcc8', '#3e5f86', '#7a2a2a'];
-const colourName = (hex) => Object.entries(COLOURS).find(([, h]) => h === hex)?.[0] || hex;
+const colourName = (hex) => Object.entries(COLOURS).find(([, h]) => h === hex)?.[0] || { '#3e5f86': 'denim blue' }[hex] || hex;
 // Longest names first, so "dark brown" wins over "brown".
 const colourIn = (t, table) => Object.keys(table).sort((a, b) => b.length - a.length).find((w) => new RegExp(`\\b${w}\\b`).test(t));
 
@@ -232,15 +290,193 @@ function renderIntent(t, render, applied, unsupported) {
   return r;
 }
 
+// ── Person vocabulary: look, hair, outfit, skin and body (owner, 2026-10-25: one Create button, full character) ──
+/** The look a sentence names, or null: photoreal (realistic, photo), hybrid (game, game-like), stylized (cartoon). */
+export function styleIn(t) {
+  if (/\bhybrid\b|\bgame(?:[- ]?(?:like|style|styled|character|look))?\b|\bvideo ?game\b/.test(t)) return 'hybrid';
+  if (/\bstyli[sz]ed\b|\bcartoon(?:y|ish)?\b|\banimated(?: look| style)?\b|\banime\b|\bpixar\b/.test(t)) return 'stylized';
+  if (/\b(?:hyper[- ]?)?realistic\b|\bphoto ?-?realistic\b|\bphotoreal\b|\bphoto\b|\blifelike\b|\breal(?:-| )life\b/.test(t)) return 'photoreal';
+  return null;
+}
+const HAIR_PART = /\bhair\b|\bbuzz ?cut\b|\bcrew ?cut\b|\bshaved head\b|\bafro\b|\bbun\b|\bbeanie\b/;
+/** A hair style named in words ("buzz cut", "short curly hair", "afro", "low bun"), or null. */
+export function hairStyleIn(t) {
+  if (/\bafro\b/.test(t)) return 'afro';
+  if (/\blow bun\b/.test(t)) return 'bun_low';
+  if (/\bbun\b/.test(t)) return 'bun_high';
+  if (/\bbeanie\b/.test(t)) return 'beanie';
+  if (/\bbuzz ?cut\b|\bcrew ?cut\b|\bshaved head\b|\bclose[- ]?cropped\b|\bcropped hair\b/.test(t)) return 'close_crop';
+  if (/\bcurly\b|\bcurls\b/.test(t)) return 'curly_short';
+  if (/\bshort hair\b|\bshort (?:black|brown|blonde?|red|grey|gray|white|dark|light) hair\b/.test(t)) return 'close_crop';
+  if (/\blong\b/.test(t)) return 'long_wavy';
+  if (/\bwavy\b|\bshoulder[- ]length\b|\bmedium[- ]length\b/.test(t)) return 'wavy_medium';
+  return null;
+}
+const OUTFIT_PART = /\b(?:outfit|clothes|clothing|jacket|shirt|t-?shirt|tee|top|hoodie|sweater|jumper|coat|blazer|sweatshirt)\b/;
+export const TOPS = [['hoodie', /\bhoodie\b|\bsweatshirt\b/], ['sweater', /\bsweater\b|\bjumper\b/], ['t_shirt', /\bt-?shirt\b|\btee\b/],
+  ['shirt', /\bshirt\b/], ['coat', /\bcoat\b/], ['blazer', /\bblazer\b/], ['jacket', /\bjacket\b/]];
+const TOP_NOTE = 'The full-body model builds a long-sleeved top and trousers in the outfit colour; the top type is saved with the project.';
+// Skin tones by name, each a human skin albedo the renderer accepts (avatar_identity.js skinOk).
+export const SKIN_TONES = { pale: '#e0b89a', fair: '#dcae8e', light: '#d4a07e', olive: '#b98a5e', tan: '#b07a50', medium: '#a06a44',
+  brown: '#7a4a2c', 'dark brown': '#5a3420', dark: '#4a2a18', deep: '#3a2010' };
+export function skinIn(t) {
+  const m = /\b(dark brown|pale|fair|light|olive|tan(?:ned)?|medium|brown|dark|deep)(?:[- ]skinned|\s+(?:skin|complexion))\b/.exec(t);
+  if (!m) return null;
+  return m[1] === 'tanned' ? 'tan' : m[1];
+}
+
+// Body shape: MPFB macro values 0..1 sent as BODY_* job settings. 0.5 is today's look (average height, weight and
+// muscle, half-way ideal proportions), and a value at its default is omitted, so a project made before body edits
+// existed queues exactly the settings it did before. gender and age are set only when the owner names them (SEX and
+// MATURE from the identity carry the face as before). age 0.1875..1 is 18..90 years: CHE builds adults only.
+export const BODY_DEFAULTS = { height: 0.5, weight: 0.5, muscle: 0.5, proportions: 0.5 };
+export const BODY_KEYS = { gender: 'BODY_GENDER', age: 'BODY_AGE', height: 'BODY_HEIGHT', weight: 'BODY_WEIGHT', muscle: 'BODY_MUSCLE', proportions: 'BODY_PROPORTIONS' };
+export const ADULT_AGE = 18;
+/** MPFB's age macro for an age in years (11 y = 0.1875, 25 y = 0.5, 90 y = 1). */
+export const ageMacro = (years) => round3(years < 25 ? 0.1875 + ((years - 11) / 14) * 0.3125 : 0.5 + ((years - 25) / 65) * 0.5);
+const AGE_MIN = ageMacro(ADULT_AGE);
+/** The shape with defaults dropped and every value in range. */
+export function cleanShape(sh = {}) {
+  const out = {};
+  for (const k of Object.keys(BODY_KEYS)) {
+    if (sh[k] === undefined || sh[k] === null || !Number.isFinite(Number(sh[k]))) continue;
+    const v = round3(clamp(Number(sh[k]), k === 'age' ? AGE_MIN : 0, 1));
+    if (BODY_DEFAULTS[k] === undefined || v !== BODY_DEFAULTS[k]) out[k] = v;
+  }
+  return out;
+}
+/** Problems with a shape (empty when valid): every macro 0..1, age 18 years or older. */
+export function shapeErrors(sh = {}) {
+  const out = [];
+  for (const [k, v] of Object.entries(sh || {})) {
+    if (!BODY_KEYS[k]) out.push(`unknown body setting ${k}`);
+    else if (!(Number(v) >= (k === 'age' ? AGE_MIN : 0) && Number(v) <= 1)) out.push(k === 'age' ? 'body age must be an adult (18 or older)' : `body ${k} must be 0..1`);
+  }
+  return out;
+}
+/** The BODY_* job settings for a shape (only values away from today's look). */
+export function shapeSettings(sh = {}) {
+  return Object.fromEntries(Object.entries(cleanShape(sh)).map(([k, v]) => [BODY_KEYS[k], String(v)]));
+}
+const BODY_WORDS = [
+  [/\btaller\b|\bmake (?:her|him|them|it) tall\b/, 'height', 0.15, 'taller'],
+  [/\bshorter\b|\bmake (?:her|him|them|it) short\b/, 'height', -0.15, 'shorter'],
+  [/\bheavier\b|\bchubbier\b|\bbigger build\b|\bfuller figure\b|\bheavier build\b|\bmore weight\b/, 'weight', 0.15, 'heavier'],
+  [/\bslimmer\b|\bleaner\b|\bskinnier\b|\bthinner\b|\blighter build\b|\blose weight\b/, 'weight', -0.15, 'slimmer'],
+  [/\bmore muscular\b|\bmore muscle\b|\bmuscl(?:ier|e up)\b|\bstronger\b|\bbuff(?:er)?\b/, 'muscle', 0.2, 'more muscular'],
+  [/\bless muscular\b|\bless muscle\b|\bsofter build\b/, 'muscle', -0.2, 'less muscular'],
+  [/\bbroad[- ]shouldered\b|\bbroader(?: shoulders| build| frame)?\b|\bbroad shoulders\b/, 'muscle', 0.15, 'broader build'],
+  [/\bheroic proportions\b|\bidealized proportions\b|\bmore ideal proportions\b/, 'proportions', 0.3, 'more idealized proportions'],
+  [/\bnatural proportions\b|\brealistic proportions\b|\baverage proportions\b/, 'proportions', null, 'natural proportions'],
+];
+/** Body words in the clauses that do not name a face part or the hair (so "thinner lips" stays a face edit). */
+function bodyIntent(clauses, p, sh, applied) {
+  for (const c of clauses) {
+    if (/\b(?:hair|nose|lips?|mouth|face|chin|jaw|eyes?|brows?|eyebrows|cheeks?|cheekbones|skin)\b/.test(c)) continue;
+    for (const [re, k, d, words] of BODY_WORDS) {
+      if (!re.test(c)) continue;
+      const was = Number(sh[k] ?? BODY_DEFAULTS[k] ?? 0.5);
+      const v = d === null ? 0.5 : round3(clamp(was + d, 0, 1));
+      if (v === was) { applied.push(`The body is already as ${words.replace(/^more |er$/, '')} as it goes.`); continue; }
+      sh[k] = v; applied.push(`Body: ${words}.`);
+    }
+    const m = /\bmore (masculine|feminine)\b|\b(masculine|feminine)\b/.exec(c);
+    if (m) {
+      const want = (m[1] || m[2]) === 'masculine' ? 0.25 : -0.25;
+      const v = round3(clamp(Number(sh.gender ?? p.body.sex ?? 0) + want, 0, 1));
+      sh.gender = v; p.body.sex = v; applied.push(`Body: ${want > 0 ? 'more masculine' : 'more feminine'} build.`);
+    }
+  }
+}
+// Things the Blender pipeline cannot build yet, said plainly instead of being ignored.
+const NOT_BUILT = [[/\bwings?\b/, 'wings'], [/\btails?\b/, 'a tail'], [/\bhorns?\b/, 'horns'], [/\bhalo\b/, 'a halo'], [/\barmou?r\b/, 'armour'],
+  [/\bcapes?\b/, 'a cape'], [/\bswords?\b|\bguns?\b|\bweapons?\b/, 'weapons'], [/\bglasses\b|\bsunglasses\b|\bspectacles\b/, 'glasses'],
+  [/\bbeards?\b|\bmoustache\b|\bmustache\b|\bgoatee\b|\bstubble\b/, 'facial hair'], [/\btattoos?\b/, 'tattoos'], [/\bpiercings?\b|\bearrings?\b/, 'piercings or jewellery'],
+  [/\b(?:hat|cap|crown|helmet)s?\b/, 'hats'], [/\bmasks?\b/, 'masks'], [/\bdress(?:es)?\b|\bskirts?\b|\bgowns?\b/, 'a dress or skirt (the body builds a top and trousers)'],
+  [/\brobots?\b|\baliens?\b|\belf\b|\belves\b|\bpointed ears\b|\bfur\b|\bscales\b|\bclaws?\b/, 'non-human features']];
+export function notBuiltIn(t) {
+  return NOT_BUILT.filter(([re]) => re.test(t)).map(([, what]) => `I can't make ${what} yet.`);
+}
+
+// ── Describe a person (one Create button): deterministic, no model call ─────────────────────────────────────────
+const MINOR = /\b(?:child(?:ren)?|kids?|toddlers?|bab(?:y|ies)|infants?|teen(?:ager|age)?s?|adolescents?|minors?|schoolboy|schoolgirl|pre-?teen|underage)\b/;
+const DESCRIBE_BODY = [
+  [/\bvery tall\b/, { height: 0.85 }, 'very tall'], [/\btall\b/, { height: 0.7 }, 'tall'], [/\bpetite\b/, { height: 0.3, weight: 0.35 }, 'petite'],
+  [/\bathletic\b|\bfit\b|\btoned\b/, { muscle: 0.7, weight: 0.45 }, 'athletic'], [/\bmuscular\b|\bburly\b|\bbodybuilder\b/, { muscle: 0.8 }, 'muscular'],
+  [/\bslim\b|\bslender\b|\bthin\b|\bskinny\b|\blean\b/, { weight: 0.3 }, 'slim'],
+  [/\bheavy(?:set)?\b|\bchubby\b|\bplus[- ]size\b|\bstocky\b|\bcurvy\b|\bbig[- ]boned\b/, { weight: 0.7 }, 'heavier build'],
+];
+// Words a description may use that carry no setting (said back only if nothing else in them was understood).
+const DESCRIBE_FILLER = new Set(('a an the and or of with in on his her their its he she they him them who is are has have wearing wears ' +
+  'look looking looks style styled character person people adult young middle aged old year years yo build body figure ' +
+  'eyes eye hair skin skinned complexion tone very quite really slightly bit little some kind sort like plus pair ' +
+  'man woman men women male female lady guy gentleman girl boy nonbinary non-binary androgynous someone dude ' +
+  'tall short long medium dark light make create build generate me please model 3d mid early late ' +
+  'game cartoon stylized stylised animated anime pixar realistic hyperrealistic hyper photo photorealistic photoreal lifelike real life').split(/\s+/));
+const KNOWN_PART = /^(?:\d{1,3}s?|\d{1,3}-year-old|twenties|thirties|forties|fifties|sixties|seventies|eighties)$/;
+
+/**
+ * A described person ("a tall athletic man in his 30s, short curly black hair, brown skin, green eyes, black hoodie,
+ * game style") as a starting preset, identity edits, body shape and look. Adults only: a child or teenager is refused
+ * with the reason. Returns { ok, base, params, style, shape, applied, unsupported, unused } or { ok: false, refused, detail }.
+ */
+export function describePerson(text, presets = BUILT_IN) {
+  const raw = String(text || '').trim().slice(0, 300);
+  const t = raw.toLowerCase().replace(/[.!?]+$/g, '');
+  if (!t) return { ok: false, detail: 'Describe the person, for example: a tall woman in her 30s, long wavy dark hair, green eyes, a denim jacket.' };
+  const n = /\b(\d{1,3})(?:-| )?(?:years?[- ]old|yo|y\/o)\b|\baged? (\d{1,3})\b|\b(?:in|during) (?:his|her|their) (?:early |mid |late )?(\d)0s\b/.exec(t);
+  let years = n ? Number(n[1] || n[2] || Number(n[3]) * 10 + 5) : null;
+  if (!years) {
+    const word = /\b(?:in (?:his|her|their) )?(twenties|thirties|forties|fifties|sixties|seventies|eighties)\b/.exec(t)?.[1];
+    years = word ? { twenties: 25, thirties: 35, forties: 45, fifties: 55, sixties: 65, seventies: 75, eighties: 85 }[word]
+      : /\byoung adult\b/.test(t) ? 22 : /\bmiddle[- ]aged\b/.test(t) ? 45 : /\belderly\b|\bold (?:man|woman|person|lady)\b|\bsenior\b/.test(t) ? 70 : null;
+  }
+  if (MINOR.test(t) || (years !== null && years < ADULT_AGE)) {
+    return { ok: false, refused: true, detail: 'CHE builds adult characters only, 18 or older. Describe an adult and I will build them.' };
+  }
+  const female = /\b(?:woman|women|female|lady|she|her|girl|gal)\b/.test(t); const male = /\b(?:man|men|male|guy|gentleman|he|his|him|boy|dude)\b/.test(t);
+  const sex = female && !male ? 0 : male && !female ? 1 : 0.5;
+  const baseId = sex === 1 ? 'orion' : 'lyra';
+  const base = presets.find((x) => x.id === baseId) || presets[0];
+  const params = clone(base); delete params.built_in; params.body = { ...(params.body || {}), sex };
+  const applied = [`${sex === 0 ? 'A woman' : sex === 1 ? 'A man' : 'A person'}${years ? ` of about ${years}` : ''}.`];
+  if (/\b(?:girl|boy)\b/.test(t)) applied.push('Built as an adult.');
+  const shape = {};
+  if (years) { shape.age = ageMacro(years); params.body.age = round3(clamp((years - 25) / 150, 0, 0.3)); }
+  const clauses = t.split(/\s*(?:,|;|\band\b|\bwith\b|\bwearing\b|\bin an?\b)\s*/).filter(Boolean);
+  for (const c of clauses) {
+    if (HAIR_PART.test(c) && !/\btall\b/.test(c)) continue;
+    for (const [re, set, words] of DESCRIBE_BODY) {
+      if (re.test(c) && !(words === 'tall' && /\bvery tall\b/.test(c))) { Object.assign(shape, set); applied.push(`Body: ${words}.`); }
+    }
+  }
+  // Hair, eyes, skin, outfit and look: the same edit vocabulary the studio uses, over the whole description.
+  const edit = parseEdit(t.replace(/\b(?:taller|shorter)\b/g, ''), params, 'photoreal', DEFAULT_RENDER, shape);
+  const style = styleIn(t) || 'photoreal';
+  applied.push(...edit.applied.filter((a) => !/^Look changed|^Rotating|^Playing|^Showing|^Paused|^Zooming|^Skipping/.test(a)), `Look: ${STYLE_LABELS[style]}.`);
+  const unsupported = edit.unsupported.filter((u) => !/^I can't change that yet/.test(u));
+  const vocab = new Set([...DESCRIBE_FILLER, ...Object.keys(COLOURS).flatMap((k) => k.split(' ')), ...Object.keys(EYE_COLOURS).flatMap((k) => k.split(' ')),
+    ...Object.keys(SKIN_TONES).flatMap((k) => k.split(' '))]);
+  const understood = (w) => vocab.has(w) || KNOWN_PART.test(w) || HAIR_PART.test(w) || OUTFIT_PART.test(w) || TOPS.some(([, re]) => re.test(w))
+    || DESCRIBE_BODY.some(([re]) => re.test(w)) || BODY_WORDS.some(([re]) => re.test(w)) || hairStyleIn(w) || NOT_BUILT.some(([re]) => re.test(w))
+    || Boolean(styleIn(w)) || /^(?:curly|wavy|straight|buzz|cut|crew|shaved|cropped|bun|afro|beanie|denim|leather|athletic|muscular|broad|shouldered|masculine|feminine|tanned|olive)$/.test(w);
+  const unused = [...new Set(t.replace(/[^a-z0-9\s'-]/g, ' ').split(/\s+/).filter(Boolean).filter((w) => !understood(w)))].slice(0, 8);
+  return { ok: true, base: base.id, params: edit.params, style, shape: edit.shape, applied, unsupported, unused };
+}
+
 /**
  * One sentence of owner words against a preset, look and render settings. Returns
  * { params, style, render, applied, unsupported, viewport, critique }: params, style and render are edited copies
  * (unchanged when nothing applied), applied and unsupported are plain sentences, critique says one was asked for.
  */
-export function parseEdit(text, params, style, render = DEFAULT_RENDER) {
+export function parseEdit(text, params, style, render = DEFAULT_RENDER, shape = {}) {
   const t = String(text || '').toLowerCase().replace(/[.!?]+$/g, '').replace(/^(?:che|chey|chay)[,:]?\s+/, '').trim();
-  const p = clone(params); let s = style;
+  const p = clone(params); let s = style; const sh = { ...(shape || {}) };
   const applied = []; const unsupported = []; let viewport = null;
+  // Clauses ("short curly hair, a black hoodie and green eyes"): colours and lengths are read in the clause that names
+  // the part, so "shorter" in "make her shorter" is height and "black" in "black hoodie" is the outfit's colour.
+  const clauses = t.split(/\s*(?:,|;|\band\b|\bwith\b|\bwearing\b|\bin an?\b)\s*/).filter(Boolean);
+  const inClause = (re) => clauses.filter((c) => re.test(c));
   p.face = p.face || {}; p.hair = p.hair || {}; p.outfit = p.outfit || {}; p.eyes = p.eyes || {}; p.skin = p.skin || {}; p.body = p.body || {};
   const critique = /\bcritique\b|\breview (?:the |this |my )?(?:design|character|model)\b|\bwhat (?:could|should|can) (?:be )?(?:better|improved)\b|\bhow (?:can|could) (?:it|this|she|he) (?:look )?better\b/.test(t);
 
@@ -253,45 +489,43 @@ export function parseEdit(text, params, style, render = DEFAULT_RENDER) {
   }
 
   // Look.
-  if (/\bphoto ?-?realistic\b|\bphotoreal\b|\brealistic\b|\breal(?:-| )life\b/.test(t) && !/\bhybrid\b/.test(t)) s = 'photoreal';
-  else if (/\bhybrid\b|\bgame (?:character|look)\b/.test(t)) s = 'hybrid';
-  else if (/\bstyli[sz]ed\b|\bcartoon\b|\banimated look\b|\banime\b|\bpixar\b/.test(t)) s = 'stylized';
+  s = styleIn(t) || s;
   if (s !== style) applied.push(`Look changed to ${STYLE_LABELS[s]}.`);
 
-  // Hair length and colour.
-  if (/\bhair\b/.test(t)) {
-    const cur = p.hair.style; const i = HAIR_LADDER.indexOf(cur);
-    const step = /\blonger\b|\bgrow\b/.test(t) ? 1 : /\bshorter\b|\bcut\b|\btrim\b/.test(t) ? -1 : 0;
-    if (step) {
+  // Hair: a named style ("buzz cut", "afro", "bun"), a length step, and a colour, each from the clause about hair.
+  const hairText = inClause(HAIR_PART).join(' ');
+  if (hairText) {
+    const was = p.hair.style; const i = HAIR_LADDER.indexOf(was);
+    const named = hairStyleIn(hairText);
+    const step = named ? 0 : /\blonger\b|\bgrow\b/.test(hairText) ? 1 : /\bshorter\b|\bcut\b|\btrim\b/.test(hairText) ? -1 : 0;
+    const strands = (st) => (HAIR_BUILT.includes(st) ? '' : ' Its strands are not built yet, so the model and previews show it close-cropped.');
+    if (named && named !== was) { p.hair.style = named; applied.push(`Hair changed to ${HAIR_WORDS[named]}.${strands(named)}`); }
+    else if (step) {
       const from = i < 0 ? (step > 0 ? 1 : 2) : i; const to = clamp(from + step, 0, HAIR_LADDER.length - 1);
-      if (i >= 0 && to === i) unsupported.push(`The hair is already as ${step > 0 ? 'long' : 'short'} as the hair styles go (${HAIR_WORDS[cur]}).`);
-      else {
-        p.hair.style = HAIR_LADDER[to];
-        applied.push(`Hair changed to ${HAIR_WORDS[p.hair.style]}.${HAIR_BUILT.includes(p.hair.style) ? '' : ' Its strands are not built yet, so the model and previews show it close-cropped.'}`);
-      }
+      if (i >= 0 && to === i) unsupported.push(`The hair is already as ${step > 0 ? 'long' : 'short'} as the hair styles go (${HAIR_WORDS[was]}).`);
+      else { p.hair.style = HAIR_LADDER[to]; applied.push(`Hair changed to ${HAIR_WORDS[p.hair.style]}.${strands(p.hair.style)}`); }
     }
-    const c = colourIn(t, COLOURS);
-    if (c && !/\beyes?\b|\bjacket|outfit|shirt|top|hoodie|sweater|clothes\b/.test(t)) { p.hair.color = COLOURS[c]; applied.push(`Hair colour changed to ${c}.`); }
-    if (!step && !c && /\bcurly\b/.test(t)) { p.hair.style = 'curly_short'; applied.push('Hair changed to short curly. Its strands are not built yet, so the model and previews show it close-cropped.'); }
+    const hc = inClause(/\bhair\b/).map((c) => colourIn(c, COLOURS)).find(Boolean);
+    if (hc && COLOURS[hc] !== p.hair.color) { p.hair.color = COLOURS[hc]; applied.push(`Hair colour changed to ${hc}.`); }
   }
   // Eyes.
-  if (/\beyes?\b/.test(t)) {
-    const c = colourIn(t, EYE_COLOURS);
-    if (c) { p.eyes.iris = EYE_COLOURS[c]; applied.push(`Eye colour changed to ${c}.`); }
-  }
-  // Outfit.
-  if (/\b(?:outfit|clothes|jacket|shirt|top|hoodie|sweater)\b/.test(t)) {
-    const c = colourIn(t, COLOURS);
-    const next = c ? COLOURS[c] : OUTFIT_PALETTE[(OUTFIT_PALETTE.indexOf(p.outfit.color) + 1) % OUTFIT_PALETTE.length];
-    for (const top of ['jacket', 'hoodie', 'sweater']) if (new RegExp(`\\b${top}\\b`).test(t) && !/\bcolou?r\b/.test(t) && !c) p.outfit.top = top;
-    if (next !== p.outfit.color || c) {
-      p.outfit.color = next;
-      applied.push(`Outfit colour changed to ${colourName(next)}. The head model and previews do not show clothes yet; the outfit is saved with the project.`);
-    }
+  const ec = inClause(/\beyes?\b/).map((c) => colourIn(c, EYE_COLOURS)).find(Boolean);
+  if (ec) { p.eyes.iris = EYE_COLOURS[ec]; applied.push(`Eye colour changed to ${ec}.`); }
+  // Outfit: the top (hoodie, jacket, sweater, shirt) and its colour; denim and leather give a colour when none is said.
+  const outfitText = inClause(OUTFIT_PART).join(' ');
+  if (outfitText) {
+    const c = colourIn(outfitText, COLOURS);
+    const top = TOPS.find(([, re]) => re.test(outfitText))?.[0];
+    const material = /\bdenim\b/.test(outfitText) ? '#3e5f86' : /\bleather\b/.test(outfitText) ? '#2a1a12' : null;
+    const next = c ? COLOURS[c] : material || (top ? p.outfit.color : OUTFIT_PALETTE[(OUTFIT_PALETTE.indexOf(p.outfit.color) + 1) % OUTFIT_PALETTE.length]);
+    if (top && top !== p.outfit.top) { p.outfit.top = top; applied.push(`Top changed to a ${top.replace('_', ' ')}. ${TOP_NOTE}`); }
+    if (next && next !== p.outfit.color) { p.outfit.color = next; applied.push(`Outfit colour changed to ${colourName(next)}. The full-body model's top uses this colour.`); }
   }
   // Skin.
   if (/\bskin\b|\bcomplexion\b|\bskin tone\b/.test(t)) {
     const f = /\bdarker\b|\bdeeper\b/.test(t) ? 0.8 : /\blighter\b|\bfairer\b|\bpaler\b/.test(t) ? 1.25 : 0;
+    const named = skinIn(t);
+    if (!f && named && SKIN_TONES[named] !== p.skin.tone) { p.skin.tone = SKIN_TONES[named]; applied.push(`Skin tone set to ${named}.`); }
     if (f && p.skin.tone) {
       const tone = shiftTone(p.skin.tone, f);
       if (tone) { p.skin.tone = tone; applied.push(`Skin tone made ${f < 1 ? 'deeper' : 'lighter'}.`); }
@@ -301,6 +535,8 @@ export function parseEdit(text, params, style, render = DEFAULT_RENDER) {
   // Age.
   if (/\bolder\b/.test(t)) { p.body.age = round3(clamp(Number(p.body.age || 0) + 0.1, 0, 0.3)); applied.push('Made older (about 5 years).'); }
   else if (/\byounger\b/.test(t)) { p.body.age = round3(clamp(Number(p.body.age || 0) - 0.1, 0, 0.3)); applied.push('Made younger (about 5 years).'); }
+  // Body: height, weight, muscle, proportions and a masculine or feminine build (MPFB macros, the BODY_* settings).
+  bodyIntent(clauses, p, sh, applied);
   // Face sliders.
   for (const [re, keys, d, words] of SLIDER_EDITS) {
     if (!re.test(t)) continue;
@@ -308,10 +544,11 @@ export function parseEdit(text, params, style, render = DEFAULT_RENDER) {
     applied.push(`Face: ${words}.`);
   }
   for (const k of Object.keys(p.face)) if (!p.face[k]) delete p.face[k];
+  unsupported.push(...notBuiltIn(t));
   if (!applied.length && !unsupported.length && !critique) {
-    unsupported.push(`I can't change that yet. Try: make the hair longer, change the outfit, bigger eyes, make it photorealistic, high detail, cinematic lighting, show the skeleton, or animate walking.`);
+    unsupported.push(`I can't change that yet. Try: make the hair longer, change the outfit, bigger eyes, taller, more muscular, make it photorealistic, high detail, cinematic lighting, show the skeleton, or animate walking.`);
   }
-  return { params: p, style: s, render: r, applied, unsupported, viewport, critique };
+  return { params: p, style: s, render: r, shape: cleanShape(sh), applied, unsupported, viewport, critique };
 }
 
 const luminance = (hex) => {
@@ -379,6 +616,17 @@ const renderView = (p, v) => {
   const q = OBJ.qualityOf(v.render); return { quality: q.id, quality_label: q.label };
 };
 
+/**
+ * The newest saved model of a project, for reopening it from My Creations: the current version's own model when it
+ * has one, else the nearest earlier version's, else any later one. { version, job_id, url, sha256, current } or null.
+ */
+export function lastModel(p, jobs) {
+  const withModel = (x) => { const j = x.job_id ? jobs.find((y) => y.id === x.job_id) : null; return j?.model?.url ? { version: x.n, job_id: j.id, url: j.model.url, sha256: j.model.sha256 } : null; };
+  const order = [...p.versions.slice(0, p.current + 1).reverse(), ...p.versions.slice(p.current + 1)];
+  for (const x of order) { const m = withModel(x); if (m) return { ...m, current: x.n === cur(p).n }; }
+  return null;
+}
+
 function summary(p, jobs) {
   const v = cur(p); const j = v.job_id ? jobs.find((x) => x.id === v.job_id) : null;
   return {
@@ -388,6 +636,9 @@ function summary(p, jobs) {
       owner_paused: Boolean(j.owner_paused), display_state: j.display_state || null, status_line: j.status_line || null } : null,
     previews: j ? { ...(j.previews || {}) } : {}, model_url: j?.model?.url || null,
     render: renderView(p, v), rig: j?.rig || null,
+    ...(isThing(p) ? {} : { reference: refView(p, v.reference), reference_line: j?.reference_line || '', device_line: j?.device_line || '',
+      shape: cleanShape(v.shape || {}), voice: v.voice || null, variation: Number(v.variation) || 0, description: p.description || null }),
+    last_model: lastModel(p, jobs),
     ...(isThing(p) ? { described: OBJ.describeSpec(p.kind, v.params), measured: j?.measured || null } : {}),
   };
 }
@@ -407,10 +658,20 @@ function stagesOf(job) {
   });
 }
 
+/** Which compute would build the next model right now, in one sentence. */
+export function engineDeviceLine(engine) {
+  const gpu = engine?.gpu && !/^CPU/.test(engine.gpu) ? engine.gpu : null;
+  if (gpu) return `A GPU worker is connected: ${gpu}. It builds the next model.`;
+  if (engine?.online || engine?.automatic) return 'No GPU is connected: your Colab GPU notebook is not open, so only the free GitHub cloud CPU worker is available. It builds on the CPU, which is slower than a GPU.';
+  return 'No worker is connected right now: no GPU, and no free cloud CPU worker can start.';
+}
+
 function detail(p, jobs, engine) {
   const v = cur(p); const raw = v.job_id ? jobs.find((x) => x.id === v.job_id) : null;
   const { jobs: _all, ...eng } = engine;
   const sum = summary(p, jobs);
+  // Before a build finishes, the device line says which compute is there now, and never calls the CPU a GPU.
+  if (!isThing(p) && !sum.device_line) sum.device_line = engineDeviceLine(engine);
   // detail.versions is the version list (the summary's count stays as versions_count).
   return { ...sum, versions_count: sum.versions, params: v.params, resources: isThing(p) ? OBJ.resourceLine(v.render) : resourceLine(renderOf(v)),
     versions: p.versions.map((x) => ({ n: x.n, at: x.at, note: x.note, style: x.style, render: isThing(p) ? renderView(p, x) : renderOf(x), job_id: x.job_id })),
@@ -461,6 +722,7 @@ export class CreationStudio {
       const cap = CAPABILITIES.find((c) => c.id === kind);
       return { ok: false, detail: cap ? `${cap.title} is ${cap.status === 'partial' ? 'a preview only' : 'not built'} as a project: ${cap.detail}` : 'CHE creates people, objects and rooms.' };
     }
+    if (String(body.description || '').trim()) return this.createDescribed(body);
     const baseId = String(body.base || 'che');
     const base = (await listIdentities(this.storage)).presets.find((x) => x.id === baseId);
     if (!base) return { ok: false, detail: `No preset named ${baseId}. Try one of: ${BUILT_IN.map((x) => x.id).join(', ')}.` };
@@ -476,6 +738,48 @@ export class CreationStudio {
     }
     list.push(p); await store(this.storage, list);
     return { ok: true, project: await this.detailOf(p) };
+  }
+
+  /**
+   * One Create button: a described person (describePerson) becomes a project and, unless body.generate is false, is
+   * queued at once. Words it cannot map are said plainly ("I can't make wings yet", "I did not use these words: ...").
+   */
+  async createDescribed(body) {
+    const said = String(body.description || '').trim().slice(0, 300);
+    const d = describePerson(said, (await listIdentities(this.storage)).presets);
+    if (!d.ok) return { ok: false, refused: Boolean(d.refused), detail: d.detail };
+    const bad = [...validate(d.params), ...shapeErrors(d.shape)];
+    if (bad.length) return { ok: false, detail: `That description could not be built: ${bad.join('; ')}.` };
+    const list = await load(this.storage);
+    if (list.length >= MAX_PROJECTS) {
+      return { ok: false, full: true, detail: `You have ${list.length} creations, the most CHE keeps. Nothing was removed; delete one you no longer need (CHE asks you first), then create again.` };
+    }
+    const t = this.now(); const id = `cr_${crypto.randomUUID().replaceAll('-', '').slice(0, 12)}`;
+    const title = String(body.title || said.replace(/^(?:an?|the)\s+/i, '').replace(/,.*$/, '')).slice(0, 80) || 'New person';
+    const p = { id, kind: 'person', title: title[0].toUpperCase() + title.slice(1), base_id: d.base, description: said,
+      created_at: iso(t), updated_at: iso(t), saved_at: null, current: 0,
+      versions: [{ n: 1, at: iso(t), note: `Described: "${said.slice(0, 160)}".`, params: d.params, style: d.style, job_id: null,
+        ...(Object.keys(d.shape).length ? { shape: d.shape } : {}), ...(Number(body.variation) > 0 ? { variation: Math.trunc(Number(body.variation)) } : {}) }] };
+    list.push(p); await store(this.storage, list);
+    const notes = [...d.unsupported, ...(d.unused.length ? [`I did not use these words: ${d.unused.join(', ')}.`] : [])].join(' ');
+    const head = `${p.title} started. ${d.applied.filter((a) => !/^Look:/.test(a)).map((a) => a.replace(/ (?:Its strands are not built yet|The full-body model).*$/, '')).join(' ')} Look: ${STYLE_LABELS[d.style]}.${notes ? ` ${notes}` : ''}`;
+    if (body.generate === false) return { ok: true, project: await this.detailOf(p), applied: d.applied, unsupported: d.unsupported, unused: d.unused, spoken: `${head} Say generate to build it.` };
+    const gen = await this.generate(id);
+    if (!gen.ok) return { ok: true, project: await this.detailOf(p), applied: d.applied, unsupported: d.unsupported, unused: d.unused, generated: false, spoken: `${head} It was not queued: ${gen.detail}` };
+    return { ok: true, project: gen.project, job: gen.job, generated: true, applied: d.applied, unsupported: d.unsupported, unused: d.unused, spoken: `${head} ${gen.spoken}` };
+  }
+
+  /** A described person as a new version of an existing project (no reference photo, voice or variation carried). */
+  async redescribe(id, description) {
+    const { list, p } = await this.find(id);
+    if (!p || isThing(p)) return { ok: false, detail: 'No such person creation.' };
+    const d = describePerson(description, (await listIdentities(this.storage)).presets);
+    if (!d.ok) return { ok: false, detail: d.detail };
+    const next = this.pushVersion(p, `Described: "${String(description).slice(0, 160)}".`, { params: d.params, style: d.style,
+      shape: Object.keys(d.shape).length ? d.shape : undefined, reference: undefined, voice: undefined, variation: undefined, render: undefined });
+    p.description = String(description).slice(0, 300);
+    await store(this.storage, list);
+    return { ok: true, version: next.n };
   }
 
   /**
@@ -553,9 +857,21 @@ export class CreationStudio {
         settings: OBJ.specSettings(v.params), queued_by: 'Live Studio', priority: 'high', requires: { gpu: 'none' } });
     } else {
       const r = renderOf(v); const q = qualityOf(r);
+      // Body macros and the variation seed only when set (so earlier versions queue the same settings as before); the
+      // outfit colour reaches the full-body top (tools/avatar_body/mpfb_body.py reads OUTFIT_SRGB).
+      const settings = { ...toSettings(v.params, v.style), ...renderSettings(r), ...shapeSettings(v.shape || {}), ...personExtras(v) };
+      if (v.reference) {
+        // The photo must still be stored: a version whose photo was deleted is not built as if it had one.
+        const ref = v.reference;
+        if (!(await mediaStore(this.env, this.storage).head(referenceKey(ref.sha256)))) {
+          return { ok: false, detail: 'The reference photo for this version is no longer stored. Say remove the reference photo, or add it again, then generate.' };
+        }
+        // The worker's URL is resolved when a worker claims the job (gpu_queue.js claim: worker and job in the URL).
+        settings.REFERENCE = JSON.stringify({ url: `/api/gpu/worker/reference?sha256=${ref.sha256}`, sha256: ref.sha256, bytes: ref.bytes, consent: ref.consent });
+      }
       // Owner-interactive: high priority; a GPU is preferred, and a free cloud CPU worker takes it when none is online.
       out = await this.queue.enqueue({ kind: 'person_model', title: `${p.title} v${v.n}: 3D model and previews`, views: VIEWS, samples: q.samples, res: q.res,
-        settings: { ...toSettings(v.params, v.style), ...renderSettings(r) }, queued_by: 'Live Studio', priority: 'high', requires: { gpu: 'preferred' } });
+        settings, queued_by: 'Live Studio', priority: 'high', requires: { gpu: 'preferred' } });
     }
     if (!out.ok) return { ok: false, detail: out.detail };
     v.job_id = out.job.id; p.updated_at = iso(this.now()); await store(this.storage, list);
@@ -575,8 +891,13 @@ export class CreationStudio {
     if (!p) return { ok: false, status: 404, detail: 'No such creation.' };
     const v = cur(p);
     if (isThing(p)) return this.editThing(list, p, v, text);
-    const r = parseEdit(text, v.params, v.style, renderOf(v));
-    const changed = JSON.stringify(r.params) !== JSON.stringify(v.params) || r.style !== v.style || JSON.stringify(r.render) !== JSON.stringify(renderOf(v));
+    const words = String(text || '').toLowerCase().replace(/[.!?]+$/g, '').replace(/^(?:che|chey|chay)[,:]?\s+/, '').trim();
+    if (REGENERATE.test(words)) return this.regenerate(id);
+    const voiceOut = await this.voiceEdit(list, p, v, words);
+    if (voiceOut) return voiceOut;
+    const r = parseEdit(text, v.params, v.style, renderOf(v), v.shape || {});
+    const changed = JSON.stringify(r.params) !== JSON.stringify(v.params) || r.style !== v.style || JSON.stringify(r.render) !== JSON.stringify(renderOf(v))
+      || JSON.stringify(r.shape) !== JSON.stringify(cleanShape(v.shape || {}));
     // "Critique this design": a parameter review of this version once it has a finished build, else an honest no.
     let critique = null;
     if (r.critique) {
@@ -584,13 +905,10 @@ export class CreationStudio {
       critique = critiqueOf(v, v.job_id ? engine.jobs.find((x) => x.id === v.job_id) : null);
     }
     if (changed) {
-      const bad = validate(r.params);
+      const bad = [...validate(r.params), ...shapeErrors(r.shape)];
       if (bad.length) return { ok: true, changed: false, applied: [], unsupported: [`That change was not saved: ${bad.join('; ')}.`], viewport: r.viewport, spoken: `That change was not saved: ${bad.join('; ')}.`, project: await this.detailOf(p) };
-      const t = this.now();
-      p.versions = p.versions.slice(0, p.current + 1);
-      p.versions.push({ n: Math.max(...p.versions.map((x) => x.n)) + 1, at: iso(t), note: String(text).slice(0, 200), params: r.params, style: r.style, render: r.render, job_id: null });
-      if (p.versions.length > MAX_VERSIONS) p.versions = p.versions.slice(-MAX_VERSIONS);
-      p.current = p.versions.length - 1; p.updated_at = iso(t);
+      // Everything else on the version (reference photo, voice, variation) is carried into the new one.
+      this.pushVersion(p, text, { params: r.params, style: r.style, render: r.render, shape: Object.keys(r.shape).length ? r.shape : undefined });
       await store(this.storage, list);
     }
     const n = cur(p).n;
@@ -625,6 +943,148 @@ export class CreationStudio {
     }
     const spoken = [...applied, ...unsupported].join(' ') + (changed ? ` Saved as version ${cur(p).n}. Say generate to build it.` : '');
     return { ok: true, changed, applied, unsupported, viewport: vi?.viewport || null, critique: null, spoken: spoken.trim(), project: await this.detailOf(p) };
+  }
+
+  /**
+   * Voice words for a character (CHE's existing on-device Kokoro voices, CHARACTER_VOICES): list them as a numbered
+   * list, choose one by number (a new version, so undo works), or ask to hear it (the app plays a short sample through
+   * its own TTS path, only because the owner asked). Null when the words are not about the character's voice.
+   */
+  async voiceEdit(list, p, v, t) {
+    if (!/\bvoices?\b/.test(t)) return null;
+    const numbered = CHARACTER_VOICES.map((x, i) => `${i + 1}. ${x.name}`).join(' ');
+    const reply = async (spoken, extra = {}) => ({ ok: true, changed: false, applied: [], unsupported: [], viewport: null, critique: null, spoken, ...extra, project: await this.detailOf(p) });
+    let m;
+    if ((m = /\b(?:choose|pick|use|select|set|give (?:her|him|them|it))?\s*(?:the )?voice (?:number )?(\d{1,2})\b|\bvoice (?:number )?(\d{1,2})\b/.exec(t))) {
+      const n = Number(m[1] || m[2]); const chosen = CHARACTER_VOICES[n - 1];
+      if (!chosen) return reply(`There is no voice ${n}. The voices are: ${numbered}`, { ok: false });
+      if (v.voice?.id === chosen.id) return reply(`This character already uses voice ${n}, ${chosen.name}.`);
+      const next = this.pushVersion(p, `Voice set to ${chosen.name}.`, { voice: { id: chosen.id, name: chosen.name, speaker: chosen.speaker } });
+      await store(this.storage, list);
+      return { ...(await reply(`Voice set to ${n}, ${chosen.name}. Saved as version ${next.n}. Say play the voice to hear it.`)), changed: true, applied: [`Voice set to ${chosen.name}.`] };
+    }
+    if (/\b(?:play|hear|preview|test|sample)\b/.test(t)) {
+      const chosen = v.voice ? CHARACTER_VOICES.find((x) => x.id === v.voice.id) : null;
+      if (!chosen) return reply(`This character has no voice yet. Choose one by number: ${numbered}`, { ok: false });
+      return reply(`Playing voice ${CHARACTER_VOICES.indexOf(chosen) + 1}, ${chosen.name}.`,
+        { play_voice: { id: chosen.id, name: chosen.name, speaker: chosen.speaker, text: `Hi, I'm ${p.title.replace(/\s*\(.*\)$/, '')}. This is my voice.` } });
+    }
+    if (/\b(?:deeper|lower|higher|softer|squeakier|raspier)\b/.test(t)) {
+      return reply(`Character voices are fixed recorded voices with no pitch control, so I can't make one deeper or higher. The masculine voices are 6, 7, 10 and 11. Choose by number: ${numbered}`);
+    }
+    return reply(`Character voices: ${numbered} Say choose voice and a number.${v.voice ? ` This character uses ${v.voice.name}.` : ''}`);
+  }
+
+  /**
+   * "Make another one" / "regenerate": a new version that is a deterministic variation of this one (the next VARIATION
+   * seed moves every face slider a little, avatar_identity.js generateVariant) and is queued at once. The previous
+   * version stays in the list: undo reopens it with its own model.
+   */
+  async regenerate(id) {
+    const { list, p } = await this.find(id);
+    if (!p) return { ok: false, status: 404, detail: 'No such creation.' };
+    if (isThing(p)) return this.generate(id);
+    const v = cur(p); const seed = Math.max(0, ...p.versions.map((x) => Number(x.variation) || 0)) + 1;
+    const varied = generateVariant({ ...v.params, name: p.title }, { seed, amount: 0.15 });
+    const params = { ...clone(v.params), face: varied.face };
+    if (validate(params).length) return { ok: false, detail: `That variation could not be made: ${validate(params).join('; ')}.` };
+    const next = this.pushVersion(p, `Variation ${seed}.`, { params, variation: seed });
+    await store(this.storage, list);
+    const out = await this.generate(id);
+    if (!out.ok) return out;
+    return { ...out, changed: true, applied: [`Variation ${seed}.`], spoken: `Made variation ${seed} as version ${next.n}: the face settings moved a little from version ${v.n}. ${out.spoken} Say undo to go back to version ${v.n}.` };
+  }
+
+  /** A new version from the current one with `changes` applied (the redo branch is dropped, as for an edit). */
+  pushVersion(p, note, changes) {
+    const v = cur(p); const t = this.now();
+    p.versions = p.versions.slice(0, p.current + 1);
+    const next = { ...clone(v), n: Math.max(...p.versions.map((x) => x.n)) + 1, at: iso(t), note: String(note).slice(0, 200), job_id: null, ...changes };
+    for (const [k, val] of Object.entries(next)) if (val === undefined) delete next[k];
+    p.versions.push(next);
+    if (p.versions.length > MAX_VERSIONS) p.versions = p.versions.slice(-MAX_VERSIONS);
+    p.current = p.versions.length - 1; p.updated_at = iso(t);
+    return next;
+  }
+
+  /**
+   * Adds a reference photo to a Create Person project as a new version. body: { image_base64, consent }. Consent must be
+   * self (this is me) or fictional (fictional or generated); anything else is refused with the reason. JPEG or PNG only,
+   * at most 8 MB, checked from the bytes; HEIC is refused with the reason (the app converts to JPEG before sending).
+   */
+  async setReference(id, body = {}) {
+    const { list, p } = await this.find(id);
+    if (!p) return { ok: false, status: 404, detail: 'No such creation.' };
+    if (isThing(p)) return { ok: false, status: 422, detail: 'Reference photos are for Create Person characters only.' };
+    const consent = String(body.consent || '').toLowerCase();
+    if (!REFERENCE_CONSENTS[consent]) {
+      return { ok: false, status: 422, refused: true, detail: `Not added. ${REFERENCE_RULE} Choose 1, this is me, or 2, fictional or generated.` };
+    }
+    const raw = String(body.image_base64 || '');
+    if (!raw) return { ok: false, status: 400, detail: 'No photo was sent.' };
+    if (raw.length > Math.ceil(MAX_REFERENCE_BYTES / 3) * 4 + 64) return { ok: false, status: 413, detail: 'Not added: the photo is larger than 8 MB. Choose a smaller photo.' };
+    const bytes = decodeBase64(raw);
+    if (!bytes?.length) return { ok: false, status: 400, detail: 'Not added: the photo could not be read.' };
+    if (bytes.length > MAX_REFERENCE_BYTES) return { ok: false, status: 413, detail: 'Not added: the photo is larger than 8 MB. Choose a smaller photo.' };
+    const type = imageTypeOf(bytes);
+    if (type === 'image/heic') {
+      return { ok: false, status: 415, detail: 'Not added: this photo is HEIC, which CHE\'s server cannot read. The CHE app converts photos to JPEG before sending; send a JPEG or PNG.' };
+    }
+    if (!type) return { ok: false, status: 415, detail: 'Not added: only JPEG or PNG photos are accepted.' };
+    const sha = await sha256Hex(bytes);
+    const v = cur(p);
+    if (v.reference?.sha256 === sha && v.reference.consent === consent) {
+      return { ok: true, changed: false, spoken: `This version already uses that reference photo (${REFERENCE_CONSENTS[consent]}).`, project: await this.detailOf(p) };
+    }
+    const saved = await mediaStore(this.env, this.storage).put(referenceKey(sha), bytes, { contentType: type });
+    if (!saved.ok) return { ok: false, status: 507, detail: `Not added: the photo could not be stored. ${saved.error || ''}`.trim() };
+    const kind = type === 'image/png' ? 'PNG' : 'JPEG';
+    const next = this.pushVersion(p, `Reference photo added (${REFERENCE_CONSENTS[consent]}).`,
+      { reference: { sha256: sha, bytes: bytes.length, content_type: type, consent, at: iso(this.now()) } });
+    await store(this.storage, list);
+    return { ok: true, changed: true, reference: refView(p, next.reference),
+      spoken: `Reference photo added: ${kb(bytes.length)} ${kind}, ${REFERENCE_CONSENTS[consent]}. Saved as version ${next.n}. Say generate to build the character from it; the likeness is approximate, not an exact copy.`,
+      project: await this.detailOf(p) };
+  }
+
+  /**
+   * The owner asked to remove the reference photo. Default: a new version without it (undo brings it back; the stored
+   * photo stays while an earlier version names it). purge: removed from every version of this project and, when no
+   * other creation uses it, deleted from storage; undo cannot bring it back.
+   */
+  async removeReference(id, { purge = false } = {}) {
+    const { list, p } = await this.find(id);
+    if (!p) return { ok: false, status: 404, detail: 'No such creation.' };
+    const v = cur(p);
+    if (!purge) {
+      if (!v.reference) return { ok: false, detail: 'This version has no reference photo, so nothing was removed.', project: await this.detailOf(p) };
+      const next = this.pushVersion(p, 'Reference photo removed.', { reference: undefined });
+      await store(this.storage, list);
+      return { ok: true, changed: true, spoken: `Removed the reference photo from this character, as you asked. Saved as version ${next.n}; say undo to bring it back. The photo stays stored while an earlier version uses it; say delete the reference photo completely to erase it.`, project: await this.detailOf(p) };
+    }
+    const shas = new Set(p.versions.map((x) => x.reference?.sha256).filter(Boolean));
+    if (!shas.size) return { ok: false, detail: 'No version of this character has a reference photo, so nothing was deleted.', project: await this.detailOf(p) };
+    for (const x of p.versions) delete x.reference;
+    p.updated_at = iso(this.now());
+    await store(this.storage, list);
+    const media = mediaStore(this.env, this.storage); let erased = 0;
+    for (const sha of shas) {
+      const used = list.some((o) => o.id !== p.id && (o.versions || []).some((x) => x.reference?.sha256 === sha));
+      if (!used) { await media.delete(referenceKey(sha)); erased += 1; }
+    }
+    const kept = shas.size - erased;
+    return { ok: true, changed: true, purged: true, erased,
+      spoken: `Deleted the reference photo${shas.size === 1 ? '' : 's'} from every version of this character${erased ? ' and from CHE\'s storage' : ''}, as you asked. Undo cannot bring ${shas.size === 1 ? 'it' : 'them'} back.${kept ? ` ${kept} stay stored because another creation uses ${kept === 1 ? 'it' : 'them'}.` : ''}`,
+      project: await this.detailOf(p) };
+  }
+
+  /** Owner: the current version's reference photo bytes and type, or null. */
+  async referenceBytes(id) {
+    const { p } = await this.find(id);
+    const r = p && cur(p).reference;
+    if (!r) return null;
+    const got = await mediaStore(this.env, this.storage).get(referenceKey(r.sha256));
+    return got?.body?.length ? { bytes: got.body, contentType: r.content_type || got.contentType } : null;
   }
 
   async step(id, action) {
@@ -662,8 +1122,21 @@ export async function creationRoute(ctx, path, request, body = {}) {
     if (request.method === 'POST') { const out = await studio.create(body || {}); return json(out, out.ok ? 201 : 422); }
     return json({ detail: 'Use GET or POST.' }, 405);
   }
-  const m = /^\/api\/creations\/(cr_[a-f0-9]{12})(?:\/(generate|edit|undo|redo|save))?$/.exec(path);
+  const m = /^\/api\/creations\/(cr_[a-f0-9]{12})(?:\/(generate|edit|undo|redo|save|reference))?$/.exec(path);
   if (!m) return json({ detail: 'Unknown creation route.' }, 404);
+  if (m[2] === 'reference') {
+    if (request.method === 'GET') {
+      const got = await studio.referenceBytes(m[1]);
+      if (!got) return json({ detail: 'This version has no reference photo.' }, 404);
+      return new Response(got.bytes, { status: 200, headers: { 'Content-Type': got.contentType, 'Content-Length': String(got.bytes.length), 'Cache-Control': 'private, no-store' } });
+    }
+    if (request.method === 'POST') return send(await studio.setReference(m[1], body || {}), 201);
+    if (request.method === 'DELETE') {
+      const purge = /^(?:1|true|yes)$/.test(new URL(request.url).searchParams.get('purge') || '');
+      return send(await studio.removeReference(m[1], { purge }));
+    }
+    return json({ detail: 'Use GET, POST or DELETE.' }, 405);
+  }
   if (!m[2]) return request.method === 'GET' ? send(await studio.get(m[1])) : json({ detail: 'Use GET.' }, 405);
   if (request.method !== 'POST') return json({ detail: 'Use POST.' }, 405);
   if (m[2] === 'generate') return send(await studio.generate(m[1]), 202);
