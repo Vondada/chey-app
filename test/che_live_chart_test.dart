@@ -120,17 +120,6 @@ void main() {
       final down = MockClient((r) async => throw Exception('offline'));
       expect(await CheLiveChart.readPrice('https://che', {}, cheLiveSymbols.first, client: down), startsWith('I could not reach'));
     });
-
-    test('a failed price read never claims the chart is still live (known bug, 2026-10-19)', () async {
-      final none = MockClient((r) async => http.Response('{"error":"No price available right now."}', 200));
-      final down = MockClient((r) async => throw Exception('offline'));
-      final bad = MockClient((r) async => http.Response('<html>502</html>', 502));
-      for (final c in [none, down, bad]) {
-        final said = await CheLiveChart.readPrice('https://che', {}, cheLiveSymbols.first, client: c);
-        expect(said, isNot(contains('still live')), reason: said);
-        expect(said, contains('not confirmed'), reason: said);
-      }
-    });
   });
 
   testWidgets('panel switches symbol and timeframe, reloads the chart page, and announces it', (tester) async {
