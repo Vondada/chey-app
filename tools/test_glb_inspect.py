@@ -45,6 +45,43 @@ def write_glb(path, meshes, extras=None):
     with open(path, 'wb') as f: f.write(out)
 
 
+def add_face_parts(path, skin_linear=(0.19, 0.07, 0.025), lash_move=0.008):
+    """Rewrites a GLB from write_glb with a PBR Skin material, two eye meshes and a Lashes mesh whose 'blink_l' morph
+    target is stored sparse (as Blender writes morph targets): one vertex moves lash_move metres down."""
+    js, binary = gi.read_glb(path)
+    js['materials'].append({'name': 'Skin', 'pbrMetallicRoughness': {'baseColorFactor': [*skin_linear, 1], 'roughnessFactor': 0.5},
+                            'emissiveFactor': [0.02, 0.01, 0.0]})
+    js['materials'].append({'name': 'Lashes'})
+
+    def view(data):
+        nonlocal binary
+        binary += b'\0' * (-len(binary) % 4)
+        js['bufferViews'].append({'buffer': 0, 'byteOffset': len(binary), 'byteLength': len(data)}); binary += data
+        return len(js['bufferViews']) - 1
+
+    def mesh(name, pts, mat, targets=None, names=None):
+        data = b''.join(struct.pack('<3f', *q) for q in pts)
+        js['accessors'].append({'bufferView': view(data), 'componentType': 5126, 'count': len(pts), 'type': 'VEC3',
+                                'min': [min(q[k] for q in pts) for k in range(3)], 'max': [max(q[k] for q in pts) for k in range(3)]})
+        prim = {'attributes': {'POSITION': len(js['accessors']) - 1}, 'material': mat}
+        if targets: prim['targets'] = targets
+        js['meshes'].append({'name': name, 'primitives': [prim], **({'extras': {'targetNames': names}} if names else {})})
+        js['nodes'].append({'name': name, 'mesh': len(js['meshes']) - 1})
+    for name, x in (('Eye_l', 0.03), ('Eye_r', -0.03)):
+        mesh(name, box(x, 1.6, 0.08, 0.03, 0.03, 0.03), len(js['materials']) - 2)
+    iv = view(struct.pack('<H', 2)); vv = view(struct.pack('<3f', 0.0, -lash_move, 0.0))
+    js['accessors'].append({'componentType': 5126, 'count': 4, 'type': 'VEC3',
+                            'sparse': {'count': 1, 'indices': {'bufferView': iv, 'componentType': 5123}, 'values': {'bufferView': vv}}})
+    mesh('Lashes', [(0.02, 1.61, 0.09), (0.04, 1.61, 0.09), (0.04, 1.62, 0.1), (0.02, 1.62, 0.1)], len(js['materials']) - 1,
+         targets=[{'POSITION': len(js['accessors']) - 1}], names=['blink_l'])
+    binary += b'\0' * (-len(binary) % 4)
+    js['buffers'] = [{'byteLength': len(binary)}]
+    j = json.dumps(js).encode(); j += b' ' * (-len(j) % 4)
+    out = struct.pack('<4sII', b'glTF', 2, 12 + 8 + len(j) + 8 + len(binary)) + struct.pack('<I4s', len(j), b'JSON') + j
+    out += struct.pack('<I4s', len(binary), b'BIN\x00') + binary
+    with open(path, 'wb') as f: f.write(out)
+
+
 def person(height=1.7, waist=0.26, hair=True, bun=False):
     """A blocky stand-in character: torso, arms apart, head, optional hair and bun."""
     h = height
@@ -89,6 +126,17 @@ class Inspect(unittest.TestCase):
                              capture_output=True, text=True).stdout.splitlines()
         self.assertTrue(out[0].startswith('INSPECT ')); self.assertTrue(out[1].startswith('COMPARE '))
         self.assertGreater(json.loads(out[1][8:])['delta']['height_m'], 0.09)
+
+    def test_materials_face_parts_and_eyes(self):
+        """Skin colour back in sRGB, the sparse morph target's reach on the lashes, and the eye spacing per height."""
+        p = self.glb('f.glb', person()); add_face_parts(p)
+        r = gi.inspect(p)
+        self.assertEqual(r['skin_srgb'], [gi.to_srgb(x) for x in (0.19, 0.07, 0.025)])
+        self.assertEqual(r['materials']['Skin']['roughness'], 0.5); self.assertEqual(r['materials']['Skin']['emissive'], [0.02, 0.01, 0.0])
+        self.assertTrue(r['face_parts']['lashes']['present']); self.assertFalse(r['face_parts']['brows']['present'])
+        self.assertEqual(r['face_parts']['lashes']['morph_max_mm'], {'blink_l': 8.0})
+        self.assertAlmostEqual(r['eyes']['interocular_m'], 0.06, places=4)
+        self.assertAlmostEqual(r['eyes']['interocular_per_height'], 0.06 / r['height_m'], places=4)
 
     def test_not_a_glb(self):
         p = os.path.join(self.d, 'x.glb')
@@ -148,6 +196,51 @@ class RealCharacters(unittest.TestCase):
         self.assertIn('HairLong', self.reports['hair_long_wavy']['hair']['meshes'])
         self.assertGreater(counts['afro'], counts['close_crop'])
         print('\nMEASURED hair vertices:', counts)
+
+    def test_three_looks_from_the_demo_description(self):
+        """The Create Room demo's description, through the Worker's parser (characters.json base), in all three looks:
+        the described skin tone in the file, brows and lashes that follow the blink and brow morphs, hair cards over a
+        thinner cap, and looks that differ in head proportion, materials and detail (all measured on the saved GLB)."""
+        sys.path.insert(0, os.path.join(ROOT, 'tools', 'avatar_body'))
+        import character_style as cs
+        with open(os.path.join(ROOT, 'tools', 'demo', 'characters.json')) as f: base = json.load(f)['base']
+        env = {k: v for k, v in base.items() if k not in ('MODEL_MODE', 'RENDER_PROFILE')}
+        r = {st: self.build(f'look_{st}', STYLE=st, **env) for st in cs.STYLES}
+        want = [int(x) for x in base['TARGET_SRGB'].split(',')]
+        self.assertEqual(r['photoreal']['skin_srgb'], want, 'photoreal skin is exactly the described tone')
+        for st in cs.STYLES:
+            g = r[st]
+            self.assertTrue(g['rig_ok'], g['rig_failures'])
+            self.assertLess(abs(cs.luminance(g['skin_srgb']) - cs.luminance(want)), 3.0, st)
+            self.assertEqual(g['character']['style_spec']['shading'], cs.STYLE_SPEC[st]['shading'])
+            fp = g['face_parts']
+            self.assertTrue(fp['brows']['present'] and fp['lashes']['present'] and fp['haircards']['present'], st)
+            self.assertGreater(fp['lashes']['morph_max_mm']['blink_l'], 3.0, 'lashes close with the blink')
+            self.assertGreater(fp['brows']['morph_max_mm']['brows_up'], 2.0, 'brows rise with brows_up')
+            self.assertLess(fp['brows']['morph_max_mm']['blink_l'], 1.0, 'brows stay put in a blink')
+            self.assertEqual(g['character']['brows']['missed'], 0, 'every brow point landed on the face')
+            body_top = max(m['bbox_max'][1] for m in g['meshes'] if m['name'] == 'Body')
+            self.assertLess(g['hair']['bbox_max_y'] - body_top, 0.0135, 'cap at most ~13 mm above the scalp (was 17 mm)')
+        ratio = {st: r[st]['eyes']['interocular_per_height'] for st in cs.STYLES}
+        self.assertGreater(ratio['hybrid'], ratio['photoreal'] * 1.04); self.assertGreater(ratio['stylized'], ratio['hybrid'] * 1.06)
+        rough = {st: r[st]['materials']['Skin']['roughness'] for st in cs.STYLES}
+        self.assertLess(rough['photoreal'], rough['hybrid']); self.assertLess(rough['hybrid'], rough['stylized'])
+        self.assertEqual(r['photoreal']['materials']['Skin']['emissive'], [0.0, 0.0, 0.0])
+        self.assertGreater(sum(r['stylized']['materials']['Skin']['emissive']), sum(r['hybrid']['materials']['Skin']['emissive']))
+        bv = {st: r[st]['face_parts']['brows']['vertices'] for st in cs.STYLES}
+        self.assertGreater(bv['photoreal'], bv['hybrid']); self.assertGreater(bv['hybrid'], bv['stylized'])
+        cv = {st: r[st]['face_parts']['haircards']['vertices'] for st in cs.STYLES}
+        self.assertGreater(cv['photoreal'], cv['hybrid']); self.assertGreater(cv['hybrid'], cv['stylized'])
+        self.assertGreater(float(r['photoreal']['character']['body_macros']['age']), 0.55, 'about 35 years, not 27')
+        print('\nMEASURED looks:', json.dumps({st: {'skin_srgb': r[st]['skin_srgb'], 'skin_roughness': rough[st], 'eyes_per_height': ratio[st],
+                                                    'brow_vertices': bv[st], 'card_vertices': cv[st],
+                                                    'lash_blink_mm': r[st]['face_parts']['lashes']['morph_max_mm']['blink_l']} for st in cs.STYLES}))
+
+    def test_close_crop_is_thin(self):
+        g = self.build('crop', HAIR_STYLE='close_crop')
+        body_top = max(m['bbox_max'][1] for m in g['meshes'] if m['name'] == 'Body')
+        # cap 7.5 mm at the crown + hair cards lifted up to 3.6 mm: 10.9 mm measured (the cap alone was 16.9 mm)
+        self.assertLess(g['hair']['bbox_max_y'] - body_top, 0.0115, 'a close crop with its strands under 11.5 mm (was 16.9 mm)')
 
     def test_t_shirt_shows_the_forearms(self):
         a, b = self.build('default'), self.build('tshirt', OUTFIT_TOP='t_shirt')

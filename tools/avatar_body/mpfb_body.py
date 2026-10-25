@@ -49,10 +49,13 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 FACE_DIR = os.path.join(HERE, '..', 'avatar_face')
 sys.path.insert(0, FACE_DIR)
 from mpfb_base import MPFB, apply_sliders, load_base, macro_from_settings, slider_deltas, target, to_blender  # noqa: E402
+sys.path.insert(0, HERE)
+import character_style  # noqa: E402
 
 FPS = 30
 CLIPS = ('idle', 'walk', 'run', 'wave', 'talk')
 CLIP_EXTRAS = {}   # clip -> glTF animation extras (the gaits' declared ground speed), written into the GLB on export
+MORPH_OBJECTS = []  # meshes besides the body whose face shape keys the clips key (brows, lashes)
 CHARACTER = {}     # what built this character (face sliders, body macros, hair style, reference), in the GLB asset extras
 MORPHS = {   # shape key -> MakeHuman expression unit(s)
     'blink_l': ['expression/units/african/eye-left-closure'],
@@ -78,10 +81,14 @@ def rgb_env(name, default):
     return [srgb_lin(float(x)) for x in os.environ.get(name, default).split(',')]
 
 
-def material(name, rgb, rough=0.6, spec=0.4, cull=True):
+def material(name, rgb, rough=0.6, spec=0.4, cull=True, emission=0.0):
+    """A Principled material; `emission` adds that share of the base colour as emissive (glTF emissiveFactor), which
+    flattens the shading of the stylized look in any viewer."""
     m = bpy.data.materials.new(name); m.use_nodes = True; p = m.node_tree.nodes['Principled BSDF']
     p.inputs['Base Color'].default_value = (*rgb, 1); p.inputs['Roughness'].default_value = rough
     p.inputs['Specular IOR Level'].default_value = spec
+    if emission:
+        p.inputs['Emission Color'].default_value = (*rgb, 1); p.inputs['Emission Strength'].default_value = emission
     m.use_backface_culling = cull
     return m
 
@@ -89,6 +96,7 @@ def material(name, rgb, rough=0.6, spec=0.4, cull=True):
 def build():
     """Builds the clothed, rigged character in an empty scene and returns (scene, armature, meshes, info)."""
     print('STAGE model', flush=True)
+    MORPH_OBJECTS.clear()
     bpy.ops.wm.read_factory_settings(use_empty=True)
     sc = bpy.context.scene
     sc.render.fps = FPS
@@ -100,12 +108,10 @@ def build():
     # with none set this is exactly the previous macro_woman body, so existing presets build the same model.
     v = apply_sliders(macro_from_settings(verts, os.environ, youth=win.get('youth', 0.0) * fitw),
                       slider_deltas(n), {k: w * fitw for k, w in win.get('weights', {}).items()})
-    style_face = {
-        'photoreal': '',
-        'hybrid': 'lr:eyes/eye-scale-incr=0.6,nose/nose-scale-horiz-decr=0.15,chin/chin-width-decr=0.1',
-        'stylized': 'lr:eyes/eye-scale-incr=1.6,nose/nose-scale-horiz-decr=0.6,nose/nose-scale-vert-decr=0.5,'
-                    'lr:cheek/cheek-volume-incr=0.45,head/head-round=0.45,chin/chin-height-decr=0.35,mouth/mouth-scale-horiz-decr=0.15',
-    }.get(os.environ.get('STYLE', 'photoreal'), '')
+    # The look (character_style.py): face targets here, head scale after the skeleton's weights load, materials, brows,
+    # lashes and hair detail below.
+    st = character_style.spec(os.environ.get('STYLE', 'photoreal'))
+    style_face = st['face']
     for item in [x for x in (os.environ.get('FACE', '') + ',' + style_face).split(',') if x.strip()]:
         tname, tw = item.split('='); v = v + target(tname.strip(), n) * float(tw)
     from mpfb_base import body_values, has_body_macros
@@ -120,7 +126,8 @@ def build():
         'body_macro_system': 'makehuman_full' if has_body_macros(os.environ) else 'legacy_macro_woman',
         'hair_style': os.environ.get('HAIR_STYLE') or 'close_crop', 'reference_sha256': ref_sha,
         'outfit_top': os.environ.get('OUTFIT_TOP') or 'long_sleeved_top',
-        'outfit_top_built': 't_shirt' if os.environ.get('OUTFIT_TOP') == 't_shirt' else 'long_sleeved_top'})
+        'outfit_top_built': 't_shirt' if os.environ.get('OUTFIT_TOP') == 't_shirt' else 'long_sleeved_top',
+        'style_spec': {k: st[k] for k in ('label', 'head_scale', 'saturation', 'emission', 'brows', 'lashes', 'hair_cards', 'shading')}})
     co = to_blender(v)
     co[:, 2] -= co[sorted(groups['body']), 2].min()   # feet on the floor (z = 0)
 
@@ -128,6 +135,18 @@ def build():
     # ── Skeleton: MPFB's game_engine rig on this body's joint groups ─────────────────────────────────────────────────
     rig = json.load(open(os.path.join(MPFB, 'rigs', 'standard', 'rig.game_engine.json')))
     weights = json.load(open(os.path.join(MPFB, 'rigs', 'standard', 'weights.game_engine.json')))['weights']
+    # Proportions of the look: the head (with the eyes, lash and hair helpers and the joint cubes inside it) is scaled
+    # about the neck joint. A body vertex takes the scale by its head-bone skin weight, so the neck blends smoothly; the
+    # helpers and joint cubes take it by height between the neck and head joints.
+    hs = float(os.environ.get('HEAD_SCALE') or st['head_scale'])
+    if hs != 1.0:
+        neck_p = co[sorted(groups['joint-neck'])].mean(0); head_p = co[sorted(groups['joint-head'])].mean(0)
+        hw = np.clip((co[:, 2] - neck_p[2]) / max(1e-6, head_p[2] - neck_p[2]), 0.0, 1.0)
+        hw = hw * hw * (3 - 2 * hw)
+        body_idx = np.array(sorted(groups['body'])); hw[body_idx] = 0.0
+        for i, w in weights.get('head', []):
+            if i < len(hw): hw[i] = character_style.head_weight(w)
+        co = neck_p + (co - neck_p) * (1.0 + (hs - 1.0) * hw)[:, None]
 
     def point(spec):
         if spec.get('strategy') == 'CUBE' and spec.get('cube_name') in groups:
@@ -174,10 +193,12 @@ def build():
     # ── Body with clothing regions ────────────────────────────────────────────────────────────────────────────────
     body_faces = [vi for g, vi, ti in faces if g == 'body']
     body, me, used, remap = mesh_from('Body', body_faces)
-    skin_rgb = rgb_env('TARGET_SRGB', '80,46,32')
-    mats = {'skin': material('Skin', skin_rgb, 0.55, 0.32),
-            'top': material('Top', rgb_env('OUTFIT_SRGB', '31,111,120'), 0.75, 0.2),
-            'trousers': material('Trousers', rgb_env('TROUSERS_SRGB', '28,30,36'), 0.8, 0.15),
+    sat, emis = st['saturation'], st['emission']
+    skin_rgb = character_style.saturate(rgb_env('TARGET_SRGB', '80,46,32'), sat)
+    cl = st['cloth']
+    mats = {'skin': material('Skin', skin_rgb, st['skin']['roughness'], st['skin']['specular'], emission=emis),
+            'top': material('Top', character_style.saturate(rgb_env('OUTFIT_SRGB', '31,111,120'), sat), cl['roughness'], cl['specular'], emission=emis),
+            'trousers': material('Trousers', character_style.saturate(rgb_env('TROUSERS_SRGB', '28,30,36'), sat), cl['roughness'] + 0.05, cl['specular'], emission=emis),
             'shoes': material('Shoes', rgb_env('SHOES_SRGB', '18,18,20'), 0.45, 0.5)}
     order = list(mats)
     for m in mats.values(): me.materials.append(m)
@@ -359,7 +380,8 @@ def build():
         return z > 0.052 - 0.25 * max(0.0, y - 0.01) or (y > 0.105 and z > -0.075)
     hair_faces = [vi for vi in body_faces if all(scalp(i) for i in vi)]
     hair, hme, hused, _ = mesh_from('Hair', hair_faces)
-    hme.materials.append(material('Hair', rgb_env('HAIR_SRGB', '28,18,16'), 0.7, 0.25, cull=False))
+    hair_rgb = character_style.saturate(rgb_env('HAIR_SRGB', '28,18,16'), sat)
+    hme.materials.append(material('Hair', hair_rgb, st['hair']['roughness'], st['hair']['specular'], cull=False, emission=emis))
     hme.update()
     edge_count = {}
     for e in hme.edges: edge_count[e.key] = 0
@@ -376,23 +398,34 @@ def build():
             for j in adj.get(i, []):
                 if j not in ring_of: ring_of[j] = ring_of[i] + 1; nxt.append(j)
         todo = nxt
+    style = os.environ.get('HAIR_STYLE') or 'close_crop'
+    # Cap thickness: up to 13 mm at the crown (7.5 mm for a close crop), fading over four rings to 0.8 mm at the edge.
+    # The 17 mm cap with a 3 mm edge read as a helmet in the Create Room demo close-ups (2026-10-25).
+    t0, t1 = (0.0025, 0.005) if style == 'close_crop' else (0.004, 0.009)
     for k, vx in enumerate(hme.vertices):
         rz = vx.co.z - eye_mid[2]
-        thick = 0.005 + 0.012 * min(1.0, max(0.0, (rz + 0.02) / 0.12))
-        # The edge thins over two rings of vertices instead of stepping from 3 mm straight to the full thickness (the
-        # step drew a saw-tooth hairline; realism pass 2026-10-25).
+        thick = t0 + t1 * min(1.0, max(0.0, (rz + 0.02) / 0.12))
         r = ring_of.get(k, 9)
-        vx.co += hnorm[k] * (0.003 + (thick - 0.003) * min(1.0, r / 3.0))
-    style = os.environ.get('HAIR_STYLE') or 'close_crop'
+        vx.co += hnorm[k] * (0.0008 + (thick - 0.0008) * min(1.0, r / 4.0))
     extra, hair_info = hair_style(style, sc, arm, hair, hme, Vector(eye_mid))
+    cards = hair_cards(sc, arm, hair, st['hair_cards']) if style != 'beanie' else None
+    if cards: extra.append(cards)
+
+    # Brows and lashes as meshes in the GLB (the bust's strands are render-only curves): their own shape keys follow the
+    # face's blink and brow morphs.
+    face_parts = brows_and_lashes(sc, arm, me, co, groups, faces, st, hair_rgb)
 
     suit = refine_suit(me, [order.index('top'), order.index('trousers')]) if os.environ.get('SUIT_REFINE', '1') != '0' else None
     if suit: print('SUIT ' + json.dumps(suit, separators=(',', ':')), flush=True)
+    transfer_morphs(body, [o for o in face_parts['objects']])
     info = {'covered_fraction': round(covered, 3), 'skin_bones': skin_bones, 'body_vertices': len(me.vertices), 'suit': suit,
-            'hair': hair_info, 'hair_style': hair_info.split(':')[0]}
+            'hair': hair_info, 'hair_style': hair_info.split(':')[0], 'brows': face_parts['brows'], 'lashes': face_parts['lashes'],
+            'hair_cards': int(cards['cards']) if cards else 0}
+    CHARACTER.update(brows=face_parts['brows'], lashes=face_parts['lashes'], hair_cards=info['hair_cards'])
     print('HAIR ' + json.dumps({'style': hair_info.split(':')[0], 'objects': [o.name for o in [hair, *extra]],
-                                'vertices': sum(len(o.data.vertices) for o in [hair, *extra])}), flush=True)
-    return sc, arm, [body, shoes, hair, *eyes, *extra], info
+                                'vertices': sum(len(o.data.vertices) for o in [hair, *extra]), 'cards': info['hair_cards']}), flush=True)
+    print('FACEPARTS ' + json.dumps({'brows': face_parts['brows'], 'lashes': face_parts['lashes']}), flush=True)
+    return sc, arm, [body, shoes, hair, *eyes, *extra, *face_parts['objects']], info
 
 
 # ── Hair styles (owner, 2026-10-25: real hair for every style, in the GLB, following the head) ─────────────────────
@@ -546,6 +579,168 @@ def hair_style(style, sc, arm, hair, hme, eye_mid):
     return extra, f'{style}: {names[style]}, mesh in the preset colour, rigid to the head bone'
 
 
+def _tangent(d, n):
+    """d projected onto the plane with normal n, normalised (or None when d is along n)."""
+    t = d - n * d.dot(n)
+    return t.normalized() if t.length > 1e-9 else None
+
+
+def hair_cards(sc, arm, hair, kind):
+    """Hair cards over the scalp cap, so the hair reads as strands instead of a smooth shell (the Create Room demo's
+    "helmet"). Each card is a ribbon rooted on the cap, walking `segments` steps away from the crown and downward along
+    the cap's surface (re-projected onto the cap at every step, lifted a little more each step), tapering to its tip; a
+    card stops where it would leave the cap. Rigid to the head like the cap. `kind` is character_style.HAIR_CARDS's key."""
+    from mathutils.bvhtree import BVHTree
+    P = character_style.HAIR_CARDS[kind]
+    hme = hair.data
+    vs = [v.co.copy() for v in hme.vertices]
+    bvh = BVHTree.FromPolygons(vs, [p.vertices[:] for p in hme.polygons])
+    c, R = sphere_fit(np.array([v[:] for v in vs]))
+    # Outward-facing cap faces only (an afro's inner skirt faces back toward the head), sampled by area.
+    polys = [p for p in hme.polygons if p.normal.dot(p.center - c) > 0 and p.area > 0]
+    if not polys: return None
+    area = np.array([p.area for p in polys]); area /= area.sum()
+    rng = np.random.default_rng(int(os.environ.get('VARIATION') or 0) + 23)
+    # Hair is swept back and down from a parting point at the top of the forehead (forward is -Y), so the cards over the
+    # forehead lie back over the head instead of piling up into blunt bangs at the cap's front edge.
+    part = c + Vector((0.0, -R * 0.75, R * 0.6))
+    down = Vector((0, 0, -1))
+    bm = bmesh.new(); made = 0
+    for fi in rng.choice(len(polys), size=P['count'], p=area):
+        poly = polys[fi]
+        ws = rng.dirichlet(np.ones(len(poly.vertices)))
+        root = sum((hme.vertices[k].co * float(w) for k, w in zip(poly.vertices, ws)), Vector())
+        loc, nrm, _, _ = bvh.find_nearest(root)
+        if loc is None: continue
+        length = float(rng.uniform(*P['length'])); step = length / P['segments']
+        pts, nrms = [loc + nrm * P['lift'] * 0.5], [nrm]
+        for sgi in range(P['segments']):
+            d = _tangent((pts[-1] - part).normalized() + down * 0.35, nrms[-1])
+            if d is None: break
+            loc, nrm, _, dist = bvh.find_nearest(pts[-1] + d * step)
+            if loc is None or dist > 0.006: break
+            pts.append(loc + nrm * P['lift'] * (1.0 + 0.5 * sgi)); nrms.append(nrm)
+        if len(pts) < 3: continue
+        rows = []
+        for k, (q, nn) in enumerate(zip(pts, nrms)):
+            d = (pts[min(k + 1, len(pts) - 1)] - pts[max(k - 1, 0)])
+            side = nn.cross(d)
+            side = side.normalized() * (P['width'] / 2) * (1.0 - 0.75 * k / (len(pts) - 1)) if side.length > 1e-9 else Vector()
+            rows.append((bm.verts.new(q - side), bm.verts.new(q + side)))
+        for (a0, a1), (b0, b1) in zip(rows, rows[1:]):
+            bm.faces.new((a0, a1, b1, b0))
+        made += 1
+    if not made:
+        bm.free(); return None
+    me = bpy.data.meshes.new('HairCards'); bm.to_mesh(me); bm.free()
+    me.materials.append(hme.materials[0])
+    for p in me.polygons: p.use_smooth = True
+    ob = bpy.data.objects.new('HairCards', me); sc.collection.objects.link(ob)
+    ob['cards'] = made
+    _rigid_to_head(ob, arm)
+    return ob
+
+
+def brows_and_lashes(sc, arm, me, co, groups, faces, st, hair_rgb):
+    """Eyebrows and eyelashes as meshes (exported in the GLB, rigid to the head). The demo's full body had neither,
+    which made the face read as a child's.
+    - Brows follow character_style.brow_curve above each eye, projected onto the face (ray cast from the front onto the
+      body): `strands` many fine hairs (BROW_N / 3 per brow, 0.45 mm wide x BROW_W / 1.4), `tufts` half as many clumps
+      about three times wider, `solid` one tapered ribbon. A hair grows up and out at the inner end and along the brow toward the
+      tail elsewhere, lying close to the skin.
+    - Lashes are MakeHuman's own lash helper geometry around each eye (helper-*-eyelashes-1 lower, -2 upper), which
+      already follows the face targets: `fins` both, `solid` the upper lash only, pushed outward for the stylized look.
+    Returns {'objects': [...], 'brows': {...}, 'lashes': {...}} with measured counts."""
+    from mathutils.bvhtree import BVHTree
+    bvh = BVHTree.FromPolygons([v.co.copy() for v in me.vertices], [p.vertices[:] for p in me.polygons])
+    rng = np.random.default_rng(int(os.environ.get('VARIATION') or 0) + 31)
+    mode = st['brows']; bw = float(os.environ.get('BROW_W') or 1.4) / 1.4
+    per = max(30, int(float(os.environ.get('BROW_N') or 800) / 3))
+    brow_m = material('Brows', [x * 0.8 for x in hair_rgb], 0.6, 0.2, cull=False, emission=st['emission'])
+    lash_m = material('Lashes', [x * 0.35 for x in hair_rgb], 0.5, 0.25, cull=False)
+    bm = bmesh.new(); hairs = 0; misses = 0
+    for gname in ('helper-l-eye', 'helper-r-eye'):
+        pts = co[sorted(groups[gname])]; c = Vector(pts.mean(0)); r = float(np.linalg.norm(pts - pts.mean(0), axis=1).max())
+        out = 1.0 if c.x > 0 else -1.0   # toward this eye's temple
+
+        def surf(side_r, up_r):
+            o = Vector((c.x + out * side_r * r, c.y - 0.15, c.z + up_r * r))
+            hit, n, _, _ = bvh.ray_cast(o, Vector((0, 1, 0)), 0.3)
+            if hit is None: return None, None
+            return hit, (n if n.y < 0 else -n)
+        if mode == 'solid':
+            rows = []
+            for k in range(19):
+                t = k / 18; sd, up, half = character_style.brow_curve(t)
+                a, na = surf(sd, up + half * 1.25 * bw); b, nb = surf(sd, up - half * 1.25 * bw)
+                if a is None or b is None:
+                    misses += 1; continue
+                rows.append((bm.verts.new(a + na * 0.0009), bm.verts.new(b + nb * 0.0009)))
+            for (a0, a1), (b0, b1) in zip(rows, rows[1:]): bm.faces.new((a0, b0, b1, a1))
+            hairs += 1
+            continue
+        n_hairs, width, lo, hi = (per, 0.00045 * bw, 0.0045, 0.0068) if mode == 'strands' else (per // 2, 0.0013 * bw, 0.0055, 0.008)
+        for _ in range(n_hairs):
+            t = float(rng.random()) ** 1.2   # a little denser toward the inner end
+            sd, up, half = character_style.brow_curve(t)
+            root, n = surf(sd, up + float(rng.uniform(-1, 1)) * half)
+            if root is None:
+                misses += 1; continue
+            slope = -2 * (2 * t - 1.3) / 1.69 * 0.5 / 2.35   # the curve's rise per unit sideways (brow_curve)
+            along = Vector((out, 0, slope)).normalized()
+            k = max(0.0, (0.28 - t) / 0.28)       # inner end: hairs grow upward
+            d = _tangent(along * (1 - k) + Vector((out * 0.3, 0, 1.0)).normalized() * k + Vector((0, 0, -0.12 * (1 - k))), n)
+            if d is None: continue
+            length = float(rng.uniform(lo, hi)) * (1.0 - 0.3 * t)
+            r0 = root + n * 0.0003; tip = root + d * length + n * 0.0009
+            w = n.cross(d).normalized() * width / 2
+            bm.faces.new((bm.verts.new(r0 - w), bm.verts.new(r0 + w), bm.verts.new(tip + w * 0.3), bm.verts.new(tip - w * 0.3)))
+            hairs += 1
+    brow_me = bpy.data.meshes.new('Brows'); bm.to_mesh(brow_me); bm.free()
+    brow_me.materials.append(brow_m)
+    brows = bpy.data.objects.new('Brows', brow_me); sc.collection.objects.link(brows); _rigid_to_head(brows, arm)
+    # Lashes from the helper geometry.
+    lash_groups = ['helper-l-eyelashes-2', 'helper-r-eyelashes-2'] + ([] if st['lashes'] == 'solid' else ['helper-l-eyelashes-1', 'helper-r-eyelashes-1'])
+    fl = [vi for g, vi, ti in faces if g in lash_groups]
+    used = sorted({i for vi in fl for i in vi}); remap = {o: k for k, o in enumerate(used)}
+    P = co[used].copy()
+    if st['lashes'] == 'solid':   # bolder: each upper lash pushed 12 % further out from its eye's centre
+        for side in ('l', 'r'):
+            e = co[sorted(groups[f'helper-{side}-eye'])].mean(0)
+            idx = [remap[i] for i in sorted(groups[f'helper-{side}-eyelashes-2'])]
+            P[idx] = e + (P[idx] - e) * 1.12
+    lash_me = bpy.data.meshes.new('Lashes')
+    lash_me.from_pydata([Vector(p) for p in P], [], [[remap[i] for i in vi] for vi in fl])
+    lash_me.materials.append(lash_m)
+    lashes = bpy.data.objects.new('Lashes', lash_me); sc.collection.objects.link(lashes); _rigid_to_head(lashes, arm)
+    return {'objects': [brows, lashes],
+            'brows': {'mode': mode, 'hairs_or_ribbons': hairs, 'vertices': len(brow_me.vertices), 'missed': misses},
+            'lashes': {'mode': st['lashes'], 'vertices': len(lash_me.vertices), 'faces': len(lash_me.polygons)}}
+
+
+def transfer_morphs(body, objects):
+    """Gives each object the face morphs (blink, brows up, mouth, smile) by copying, for each of its vertices, the
+    inverse-distance mean of the four nearest body vertices' offsets, so brows rise with brows_up and lashes close
+    with the blink. animate() keys these shape keys with the body's."""
+    from mathutils.kdtree import KDTree
+    kb = body.data.shape_keys.key_blocks; basis = kb['Basis']
+    kd = KDTree(len(basis.data))
+    for i, d in enumerate(basis.data): kd.insert(d.co, i)
+    kd.balance()
+    for ob in objects:
+        if not len(ob.data.vertices): continue
+        ob.shape_key_add(name='Basis')
+        near = [kd.find_n(v.co, 4) for v in ob.data.vertices]
+        for name in MORPHS:
+            src = kb[name]; key = ob.shape_key_add(name=name)
+            for j, v in enumerate(ob.data.vertices):
+                ws = [(1.0 / (dist + 1e-4), i) for (_, i, dist) in near[j]]; tot = sum(w for w, _ in ws)
+                delta = sum(((src.data[i].co - basis.data[i].co) * w for w, i in ws), Vector()) / tot
+                key.data[j].co = v.co + delta
+            key.value = 0.0
+        MORPH_OBJECTS.append(ob)
+
+
 def refine_suit(me, garment_mats, passes=4):
     """Splits each garment face in four and Taubin-smooths the garment's inner vertices; returns the measured counts.
 
@@ -670,12 +865,15 @@ def animate(sc, arm, body):
         arm.animation_data.action = None
         tr = arm.animation_data.nla_tracks.new(); tr.name = name; tr.strips.new(name, 0, act); tr.mute = True
         if morph:
-            mact = bpy.data.actions.new(name + '_face'); keys.animation_data_create(); keys.animation_data.action = mact
-            for f in range(frames + 1):
-                for kname, val in morph(f / frames, f).items():
-                    kb = keys.key_blocks[kname]; kb.value = val; kb.keyframe_insert('value', frame=f)
-            keys.animation_data.action = None
-            mt = keys.animation_data.nla_tracks.new(); mt.name = name; mt.strips.new(name, 0, mact); mt.mute = True
+            # The body's face keys and the same keys on the brows and lashes, each with its own action, one NLA track
+            # per clip name (the exporter joins tracks of one name into one animation).
+            for ki, kd in enumerate([keys] + [o.data.shape_keys for o in MORPH_OBJECTS if o.data.shape_keys]):
+                mact = bpy.data.actions.new(name + '_face' + (f'_{ki}' if ki else '')); kd.animation_data_create(); kd.animation_data.action = mact
+                for f in range(frames + 1):
+                    for kname, val in morph(f / frames, f).items():
+                        kb = kd.key_blocks[kname]; kb.value = val; kb.keyframe_insert('value', frame=f)
+                kd.animation_data.action = None
+                mt = kd.animation_data.nla_tracks.new(); mt.name = name; mt.strips.new(name, 0, mact); mt.mute = True
         for pb in pbs: pb.rotation_quaternion = Quaternion(); pb.location = Vector()
         clips[name] = frames / FPS
 
@@ -838,7 +1036,7 @@ def annotate_glb(path, extras_by_clip, character=None):
 
 
 def export(path, arm, meshes, clips, info):
-    for ad in (arm.animation_data, meshes[0].data.shape_keys.animation_data):
+    for ad in (arm.animation_data, meshes[0].data.shape_keys.animation_data, *[o.data.shape_keys.animation_data for o in MORPH_OBJECTS if o.data.shape_keys]):
         if ad:
             for tr in ad.nla_tracks: tr.mute = False
     bpy.ops.object.select_all(action='DESELECT')

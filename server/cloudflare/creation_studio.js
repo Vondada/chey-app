@@ -144,6 +144,7 @@ export function personExtras(v) {
   const o = v.params?.outfit || {}; const out = {};
   if (/^#[0-9a-f]{6}$/i.test(String(o.color || ''))) out.OUTFIT_SRGB = [1, 3, 5].map((i) => String(parseInt(o.color.slice(i, i + 2), 16))).join(',');
   if (o.top && TOPS.some(([k]) => k === o.top)) out.OUTFIT_TOP = o.top;
+  if (/^#[0-9a-f]{6}$/i.test(String(o.trousers || ''))) out.TROUSERS_SRGB = [1, 3, 5].map((i) => String(parseInt(o.trousers.slice(i, i + 2), 16))).join(',');
   if (Number(v.variation) > 0) out.VARIATION = String(Math.trunc(Number(v.variation)));
   return out;
 }
@@ -166,8 +167,12 @@ export const COLOURS = {
   auburn: '#6a2e1a', red: '#8a2a16', ginger: '#b0521e', blonde: '#d8b46a', blond: '#d8b46a', 'platinum blonde': '#e6d6b0', grey: '#8a8580',
   gray: '#8a8580', silver: '#b8b8b8', white: '#e8e6e0', purple: '#8d64d6', violet: '#8d64d6', pink: '#d67ea8', blue: '#3a6ec8',
   green: '#3c7a4a', teal: '#1f6f78', navy: '#1d2b4a', orange: '#e8732e', yellow: '#d8b030', gold: '#c8a040', beige: '#d8c4a0', cream: '#e9dcc8',
+  // Clothing colours a description uses (Create Room demo, 2026-10-25: "terracotta top" was not a colour, so the outfit
+  // silently took the next palette colour, olive green).
+  terracotta: '#b8543a', rust: '#9a3e1e', maroon: '#5a1a1e', burgundy: '#6a1e2a', charcoal: '#2e3034', olive: '#56603e',
+  khaki: '#a89a6a', coral: '#e8735a', mustard: '#c8962a', lavender: '#b79be6', 'sky blue': '#7aa6d6', 'forest green': '#2a5a34',
 };
-export const EYE_COLOURS = { brown: '#5a3a22', 'dark brown': '#3e2616', 'light brown': '#7a5232', hazel: '#7a6a3a', amber: '#a8742a', green: '#4f7a4a',
+export const EYE_COLOURS = { brown: '#5a3a22', 'dark brown': '#3e2616', 'light brown': '#7a5232', hazel: '#7a6a3a', 'green-brown': '#6a6a3a', 'brown-green': '#6a6a3a', amber: '#a8742a', green: '#4f7a4a',
   blue: '#4f7fb5', 'light blue': '#7aa6d6', grey: '#6f7a80', gray: '#6f7a80', black: '#241812' };
 const OUTFIT_PALETTE = ['#1f6f78', '#1d2b4a', '#4a525c', '#e8732e', '#d89a2a', '#56603e', '#b79be6', '#e9dcc8', '#3e5f86', '#7a2a2a'];
 const colourName = (hex) => Object.entries(COLOURS).find(([, h]) => h === hex)?.[0] || { '#3e5f86': 'denim blue' }[hex] || hex;
@@ -193,7 +198,7 @@ const SLIDER_EDITS = [
   [/\b(?:thinner|smaller) lips\b|\blips (?:thinner|smaller)\b/, ['lip_upper', 'lip_lower'], -0.2, 'lips thinner'],
   [/\bwider (?:mouth|smile)\b/, 'mouth_width', 0.2, 'mouth wider'],
   [/\bnarrower mouth\b|\bsmaller mouth\b/, 'mouth_width', -0.2, 'mouth narrower'],
-  [/\brounder face\b|\bface rounder\b|\bround(?:er)? cheeks\b/, 'face_round', 0.2, 'face rounder'],
+  [/\brounder face\b|\bface rounder\b|\bround(?:er)? cheeks\b|\bround face\b/, 'face_round', 0.2, 'face rounder'],
   [/\b(?:more )?oval face\b/, 'face_oval', 0.2, 'face more oval'],
   [/\bwider face\b|\bface wider\b/, 'face_width', 0.15, 'face wider'],
   [/\b(?:narrower|thinner|slimmer) face\b|\bface (?:narrower|thinner|slimmer)\b/, 'face_width', -0.15, 'face narrower'],
@@ -312,6 +317,7 @@ export function hairStyleIn(t) {
   if (/\bwavy\b|\bshoulder[- ]length\b|\bmedium[- ]length\b/.test(t)) return 'wavy_medium';
   return null;
 }
+const TROUSERS_PART = /\b(?:trousers|pants|jeans|slacks|chinos|leggings)\b/;
 const OUTFIT_PART = /\b(?:outfit|clothes|clothing|jacket|shirt|t-?shirt|tee|top|hoodie|sweater|jumper|coat|blazer|sweatshirt)\b/;
 export const TOPS = [['hoodie', /\bhoodie\b|\bsweatshirt\b/], ['sweater', /\bsweater\b|\bjumper\b/], ['t_shirt', /\bt-?shirt\b|\btee\b/],
   ['shirt', /\bshirt\b/], ['coat', /\bcoat\b/], ['blazer', /\bblazer\b/], ['jacket', /\bjacket\b/]];
@@ -459,7 +465,7 @@ export function describePerson(text, presets = BUILT_IN) {
     ...Object.keys(SKIN_TONES).flatMap((k) => k.split(' '))]);
   const understood = (w) => vocab.has(w) || KNOWN_PART.test(w) || HAIR_PART.test(w) || OUTFIT_PART.test(w) || TOPS.some(([, re]) => re.test(w))
     || DESCRIBE_BODY.some(([re]) => re.test(w)) || BODY_WORDS.some(([re]) => re.test(w)) || hairStyleIn(w) || NOT_BUILT.some(([re]) => re.test(w))
-    || Boolean(styleIn(w)) || /^(?:curly|wavy|straight|buzz|cut|crew|shaved|cropped|bun|low|afro|beanie|denim|leather|athletic|muscular|broad|shouldered|masculine|feminine|tanned|olive)$/.test(w);
+    || Boolean(styleIn(w)) || TROUSERS_PART.test(w) || /^(?:curly|wavy|straight|buzz|cut|crew|shaved|cropped|bun|low|afro|beanie|denim|leather|athletic|muscular|broad|shouldered|masculine|feminine|tanned|olive)$/.test(w);
   const unused = [...new Set(t.replace(/[^a-z0-9\s'-]/g, ' ').split(/\s+/).filter(Boolean).filter((w) => !understood(w)))].slice(0, 8);
   return { ok: true, base: base.id, params: edit.params, style, shape: edit.shape, applied, unsupported, unused };
 }
@@ -512,8 +518,15 @@ export function parseEdit(text, params, style, render = DEFAULT_RENDER, shape = 
   // Eyes.
   const ec = inClause(/\beyes?\b/).map((c) => colourIn(c, EYE_COLOURS)).find(Boolean);
   if (ec) { p.eyes.iris = EYE_COLOURS[ec]; applied.push(`Eye colour changed to ${ec}.`); }
+  // Trousers: a colour said in the clause that names them ("charcoal trousers", "blue jeans"); mpfb_body.py reads
+  // TROUSERS_SRGB. Jeans with no colour are denim.
+  const legText = inClause(TROUSERS_PART).join(' ');
+  if (legText) {
+    const c = colourIn(legText, COLOURS); const next = c ? COLOURS[c] : /\bjeans\b|\bdenim\b/.test(legText) ? '#3e5f86' : null;
+    if (next && next !== p.outfit.trousers) { p.outfit.trousers = next; applied.push(`Trousers colour changed to ${colourName(next)}.`); }
+  }
   // Outfit: the top (hoodie, jacket, sweater, shirt) and its colour; denim and leather give a colour when none is said.
-  const outfitText = inClause(OUTFIT_PART).join(' ');
+  const outfitText = inClause(OUTFIT_PART).filter((c) => !TROUSERS_PART.test(c) || /\b(?:top|shirt|jacket|hoodie|sweater|coat|blazer)\b/.test(c)).join(' ');
   if (outfitText) {
     const c = colourIn(outfitText, COLOURS);
     const top = TOPS.find(([, re]) => re.test(outfitText))?.[0];

@@ -155,6 +155,7 @@ jobs:
           python3 -m unittest discover -s tools -p 'test_worker_reference.py'
           python3 -m unittest discover -s tools -p 'test_glb_inspect.py'
           python3 -m unittest discover -s tools -p 'test_body_macros.py'
+          python3 -m unittest discover -s tools -p 'test_character_style.py'
       - name: Claude Code project skills (.claude/skills) tests
         run: node --test .claude/skills/tests/*.test.mjs
       - name: CHE free-first coding and paid cap regression tests

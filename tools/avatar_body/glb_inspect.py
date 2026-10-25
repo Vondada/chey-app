@@ -15,6 +15,12 @@ What it reports, all read from the file itself:
 - hair: present, style (from the hair mesh names and the material), meshes and vertex count;
 - clothing: garment material names (Top, Trousers, Shoes) found on the meshes;
 - rig: joint count, animation names, morph target names.
+- materials: each material's base colour as sRGB 0-255 (glTF stores it linear), roughness, specular-free emissive
+  factor; skin_srgb is the Skin material's colour (the described skin tone, after the look's saturation);
+- face_parts: brows, lashes and hair cards (mesh present, vertex count) and, for brows and lashes, how far each morph
+  target moves them at most (mm), so a blink that leaves the lashes behind shows as 0;
+- eyes: the eye spheres' centre distance and radius and their ratio to the height (head proportion: the stylized look
+  scales the head, so its eyes sit further apart relative to the body).
 Nothing is rendered and nothing is estimated: a measure the file does not hold is null.
 """
 import json
@@ -39,13 +45,24 @@ def read_glb(path):
 
 
 def accessor(js, binary, i):
-    a = js['accessors'][i]; bv = js['bufferViews'][a['bufferView']]
+    a = js['accessors'][i]
     fmt, size = COMP[a['componentType']]; k = NCOMP[a['type']]
-    stride = bv.get('byteStride') or size * k
-    base = bv.get('byteOffset', 0) + a.get('byteOffset', 0)
-    out = []
-    for n in range(a['count']):
-        out.append(struct.unpack_from('<' + fmt * k, binary, base + n * stride))
+    if 'bufferView' in a:
+        bv = js['bufferViews'][a['bufferView']]
+        stride = bv.get('byteStride') or size * k
+        base = bv.get('byteOffset', 0) + a.get('byteOffset', 0)
+        out = [struct.unpack_from('<' + fmt * k, binary, base + n * stride) for n in range(a['count'])]
+    else:   # no buffer view: all zeros (glTF 2.0 3.6.2), then the sparse values below
+        out = [(0,) * k for _ in range(a['count'])]
+    sp = a.get('sparse')
+    if sp:   # morph targets are written sparse: only the moved vertices are stored
+        ib, vb = sp['indices'], sp['values']
+        ifmt, isz = COMP[ib['componentType']]
+        ibv, vbv = js['bufferViews'][ib['bufferView']], js['bufferViews'][vb['bufferView']]
+        io = ibv.get('byteOffset', 0) + ib.get('byteOffset', 0); vo = vbv.get('byteOffset', 0) + vb.get('byteOffset', 0)
+        for n in range(sp['count']):
+            j = struct.unpack_from('<' + ifmt, binary, io + n * isz)[0]
+            out[j] = struct.unpack_from('<' + fmt * k, binary, vo + n * size * k)
     return out
 
 
@@ -108,11 +125,58 @@ def inspect(path):
     garments = sorted({x for m in meshes for x in m['materials'] if x.split('.')[0] in ('Top', 'Trousers', 'Shoes', 'Beanie')})
     rep['clothing'] = {'garment_materials': garments, 'meshes_with_garments': sorted(m['name'] for m in meshes if set(m['materials']) & set(garments))}
     rep['character'] = (js.get('asset', {}).get('extras') or {}).get('che_character')
+    rep['materials'] = materials(js)
+    rep['skin_srgb'] = (rep['materials'].get('Skin') or {}).get('base_srgb')
+    by_name = {m['name']: m for m in meshes}
+    mesh_of = {(n.get('name') or ''): js['meshes'][n['mesh']] for n in js.get('nodes', []) if 'mesh' in n}
+    rep['face_parts'] = {}
+    for part in ('Brows', 'Lashes', 'HairCards'):
+        m = by_name.get(part)
+        rep['face_parts'][part.lower()] = {'present': bool(m and m['vertices']), 'vertices': m['vertices'] if m else 0,
+                                          'morph_max_mm': morph_reach(js, binary, mesh_of[part]) if m and part != 'HairCards' else {}}
+    el, er = by_name.get('Eye_l'), by_name.get('Eye_r')
+    if el and er:
+        cen = lambda m: [(a + b) / 2 for a, b in zip(m['bbox_min'], m['bbox_max'])]
+        gap = sum((a - b) ** 2 for a, b in zip(cen(el), cen(er))) ** 0.5
+        rep['eyes'] = {'interocular_m': round(gap, 4), 'radius_m': round((el['bbox_max'][0] - el['bbox_min'][0]) / 2, 4),
+                       'interocular_per_height': round(gap / rep['height_m'], 5) if rep.get('height_m') else None}
+    else:
+        rep['eyes'] = None
     skins = js.get('skins', [])
     rep['rig'] = {'joints': len(skins[0]['joints']) if skins else 0,
                   'animations': [a.get('name', '') for a in js.get('animations', [])],
                   'morphs': sorted({x for m in meshes for x in m['morphs']})}
     return rep
+
+
+def to_srgb(x):
+    x = max(0.0, min(1.0, float(x)))
+    return int(round((x * 12.92 if x <= 0.0031308 else 1.055 * x ** (1 / 2.4) - 0.055) * 255))
+
+
+def materials(js):
+    out = {}
+    for m in js.get('materials', []):
+        pbr = m.get('pbrMetallicRoughness', {})
+        base = pbr.get('baseColorFactor', [1, 1, 1, 1])
+        strength = ((m.get('extensions') or {}).get('KHR_materials_emissive_strength') or {}).get('emissiveStrength', 1.0)
+        out[m.get('name', '')] = {'base_srgb': [to_srgb(c) for c in base[:3]], 'base_linear': [round(c, 4) for c in base[:3]],
+                                  'roughness': round(pbr.get('roughnessFactor', 1.0), 3),
+                                  'emissive': [round(c * strength, 4) for c in m.get('emissiveFactor', [0, 0, 0])]}
+    return out
+
+
+def morph_reach(js, binary, mesh):
+    """{target name: largest vertex displacement in mm} for a mesh's morph targets."""
+    names = (mesh.get('extras') or {}).get('targetNames', [])
+    out = {}
+    for prim in mesh['primitives']:
+        for k, t in enumerate(prim.get('targets', [])):
+            if 'POSITION' not in t: continue
+            d = max((sum(c * c for c in v) ** 0.5 for v in accessor(js, binary, t['POSITION'])), default=0.0)
+            key = names[k] if k < len(names) else str(k)
+            out[key] = max(out.get(key, 0.0), round(d * 1000, 2))
+    return out
 
 
 def body_measures(pos, floor):
