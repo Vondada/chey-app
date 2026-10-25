@@ -41,19 +41,13 @@ List<int> unlabeledTapTargets(String source) {
   return found;
 }
 
-// Unlabeled tap targets per file at main 0c43197 (see docs/CHE_A11Y_AUDIT.md for each one and its fix).
+// Unlabeled tap targets per file (see docs/CHE_A11Y_AUDIT.md for each one and its fix). Lowered 2026-10-25 by the
+// infra/app reliability lane: plugin tile, device badge, Brain node and voice orb got button labels; chat-bubble
+// long-press actions became named VoiceOver actions; keyboard-dismiss areas and the home orb are marked a11y-label-ok.
 const baseline = <String, int>{
   'lib/brain/che_knowledge_atlas.dart': 1,
   'lib/che_theme.dart': 1,
-  'lib/che_ui/che_agent_chat.dart': 1,
-  'lib/che_ui/che_plugins.dart': 1,
   'lib/che_ui/che_widgets.dart': 1,
-  'lib/che_voice_ui.dart': 1,
-  'lib/conversations/che_conversations_screen.dart': 1,
-  'lib/devices_hub_scene.dart': 1,
-  'lib/home/che_home_chat.dart': 2,
-  'lib/insights_brain_scene.dart': 1,
-  'lib/main.dart': 1,
   'lib/visual/che_image_canvas.dart': 1,
   'lib/widgets/che_native_scene_world.dart': 1,
   'lib/world/che_plan_room.dart': 1,
@@ -79,5 +73,15 @@ void main() {
       if (lines.length > allowed) grown.add('$path: ${lines.length} unlabeled (baseline $allowed) at lines ${lines.join(', ')}');
     }
     expect(grown, isEmpty, reason: 'Wrap these tap targets in Semantics(button: true, label: ...) so VoiceOver can say what they do.');
+  });
+
+  test('the baseline only goes down: a fixed file must lower its number', () {
+    final stale = <String>[];
+    for (final entry in baseline.entries) {
+      final file = File(entry.key);
+      final now = file.existsSync() ? unlabeledTapTargets(file.readAsStringSync()).length : 0;
+      if (now < entry.value) stale.add('${entry.key}: baseline ${entry.value}, now $now');
+    }
+    expect(stale, isEmpty, reason: 'Lower these entries in baseline so the fix cannot silently regress.');
   });
 }

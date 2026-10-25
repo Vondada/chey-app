@@ -932,7 +932,10 @@ class _ChePluginsScreenState extends State<ChePluginsScreen> {
         radius: CheRadius.lg,
         edge: reg.isEnabled(p.id) ? p.color.withValues(alpha: 0.5) : null,
         child: Row(children: [
-          GestureDetector(
+          Semantics(
+            button: true,
+            label: 'Open ${p.name}',
+            child: GestureDetector(
             onTap: () => _openPlugin(p),
             child: Container(
               width: 42,
@@ -942,6 +945,7 @@ class _ChePluginsScreenState extends State<ChePluginsScreen> {
                 borderRadius: BorderRadius.circular(CheRadius.sm),
               ),
               child: Icon(p.icon, color: p.color),
+            ),
             ),
           ),
           const SizedBox(width: CheSpace.md),

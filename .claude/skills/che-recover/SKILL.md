@@ -9,7 +9,7 @@ description: Recover a blocked CHE development session and protect unfinished wo
 ```
 node .claude/skills/che-recover/scripts/preflight.mjs [--need-gb 8] [--json]
 ```
-It prints free disk on the repo's filesystem, regenerable build outputs and their size, and **local-only work**: uncommitted changes, branches with commits that are on no remote, worktrees on a detached HEAD with unpushed commits, and stashes (the stack is shared by every worktree and never pushed). Exit 0 = OK, 3 = low disk, 4 = local-only work.
+It prints free disk on the repo's filesystem, regenerable build outputs and their size, and **local-only work**: uncommitted changes and branches or worktrees with commits that are on no remote. Exit 0 = OK, 3 = low disk, 4 = local-only work.
 
 Run it at session start, before a full `flutter test` or an IPA-sized build (needs ~8 GB), and before you stop. Exit 4 at stop time means work will be lost with this container: commit and push it (prefix `WIP:` if partial).
 

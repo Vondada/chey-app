@@ -289,7 +289,10 @@ class _Bubble extends StatelessWidget {
                 style: CheType.caption.copyWith(color: color, fontWeight: FontWeight.w700, fontSize: 12),
               ),
             ),
-          GestureDetector(
+          // VoiceOver cannot long-press easily: Copy is also a named action (swipe up or down to it).
+          Semantics(
+            customSemanticsActions: {const CustomSemanticsAction(label: 'Copy message'): copy},
+            child: GestureDetector(
             onLongPress: copy,
             child: ConstrainedBox(
               constraints: BoxConstraints(maxWidth: width),
@@ -305,6 +308,7 @@ class _Bubble extends StatelessWidget {
                 ),
               ),
             ),
+          ),
           ),
           if (message.at != null)
             Padding(padding: const EdgeInsets.only(top: 2, left: 10, right: 10), child: Text(cheChatTime(message.at), style: CheType.caption.copyWith(fontSize: 10))),

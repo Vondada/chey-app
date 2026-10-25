@@ -7,7 +7,7 @@ description: Verify and ship CHE. Covers PR checks, merging, the Cloudflare Work
 
 ## Status: one read-only command
 ```
-node .claude/skills/che-release/scripts/release_status.mjs [--pr N | --sha SHA] [--installed VERSION+BUILD] [--json]
+node .claude/skills/che-release/scripts/release_status.mjs [--pr N | --sha SHA] [--json]
 ```
 It reports:
 - the PR state and merge SHA;
@@ -16,8 +16,7 @@ It reports:
 - the Worker deploy run for the target commit, with what it verified live (the live commit, the memory probe, the voice probe);
 - the Shorebird and IPA runs;
 - the newest published IPA, with its sha256;
-- whether `/health` is reachable from here;
-- with `--installed` (the version+build the owner's CHE Updates screen shows): whether that phone is behind, on or ahead of the newest published IPA. In chat, CHE answers the same from the phone's own report (`self_update.js` `appStatusReport`).
+- whether `/health` is reachable from here.
 
 **UNKNOWN means not verified.** Never report it as success. The iPhone is never verifiable from here.
 

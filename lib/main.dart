@@ -1826,6 +1826,7 @@ OWNER AGENCY
                     ),
                   ),
                   )
+                // a11y-label-ok: dismisses the keyboard only; the messages inside carry their own labels.
                 : GestureDetector(
                     key: const ValueKey('chat'),
                     onTap: () => _composerFocus.unfocus(),

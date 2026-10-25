@@ -550,9 +550,6 @@ function questionEnd(clause, { coding, text }) {
       new RegExp(`\\bwhat(?:['’]?s|\\s+is)\\s+(?:going\\s+on|blocking|wrong|happening|new|the\\s+latest|the\\s+hold-?up)\\s+(?:with|on)\\s+${ofRun}\\b`, 'gi'),
       new RegExp(`\\bis\\s+${ofRun}\\s+(?:still\\s+)?(?:retrying|recovering|blocked|failing|passing|green|red|ok|okay|alright|healthy)\\b`, 'gi'),
       new RegExp(`\\bhow\\s+did\\s+${ofRun}\\s+(?:go|do|turn\\s+out|end(?:\\s+up)?)\\b`, 'gi'),
-      // Spoken status questions (voice routing audit, 2026-10-25): "what is the coding job doing", "where is my coding job
-      // at" reached the model, which has no record of the job.
-      new RegExp(`\\bwhat(?:['’]?s|\\s+is)\\s+${ofRun}\\s+(?:doing|working\\s+on|up\\s+to)(?:\\s+(?:right\\s+)?now)?\\b|\\bwhere\\s+(?:is|are)\\s+${ofRun}(?:\\s+at)?(?:\\s+(?:right\\s+)?now)?\\b`, 'gi'),
       // "Inspect that coding job": the job's record, not the code that runs it.
       /\b(?:inspect|check|look\s+at|review|show\s+me|examine)\s+(?:that|the|my|this|your|the\s+last|the\s+latest)\s+(?:coding|opencode)\s+(?:jobs?|runs?|sessions?|attempts?)\b/gi,
     );

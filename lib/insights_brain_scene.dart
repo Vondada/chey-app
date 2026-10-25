@@ -318,7 +318,10 @@ class _InsightsBrainSceneState extends State<InsightsBrainScene>
                             Positioned(
                               left: nodes[i].position.dx - 18,
                               top: nodes[i].position.dy - 18,
-                              child: GestureDetector(
+                              child: Semantics(
+                                button: true,
+                                label: '${nodes[i].title}, ${nodes[i].region}. Open.',
+                                child: GestureDetector(
                                 onTap: () => _openNode(nodes[i]),
                                 child: Transform.scale(
                                   scale: widget.active && !nodes[i].empty
@@ -364,6 +367,7 @@ class _InsightsBrainSceneState extends State<InsightsBrainScene>
                                     ),
                                   ),
                                 ),
+                              ),
                               ),
                             ),
                         ],

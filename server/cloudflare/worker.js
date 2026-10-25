@@ -129,7 +129,7 @@ import { commitIntent, commitReceipt, speakReceipt } from './deploy_receipt.js';
 import { UI_CONFIG, handleImprovement, improvementIntent, loadImprovements, recordApplied, startLoggedTask, startTaskIntent, summary as improvementSummary, uiConfigPayload, undoTask, withJobStates } from './owner_improvements.js';
 import { CHE_UPDATE_GUIDE, mergeSelfUpdatePr, openSelfUpdatePr, rollbackLastUpdate, selfUpdateGitHubAccess, selfUpdateStatus, workerDeploymentStatus, latestWorkerDeploymentIntent, latestWorkerDeploymentStatus, speakLatestWorkerDeployment, appStatusIntent, appStatusReport } from './self_update.js';
 import { FAILURE_CLASS, backoffMs, classifyFailure, idempotencyKey, ownerEngineeringMessage, stableHash, stripOwnerHomework } from './recovery_policy.js';
-import { handleMobileUpdateRequest, isMobileUpdatePath, latestVerifiedRelease } from './mobile_update.js';
+import { handleMobileUpdateRequest, isMobileUpdatePath } from './mobile_update.js';
 import { definitionAnswer, inspectRepositoryContext, lookupAnswer, prepareSelfUpdate, recordLesson, recoveryRequestIntent, refusesAnswer, SOURCE_RETRY_NOTE } from './self_development.js';
 import { jsRegexFlagProblems } from './flagstaff_code_check.js';
 import { ownToolPermissionProblems } from './flagstaff_reply_check.js';
@@ -10608,10 +10608,7 @@ export class CheState extends DurableObject {
           const runtime = runtimeVersion(this.env);
           const deployment = runtimeStatusAsk.kind === 'deployment'
             ? await latestWorkerDeploymentStatus(this.env, fetch, runtime).catch(() => ({ status: 503, detail: 'Deployment history lookup failed. No successful deployment is verified.' })) : null;
-          // The newest verified IPA, compared with the phone's own report ("is the new build installed?"); a failed
-          // GitHub read is null and the reply says the comparison is unavailable.
-          const latest = body.client_app ? await latestVerifiedRelease(this.env, fetch).catch(() => null) : null;
-          const report = appStatusReport({ runtime, client: body.client_app, deployment, latest });
+          const report = appStatusReport({ runtime, client: body.client_app, deployment });
           const text = runtimeStatusAsk.kind === 'settings' ? `${report.text} Your app can open CHE's app/update details screen for this request.` : report.text;
           return ndjsonReply(text, { source: 'che_runtime_status', ok: true, model_calls: 0, status_receipt: report, ...(runtimeStatusAsk.kind === 'settings' ? { open_screen: 'app_details' } : {}) });
         }

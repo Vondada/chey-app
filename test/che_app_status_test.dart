@@ -1,6 +1,3 @@
-import 'dart:convert';
-import 'dart:io';
-
 import 'package:chey/self_update/che_mobile_update.dart';
 import 'package:chey/self_update/che_self_update_intent.dart';
 import 'package:flutter/services.dart';
@@ -64,18 +61,5 @@ void main() {
     expect(build.chatMetadata(patch: '7')['patch'], '7');
     expect(build.chatMetadata(patch: 'none')['patch'], 'none');
     expect(build.chatMetadata().containsKey('patch'), isFalse);
-  });
-
-  // One phrase list for the phone and the Worker (server/cloudflare/version_truth.test.mjs reads the same file).
-  // "Is the new build installed on my phone?" once reached the Worker with no device report, so CHE said the
-  // installed build was unavailable while the phone could read it.
-  test('every install or version phrase the Worker answers carries the phone build report', () {
-    final phrases = (jsonDecode(File('test/fixtures/app_status_phrases.json').readAsStringSync()) as Map).cast<String, dynamic>();
-    for (final phrase in [...phrases['runtime'] as List, ...phrases['receipt'] as List]) {
-      expect(cheIsAppStatusRequest('$phrase'), isTrue, reason: '$phrase');
-    }
-    for (final phrase in phrases['neither'] as List) {
-      expect(cheIsAppStatusRequest('$phrase'), isFalse, reason: '$phrase');
-    }
   });
 }

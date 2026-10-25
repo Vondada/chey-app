@@ -686,81 +686,37 @@ export function appStatusIntent(message = '') {
   if (/\b(?:added|introduced|was running|used to|previously|back then|at the time|when .*was)\b/.test(t)) return null;
   // "What changed in commit X and what can I test on my iPhone" asks about a commit's content (deploy_receipt.js),
   // not the running version; "my iPhone" plus "commit" once matched here and repeated the status answer.
-  if (/\bwhat(?:'?s| is| was)? (?:changed|new|in)\b|\bchanged in\b|\bchanges? (?:in|from|made)\b|\bsummar(?:y|ize|ise)\b|\bwhat (?:can|should|do) i test\b|\bto test\b/.test(t)) return null;
+  if (/\bwhat(?:'s| is| was)? (?:changed|new|in)\b|\bchanged in\b|\bchanges? (?:in|from|made)\b|\bsummar(?:y|ize|ise)\b|\bwhat (?:can|should|do) i test\b|\bto test\b/.test(t)) return null;
   if (/^(?:open|show)(?: me)? (?:settings|about)(?:\s*(?:\/|and)\s*(?:about|show(?: me)?))?.*\b(?:app )?version\b/.test(t)) return { kind: 'settings' };
   // Install and update questions about the owner's phone (reliability lane, gap 10): "Is the new build installed on my
   // phone?", "Did the update go through?", "What's on my iPhone right now?". The device report answers, not the model.
   if (/^(?:is|are|did|has|have)\b/.test(t)
     && /\b(?:new|latest|last)?\s*(?:build|update|patch|version|ipa)\b/.test(t)
     && /\b(?:installed|go(?:ne)? through|went through|land(?:ed)?|arrived?|reach(?:ed)?|on my (?:phone|iphone))\b/.test(t)) return { kind: 'runtime' };
-  if (/^what(?:'?s| is)\s+(?:installed\s+)?on my (?:phone|iphone)(?: right now| now)?$/.test(t)) return { kind: 'runtime' };
-  if (!/^(?:what(?:'?s| is| are)?|which|tell me|show me|check|read|give me)\b/.test(t)) return null;
+  if (/^what(?:'s| is)\s+(?:installed\s+)?on my (?:phone|iphone)(?: right now| now)?$/.test(t)) return { kind: 'runtime' };
+  if (!/^(?:what(?:'s| is| are)?|which|tell me|show me|check|read|give me)\b/.test(t)) return null;
   // The subject must be CHE itself: "what version of Python should my project use" is not a status question.
   if (/\b(?:version|build number|deployment (?:identifier|id|status)|commit|sha)\b/.test(t)
     && /\b(?:installed|backend|worker|connected|deployed|deployment|running|che|(?:my|the|this) (?:app|build|iphone app|phone app))\b/.test(t)) return { kind: /\b(?:commit|sha|last verified deployment|deployment status)\b/.test(t) ? 'deployment' : 'runtime' };
   return null;
 }
 
-/** Installed build vs the newest verified release: numeric version parts, then the build number. */
-function compareInstalled(native, latest) {
-  const parts = (v) => String(v).split('.').map((x) => (/^\d+$/.test(x) ? BigInt(x) : null));
-  const a = parts(native.version);
-  const b = parts(latest.version);
-  if (a.includes(null) || b.includes(null) || !/^\d+$/.test(String(latest.build_number || ''))) return 'unknown';
-  for (let i = 0; i < Math.max(a.length, b.length); i++) {
-    const x = a[i] ?? 0n;
-    const y = b[i] ?? 0n;
-    if (x !== y) return x > y ? 'ahead' : 'behind';
-  }
-  const mine = BigInt(native.build);
-  const theirs = BigInt(latest.build_number);
-  return mine === theirs ? 'current' : mine > theirs ? 'ahead' : 'behind';
-}
-
-/**
- * Metadata values come from the current Worker binding and paired device, never from a model or release listing.
- * `latest` is the newest verified IPA release (mobile_update.js latestVerifiedRelease); it is compared with the
- * device report and never stands in for it.
- */
-export function appStatusReport({ runtime = {}, client = null, deployment = null, latest = null, now = Date.now() } = {}) {
+/** Metadata values come from the current Worker binding and paired device, never from a model or release listing. */
+export function appStatusReport({ runtime = {}, client = null, deployment = null, now = Date.now() } = {}) {
   const deploymentId = typeof runtime.version_id === 'string' && /^[a-zA-Z0-9-]{1,80}$/.test(runtime.version_id) ? runtime.version_id : null;
   const tag = typeof runtime.version_tag === 'string' && /^[a-f0-9]{7,40}$/i.test(runtime.version_tag) ? runtime.version_tag : null;
   const at = Date.parse(client?.checked_at || '');
   const native = client?.source === 'ios_bundle' && Number.isFinite(at) && now - at >= -5000 && now - at <= 300000
     && typeof client.version === 'string' && /^\d+(?:\.\d+){1,4}$/.test(client.version)
     && typeof client.build === 'string' && /^\d{1,64}$/.test(client.build) ? client : null;
-  // The Shorebird patch the phone's updater read: a number, or "none" for the bare release. Anything else is unread.
-  const patch = native && typeof native.patch === 'string' && /^(?:none|\d{1,6})$/.test(native.patch) ? native.patch : null;
   const full = tag?.length === 40 ? tag : deployment?.production_version_verified === true
     && /^[a-f0-9]{40}$/i.test(deployment.commit_sha || '') && tag && deployment.commit_sha.startsWith(tag) ? deployment.commit_sha : null;
-  const patchText = patch === 'none' ? ' It runs no Shorebird patch (the bare release).' : patch ? ` It runs Shorebird patch ${patch}.` : ' This does not identify a Shorebird patch.';
-  const parts = [native ? `This iPhone reports installed CHE version ${native.version}, build ${native.build}, from its iOS bundle at ${native.checked_at}.${patchText}`
+  const parts = [native ? `This iPhone reports installed CHE version ${native.version}, build ${native.build}, from its iOS bundle at ${native.checked_at}. This does not identify a Shorebird patch.`
     : 'Installed iPhone version and build are unavailable: this request has no fresh native iOS bundle report. The backend cannot infer them from the latest published app.'];
-  const release = latest && typeof latest.version === 'string' && /^\d+(?:\.\d+){1,4}$/.test(latest.version) && /^\d{1,64}$/.test(String(latest.build_number || '')) ? latest : null;
-  const comparison = {
-    installed_vs_latest: native && release ? compareInstalled(native, release) : 'unknown',
-    latest: release ? { tag: release.tag || null, version: release.version, build: String(release.build_number), commit_sha: /^[a-f0-9]{7,40}$/i.test(release.commit_sha || '') ? release.commit_sha : null } : null,
-    same_commit: null,
-  };
-  if (native) {
-    const label = release ? `CHE ${release.version}, build ${release.build_number}${release.tag ? ` (${release.tag})` : ''}` : '';
-    if (!release) parts.push('I could not read the newest verified iPhone build, so I cannot say whether this iPhone is behind it.');
-    else if (comparison.installed_vs_latest === 'current') {
-      const appCommit = comparison.latest.commit_sha?.toLowerCase();
-      const backend = tag?.toLowerCase();
-      comparison.same_commit = appCommit && backend ? appCommit.startsWith(backend) || backend.startsWith(appCommit) : null;
-      const commitText = !appCommit || !backend ? ''
-        : comparison.same_commit ? ` It was built from the same commit the backend runs, ${tag}.`
-          : ` It was built from commit ${appCommit.slice(0, 12)}; the backend runs ${tag}. A newer backend is normal; app changes after that commit need a patch or a new build.`;
-      parts.push(`That is the newest verified iPhone build, ${label}.${commitText}`);
-    } else if (comparison.installed_vs_latest === 'behind') parts.push(`The newest verified iPhone build is ${label}, so this iPhone is behind it. A Shorebird patch made for that newer release does not reach this one; installing the newer build does.`);
-    else if (comparison.installed_vs_latest === 'ahead') parts.push(`This iPhone runs a build newer than the newest published release (${label}), so it was installed from an unpublished build.`);
-    else parts.push(`The newest verified iPhone build is ${label}; its version could not be compared with this one.`);
-  }
   parts.push(deploymentId ? `Connected Worker deployment identifier: ${deploymentId}.` : 'Connected Worker deployment identifier is unavailable: CF_VERSION_METADATA.id was not supplied.');
   parts.push(full ? `Backend commit SHA: ${full}.` : tag ? `Backend commit tag: ${tag}. A full commit SHA is not verified by this runtime metadata.` : 'Backend commit is unavailable: CF_VERSION_METADATA.tag was not supplied as a commit identifier.');
   if (deployment) parts.push(speakLatestWorkerDeployment(deployment));
   else parts.push('This reads the running version only; it does not prove that CHE deployed a change or that the latest deployment workflow succeeded.');
-  return { status: native || deploymentId || tag ? 'available' : 'unavailable', operation: 'read_runtime_metadata', text: parts.join(' '), checked_at: new Date(now).toISOString(), source: 'current Worker CF_VERSION_METADATA; native bundle values are device-reported; newest release from GitHub releases', installed: native ? { version: native.version, build: native.build, patch, checked_at: native.checked_at, source: native.source } : null,
-    backend: { deployment_id: deploymentId, commit_tag: tag, commit_sha: full }, comparison, deployment };
+  return { status: native || deploymentId || tag ? 'available' : 'unavailable', operation: 'read_runtime_metadata', text: parts.join(' '), checked_at: new Date(now).toISOString(), source: 'current Worker CF_VERSION_METADATA; native bundle values are device-reported', installed: native ? { version: native.version, build: native.build, checked_at: native.checked_at, source: native.source } : null,
+    backend: { deployment_id: deploymentId, commit_tag: tag, commit_sha: full }, deployment };
 }

@@ -306,21 +306,6 @@ test('che-release expands an abbreviated SHA before matching runs and /health', 
   assert.ok(missing.unknown.some((u) => /^commit deadbee/.test(u)));
 });
 
-test('che-release --installed: the owner-reported iPhone build is compared with the newest published IPA, never inferred', async () => {
-  const { releaseStatus, formatStatus, compareInstalled } = await releaseLib();
-  const tag = 'che-ios-v1.4.1024729463-b3851546996201';
-  assert.equal(compareInstalled('1.4.1024729463+3851546996201', tag), 'current');
-  assert.equal(compareInstalled('1.4.1024000000+9999999999999', tag), 'behind');
-  assert.equal(compareInstalled('1.4.1024729463+3851546996200', tag), 'behind');
-  assert.equal(compareInstalled('1.4.1025652491+4013508846901', tag), 'ahead');
-  assert.equal(compareInstalled('1.4.1025652491 build 4013508846901', tag), 'ahead');
-  for (const bad of ['', 'latest', '1.4', '1.4.x+1']) assert.equal(compareInstalled(bad, tag), 'unknown', bad);
-  const status = { ...(await releaseStatus({ pr: 300, fetcher: fakeGitHub().fetcher, token: '' })), installed: '1.4.1024000000+1' };
-  assert.match(formatStatus(status), /installed \(owner-reported\) 1\.4\.1024000000\+1: BEHIND the newest published IPA che-ios-v1\.4\.1024729463/);
-  assert.doesNotMatch(formatStatus({ ...status, installed: undefined }), /owner-reported/, 'no report, no installed line');
-  assert.equal(node([script('che-release', 'release_status.mjs'), '--installed', 'latest']).status, 2);
-});
-
 // ─── che-youtube ────────────────────────────────────────────────────────────
 
 test('che-youtube check_package: a sourced example is ready to render but not to publish', () => {
@@ -427,17 +412,4 @@ test('che-recover preflight: cleans build outputs, refuses tracked files, report
   assert.ok(existsSync(join(dir, '.dart_tool/tracked.txt')), 'a target holding a tracked file is refused');
   assert.match(done.refused[0].reason, /tracked/);
   assert.ok(existsSync(join(dir, 'keep.dart')), 'source untouched');
-
-  // 2026-10-25: five lanes were lost from .claude/worktrees. Commits on a detached worktree and stashes are
-  // local-only too, and no branch scan sees them.
-  const wt = join(dir, '.claude', 'worktrees', 'lane');
-  sh('worktree', 'add', '-q', '--detach', wt);
-  writeFileSync(join(wt, 'lane.dart'), 'void lane() {}\n');
-  run('git', ['add', 'lane.dart'], { cwd: wt });
-  run('git', ['-c', 'user.email=t@example.org', '-c', 'user.name=t', 'commit', '-q', '-m', 'lane work'], { cwd: wt });
-  writeFileSync(join(dir, 'keep.dart'), 'void main() { /* half done */ }\n');
-  sh('stash', 'push', '-q', '-m', 'preflight-test');
-  const more = JSON.parse(pre().stdout).local_only;
-  assert.ok(more.some((w) => w.kind === 'detached HEAD, unpushed' && w.where.endsWith(join('worktrees', 'lane')) && w.count === 1), JSON.stringify(more));
-  assert.ok(more.some((w) => w.kind === 'stashed' && w.count === 1), JSON.stringify(more));
 });

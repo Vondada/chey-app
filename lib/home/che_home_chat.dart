@@ -9,6 +9,7 @@
 //   • floating glow composer: Agent | Chat mode chip, attach, mic, send/stop
 
 import 'package:flutter/material.dart';
+import 'package:flutter/semantics.dart';
 import 'package:flutter/services.dart';
 
 import '../che_ui/che_agent_chat.dart' show CheOrb, CheOrbState, CheOrbStateLabel;
@@ -46,6 +47,7 @@ class CheHomePresence extends StatelessWidget {
               : orbState == CheOrbState.listening
                   ? 'CHE is listening. Double tap to stop listening.'
                   : 'CHE, ${orbState.label}. Double tap to talk.',
+          // a11y-label-ok: the Semantics(button: true, label: ...) just above names this orb.
           child: GestureDetector(
             onTap: () {
               HapticFeedback.mediumImpact();
@@ -135,7 +137,10 @@ class CheHomeUserBubble extends StatelessWidget {
     );
     return Align(
       alignment: Alignment.centerRight,
-      child: GestureDetector(
+      // VoiceOver cannot long-press easily: the same message actions are a named action.
+      child: Semantics(
+        customSemanticsActions: onLongPress == null ? null : {const CustomSemanticsAction(label: 'Message actions'): onLongPress!},
+        child: GestureDetector(
         onLongPress: onLongPress,
         child: ConstrainedBox(
           constraints: BoxConstraints(maxWidth: maxW),
@@ -169,6 +174,7 @@ class CheHomeUserBubble extends StatelessWidget {
                   ),
           ),
         ),
+      ),
       ),
     );
   }
@@ -216,7 +222,10 @@ class CheHomeAssistantMessage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final live = liveStart != null;
-    return GestureDetector(
+    // VoiceOver cannot long-press easily: the same message actions are a named action.
+    return Semantics(
+      customSemanticsActions: onLongPress == null ? null : {const CustomSemanticsAction(label: 'Message actions'): onLongPress!},
+      child: GestureDetector(
       onLongPress: onLongPress,
       child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Padding(
@@ -251,6 +260,7 @@ class CheHomeAssistantMessage extends StatelessWidget {
           ]),
         ),
       ]),
+      ),
     );
   }
 }

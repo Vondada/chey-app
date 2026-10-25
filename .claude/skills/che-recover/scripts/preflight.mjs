@@ -6,8 +6,7 @@
 //
 // Default: read-only. Reports free disk on the repo's filesystem, the size of
 // regenerable build outputs, and work that exists only on this machine
-// (uncommitted changes, commits on branches or detached worktrees that were never
-// pushed, and stashes).
+// (uncommitted changes, commits on branches or worktrees that were never pushed).
 // A full container or an expired session loses exactly that work.
 //
 // --clean lists what it would delete; add --yes to delete. It only ever removes
@@ -117,16 +116,7 @@ function localOnlyWork() {
   for (const wt of worktrees.length ? worktrees : [repo]) {
     const dirty = (git(wt, 'status', '--porcelain') || '').split('\n').filter(Boolean).length;
     if (dirty) found.push({ where: wt, kind: 'uncommitted', count: dirty });
-    // A worktree on a detached HEAD (agents check out commits) holds commits no branch names: the branch scan below
-    // never sees them, and they vanish with the container.
-    if (git(wt, 'symbolic-ref', '-q', 'HEAD') === null && git(wt, 'rev-parse', '-q', '--verify', 'HEAD')) {
-      const n = Number(git(wt, 'rev-list', '--count', 'HEAD', '--not', '--remotes', '--branches') || 0);
-      if (n > 0) found.push({ where: wt, kind: 'detached HEAD, unpushed', count: n });
-    }
   }
-  // Stashes live only in this clone (the stack is shared by every worktree) and are never pushed.
-  const stashes = (git(repo, 'stash', 'list') || '').split('\n').filter(Boolean).length;
-  if (stashes) found.push({ where: 'git stash', kind: 'stashed', count: stashes });
   const branches = (git(repo, 'for-each-ref', '--format=%(refname:short)|%(upstream:short)', 'refs/heads') || '')
     .split('\n')
     .filter(Boolean);

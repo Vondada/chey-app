@@ -802,6 +802,7 @@ class _CheAgentChatScreenState extends State<CheAgentChatScreen> {
                         onPick: _send,
                         orbState: c.orbState,
                       )
+                    // a11y-label-ok: dismisses the keyboard only; the messages inside carry their own labels.
                     : GestureDetector(
                         key: ValueKey(c.current.id),
                         onTap: () => _focus.unfocus(),

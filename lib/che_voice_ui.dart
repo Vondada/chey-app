@@ -62,7 +62,10 @@ class _CheVoiceOrbState extends State<CheVoiceOrb>
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
+    return Semantics(
+      button: true,
+      label: 'CHE voice, ${widget.snapshot.phase.name}. Double tap to talk or stop.',
+      child: GestureDetector(
       onTap: widget.onTap,
       child: AnimatedBuilder(
         animation: controller,
@@ -110,6 +113,7 @@ class _CheVoiceOrbState extends State<CheVoiceOrb>
             ),
           );
         },
+      ),
       ),
     );
   }

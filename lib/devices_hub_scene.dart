@@ -456,9 +456,13 @@ class _DevicesHubSceneState extends State<DevicesHubScene>
                                 Positioned(
                                   left: positions[i].dx - 44,
                                   top: positions[i].dy - 38,
-                                  child: GestureDetector(
-                                    onTap: () => _openDevice(nodes[i]),
-                                    child: _DeviceBadge(node: nodes[i]),
+                                  child: Semantics(
+                                    button: true,
+                                    label: 'Open ${nodes[i].name}',
+                                    child: GestureDetector(
+                                      onTap: () => _openDevice(nodes[i]),
+                                      child: _DeviceBadge(node: nodes[i]),
+                                    ),
                                   ),
                                 ),
                             ],
