@@ -52,6 +52,7 @@ export const CONNECTORS = Object.freeze({
   bookkeeping: { label: 'Bank or bookkeeping feed', kind: 'none', setup: 'CHE has no bank or bookkeeping connector yet.' },
   ads_account: { label: 'Ad account (Google/Meta)', kind: 'none', setup: 'CHE has no ad-platform connector yet.' },
   fundyouredge: { label: 'FundYourEdge funded account (Rithmic)', kind: 'none', setup: 'Rithmic requires its own licensed API before CHE can read or trade a funded account. Nothing is connected.' },
+  rentahuman: { label: 'RentAHuman account (optional)', kind: 'secret', setup: 'Create an API key at rentahuman.ai/account/api-keys, then open Business, CHE Earn, Connect RentAHuman and paste it in the secure field. Search works without it, with RentAHuman\'s public limits.' },
 });
 
 export const MODES = Object.freeze({ EXPLORE: 'EXPLORE', PLAN: 'PLAN', BUILD: 'BUILD' });
@@ -867,6 +868,39 @@ export const COMMANDS = Object.freeze([
     examples: ['Profit report for this month'],
     prompt: `Make a profit report from: {input}. ${NUMBERS_RULE}`, produces: 'profit report', keywords: ['profit', 'revenue', 'report', 'p&l'],
   }),
+  // CHE Earn (owner, 2026-10-25): earn_hub.js over RentAHuman's documented read API. Search only; $0 authorized
+  // spending by default; hiring, paying, applying and submitting stay the owner's, after his approval.
+  C('earn-find-worker', 'money', 'EXPLORE', 'Find a person on RentAHuman for a task.', {
+    does: 'Searches RentAHuman\'s public profiles for people who can do the task and reads the top three with rates, ratings and RentAHuman verification. Posts, hires and pays nothing.',
+    needs: ['office'], optional: ['rentahuman'], route: 'che_earn', handler: 'earn_hub.earnChatReply → earn_marketplace.rentahuman.searchWorkers',
+    input: { name: 'task', required: false, hint: 'The task, place and budget' },
+    examples: ['CHE, find someone to do this task', 'Find someone to photograph my storefront in Phoenix'],
+    prompt: 'Find someone to {input}', produces: 'worker shortlist', evidence: 'RentAHuman profile records with the endpoint and time they were read.', keywords: ['find someone', 'hire a human', 'rentahuman', 'worker', 'human workforce'],
+  }),
+  C('earn-workers', 'money', 'EXPLORE', 'Read your human worker jobs.', {
+    does: 'Reads the human worker jobs CHE Earn is tracking (drafted bounties, hires and their status) from the Office task list.',
+    needs: ['office'], route: 'che_earn', handler: 'earn_hub.earnChatReply (data.team_tasks, worker_kind human)', input: null,
+    examples: ['CHE, show my human workers'],
+    prompt: 'Show my human workers', produces: 'worker jobs', evidence: 'Stored CHE Earn records only.', keywords: ['my human workers', 'hired humans', 'human jobs'],
+  }),
+  C('earn-opportunities', 'money', 'EXPLORE', 'Find and rank paid marketplace opportunities.', {
+    does: 'Reads RentAHuman\'s open bounties and ranks them by net pay, deadline, skills and whether AI help is allowed: CHE can complete, CHE can help, human required or not eligible. You submit applications yourself.',
+    needs: ['office'], optional: ['rentahuman'], route: 'che_earn', handler: 'earn_hub.earnChatReply → earn_evaluator.rankOpportunities', input: null,
+    examples: ['Find earning opportunities', 'Show me paid bounties'],
+    prompt: 'Find earning opportunities', produces: 'ranked opportunities', evidence: 'RentAHuman bounty records; every score is labelled as an estimate.', keywords: ['earning opportunities', 'bounties', 'paid gigs', 'make money', 'che earn'],
+  }),
+  C('earn-earnings', 'money', 'EXPLORE', 'Read verified CHE Earn earnings.', {
+    does: 'Reads CHE Earn earnings from verified payment records only (a Stripe invoice read back as paid). Says "No verified earnings yet" when there are none.',
+    needs: ['office'], optional: ['stripe'], route: 'che_earn', handler: 'earn_hub.verifiedEarnings', input: null,
+    examples: ['CHE Earn earnings'],
+    prompt: 'CHE Earn earnings', produces: 'earnings', evidence: 'Verified payment records only; test-mode payments are labelled test.', keywords: ['che earn earnings', 'marketplace earnings', 'verified earnings'],
+  }),
+  C('earn-approvals', 'money', 'EXPLORE', 'Read the CHE Earn steps waiting for your yes.', {
+    does: 'Reads, as a numbered list, each CHE Earn step waiting for your approval and whether it spends money. Approving happens in CHE Earn\'s Approvals, where each one is read back first.',
+    needs: ['office'], route: 'che_earn', handler: 'earn_hub.pendingApprovals', input: null,
+    examples: ['CHE Earn approvals'],
+    prompt: 'CHE Earn approvals', produces: 'approval list', evidence: 'Stored CHE Earn requests only.', keywords: ['earn approvals', 'approvals waiting'],
+  }),
 
   // ── Client Scouting & Service Fulfillment ─────────────────────────────
   C('lead-scout', 'clients', 'EXPLORE', 'Find potential clients using lawful business information.', {
@@ -1178,6 +1212,7 @@ export function connectorStatus(env = {}, facts = {}) {
   out.bookkeeping = { state: 'none', detail: CONNECTORS.bookkeeping.setup };
   out.ads_account = { state: 'none', detail: CONNECTORS.ads_account.setup };
   out.fundyouredge = { state: 'none', detail: CONNECTORS.fundyouredge.setup };
+  out.rentahuman = truthy(env.RENTAHUMAN_API_KEY) ? ok() : missing('No RentAHuman key: public search only.');
   return out;
 }
 

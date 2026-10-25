@@ -262,6 +262,7 @@ import { loadRegistry as loadCapabilityRegistry } from './capability_registry.js
 import { BrainLedger, answerLedger, decidePending as decideBrainPending, installBrainLedger, ledgerApi, recordGraphConnections, ledgerIntent as brainLedgerIntent, DEFAULT_ZONE as LEDGER_DEFAULT_ZONE } from './brain_ledger.js';
 import { FilmStore, filmIntent, filmProgress, farmProviders, loadRates, loadUsage, speakFarm, speakPlan, speakStatus as speakFilmStatus } from './film_studio.js';
 import { GpuQueue, gpuWorkerRoute, speakGpuSummary } from './gpu_queue.js';
+import { earnChatReply, earnIntent, earnRoute } from './earn_hub.js';
 import { CreationStudio, studioOwnerRoute } from './creation_studio.js';
 import { creationProbeRoute } from './creation_probe.js';
 import { projectAudit, projectLibraryRoute } from './project_library.js';
@@ -5705,7 +5706,7 @@ export class CheState extends DurableObject {
     return reply;
   }
 
-  // ── Command Center ─────────────────────────────────────────────────────
+  // Command Center
   // Live readiness of every connector a command can need, from the Worker's
   // real configuration (secrets, OAuth tokens, engines). Never guessed.
   // The Showroom's real examples: the newest saved invention, video and picture, each only when it exists. The showroom
@@ -6006,7 +6007,7 @@ export class CheState extends DurableObject {
     await this.scheduleWork();
   }
 
-  // ─── Cloud Computer (cloud_computer.js) ─────────────────────────────────
+  // Cloud Computer (cloud_computer.js)
   // One manager over the existing compute. Handoff kinds go to their existing starters; repo tests become a
   // cloud_task job in this queue that waits for the owner's approval; file inspection finishes on the Worker.
   async cloudStart(kind, params = {}, { agent = 'CHE', confirmed = false } = {}) {
@@ -6122,7 +6123,7 @@ export class CheState extends DurableObject {
   // Starts a workflow on CHE's existing objective graph: each step is a
   // `command` node, independent steps run in parallel lanes, approval steps
   // wait for the owner. Nothing starts unless every step can run now.
-  // ── Capability Engine ──────────────────────────────────────────────────
+  // Capability Engine
   // Internal-only mode has one switch: Security Intelligence's egress policy (security_intelligence.js), which guards
   // every outbound fetch. Turning it on is allowed from here; turning it off needs Face ID on the Security page.
   async setCapabilityPolicy(data, intent) {
@@ -6198,7 +6199,7 @@ export class CheState extends DurableObject {
     return say('I can tell you what I can actually do, what I learned about something, which knowledge I used, or build an internal tool.', { ok: false });
   }
 
-  // ── Security Intelligence ──────────────────────────────────────────────
+  // Security Intelligence
   async securityCount(name) {
     try {
       const sec = await loadSecurity(this.ctx.storage);
@@ -6439,7 +6440,7 @@ export class CheState extends DurableObject {
   }
 
   // The owner's spoken or typed security requests. Every answer reports what was actually done or found.
-  // ── Film Studio ────────────────────────────────────────────────────────
+  // Film Studio
   // What every film step needs. The owner's own computer is never part of it (owner, 2026-10-22).
   async filmCtx(request = null) {
     const storage = this.ctx.storage;
@@ -6572,7 +6573,7 @@ export class CheState extends DurableObject {
     return say('I can run a security check, give the status, revoke sessions, lock down, review internal tools or knowledge access, and turn off external dependencies, sir.', { ok: false });
   }
 
-  // ── Workflow Engine ────────────────────────────────────────────────────
+  // Workflow Engine
   // The library, its measurements and the owner's controls. Running a workflow stays with the existing
   // executors (handlers, runSlashCommand, startCommandWorkflow and the objective graph).
   async workflowsApi(path, request, body, data) {
@@ -7103,6 +7104,8 @@ export class CheState extends DurableObject {
       if (!ownerDevice && !guestRouteAllowed(request.method, path, { ownerProfile: activeTenant?.role === 'owner' })) {
         return json({ detail: 'Only the CHE owner can use that. This profile can chat, read aloud, and manage its own notifications.' }, 403);
       }
+      // CHE Earn (earn_hub.js): owner only; paid/binding steps are gated there.
+      if (path.startsWith('/api/earn')) return earnRoute({ data, storage: this.ctx.storage, env: this.env, model: this.env.CHE_STRONG_MODEL || STRONG_MODEL, owner: ownerDevice, save: () => this.ctx.storage.put('che', data) }, path, request.method, body, new URL(request.url).searchParams);
 
       // The paired phone reports the build it is running. That receipt is the only evidence behind
       // "the update is installed on your iPhone" (hallucination_auditor.js); nothing else may claim it.
@@ -8795,7 +8798,7 @@ export class CheState extends DurableObject {
         return json({ unread: flag.count + letters.length, incoming: flag.count, letters_unread: letters.length, important, latest: gistRows(flag.latest) });
       }
 
-      // ─── Token usage tracker ──────────────────────────────────────────
+      // Token usage tracker
       if (path === '/api/usage/tokens' && request.method === 'GET') {
         return json(await usageReport(this.ctx.storage));
       }
@@ -9078,7 +9081,7 @@ export class CheState extends DurableObject {
         this.broadcastAgents(data);
         return json({ agent: agentDetail(data, made.agent).agent, task });
       }
-      // ─── Universal AI layer ────────────────────────────────────────────
+      // Universal AI layer
       // No endpoint ever returns a credential value; only whether one exists.
       if (path === '/api/ai/overview' && request.method === 'GET') {
         return json(await aiOverview(this.env, data, this.ctx.storage));
@@ -11401,7 +11404,8 @@ export class CheState extends DurableObject {
           }
           return ndjsonReply(answers.join('\n'), { source: handoffRead ? 'che_live_handoff' : 'che_github_verification', ok: receipts.every((r) => r.status === 'success'), execution_receipts: receipts, request_id });
         }
-
+        const earnAsk = body.attachment ? null : earnIntent(message);
+        if (earnAsk) return ndjsonReply(ownerDevice ? await earnChatReply({ storage: this.ctx.storage, env: this.env, data }, earnAsk) : 'Only the CHE owner can use CHE Earn, sir.', { source: 'che_earn', model_calls: 0 });
 
         // Pictures, videos and files the owner sends are kept in CHE's media store (media.js saveOwnerFile), and "how many"
         // is counted from that store. Owner only, with no model call, so CHE never says she has nowhere to keep them.

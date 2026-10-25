@@ -138,11 +138,11 @@ Future<void> openCenter(
 void main() {
   setUp(() => SharedPreferences.setMockInitialValues({}));
 
-  test('the fixture is the whole catalog: 131 commands in 9 categories', () {
+  test('the fixture is the whole catalog: 136 commands in 9 categories', () {
     final catalog = CheCommandCatalog.fromJson(fixture);
-    expect(catalog.commands.length, 131);
+    expect(catalog.commands.length, 136);
     expect(catalog.categories.length, 9);
-    expect(catalog.commands.map((c) => c.id).toSet().length, 131);
+    expect(catalog.commands.map((c) => c.id).toSet().length, 136);
     expect(catalog.byId('/trade-chart')?.title, isNotEmpty);
     expect(catalog.search('find website clients').take(3).map((c) => c.id), contains('lead-scout'));
     expect(catalog.search('how much should I charge').take(3).map((c) => c.id), contains('pricing'));
@@ -153,7 +153,7 @@ void main() {
     final che = FakeChe();
     await openCenter(tester, che: che);
     expect(find.text('Commands'), findsOneWidget);
-    expect(find.text('All 131'), findsOneWidget);
+    expect(find.text('All 136'), findsOneWidget);
     for (final label in [_intelligenceLabel, 'YouTube 11', 'Trading 25', 'Websites, Apps & AI 20', 'Money Management 8',
       'Client Scouting & Delivery 9', 'Marketing & Sales 7', 'Office & Automation 21', 'Creator Studio 9']) {
       expect(find.text(label), findsOneWidget, reason: label);
@@ -257,7 +257,7 @@ void main() {
     final reloaded = CheCommandStore();
     await reloaded.load();
     expect(reloaded.favorites, ['che']);
-    expect(reloaded.cachedCatalog?.commands.length, 131, reason: 'the catalog is cached for offline use');
+    expect(reloaded.cachedCatalog?.commands.length, 136, reason: 'the catalog is cached for offline use');
   });
 
   testWidgets('offline: the cached library still opens and says it may be out of date', (tester) async {
@@ -267,7 +267,7 @@ void main() {
     final offline = FakeChe(offline: true);
     await openCenter(tester, che: offline);
     expect(find.textContaining('Showing the last list CHE sent; statuses may be out of date'), findsOneWidget);
-    expect(find.text('All 131'), findsOneWidget);
+    expect(find.text('All 136'), findsOneWidget);
   });
 
   testWidgets('offline with nothing cached says so instead of showing an empty success', (tester) async {

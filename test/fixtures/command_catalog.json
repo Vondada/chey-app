@@ -3800,6 +3800,192 @@
    ]
   },
   {
+   "id": "earn-find-worker",
+   "category": "money",
+   "title": "Earn Find Worker",
+   "summary": "Find a person on RentAHuman for a task.",
+   "does": "Searches RentAHuman's public profiles for people who can do the task and reads the top three with rates, ratings and RentAHuman verification. Posts, hires and pays nothing.",
+   "mode": "EXPLORE",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": {
+    "name": "task",
+    "required": false,
+    "hint": "The task, place and budget"
+   },
+   "examples": [
+    "CHE, find someone to do this task",
+    "Find someone to photograph my storefront in Phoenix"
+   ],
+   "needs": [
+    "office"
+   ],
+   "optional": [
+    "rentahuman"
+   ],
+   "handler": "earn_hub.earnChatReply → earn_marketplace.rentahuman.searchWorkers",
+   "route": "che_earn",
+   "produces": "worker shortlist",
+   "evidence": "RentAHuman profile records with the endpoint and time they were read.",
+   "cost": "Free engines only, unless you turned paid AI on.",
+   "keywords": [
+    "find someone",
+    "hire a human",
+    "rentahuman",
+    "worker",
+    "human workforce"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": [
+    "rentahuman"
+   ]
+  },
+  {
+   "id": "earn-workers",
+   "category": "money",
+   "title": "Earn Workers",
+   "summary": "Read your human worker jobs.",
+   "does": "Reads the human worker jobs CHE Earn is tracking (drafted bounties, hires and their status) from the Office task list.",
+   "mode": "EXPLORE",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": null,
+   "examples": [
+    "CHE, show my human workers"
+   ],
+   "needs": [
+    "office"
+   ],
+   "optional": [],
+   "handler": "earn_hub.earnChatReply (data.team_tasks, worker_kind human)",
+   "route": "che_earn",
+   "produces": "worker jobs",
+   "evidence": "Stored CHE Earn records only.",
+   "cost": "Free engines only, unless you turned paid AI on.",
+   "keywords": [
+    "my human workers",
+    "hired humans",
+    "human jobs"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
+   "id": "earn-opportunities",
+   "category": "money",
+   "title": "Earn Opportunities",
+   "summary": "Find and rank paid marketplace opportunities.",
+   "does": "Reads RentAHuman's open bounties and ranks them by net pay, deadline, skills and whether AI help is allowed: CHE can complete, CHE can help, human required or not eligible. You submit applications yourself.",
+   "mode": "EXPLORE",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": null,
+   "examples": [
+    "Find earning opportunities",
+    "Show me paid bounties"
+   ],
+   "needs": [
+    "office"
+   ],
+   "optional": [
+    "rentahuman"
+   ],
+   "handler": "earn_hub.earnChatReply → earn_evaluator.rankOpportunities",
+   "route": "che_earn",
+   "produces": "ranked opportunities",
+   "evidence": "RentAHuman bounty records; every score is labelled as an estimate.",
+   "cost": "Free engines only, unless you turned paid AI on.",
+   "keywords": [
+    "earning opportunities",
+    "bounties",
+    "paid gigs",
+    "make money",
+    "che earn"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": [
+    "rentahuman"
+   ]
+  },
+  {
+   "id": "earn-earnings",
+   "category": "money",
+   "title": "Earn Earnings",
+   "summary": "Read verified CHE Earn earnings.",
+   "does": "Reads CHE Earn earnings from verified payment records only (a Stripe invoice read back as paid). Says \"No verified earnings yet\" when there are none.",
+   "mode": "EXPLORE",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": null,
+   "examples": [
+    "CHE Earn earnings"
+   ],
+   "needs": [
+    "office"
+   ],
+   "optional": [
+    "stripe"
+   ],
+   "handler": "earn_hub.verifiedEarnings",
+   "route": "che_earn",
+   "produces": "earnings",
+   "evidence": "Verified payment records only; test-mode payments are labelled test.",
+   "cost": "Free engines only, unless you turned paid AI on.",
+   "keywords": [
+    "che earn earnings",
+    "marketplace earnings",
+    "verified earnings"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": [
+    "stripe"
+   ]
+  },
+  {
+   "id": "earn-approvals",
+   "category": "money",
+   "title": "Earn Approvals",
+   "summary": "Read the CHE Earn steps waiting for your yes.",
+   "does": "Reads, as a numbered list, each CHE Earn step waiting for your approval and whether it spends money. Approving happens in CHE Earn's Approvals, where each one is read back first.",
+   "mode": "EXPLORE",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": null,
+   "examples": [
+    "CHE Earn approvals"
+   ],
+   "needs": [
+    "office"
+   ],
+   "optional": [],
+   "handler": "earn_hub.pendingApprovals",
+   "route": "che_earn",
+   "produces": "approval list",
+   "evidence": "Stored CHE Earn requests only.",
+   "cost": "Free engines only, unless you turned paid AI on.",
+   "keywords": [
+    "earn approvals",
+    "approvals waiting"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
    "id": "lead-scout",
    "category": "clients",
    "title": "Lead Scout",
@@ -5520,6 +5706,12 @@
    "detail": "Rithmic requires its own licensed API before CHE can read or trade a funded account. Nothing is connected.",
    "label": "FundYourEdge funded account (Rithmic)",
    "setup": "Rithmic requires its own licensed API before CHE can read or trade a funded account. Nothing is connected."
+  },
+  "rentahuman": {
+   "state": "not_connected",
+   "detail": "No RentAHuman key: public search only.",
+   "label": "RentAHuman account (optional)",
+   "setup": "Create an API key at rentahuman.ai/account/api-keys, then open Business, CHE Earn, Connect RentAHuman and paste it in the secure field. Search works without it, with RentAHuman's public limits."
   }
  }
 }
