@@ -72,6 +72,7 @@ Branch: `claude/che-character-realism` (from main `afb8de1`). Lanes push to `lan
 | G11 | Compute pool (providers, cooldowns, handoff) | C | in progress |
 | G12 | World population + benchmarks | D | in progress |
 | G13 | Create Room demo video + walkthrough | E | in progress |
+| G14 | "Open and display saved image <id>" listed all 26 media items | me | fixed `dfd3f48`: Worker 19/19 media tests, full Worker 3990/0; Flutter che_chat_image 2/2; iPhone display unverified |
 | G9 | e2e server "k.startsWith" (research queue never ran in e2e) | me | done `4ad45c9`; e2e 2/2 |
 
 ## Integration and release
