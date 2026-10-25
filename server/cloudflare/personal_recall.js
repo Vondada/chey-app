@@ -111,7 +111,17 @@ export function ownerAssertion(text) {
   return ownerFacts(text)[0] || null;
 }
 
-/** The subject of a personal question, or null when the words are not asking for a personal fact. */
+// "Where did you get my favorite drink from?", "how did you learn my dog's name?": the source of one stored fact.
+const SOURCE_OF = /^(?:where|how) did you (?:get|learn|hear|find out|come up with)(?: about)?\s+(?:my|the owner'?s?)\s+(.{2,60}?)(?:\s+from)?$/i;
+// "My favorites", "my favorite things": every favorite the owner stated, not one subject.
+const ALL_FAVORITES = new Set(['favorite', 'favorites', 'things', 'stuff', 'preferences', 'all']);
+
+/**
+ * The subject of a personal question, or null when the words are not asking for a personal fact. Owner live test
+ * (2026-10-25): "What are my favorite food, drink and color?" answered only the food, and "tell me my favorites" said
+ * there was no record. A list of subjects comes back as `parts` (one question each, the shared "favorite" carried to
+ * every bare item), and "my favorites" / "my favorite things" as `all_favorites`.
+ */
 export function personalFactQuestion(message) {
   const text = stripWake(message);
   if (!text || /\b(?:story|fiction|pretend|imagine|hypothetical|poem|joke)\b/i.test(text)) return null;
@@ -119,12 +129,73 @@ export function personalFactQuestion(message) {
   // The asked sentence ends at its first question mark or full stop. What follows ("Tell me how you know that…") is an
   // instruction about the answer, never part of the subject.
   const [asked] = text.split(/[?!.]/);
+  const source = SOURCE_OF.exec(asked.trim());
+  if (source) {
+    const subject = source[1].trim();
+    if (!words(subject).length || NOT_PERSONAL.test(subject)) return null;
+    return { subject, learn: true, words: words(subject) };
+  }
   const [head] = asked.split(/,|\band\b|\bwhere\b/i);
   const match = PERSONAL.exec(head.trim());
   if (!match) return null;
   const subject = match[1].replace(/\b(?:and|please)\b.*$/i, '').trim();
   if (!words(subject).length || NOT_PERSONAL.test(subject)) return null;
-  return { subject, learn, words: words(subject) };
+  const question = { subject, learn, words: words(subject) };
+  if (question.words.every((w) => ALL_FAVORITES.has(w)) && question.words.some((w) => w.startsWith('favorite'))) question.all_favorites = true;
+  // "my favorite food, drink and color": the rest of the sentence after the first subject, split into its items.
+  const full = PERSONAL.exec(asked.trim().replace(/\s+where\b.*$/i, ''));
+  const items = full ? full[1].split(/\s*,\s*(?:and\s+)?|\s+and\s+/i).map((x) => x.trim().replace(/^(?:my|your)\s+/i, '')).filter(Boolean) : [];
+  if (items.length > 1 && items.length <= 6) {
+    // The qualifier of the first item ("favorite") belongs to bare items after it ("drink" → "favorite drink").
+    const lead = items[0].split(/\s+/);
+    const qualifier = lead.length > 1 ? lead.slice(0, -1).join(' ') : '';
+    const parts = items.map((item, i) => (i > 0 && qualifier && item.split(/\s+/).length === 1 ? `${qualifier} ${item}` : item))
+      .filter((item) => words(item).length && !NOT_PERSONAL.test(item) && !/\b(?:how|why|when|who|what)\b/i.test(item))
+      .map((item) => ({ subject: item, learn, words: words(item) }));
+    if (parts.length > 1) question.parts = parts;
+  }
+  return question;
+}
+
+// An explicit request to store something in memory. Owner live test (2026-10-25): "Please save Silver Falcon 27 to your
+// memory" and "Store the code phrase Silver Falcon 27" reached the model, which said "I've saved that" while nothing was
+// written. Every form here goes to the one authorized memory write (worker.js rememberOwnerStatement), which confirms
+// only after reading the record back from storage.
+const SAVE_VERB = String.raw`(?:remember|memori[sz]e|keep\s+in\s+mind|save|store|keep|note(?:\s+down)?|record|log|add|write\s+down|commit)`;
+const ALWAYS_SAVE = /^(?:remember|memori[sz]e|keep\s+in\s+mind)$/i;
+const MEMORY_PLACE = String.raw`(?:(?:to|in|into|on)\s+(?:(?:your|my|the)\s+)?(?:long[- ]term\s+)?(?:memory|memories|brain|records?|notes))`;
+const NAMED_ITEM = /^(?:the\s+|this\s+|a\s+|my\s+)?(?:(?:code|secret|test|key|magic|safe)\s+)?(?:phrase|word|code ?word|fact|note|detail|number)\b/i;
+
+/**
+ * The statement an explicit save request asks CHE to store, or null. "Remember …" always counts; any other verb needs
+ * a memory word ("to your memory"), a colon or a named item ("the code phrase X"), so "add milk to the shopping list"
+ * or "save the file" never land here. A question is never a save, and passwords never become memory records: they
+ * live only in the on-device Keychain vault (AGENTS.md).
+ */
+export function explicitMemorySave(message) {
+  const text = stripWake(message).replace(/^(?:please|hey|ok(?:ay)?|now)[,\s]+/i, '').replace(/^(?:can|could|would|will)\s+you\s+(?:please\s+)?/i, '').trim();
+  if (!text || text.length > 600) return null;
+  const m = new RegExp(String.raw`^(${SAVE_VERB})\b\s*(?:this|that|the following)?\s*(.+)$`, 'i').exec(text);
+  if (!m) return null;
+  let body = m[2].replace(/[.!]+$/, '').replace(/\s*please$/i, '').trim();
+  const place = new RegExp(String.raw`\s*,?\s*${MEMORY_PLACE}$`, 'i');
+  const placeLead = new RegExp(String.raw`^${MEMORY_PLACE}\s*[:,-]?\s*`, 'i');
+  const hasPlace = place.test(body) || placeLead.test(body);
+  body = body.replace(place, '').replace(placeLead, '').trim();
+  const colon = /^:/.test(body);
+  body = body.replace(/^:\s*/, '').replace(/^that\s+/i, '').trim();
+  const named = NAMED_ITEM.exec(body);
+  if (!ALWAYS_SAVE.test(m[1].replace(/\s+/g, ' ')) && !hasPlace && !named && !colon) return null;
+  if (/\b(?:password|passcode|security code|social security|credit card|card number)\b/i.test(body)) return null;
+  if (named) {
+    const value = body.slice(named[0].length).replace(/^\s*(?:is|:|-|=)\s*/i, '').replace(/^["“']|["”']$/g, '').trim();
+    if (value) {
+      const label = named[0].replace(/^(?:the|this|a|my)\s+/i, '').trim();
+      body = `${label[0].toUpperCase()}${label.slice(1)}: ${value}`;
+    }
+  }
+  if (!body || isQuestionLike(body)) return null;
+  return body.slice(0, 500);
 }
 
 // The owner's calendar. Stored instants stay UTC; only the day shown or spoken is converted to America/Chicago,
@@ -204,13 +275,75 @@ export function statementsFromBrain(records = []) {
       const said = /You said:\s*([\s\S]*?)(?:\n(?:CHE|ChatGPT) answered:|$)/.exec(String(r.body || ''));
       // A ChatGPT turn keeps the time the owner wrote it there, not the import time.
       const at = r.source?.kind === 'chatgpt_export' ? (r.source.message_at || r.created_at) : r.created_at;
-      return { id: r.id, text: said ? said[1].replace(/\s+/g, ' ').trim() : '', created_at: at, brain: true, origin: r.source?.kind, title: r.source?.conversation_title || '' };
+      const words = said ? said[1].replace(/\s+/g, ' ').trim() : '';
+      // "Store the code phrase Silver Falcon 27" is a request; what it stored is the statement (owner live test, 2026-10-25:
+      // recall quoted the request itself as one of "4 things you told me").
+      return { id: r.id, text: explicitMemorySave(words) || words, created_at: at, brain: true, origin: r.source?.kind, title: r.source?.conversation_title || '' };
     })
     .filter((r) => r.text);
 }
 
-/** The reply and the records it rests on. A miss says so and never guesses; a hit gives the stored subject and value. */
+// Where a recalled record lives and how it was confirmed, as stored: the source metadata the owner asks for.
+const STORE_NAME = (r) => (r.phone ? 'the Brain notes on your phone' : r.legacy ? 'saved preferences' : r.brain ? 'the Brain' : 'memory records');
+const SOURCE_NAME = { owner_chat: 'your own words in chat', owner: 'your own words', explicit_memory: 'a memory you asked me to save', owner_approved: 'a memory you approved', chatgpt_export: 'your imported ChatGPT history' };
+
+/** "Record 1602a8d5 in memory records, stored 2026-10-25 06:03 UTC, source: your own words in chat, owner-confirmed." */
+export function recordMetadata(r = {}) {
+  const at = Date.parse(String(r.created_at || r.recorded || ''));
+  const when = Number.isFinite(at) ? `stored ${new Date(at).toISOString().slice(0, 16).replace('T', ' ')} UTC` : 'no stored time';
+  const source = SOURCE_NAME[r.source] || SOURCE_NAME[r.origin] || (r.legacy ? 'saved from our chat (inferred)' : r.phone ? 'a phone note with no author' : r.source ? String(r.source) : 'unknown source');
+  const confirmed = r.verification_status === 'owner_attested' || r.brain ? ', owner-confirmed' : '';
+  return `${r.id ? `Record ${String(r.id).slice(0, 8)}` : 'No record ID'} in ${STORE_NAME(r)}, ${when}, source: ${source}${confirmed}.`;
+}
+
+/**
+ * Every favorite the owner stated, newest value per subject: [{ question, record }]. "Tell me my favorites" reads the
+ * same records "what's my favorite drink" reads, so the answers always agree.
+ */
+export function recallAllFavorites(data = {}, brainRecords = [], phoneNotes = []) {
+  const records = [...phoneNotes, ...legacyPreferences(data), ...ownerAttestedRecords(data), ...statementsFromBrain(brainRecords)].filter((r) => r.text);
+  const subjects = new Map();
+  for (const r of records) {
+    for (const fact of ownerFacts(r.text)) {
+      if (!fact.subjectWords.includes('favorite') || fact.subjectWords.every((w) => ALL_FAVORITES.has(w))) continue;
+      const key = [...fact.subjectWords].sort().join(' ');
+      if (!subjects.has(key)) subjects.set(key, { subject: fact.subject.replace(/\bfav(?:ourite|e)?\b/gi, 'favorite'), words: fact.subjectWords });
+    }
+  }
+  return [...subjects.values()].map((question) => ({ question, record: recallPersonalFact(data, question, brainRecords, phoneNotes) })).filter((x) => x.record);
+}
+
+/**
+ * The reply and the records it rests on. A miss says so and never guesses; a hit gives the stored subject and value.
+ * Several subjects ("my favorite food, drink and color") and "my favorites" are answered item by item, each with its
+ * own date, and a question about where a fact came from names the record, its store, time and source.
+ */
 export function answerPersonalFact(data = {}, question = {}, brainRecords = [], phoneNotes = []) {
+  const several = question.all_favorites
+    ? recallAllFavorites(data, brainRecords, phoneNotes)
+    : Array.isArray(question.parts) && question.parts.length > 1
+      ? question.parts.map((q) => ({ question: q, record: recallPersonalFact(data, q, brainRecords, phoneNotes) }))
+      : null;
+  if (several) {
+    if (!several.length || several.every((x) => !x.record)) {
+      return { kind: 'none', records: [], answer: `I don't have a record of your ${question.subject}, sir, so I don't know ${question.all_favorites ? 'them' : 'it'}. Tell me and I'll remember.` };
+    }
+    const lines = several.map(({ question: q, record: r }) => {
+      const subject = String(q.subject).replace(/\bfav(?:ourite|orite|e)?\b/gi, 'favorite');
+      if (!r) return `I have no record of your ${subject}`;
+      const when = spokenStoredDate(r);
+      return `your ${subject} is ${r.value}${when ? ` (you told me on ${when})` : r.legacy ? ' (saved from our chat, no date)' : ''}${question.learn ? `; ${recordMetadata(r).replace(/\.$/, '')}` : ''}`;
+    });
+    const found = several.filter((x) => x.record).map((x) => x.record);
+    const first = lines[0][0].toUpperCase() + lines[0].slice(1);
+    return {
+      kind: found.every((r) => !r.legacy && !r.phone) ? 'owner_attested' : 'mixed',
+      records: found.map((r) => r.id).filter(Boolean),
+      record: found[0],
+      found,
+      answer: `From what you told me, sir: ${[first, ...lines.slice(1)].join('; ')}.`,
+    };
+  }
   const record = recallPersonalFact(data, question, brainRecords, phoneNotes);
   if (!record) {
     return {
@@ -236,7 +369,8 @@ export function answerPersonalFact(data = {}, question = {}, brainRecords = [], 
   const lead = record.confidence === 'high' ? `Your ${subject} is ${record.value}.` : `It sounds like your ${subject} is ${record.value}, from what you told me.`;
   const prior = record.earlier?.at(-1);
   const replaced = prior && !record.legacy ? ` Earlier${spokenStoredDate(prior) ? `, on ${spokenStoredDate(prior)},` : ''} you said ${prior.value}; your newer statement replaces it.` : '';
-  return { kind: 'owner_attested', records: [record.id].filter(Boolean), record, answer: `${lead}${told}${quoted}${source}${replaced}` };
+  const meta = question.learn ? ` ${recordMetadata(record)}` : '';
+  return { kind: 'owner_attested', records: [record.id].filter(Boolean), record, answer: `${lead}${told}${quoted}${source}${replaced}${meta}` };
 }
 
 // ─── The fact under discussion: short replies, corrections and vague follow-ups ──────────────────────────────────────
@@ -262,7 +396,9 @@ const VALUE_LEAD = /^(?:it'?s|it is|that'?s|that is|i said|i meant|i mean|i told
 // Never a value on its own: acknowledgements, pointers and call-offs.
 const NOT_A_VALUE = /^(?:yes|yeah|yep|no|nope|ok|okay|thanks|thank you|cancel|stop|never ?mind|forget it|wait|hold on|that|this|it|the other one|that one|this one|the same|same|nothing|something|anything|everything|please|sir|right|correct|exactly|fine|good)$/i;
 // A value that is really an order or a question belongs to its own route.
-const ORDER_WORD = /\b(?:cancel|stop|delete|remove|forget|open|send|call|play|pause|search|find|show|read|buy|pay|order|turn|switch|start|run|fix|change|update|research|check|look|tell|remind|ask|write|give)\b/i;
+// "Remember this phrase: Silver Falcon 27" right after "I don't have a record of your favorite things" is a new memory,
+// never that fact's value (owner live test, 2026-10-25: it was stored as "my favorite things is Remember this phrase…").
+const ORDER_WORD = /\b(?:cancel|stop|delete|remove|forget|open|send|call|play|pause|search|find|show|read|buy|pay|order|turn|switch|start|run|fix|change|update|research|check|look|tell|remind|ask|write|give|remember|save|store|memori[sz]e|note|record)\b/i;
 // "That's not what I meant", "fix that", "wrong": the owner rejects the answer without naming the right value.
 const VAGUE_FIX = /^(?:no[,.!]?\s*)?(?:that'?s not (?:what i meant|what i said|right|it|correct)|that is not (?:what i meant|right|correct)|not (?:that|right|quite)|fix (?:that|it)|change (?:that|it)|correct (?:that|it)|that'?s wrong|that is wrong|wrong|you(?:'re| are) wrong|you got (?:that|it) wrong|you misheard(?: me)?|you heard (?:me |that )?wrong)[.!]*$/i;
 // "No, the one I just told you", "like I just said": the right value is in the owner's own recent turn.
@@ -413,7 +549,9 @@ export function storedStatementQuestion(message) {
   if (/\b(?:story|pretend|imagine|hypothetical|poem|joke)\b/i.test(text)) return null;
   const first = text.split(/[?!]/)[0];
   const asked = keyWords(first);
-  return asked.length >= 2 ? { words: asked, names: namedWords(first), learn: LEARN.test(text) } : null;
+  // "Do you remember Silver Falcon 27?" asks whether that exact thing is stored: a record saying just those words answers it.
+  const confirm = /^(?:do|did) you (?:still )?(?:remember|have|keep|know|recall)\b|^(?:is|was) .+ (?:saved|stored|remembered)$/i.test(first.trim());
+  return asked.length >= 2 ? { words: asked, names: namedWords(first), learn: LEARN.test(text), confirm } : null;
 }
 
 /**
@@ -450,7 +588,7 @@ export function recallStoredStatement(data = {}, question = {}, brainRecords = [
     if ((question.names || []).some((n) => !own.includes(n))) continue;
     const shared = own.filter((w) => asked.has(w)).length;
     const extra = own.filter((w) => !asked.has(w)).length;
-    if (shared >= Math.min(3, asked.size) && shared / asked.size >= 0.6 && extra > 0) scored.push({ ...r, statement: text, score: shared / asked.size });
+    if (shared >= Math.min(3, asked.size) && shared / asked.size >= 0.6 && (extra > 0 || (question.confirm && shared === asked.size))) scored.push({ ...r, statement: text, score: shared / asked.size });
   }
   if (!scored.length) return { kind: 'none', matches: [] };
   const best = Math.max(...scored.map((x) => x.score));
@@ -466,6 +604,14 @@ export function answerStoredStatement(data = {}, question = {}, brainRecords = [
   const found = recallStoredStatement(data, question, brainRecords);
   if (found.kind === 'none') return null;
   const said = (r) => r.statement.replace(/[.!]+$/, '');
+  if (question.confirm) {
+    // "Do you remember X?": yes, with each stored copy's record, store, time and source, never a "which one?" back.
+    const shown = found.matches.slice(0, 3);
+    return {
+      kind: 'owner_attested', records: shown.map((r) => r.id).filter(Boolean), record: shown[0],
+      answer: `Yes, sir. I have it saved: ${shown.map((r, i) => `${shown.length > 1 ? `${i + 1}. ` : ''}"${said(r)}". ${recordMetadata(r)}`).join(' ')}`,
+    };
+  }
   if (found.kind === 'one') {
     const r = found.matches[0];
     const when = spokenStoredDate(r);

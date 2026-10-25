@@ -171,7 +171,8 @@ export function completedWorkProof(jobs = [], repo = '') {
 // The other AIs whose coding work CHE's job records never hold. Named in a question about who did coding work, the answer
 // says so, then gives CHE's own record. Handoffs, mailbox messages and consultations are routed before this (worker.js).
 const OTHER_AGENT = /\b(claude|codex|chatgpt|gpt|gemini|cursor|copilot|grok)\b|\b(?:another|other|which|what)\s+(?:agent|ai)\b/i;
-const AGENT_WORK = /\b(?:finish\w*|complet\w*|wrote|written|write|made|merged?|did|done|built|build|changed|change|changes|commit\w*|pull requests?|PRs?|coding|code|job|task|work|far\s+(?:did|has|have)|progress|get|got)\b/i;
+// "What is Claude currently working on?" (owner live test, 2026-10-25) is a question about that AI's work too.
+const AGENT_WORK = /\b(?:finish\w*|complet\w*|wrote|written|write|made|merged?|did|done|built|build|changed|change|changes|commit\w*|pull requests?|PRs?|coding|code|job|task|work|working|far\s+(?:did|has|have)|progress|get|got)\b/i;
 const AGENT_SPEECH = /\b(?:say|said|tell|told|ask|asked|message|mailbox|hand\s*off|handed|pass|send|sent|forward|consult|work\s+with|compare|coordinate|collaborate|check\s+with|repl(?:y|ies|ied)|respon(?:d|ds|ded|se|ses)|answer(?:s|ed)?)\b/i;
 // A question, not an instruction to another AI: it opens like one, or ends with one.
 const ASKS = /^(?:(?:che|chay|chey)[,:]?\s+)?(?:did|does|do|has|have|is|was|were|who|which|what|how|where|when|why|tell\s+me\s+(?:who|which|what|how|whether))\b/i;
@@ -185,8 +186,12 @@ export function otherAgentWorkAsk(message) {
 }
 
 /** The reply to a question about another AI's coding work: CHE does not own it, and CHE's own record is given instead. */
-export function otherAgentWorkReply(agent, jobs = [], repo = '') {
+// `correspondence`: what that AI itself wrote in the Flagstaff mailbox, read from the Brain's imported correspondence
+// (brain_office.answerCorrespondenceQuestion), quoted with file and message id. It is that AI's own report, not CHE's
+// verification, and it is said so.
+export function otherAgentWorkReply(agent, jobs = [], repo = '', { correspondence = '' } = {}) {
   const named = /^(?:another|other|which|what)\b/.test(agent) ? 'another agent' : agent[0].toUpperCase() + agent.slice(1);
   const own = completedWorkProof(jobs, repo).text;
-  return `I can't see ${named}'s work in my own records, sir, so I can't say who wrote it, how far it got, or whether it reached a verified result. ${own}`;
+  const said = correspondence ? ` ${correspondence}` : '';
+  return `I can't see ${named}'s live session in my own records, sir, so I can't confirm what it is doing right now or whether it reached a verified result.${said} ${own}`;
 }
