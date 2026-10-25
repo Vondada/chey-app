@@ -81,7 +81,9 @@ Then, on GitHub:
 - Deploy run 40152765240: "VERIFIED afb8de155d3a is live" (Worker version 22362764-d908-4966-900a-3a6f7938b6af); memory truth 22/22 (0 model calls), Command Center 5/5 (130 commands ready), Knowledge Atlas 11/11, ElevenLabs voice 52287 bytes in 625 ms.
 - Live trading (paper, read-only): futures paper ON, DELAYED MNQ=F MNQZ6 (weekend), 219 closed, 53 won/166 lost, net -6917.09; Orion crypto PAUSED, read real Coinbase BTC/ETH 5m/15m/1h LIVE bars (BTC 5m close 80781.14 at 01:55Z).
 - Pre-merge evidence on head 32f2edb: all gating checks GREEN; local full Flutter 1365 pass / 0 fail / 2 skipped; Worker 3967/0; 13 Python suites OK.
-- Running: IPA build 40152765510, Shorebird 40152765316, creation_check dispatch 40153146586.
+- **IPA build 40152765510 SUCCESS** (macos-15, Shorebird release build, native Swift compiled): artifact 12584105082 `CHE-unsigned-ipa-self-updating`, 45,707,060 bytes, zip sha256 dcd40d6679a65b9db1ff09fef039296ffa465ff729efdf61594bfcd22f77b6d6, expires 2026-11-01. Not downloadable from the sandbox (blob host blocked); download from https://github.com/Vondada/chey-app/actions/runs/40152765510. Not signed, not installed, public release workflow not run.
+- **Shorebird 40152765316 SUCCESS:** Published Patch 1 for release 1.4.1025652491+4013508846901 (the 0c43197 IPA), Dart-only; the owner's last known install is 1.4.1025342820, so this patch does not reach it.
+- **creation_check 40153146586 SUCCESS (live):** job gpu_2f4b20b29e09 in 1.4 min on "free GitHub cloud CPU runner gha-40153346538-1" (worker name fixed), GLB 1,959,512 bytes sha matches receipt, 53 bones, 5 clips; viewport 7 meshes, 23,946 vertices (suit subdivision live), walk played.
 - Not verified: iPhone install/behavior (native changes need the new IPA), phone WebSocket crypto stream vs real exchanges, Colab GPU, live Poly Haven fetch, Brain Room fps on device.
 - Open: studio-tutorials lane never rebuilt; ~15 lane-requested commands not yet in command_catalog.js; "Research queue failed: k.startsWith" log line in the e2e server (pre-existing).
 
