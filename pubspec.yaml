@@ -43,6 +43,7 @@ flutter:
     - assets/characters/app/
     - assets/characters/crew/
     - assets/atlas/
+    - assets/browser/
     - shorebird.yaml
 
 flutter_launcher_icons:
