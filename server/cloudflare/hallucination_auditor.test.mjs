@@ -237,3 +237,20 @@ test('"what do you know versus what are you guessing?" is answered from owner re
   assert.match(empty.text, /nothing yet in your own words/);
   assert.match(empty.text, /checked no completion claims/);
 });
+
+test('a text brief about a track is not read as generated audio (review of #534)', () => {
+  const kept = auditReply("I've created a production brief for your track.");
+  assert.match(kept.text, /production brief for your track/);
+  assert.equal(kept.claims.some((c) => c.kind === 'audio_made'), false);
+});
+
+test('a real audio claim is still caught when a brief is mentioned as well (review of #534)', () => {
+  const caught = auditReply("I've created a song and wrote a brief.");
+  assert.equal(caught.claims.some((c) => c.kind === 'audio_made'), true);
+});
+
+test('a guest denial of record access is kept as written, while owners still get the records correction (review of #534)', () => {
+  const denial = 'I cannot access your memory.';
+  assert.equal(auditReply(denial, { ownerRecords: false }).text, denial);
+  assert.notEqual(auditReply(denial).text, denial);
+});
