@@ -69,11 +69,12 @@ function splitSentences(text) {
 }
 
 function sentenceClaims(sentence) {
-  if (/\?\s*$/.test(sentence)) return [];
+  const question = /\?\s*$/.test(sentence);
   return CLAIMS.filter((c) => c.re.test(sentence) && (c.kind.startsWith('audio_')
     // "No background noise" does not negate "I generated the track". Actual denials don't match the completion verbs.
-    ? !/^(?:if|suppose|imagine)\b/i.test(sentence)
-    : !NEGATED.test(sentence)));
+    // A declarative completion followed by "would you like to hear it?" is still a completion claim.
+    ? !/^(?:if|suppose|imagine)\b/i.test(sentence) && !(question && /^(?:is|are|was|were|did|do|does|have|has|can|could|would|should|will|why|what|when|where|how|who)\b/i.test(sentence))
+    : !question && !NEGATED.test(sentence)));
 }
 
 export function claimKindsIn(text) {

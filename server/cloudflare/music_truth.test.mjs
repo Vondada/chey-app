@@ -27,7 +27,7 @@ test('music plans, lyrics, questions and requested fiction stay text', () => {
 });
 
 test('hedges and unrelated negative words cannot license invented audio actions', () => {
-  for (const reply of ['I think your track is complete.', 'I generated a track with no background noise.', "I'm playing your song now.", 'Here is your finished song.']) {
+  for (const reply of ['I think your track is complete.', 'I generated a track with no background noise.', "I'm playing your song now.", 'Here is your finished song.', 'Your track is complete, would you like to hear it?']) {
     assert.equal(auditReply(reply).outcome, 'blocked', reply);
   }
 });
