@@ -1,6 +1,7 @@
 // Rithmic discovery, login, subscription and contract roll against a fake socket that plays Rithmic's part with the
 // same wire messages (rithmic_wire.dart). No network. A real login still needs the owner's credentials.
 import 'dart:async';
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:chey/rithmic/rithmic_client.dart';
@@ -53,6 +54,65 @@ List<Uint8List> bootstrap(RithmicFrame r, {List<String> systems = const ['Rithmi
 }
 
 void main() {
+  test('the actual WebSocket adds and removes the Rithmic length header', () async {
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    addTearDown(() => server.close(force: true));
+    final peer = server.first.then(WebSocketTransformer.upgrade);
+    final channel = await openRithmicWebSocket(Uri.parse('ws://127.0.0.1:${server.port}'), const Duration(seconds: 2));
+    addTearDown(channel.close);
+    final socket = await peer;
+    addTearDown(socket.close);
+    final request = socket.first;
+    final response = channel.frames.first;
+    channel.send(encodeHeartbeat());
+    expect(await request, [0, 0, 0, 4, 0x98, 0xb6, 0x4b, 0x12]);
+    socket.add([0, 0, 0, 4, 0x98, 0xb6, 0x4b, 0x13]);
+    expect(RithmicFrame.parse(await response).templateId(), RithmicTemplate.heartbeatResponse);
+  });
+
+  test('ordinary account discovery uses production, never the UAT gateway', () {
+    expect(kRithmicBootstrap.host, 'rprotocol.rithmic.com');
+  });
+
+  test('a chosen system controls discovery and gateway lookup together', () async {
+    final uris = <Uri>[];
+    final gatewayRequests = <String>[];
+    final finder = RithmicBootstrapDiscovery(open: opener([], (request) {
+      if (request.templateId() == RithmicTemplate.systemInfo) {
+        return [encodeSystemInfoResponse(systems: ['Rithmic Paper Trading', 'Firm System'])];
+      }
+      gatewayRequests.add(request.toGatewayInfo().systemName);
+      return [encodeGatewayInfoResponse(systemName: 'Firm System', names: ['Chicago'], uris: ['wss://firm.example:443'])];
+    }, uris: uris));
+    final route = await finder.find(preferPaper: true, systemName: 'Firm System');
+    expect(route.system, 'Firm System');
+    expect(route.gatewayUri.host, 'firm.example');
+    expect(gatewayRequests, ['Firm System']);
+    expect(uris.every((uri) => uri == kRithmicBootstrap), isTrue);
+  });
+
+  test('Rithmic Test is used only when explicitly chosen', () async {
+    final uris = <Uri>[];
+    final finder = RithmicBootstrapDiscovery(open: opener([], (request) {
+      if (request.templateId() == RithmicTemplate.systemInfo) {
+        return [encodeSystemInfoResponse(systems: ['Rithmic Test'])];
+      }
+      return [encodeGatewayInfoResponse(systemName: 'Rithmic Test', names: ['UAT'], uris: ['wss://test.example:443'])];
+    }, uris: uris));
+    final route = await finder.find(preferPaper: false, systemName: 'Rithmic Test');
+    expect(route.system, 'Rithmic Test');
+    expect(uris.every((uri) => uri == kRithmicTestBootstrap), isTrue);
+  });
+
+  test('an unavailable explicit system never sends a gateway lookup or login', () async {
+    final opened = <FakeChannel>[];
+    final finder = RithmicBootstrapDiscovery(open: opener(opened, bootstrap));
+    await expectLater(finder.find(preferPaper: true, systemName: 'Absent firm'),
+        throwsA(isA<RithmicException>().having((e) => e.message, 'message', contains('Login was not attempted'))));
+    expect(opened.expand((c) => c.sent), [RithmicTemplate.systemInfo]);
+    expect(opened.single.closed, isTrue);
+  });
+
   test('discovery asks the bootstrap endpoint for systems, picks Paper Trading for a prop account, and its Chicago gateway', () async {
     final opened = <FakeChannel>[];
     final uris = <Uri>[];

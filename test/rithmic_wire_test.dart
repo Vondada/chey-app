@@ -17,6 +17,17 @@ Uint8List _hex(String text) {
 String _toHex(Uint8List bytes) => bytes.map((b) => b.toRadixString(16).padLeft(2, '0')).join();
 
 void main() {
+  test('Rithmic envelopes carry a big-endian payload length', () {
+    // Reference heartbeat packet: 4-byte length 4, then protobuf template_id 18.
+    final packet = encodeRithmicPacket(encodeHeartbeat());
+    expect(_toHex(packet), '0000000498b64b12');
+    expect(_toHex(decodeRithmicPacket(packet)), '98b64b12');
+    expect(() => decodeRithmicPacket(_hex('0000000598b64b12')), throwsFormatException);
+    expect(() => decodeRithmicPacket(_hex('98b64b12')), throwsFormatException);
+    expect(() => decodeRithmicPacket(_hex('00000000')), throwsFormatException);
+    expect(() => encodeRithmicPacket(Uint8List(0)), throwsFormatException);
+  });
+
   test('login fixture encodes required protocol version separately from app version', () {
     final bytes = encodeLogin(
       user: 'user1',
