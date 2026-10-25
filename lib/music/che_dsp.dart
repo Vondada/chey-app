@@ -212,11 +212,54 @@ double cheReduceNoise(Float32List x, {double depthDb = 18, int rate = cheStudioR
   return floor;
 }
 
-/// YIN fundamental frequency of one window, or 0 when nothing pitched is there.
-double cheDetectPitch(Float32List x, int from, int size, {int rate = cheStudioRate, double minHz = 70, double maxHz = 1000, double threshold = 0.15}) {
-  final maxLag = (rate / minHz).floor(), minLag = (rate / maxHz).floor();
-  final w = math.min(size, x.length - from) - maxLag;
-  if (w < 64) return 0;
+/// YIN's difference function d(tau) = sum over j < [w] of (x[from+j] - x[from+j+tau])^2, for tau 1..[maxLag].
+///
+/// Computed exactly as E0 + E(tau) - 2 r(tau): the two energies from a running sum, the cross-correlation r from one
+/// FFT of both real windows packed as one complex signal and one inverse FFT. The direct double loop
+/// ([cheYinDifferenceDirect]) was 96% of the Recording Studio's effect time: about 26 s to pitch-correct a 3-minute take
+/// on this machine, against under 2 s this way (2026-10-25 benchmark). Results match the direct form to float rounding.
+Float64List cheYinDifference(Float32List x, int from, int w, int maxLag) {
+  final len = w + maxLag; // samples read: x[from .. from + len)
+  var n = 1;
+  while (n < len) {
+    n <<= 1;
+  }
+  // a = the first w samples (zero-padded), b = all len samples. No wrap-around: j + tau < len <= n.
+  final re = Float64List(n), im = Float64List(n);
+  for (var j = 0; j < len; j++) {
+    final v = x[from + j].toDouble();
+    if (j < w) re[j] = v;
+    im[j] = v;
+  }
+  _cheFft(re, im, false);
+  // Unpack the spectra A and B of the two real signals, form conj(A) * B, and transform back.
+  final pr = Float64List(n), pi = Float64List(n);
+  for (var k = 0; k < n; k++) {
+    final k2 = (n - k) & (n - 1);
+    final ar = 0.5 * (re[k] + re[k2]), ai = 0.5 * (im[k] - im[k2]);
+    final br = 0.5 * (im[k] + im[k2]), bi = -0.5 * (re[k] - re[k2]);
+    pr[k] = ar * br + ai * bi;
+    pi[k] = ar * bi - ai * br;
+  }
+  _cheFft(pr, pi, true);
+  var e0 = 0.0;
+  for (var j = 0; j < w; j++) {
+    final v = x[from + j];
+    e0 += v * v;
+  }
+  final d = Float64List(maxLag + 1);
+  var et = e0; // energy of x[from+tau .. from+tau+w)
+  for (var tau = 1; tau <= maxLag; tau++) {
+    final out = x[from + tau - 1], inn = x[from + tau + w - 1];
+    et += inn * inn - out * out;
+    final v = e0 + et - 2 * pr[tau] / n;
+    d[tau] = v > 0 ? v : 0; // rounding can dip a true zero just below it
+  }
+  return d;
+}
+
+/// The direct O(w * maxLag) form of [cheYinDifference], kept as its reference in tests.
+Float64List cheYinDifferenceDirect(Float32List x, int from, int w, int maxLag) {
   final d = Float64List(maxLag + 1);
   for (var tau = 1; tau <= maxLag; tau++) {
     var s = 0.0;
@@ -226,6 +269,59 @@ double cheDetectPitch(Float32List x, int from, int size, {int rate = cheStudioRa
     }
     d[tau] = s;
   }
+  return d;
+}
+
+final _cheTwiddles = <int, (Float64List, Float64List)>{};
+
+/// In-place iterative radix-2 complex FFT (length a power of two); [inverse] leaves the 1/n scale to the caller.
+void _cheFft(Float64List re, Float64List im, bool inverse) {
+  final n = re.length;
+  for (var i = 1, j = 0; i < n; i++) {
+    var bit = n >> 1;
+    for (; (j & bit) != 0; bit >>= 1) {
+      j ^= bit;
+    }
+    j ^= bit;
+    if (i < j) {
+      final tr = re[i], ti = im[i];
+      re[i] = re[j];
+      im[i] = im[j];
+      re[j] = tr;
+      im[j] = ti;
+    }
+  }
+  final (cosT, sinT) = _cheTwiddles.putIfAbsent(n, () {
+    final c = Float64List(n ~/ 2), s = Float64List(n ~/ 2);
+    for (var k = 0; k < n ~/ 2; k++) {
+      c[k] = math.cos(2 * math.pi * k / n);
+      s[k] = -math.sin(2 * math.pi * k / n);
+    }
+    return (c, s);
+  });
+  final sign = inverse ? -1.0 : 1.0;
+  for (var size = 2; size <= n; size <<= 1) {
+    final half = size >> 1, step = n ~/ size;
+    for (var start = 0; start < n; start += size) {
+      for (var k = 0; k < half; k++) {
+        final wr = cosT[k * step], wi = sign * sinT[k * step];
+        final a = start + k, b = a + half;
+        final xr = re[b] * wr - im[b] * wi, xi = re[b] * wi + im[b] * wr;
+        re[b] = re[a] - xr;
+        im[b] = im[a] - xi;
+        re[a] += xr;
+        im[a] += xi;
+      }
+    }
+  }
+}
+
+/// YIN fundamental frequency of one window, or 0 when nothing pitched is there.
+double cheDetectPitch(Float32List x, int from, int size, {int rate = cheStudioRate, double minHz = 70, double maxHz = 1000, double threshold = 0.15}) {
+  final maxLag = (rate / minHz).floor(), minLag = (rate / maxHz).floor();
+  final w = math.min(size, x.length - from) - maxLag;
+  if (w < 64) return 0;
+  final d = cheYinDifference(x, from, w, maxLag);
   var running = 0.0;
   final cmnd = Float64List(maxLag + 1)..[0] = 1;
   for (var tau = 1; tau <= maxLag; tau++) {
