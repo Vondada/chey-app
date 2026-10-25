@@ -73,6 +73,7 @@ Branch: `claude/che-character-realism` (from main `afb8de1`). Lanes push to `lan
 | G12 | World population + benchmarks | D | in progress |
 | G13 | Create Room demo video + walkthrough | E | in progress |
 | G14 | "Open and display saved image <id>" listed all 26 media items | me | fixed `dfd3f48`: Worker 19/19 media tests, full Worker 3990/0; Flutter che_chat_image 2/2; iPhone display unverified |
+| G15 | Realism sample: rig walks in, turns, sits, gestures, speaks (Rhubarb lip-sync), close-up, skeleton overlay; MP4 + rigged GLB | G | in progress `lane/char-realism`: mocap library `560f0ce`; sample script, timeline, foot lock on the grounded point, rig check, CPU worker mode `realism_sample` (6 shards + mux), 15 tests; local 720p render running; CI mode NOT yet run. See `docs/CHE_REALISM_STACK.md` |
 | G9 | e2e server "k.startsWith" (research queue never ran in e2e) | me | done `4ad45c9`; e2e 2/2 |
 
 ## Integration and release

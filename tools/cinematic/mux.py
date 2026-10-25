@@ -24,7 +24,23 @@ CAPTIONS = {
     'closeup': 'Face: Rhubarb visemes from the Kokoro TTS line, blinks, saccades, expression blends',
     'skeleton': 'Skeleton overlay: the same armature driving the mesh (bones drawn from the rig)',
 }
-FOOTER = 'Blender 5.0.1 Cycles (CPU) render of CHE\'s rigged 3D model - not AI-generated video'
+# Everything in the sample, with its licence (written into the receipt next to the MP4).
+LICENSES = [
+    {'what': 'Blender 5.0.1 (Cycles)', 'licence': 'GPL-2.0-or-later; rendered output is unrestricted', 'url': 'https://www.blender.org/about/license/'},
+    {'what': 'MPFB2 / MakeHuman body, skeleton, expression units, teeth/tongue helpers', 'licence': 'code GPL-3.0; assets CC0 1.0',
+     'url': 'https://github.com/makehumancommunity/mpfb2'},
+    {'what': 'Motion: CMU Graphics Lab Motion Capture Database, subject 86 trial 15 (BVH by B. Hahne)',
+     'licence': 'free for research and commercial use (READMEFIRST v1.1); raw files not redistributed', 'url': 'http://mocap.cs.cmu.edu/'},
+    {'what': 'Voice line: Kokoro-82M int8 (sherpa-onnx), speaker 0', 'licence': 'Apache-2.0 (model and runtime)',
+     'url': 'https://github.com/k2-fsa/sherpa-onnx/releases/tag/tts-models'},
+    {'what': 'Mouth cues: Rhubarb Lip Sync 1.13.0', 'licence': 'MIT', 'url': 'https://github.com/DanielSWolf/rhubarb-lip-sync'},
+    {'what': 'HDRI: Poly Haven hotel_room (1K, as bundled with Blender: datafiles/studiolights/world/interior.exr)',
+     'licence': 'CC0 1.0', 'url': 'https://polyhaven.com/a/hotel_room'},
+    {'what': 'Office set and props: built procedurally by tools/avatar_body/rooms.py and objects.py', 'licence': 'this repository; no third-party assets',
+     'url': ''},
+    {'what': 'Captions font: DejaVu Sans', 'licence': 'Bitstream Vera / public domain changes', 'url': 'https://dejavu-fonts.github.io/License.html'},
+]
+FOOTER ='Blender 5.0.1 Cycles (CPU) render of CHE\'s rigged 3D model - not AI-generated video'
 
 
 def load(path):
@@ -98,6 +114,7 @@ def main():
                            capture_output=True, text=True).stdout
     streams = json.loads(probe).get('streams', [])
     rec['mp4'] = {'file': os.path.basename(out), 'bytes': os.path.getsize(out), 'streams': streams}
+    rec['licenses'] = LICENSES
     save(rec, os.path.join(a.dir, 'receipt.json'))
     print('MP4', out, os.path.getsize(out), 'bytes', json.dumps(streams), flush=True)
 
