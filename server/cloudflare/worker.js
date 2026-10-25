@@ -4429,7 +4429,7 @@ export class CheState extends DurableObject {
       const verified = persisted?.memory_records?.find((r) => r.id === record.id && r.text === record.text && r.active !== false);
       if (!verified) throw new Error('memory read-back did not match');
       const hash = await this.recordMemorySaved(verified);
-      // The reply quotes the write receipt read back from storage: full record id and stored time (owner, 2026-10-25).
+      // Reply quotes the read-back receipt: full record id and stored time (owner, 2026-10-25).
       const at = Date.parse(String(verified.created_at || ''));
       const stamp = Number.isFinite(at) ? new Date(at).toISOString().slice(0, 16).replace('T', ' at ') + ' UTC' : 'an unrecorded time';
       const quote = String(verified.text).replace(/\s+/g, ' ').trim();
@@ -10623,8 +10623,7 @@ export class CheState extends DurableObject {
           const runtime = runtimeVersion(this.env);
           const deployment = runtimeStatusAsk.kind === 'deployment'
             ? await latestWorkerDeploymentStatus(this.env, fetch, runtime).catch(() => ({ status: 503, detail: 'Deployment history lookup failed. No successful deployment is verified.' })) : null;
-          // The newest verified IPA, compared with the phone's own report ("is the new build installed?"); a failed
-          // GitHub read is null and the reply says the comparison is unavailable.
+          // Newest verified IPA vs the phone's report; null = comparison unavailable.
           const latest = body.client_app ? await latestVerifiedRelease(this.env, fetch).catch(() => null) : null;
           const report = appStatusReport({ runtime, client: body.client_app, deployment, latest });
           const text = runtimeStatusAsk.kind === 'settings' ? `${report.text} Your app can open CHE's app/update details screen for this request.` : report.text;
@@ -12538,7 +12537,7 @@ export class CheState extends DurableObject {
         const otherAgent = body.attachment || handoffIntent(message) || mailboxIntent(message) || consultIntent(message) ? '' : otherAgentWorkAsk(message);
         if (otherAgent) {
           if (!ownerDevice) return ndjsonReply('Only the CHE owner can read coding job status, sir.', { source: 'che_coding_history', ok: false, outcome: RECALL_OUTCOMES.PERMISSION_DENIED });
-          // Its own newest report: the live che-mailbox, else the Brain's imported copy (coding_history.agentReportTurn).
+          // Newest report: live che-mailbox, else the Brain's copy (coding_history.agentReportTurn).
           const { text: correspondence, records, outcome } = await agentReportTurn(otherAgent, {
             live: hasGitHubMailbox(this.env) ? (peer) => Promise.all([readThread(this.env, peer).catch((error) => ({ error: String(error?.message || error) })), readLiveHandoff(this.env).catch(() => null)]) : null,
             brain: (peer) => answerCorrespondenceQuestion(new CheBrainStore(this.ctx.storage), { peer, direction: 'from', topic: '' }, { limit: 2 }),
