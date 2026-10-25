@@ -263,6 +263,7 @@ import { BrainLedger, answerLedger, decidePending as decideBrainPending, install
 import { FilmStore, filmIntent, filmProgress, farmProviders, loadRates, loadUsage, speakFarm, speakPlan, speakStatus as speakFilmStatus } from './film_studio.js';
 import { GpuQueue, gpuWorkerRoute, speakGpuSummary } from './gpu_queue.js';
 import { CreationStudio, studioOwnerRoute } from './creation_studio.js';
+import { populationAnswer, worldPopulationIntent, worldRoute } from './world_population.js';
 import { creationProbeRoute } from './creation_probe.js';
 import { projectAudit, projectLibraryRoute } from './project_library.js';
 import { FILM_ACTIVE_STATES, filmPlan, filmTick, filmTokenRoute, refreshValidation as refreshFilmValidation, remakeShot, setFilmState, startFilm } from './film_pipeline.js';
@@ -5923,6 +5924,12 @@ export class CheState extends DurableObject {
       if (!ask) return ndjsonReply('Tell me what feels wrong, for example "/che-improve the chart is too big". Nothing was changed.', { source: 'che_owner_improvement', ok: false, command: command.id, model_calls: 0 });
       return withDoneFields(await this.improvementChat(body || {}, ask), { command: command.id });
     }
+    // CHE World population: records, generated base models and (only the viewer knows) active characters, kept apart.
+    if (command.local === 'world_population') {
+      if (!OWNER_CHAT_REQUESTS.has(request)) return ndjsonReply('Only the CHE owner can read CHE World.', { source: 'che_world_population', ok: false, command: command.id, model_calls: 0 });
+      const out = await populationAnswer(this.ctx.storage, new GpuQueue(this.ctx.storage));
+      return ndjsonReply(out.spoken, { source: 'che_world_population', ok: out.ok, command: command.id, model_calls: 0, counts: out.counts || null, open_screen: 'world_population' });
+    }
     if (String(command.local).startsWith('cloud_')) {
       if (!OWNER_CHAT_REQUESTS.has(request)) return ndjsonReply('Only the CHE owner can use the cloud computer. Nothing was started.', { source: CLOUD_SOURCE, ok: false, command: command.id, model_calls: 0 });
       return this.cloudCommand(command, input);
@@ -7694,6 +7701,12 @@ export class CheState extends DurableObject {
       if (/^\/api\/(gpu|creations)(\/|$)/.test(path)) {
         if (!ownerDevice) return json({ detail: 'Only the CHE owner can use the GPU queue.' }, 403);
         return (await studioOwnerRoute({ storage: this.ctx.storage, env: this.keyEnv || this.env }, path, request, body)) || json({ detail: 'Not found.' }, 404);
+      }
+      // CHE World population (world_population.js): seeded character records, shared base-model buckets. /api/world/scene stays below.
+      if (path !== '/api/world/scene' && path.startsWith('/api/world/')) {
+        if (!ownerDevice) return json({ detail: 'Only the CHE owner can read CHE World.' }, 403);
+        const studioEnv = this.keyEnv || this.env;
+        return (await worldRoute({ storage: this.ctx.storage, makeStudio: () => new CreationStudio(this.ctx.storage, () => Date.now(), { env: studioEnv }) }, path, request, body)) || json({ detail: 'Not found.' }, 404);
       }
       // Project manager (project_library.js): cards over data.projects, the crew's tasks and 3D creations; Roblox recovery.
       if (path.startsWith('/api/projects/')) {
@@ -10724,6 +10737,12 @@ export class CheState extends DurableObject {
           // Cloud Computer: "open your cloud computer", "run your coding tests", "create a Blender animation",
           // "approve the cloud job"… Each runs its catalog command (command_catalog.js cloud-*), so the spoken and
           // slash forms share one handler. Before the coding-job cancel: "cancel cloud job …" is a cloud job.
+          // "How many characters live in CHE World?": the /world-population command (world_population.js), no model.
+          const worldAsk = body.attachment || body.workflow_step ? null : worldPopulationIntent(rawMessage);
+          if (worldAsk) {
+            const command = commandById(worldAsk.command);
+            return this.runSlashCommand(request, body, data, { name: command.id, command, input: '' }, { confirmed: false });
+          }
           const cloudAsk = body.attachment || body.workflow_step ? null : cloudIntent(rawMessage);
           if (cloudAsk) {
             await this.dropHeldActions();

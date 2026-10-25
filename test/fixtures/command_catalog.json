@@ -4909,6 +4909,39 @@
    "optional_missing": []
   },
   {
+   "id": "world-population",
+   "category": "office",
+   "title": "CHE World population",
+   "summary": "How many characters live in CHE World.",
+   "does": "Says how many character records CHE World holds (seeded descriptions, not models), how many of the 288 shared base models are really generated or building, and that the active on-screen count is known only while the world viewer is open. Nothing is built.",
+   "mode": "EXPLORE",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": null,
+   "examples": [
+    "How many characters live in CHE World?"
+   ],
+   "needs": [],
+   "optional": [],
+   "handler": "world_population.populationAnswer",
+   "route": "che_world_population",
+   "produces": "population counts",
+   "evidence": "The stored world range and the GPU queue job states of the bucket models.",
+   "cost": "Free: no AI engine is used.",
+   "keywords": [
+    "che world",
+    "population",
+    "characters",
+    "crowd",
+    "residents"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
    "id": "cloud-blender",
    "category": "office",
    "title": "Cloud Blender",
