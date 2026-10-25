@@ -170,6 +170,18 @@ String? cheDescribedObjectFromWords(String words) {
   return m?.group(1)?.trim();
 }
 
+/// "create a person: a tall woman in her 30s", "describe a character, a slim man with an afro", "make me a character
+/// who is a broad-shouldered man in his 40s" -> the description; null for anything else ("create a person" alone opens
+/// the choices).
+String? cheDescribedPersonFromWords(String words) {
+  final t = words.trim().replaceAll(RegExp(r'[.!?]+$'), '').replaceFirst(RegExp(r'^(?:che|chey|chay)[,:]?\s+', caseSensitive: false), '');
+  final m = RegExp(
+    r'^(?:create|make|build|describe|design|generate)(?: me)? (?:an? |my |the )?(?:new )?(?:person|character|human|avatar)(?: who is| that is| like| as| of)?[:,]?\s+(.{3,300})$',
+    caseSensitive: false,
+  ).firstMatch(t);
+  return m?.group(1)?.trim();
+}
+
 /// "create a chair", "make a coffee table", "new office", "build a living room" -> (kind, base); null for anything else.
 (String, String)? cheCreateThingFromWords(String words) {
   final t = words
@@ -361,7 +373,7 @@ class CheCreativeStudioState extends State<CheCreativeStudio> {
 
   /// Starts an object or room project on the Worker and returns its real answer.
   Future<String> createThing(String kind, String base, {bool viaVoice = false}) async {
-    final title = kind == 'object' ? 'Create Object' : 'Create Room';
+    final title = kind == 'object' ? 'Create Object' : kind == 'person' ? 'Create Person' : 'Create Room';
     final f = widget.actions.onCreateThing;
     if (f == null) return '$title is not connected in this build.';
     final said = await f(kind, base, viaVoice);
@@ -410,6 +422,16 @@ class CheCreativeStudioState extends State<CheCreativeStudio> {
     final w = words?.trim() ?? '';
     if (w.isEmpty) return 'Nothing was created.';
     return createThing('object', 'describe:$w');
+  }
+
+  /// One Create button for a person (owner, 2026-10-25): the owner's own words ("a tall athletic man in his 30s, short
+  /// curly black hair, green eyes, black hoodie, game style"). The Worker maps them deterministically, says plainly what
+  /// it cannot make, and queues the build at once. By voice: "create a person: ..." or "describe a character ...".
+  Future<String> describePerson() async {
+    final words = await showDialog<String>(context: context, builder: (_) => const _DescribeObjectDialog(person: true));
+    final w = words?.trim() ?? '';
+    if (w.isEmpty) return 'Nothing was created.';
+    return createThing('person', 'describe:$w');
   }
 
   String _thingChoice(String kind) {
@@ -541,6 +563,12 @@ class CheCreativeStudioState extends State<CheCreativeStudio> {
       if (go == null) return 'Continue creating is not connected in this build.';
       if (sheet != null && _sheetContext != null) Navigator.of(_sheetContext!).pop();
       return go();
+    }
+    // "create a person: a tall woman in her 30s ...": the Worker maps the words and queues the build at once.
+    final person = cheDescribedPersonFromWords(words);
+    if (person != null && capability('person').$1 != 'unavailable' && widget.actions.onCreateThing != null) {
+      if (sheet != null && _sheetContext != null) Navigator.of(_sheetContext!).pop();
+      return createThing('person', 'describe:$person', viaVoice: true);
     }
     // "create an object: a snowman": the Worker composes it from primitives or says plainly what it cannot make.
     final described = cheDescribedObjectFromWords(words);
@@ -711,7 +739,9 @@ class CheCreativeStudioState extends State<CheCreativeStudio> {
           ?.showSnackBar(const SnackBar(content: Text('Could not load the characters from CHE. Try again.')));
       return;
     }
-    await _showSheet('Create a person', 'Start from CHE or one of the crew. You can change everything after.', [
+    await _showSheet('Create a person', 'Describe your character in your own words, or start from CHE or one of the crew. You can change everything after.', [
+      if (a.onCreateThing != null)
+        ('Describe your character', 'Say or type who to build; CHE builds it at once', Icons.edit_rounded, () => unawaited(describePerson())),
       for (final p in people) (p.$2, p.$3, Icons.person_outline_rounded, () => a.onCreatePerson!(p.$1)),
     ]);
   }
@@ -1798,7 +1828,10 @@ class _EngineRow extends StatelessWidget {
 
 /// The Describe-an-object box: owns its text controller, so closing the dialog never touches a disposed one.
 class _DescribeObjectDialog extends StatefulWidget {
-  const _DescribeObjectDialog();
+  const _DescribeObjectDialog({this.person = false});
+
+  /// Describe a person (Create Person) rather than an object.
+  final bool person;
   @override
   State<_DescribeObjectDialog> createState() => _DescribeObjectDialogState();
 }
@@ -1813,24 +1846,47 @@ class _DescribeObjectDialogState extends State<_DescribeObjectDialog> {
   }
 
   @override
-  Widget build(BuildContext context) => AlertDialog(
-    title: Semantics(header: true, child: const Text('Describe an object')),
-    content: Semantics(
-      textField: true,
-      label: 'What should the object be?',
-      child: TextField(
-        key: const ValueKey('describe-object-text'),
-        controller: _text,
-        autofocus: true,
-        maxLength: 200,
-        style: const TextStyle(fontSize: 18),
-        decoration: const InputDecoration(hintText: 'For example: a snowman, or a red ball on top of a blue box'),
-        onSubmitted: (v) => Navigator.of(context).pop(v),
+  Widget build(BuildContext context) {
+    final p = widget.person;
+    final k = p ? 'describe-person' : 'describe-object';
+    return AlertDialog(
+      title: Semantics(header: true, child: Text(p ? 'Describe your character' : 'Describe an object')),
+      content: Semantics(
+        textField: true,
+        label: p ? 'Who should CHE build? Describe the person.' : 'What should the object be?',
+        child: TextField(
+          key: ValueKey('$k-text'),
+          controller: _text,
+          autofocus: true,
+          maxLength: p ? 300 : 200,
+          maxLines: p ? 3 : 1,
+          style: const TextStyle(fontSize: 18),
+          decoration: InputDecoration(
+            hintText: p
+                ? 'For example: a tall athletic man in his 30s, short curly black hair, green eyes, black hoodie, game style'
+                : 'For example: a snowman, or a red ball on top of a blue box',
+          ),
+          onSubmitted: (v) => Navigator.of(context).pop(v),
+        ),
       ),
-    ),
-    actions: [
-      TextButton(key: const ValueKey('describe-object-cancel'), onPressed: () => Navigator.of(context).pop(), child: const Text('Cancel')),
-      FilledButton(key: const ValueKey('describe-object-create'), onPressed: () => Navigator.of(context).pop(_text.text), child: const Text('Create object')),
-    ],
-  );
+      actions: [
+        Semantics(
+          button: true,
+          label: 'Cancel',
+          excludeSemantics: true,
+          child: TextButton(key: ValueKey('$k-cancel'), onPressed: () => Navigator.of(context).pop(), child: const Text('Cancel')),
+        ),
+        Semantics(
+          button: true,
+          label: p ? 'Create and build this character' : 'Create object',
+          excludeSemantics: true,
+          child: FilledButton(
+            key: ValueKey('$k-create'),
+            onPressed: () => Navigator.of(context).pop(_text.text),
+            child: Text(p ? 'Create character' : 'Create object'),
+          ),
+        ),
+      ],
+    );
+  }
 }
