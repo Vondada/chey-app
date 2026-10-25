@@ -101,9 +101,18 @@ The chosen jobs are reserved for 25 minutes. If the kernel never claims them, th
 
 ## Benchmarks (measured)
 
-Measured with `node server/cloudflare/compute_pool_bench.mjs` on the development container: Node 22.22.0, 4 vCPU Intel Xeon at 2.80 GHz. Each figure is the median of 5 runs.
+Measured with `node server/cloudflare/compute_pool_bench.mjs` on the development container: Node 22.22.0, 4 vCPU Intel Xeon at 2.80 GHz. Each figure is the median of 11 runs after one warm-up run.
 
-BENCH_RESULTS
+The container was shared with other running agents, so the medians varied between runs. The table gives the range of medians over the runs.
+
+| Measurement | Result |
+|---|---|
+| Scheduling decision (`heldReason` + `selectProvider` + `poolAllows`) over 10,000 queued jobs | 24.6 to 38.0 ms median across 3 runs (about 2.5 to 3.8 µs per job) |
+| The same over 1,000 queued jobs | 3.0 to 11.7 ms median (fastest single run 1.4 ms) |
+| `applyPending` over 10,000 jobs with nothing pending (the per-request cost of the pool hook) | 4.0 to 16.9 ms |
+| One `person_model` job record (3 views, queued), JSON | 714 bytes |
+| The same after two pool attempts (handed off once, then completed) | 1,196 bytes (+482). At the cap of 6 attempts, about +1.4 KB. |
+| `pool:state` with 50 handoffs and one cooldown | 11,269 bytes (one storage key) |
 
 For scale, one queue shard holds at most 500 waiting jobs (`MAX_WAITING`) and 200 jobs in all (`MAX_JOBS`). 10,000 jobs is a stress figure, not a real load.
 

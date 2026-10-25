@@ -19,7 +19,8 @@ function jobs(n) {
   return out;
 }
 
-function time(label, fn, reps = 5) {
+function time(label, fn, reps = 11) {
+  fn();   // warm-up (JIT), not counted
   const ms = [];
   for (let r = 0; r < reps; r++) { const a = process.hrtime.bigint(); fn(); ms.push(Number(process.hrtime.bigint() - a) / 1e6); }
   ms.sort((x, y) => x - y);
