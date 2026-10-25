@@ -50,8 +50,8 @@ Branch: `claude/che-character-realism` (from main `afb8de1`). Lanes push to `lan
     only with a GPU, paid nodes disabled. First a real 15–20 s sample (walk in, turn, sit, gesture, speak, close-up,
     skeleton overlay) + rigged model; honest comparison with the owner's two reference videos. AI video is never proof
     of rig motion. Lane G `lane/char-realism`; doc `docs/CHE_REALISM_STACK.md`.
-    BLOCKER: the two reference videos did not reach this container (no video files in the session); owner asked to
-    re-send. Comparison waits for them.
+    References received and inspected 2026-10-25: notes in `docs/CHE_REALISM_REFERENCES.md` (AI-generated drama
+    footage; the target for the cinematic path).
 
 ## Infrastructure facts (inspected, not assumed)
 - Cloudflare Worker: queue, storage, routing only. No GPU, no Blender.
