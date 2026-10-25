@@ -43,6 +43,9 @@ const List<(double, double, double, double, double, double)> _brainVolumes = [
   (-2.2, -6.0, 0, 1.1, 2.6, 1.1), // brainstem
 ];
 
+/// The brain's volumes (centre x, y, z and radii x, y, z), for the renderer's luminous body.
+const List<(double, double, double, double, double, double)> cheBrainVolumes = _brainVolumes;
+
 /// < 1 inside the brain, 1 on its surface.
 double cheBrainShape(vm.Vector3 p) {
   var best = double.infinity;
@@ -394,6 +397,9 @@ enum CheBrainAction {
   zoomIn, zoomOut, fit, back, centerChe, centerSelected, openWorker, lens,
   // The searchable list (owner, 2026-10-23) and back to the neural view.
   list, space,
+  // The eleven regions (lane brain-visual, 2026-10-25): fly to one, read them as a numbered list, open one's records,
+  // and turn the brain by voice as a drag does.
+  region, regions, openRegion, rotate,
 }
 
 /// Which brain is in view and what is shown of it: the owner's place in the
@@ -536,7 +542,7 @@ class CheBrainLens {
 }
 
 class CheBrainCommand {
-  const CheBrainCommand(this.action, {this.category, this.query, this.agent, this.worker, this.lens, this.section});
+  const CheBrainCommand(this.action, {this.category, this.query, this.agent, this.worker, this.lens, this.section, this.region, this.direction});
   final CheBrainAction action;
   final String? category;
   final String? query;
@@ -552,6 +558,12 @@ class CheBrainCommand {
 
   /// A list section ("show the brain's actions").
   final CheBrainSection? section;
+
+  /// One of the eleven regions ("go to the memory region", "open region 4").
+  final CheBrainRegion? region;
+
+  /// left, right, up or down ("rotate the brain left").
+  final String? direction;
 
   static const Map<String, CheBrainSection> _sectionWords = {
     'conversations': CheBrainSection.conversations,
@@ -619,6 +631,23 @@ class CheBrainCommand {
     }
     if (RegExp(r'^(?:show|open|switch to|back to) (?:the |my |your )?(?:neural|3d|brain|orb) view$').hasMatch(t)) return const CheBrainCommand(CheBrainAction.space);
     if (RegExp(r'^(?:back out|go back out|pull back)$').hasMatch(t)) return const CheBrainCommand(CheBrainAction.backOut);
+    // The regions: "list the brain regions", "go to the memory region", "fly to region 3", "open the trading region",
+    // "rotate the brain left". A name that is not one of the eleven is not a region command.
+    if (RegExp(r'^(?:list|read|name|say) (?:me )?(?:the |all |my |your )?(?:brain |eleven )?regions$|^(?:what|which) (?:brain )?regions (?:are there|do you have|does (?:the|my|your) brain have)$|^what are (?:the |my |your )?(?:brain )?regions$').hasMatch(t)) {
+      return const CheBrainCommand(CheBrainAction.regions);
+    }
+    final openRegion = RegExp(r'^(?:open|list|read)(?: me)? (?:the )?(?:records|memories) (?:in|of|from) (?:the |my )?(.+?)(?: region| lobe)?$|^(?:open|list) (?:the |my )?(.+? region|region (?:number )?\w+)(?: records)?$').firstMatch(t);
+    if (openRegion != null) {
+      final r = cheBrainRegionFromWords(openRegion.group(1) ?? openRegion.group(2)!);
+      if (r != null) return CheBrainCommand(CheBrainAction.openRegion, region: r);
+    }
+    final flyRegion = RegExp(r'^(?:go|fly|take me|move|zoom|jump|travel|head|navigate)(?: in| me)? (?:to|into) (?:the |my )?(.+? (?:region|lobe)|region (?:number )?\w+)$|^(?:show me|show|focus on|center on|centre on) (?:the |my )?(.+? region|region (?:number )?\w+)$').firstMatch(t);
+    if (flyRegion != null) {
+      final r = cheBrainRegionFromWords(flyRegion.group(1) ?? flyRegion.group(2)!);
+      if (r != null) return CheBrainCommand(CheBrainAction.region, region: r);
+    }
+    final turn = RegExp(r'^(?:rotate|turn|spin)(?: the brain| my brain| your brain| it)?(?: to the| to)? (left|right|up|down)$|^(?:rotate|turn|spin) (?:the |my |your )?brain$').firstMatch(t);
+    if (turn != null) return CheBrainCommand(CheBrainAction.rotate, direction: turn.group(1) ?? 'right');
     if (RegExp(r'^(?:zoom out|zoom out a bit|farther|further out|move (?:back|away))$').hasMatch(t)) return const CheBrainCommand(CheBrainAction.zoomOut);
     if (RegExp(r'^(?:zoom in|zoom in a bit|closer|move closer|come closer)$').hasMatch(t)) return const CheBrainCommand(CheBrainAction.zoomIn);
     if (RegExp(r'^(?:go back|back|previous view|take me back|return to (?:the )?previous view)$').hasMatch(t)) return const CheBrainCommand(CheBrainAction.back);

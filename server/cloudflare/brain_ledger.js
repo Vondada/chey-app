@@ -51,8 +51,11 @@ export const EVENT_TYPES = Object.freeze([
   'SOURCE_DISCOVERED', 'SOURCE_INDEXED', 'SOURCE_FAILED', 'SOURCE_USED', 'KNOWLEDGE_EXTRACTED', 'KNOWLEDGE_SAVED', 'KNOWLEDGE_UPDATED',
   'PROCEDURE_CREATED', 'CAPABILITY_TESTED', 'CAPABILITY_VERIFIED', 'CAPABILITY_STATE', 'OWNER_PREFERENCE_SAVED', 'OWNER_MEMORY_SAVED',
   'PROJECT_KNOWLEDGE_UPDATED', 'EVIDENCE_UPDATED', 'EVIDENCE_STRENGTHENED', 'CORRECTION', 'REMOVED', 'SCOPE_CHANGED', 'PENDING',
-  'REJECTED', 'WORKFLOW_PROMOTED', 'CONVERSATION_REMEMBERED', 'BATCH_RECEIPT',
+  'REJECTED', 'WORKFLOW_PROMOTED', 'CONVERSATION_REMEMBERED', 'BATCH_RECEIPT', 'CONNECTION_CREATED',
 ]);
+
+/** Events that are bookkeeping about knowledge, not knowledge entering: never counted as an item or "entered today". */
+const NOT_KNOWLEDGE = new Set(['BATCH_RECEIPT', 'CONNECTION_CREATED']);
 
 /** Library ingestion status, as the Knowledge Library shows it. */
 export const INGESTION = Object.freeze(['NOT READ', 'PROCESSING', 'INDEXED', 'PARTIALLY INDEXED', 'FAILED', 'INDEXED + USED', 'ARCHIVED']);
@@ -333,7 +336,7 @@ export async function categoryCards(storage, { zone = DEFAULT_ZONE, now = Date.n
   const latestByItem = new Map();
   for (const e of all) {
     const card = cards[e.category];
-    if (!card) continue;
+    if (!card || e.event_type === 'CONNECTION_CREATED') continue;
     const key = e.record_id || e.capability_id || e.brain_event_id;
     if (!latestByItem.has(`${e.category}|${key}`)) latestByItem.set(`${e.category}|${key}`, e);
     if (e.event_type === 'BATCH_RECEIPT') continue;
@@ -421,6 +424,7 @@ const EVENT_WORDS = {
   OWNER_PREFERENCE_SAVED: 'Owner preference saved', OWNER_MEMORY_SAVED: 'Owner memory saved', PROJECT_KNOWLEDGE_UPDATED: 'Project knowledge updated',
   EVIDENCE_UPDATED: 'Evidence updated', EVIDENCE_STRENGTHENED: 'Evidence strengthened', CORRECTION: 'Corrected', REMOVED: 'Removed', SCOPE_CHANGED: 'Scope changed',
   PENDING: 'Pending', REJECTED: 'Not retained', WORKFLOW_PROMOTED: 'Workflow promoted', CONVERSATION_REMEMBERED: 'Conversation remembered', BATCH_RECEIPT: 'Batch completed',
+  CONNECTION_CREATED: 'Connection created',
 };
 export const eventWords = (e) => EVENT_WORDS[e.event_type] || 'Updated';
 const sourceWords = (s) => ({ OWNER: 'From you', CONVERSATION: 'From conversation', 'PAPER TRADE': 'Paper trade', BACKTEST: 'Backtest', 'SYSTEM EVENT': 'System event' }[s] || String(s || '').toLowerCase().replace(/^\w/, (c) => c.toUpperCase()));
@@ -429,6 +433,7 @@ const sourceWords = (s) => ({ OWNER: 'From you', CONVERSATION: 'From conversatio
 export function statusWord(e) {
   if (e.event_type === 'REMOVED') return 'Removed';
   if (e.event_type === 'REJECTED') return 'Not retained';
+  if (e.event_type === 'CONNECTION_CREATED') return e.verification_status === 'derived' ? 'Derived link' : e.verification_status === 'candidate' ? 'Candidate link' : 'Link';
   if (e.new_state === 'PENDING' || e.event_type === 'PENDING') return 'Pending';
   if (e.new_state === 'FAILED' || e.event_type === 'SOURCE_FAILED') return 'Failed';
   if (e.knowledge_type === 'capability') return CAP_STATES.has(e.new_state) ? 'Verified capability' : `Capability ${String(e.new_state || 'candidate').toLowerCase()}, not available`;
@@ -491,7 +496,7 @@ export async function answerLedger(storage, ask, { zone = DEFAULT_ZONE, now = Da
   const line = (e) => `${displayTime(e.ms, zone, now)} · ${e.category}: ${e.title} (${eventWords(e).toLowerCase()}, ${statusWord(e).toLowerCase()})`;
   if (ask.kind === 'today') {
     const startOfDay = startOfDayMs(now, zone);
-    const events = (await ledger.query({ since: startOfDay, limit: 500 })).filter((e) => e.event_type !== 'BATCH_RECEIPT');
+    const events = (await ledger.query({ since: startOfDay, limit: 500 })).filter((e) => !NOT_KNOWLEDGE.has(e.event_type));
     if (!events.length) return { text: 'Nothing entered my brain today, sir.', events: [] };
     const byCat = {};
     for (const e of events) byCat[e.category] = (byCat[e.category] || 0) + 1;
@@ -499,7 +504,7 @@ export async function answerLedger(storage, ask, { zone = DEFAULT_ZONE, now = Da
     return { text: `Today ${plural(events.length, 'item')} entered my brain: ${Object.entries(byCat).map(([c, n]) => `${c} ${n}`).join(', ')}. Newest: ${top.map(line).join('; ')}.`, events: top };
   }
   if (ask.kind === 'category') {
-    const events = (await ledger.query({ category: ask.category, limit: 200 })).filter((e) => e.event_type !== 'BATCH_RECEIPT');
+    const events = (await ledger.query({ category: ask.category, limit: 200 })).filter((e) => !NOT_KNOWLEDGE.has(e.event_type));
     if (!events.length) return { text: `Nothing has entered my ${ask.category} brain yet, sir.`, events: [] };
     return { text: `My ${ask.category} brain has ${plural(events.length, 'recorded event')}. Newest: ${events.slice(0, 5).map(line).join('; ')}.`, events: events.slice(0, 5) };
   }
@@ -514,7 +519,7 @@ export async function answerLedger(storage, ask, { zone = DEFAULT_ZONE, now = Da
       const extracted = related.filter((e) => ['KNOWLEDGE_EXTRACTED', 'PROCEDURE_CREATED'].includes(e.event_type));
       return { text: `${src.title} entered my brain ${displayTime(src.ms, zone, now)} under ${src.category} → ${src.subcategory}. Status: ${statusWord(src)}. ${extracted.length ? `From it: ${extracted.map((e) => e.title).slice(0, 5).join('; ')}.` : 'No procedures or capabilities have come from it yet.'}`, events: [src, ...extracted] };
     }
-    events = events.filter((e) => e.event_type !== 'BATCH_RECEIPT');
+    events = events.filter((e) => !NOT_KNOWLEDGE.has(e.event_type));
     if (!events.length) return { text: `I have nothing in my brain about ${text}, sir.`, events: [] };
     return { text: `About ${text}: ${events.slice(0, 5).map(line).join('; ')}.`, events: events.slice(0, 5) };
   }
@@ -537,8 +542,8 @@ export async function answerLedger(storage, ask, { zone = DEFAULT_ZONE, now = Da
   }
   if (ask.kind === 'when' || ask.kind === 'where') {
     let e = null;
-    if (ask.text) e = (await ledger.query({ text: ask.text, limit: 20 })).filter((x) => x.event_type !== 'BATCH_RECEIPT').pop() || null;
-    else if (lastSubject) e = (await ledger.query({ text: lastSubject, limit: 20 })).filter((x) => x.event_type !== 'BATCH_RECEIPT').pop() || null;
+    if (ask.text) e = (await ledger.query({ text: ask.text, limit: 20 })).filter((x) => !NOT_KNOWLEDGE.has(x.event_type)).pop() || null;
+    else if (lastSubject) e = (await ledger.query({ text: lastSubject, limit: 20 })).filter((x) => !NOT_KNOWLEDGE.has(x.event_type)).pop() || null;
     if (!e) return { text: `I have no ledger record for ${ask.text || 'that'}, sir, so I can't say when or where I learned it.`, events: [] };
     if (ask.kind === 'when') return { text: `${e.title} first entered my brain ${fullTime(e.ms, zone)}, under ${e.category} → ${e.subcategory}.`, events: [e] };
     return { text: `${e.title}: source ${sourceWords(e.source_type).toLowerCase()}${e.source_reference ? ` (${e.source_reference})` : ''}; saved because ${e.reason_saved || 'it was written to my brain by that path'}; ${statusWord(e).toLowerCase()}.`, events: [e] };
@@ -847,6 +852,113 @@ export async function decidePending(storage, recordId, decision, { now = new Dat
 }
 
 /** All write paths the ledger covers; the coverage test walks this list. */
+// ─── Connections (CONNECTION_CREATED) ───────────────────────────────────────
+// When CHE links two nodes (brain_rooms.linkRelated for Brain records, the token-overlap pass of
+// research_memory.buildBrainGraph for the neural map), the ledger keeps one event: both node ids, the reason, the
+// link's status and the time. The same pair is never a second event. Ids and titles pass the same secret scanner as
+// every other ledger field. Needs the SQL ledger (the Durable Object); the key-value fallback records nothing.
+
+function pairHash(text) {
+  let a = 0x811c9dc5, b = 0x01000193 ^ 0x5bd1e995;
+  for (let i = 0; i < text.length; i++) {
+    const c = text.charCodeAt(i);
+    a = Math.imul(a ^ c, 16777619);
+    b = Math.imul(b ^ c, 2246822519);
+  }
+  return `${(a >>> 0).toString(16).padStart(8, '0')}${(b >>> 0).toString(16).padStart(8, '0')}`;
+}
+
+/** The ledger record id of a link between two nodes, the same whichever side is named first. */
+export function connectionKey(a, b) {
+  const [x, y] = String(a) < String(b) ? [String(a), String(b)] : [String(b), String(a)];
+  return `link:${pairHash(`${x}\u0000${y}`)}`;
+}
+
+/** Writes one CONNECTION_CREATED event unless this pair already has one. Returns the event, or null (no SQL, same pair, bad input). */
+export function recordConnection(storage, link = {}, now = new Date()) {
+  const from = clip(link.from, 120);
+  const to = clip(link.to, 120);
+  if (!from || !to || from === to) return null;
+  const ledger = new BrainLedger(storage);
+  if (!ledger.sql) return null;
+  ledger.init();
+  const key = connectionKey(from, to);
+  if (ledger.rows('SELECT brain_event_id FROM brain_ledger WHERE record_id = ? AND event_type = ? LIMIT 1', key, 'CONNECTION_CREATED').length) return null;
+  const fromTitle = safeText(link.from_title, 120, '');
+  const toTitle = safeText(link.to_title, 120, '');
+  const reason = safeText(link.reason, 200, 'linked');
+  return ledger.record({
+    event_type: 'CONNECTION_CREATED',
+    knowledge_type: 'connection',
+    title: `${fromTitle || 'Record'} ↔ ${toTitle || 'Record'}`,
+    summary: `Linked: ${reason}`,
+    category: link.category || '',
+    subcategory: link.subcategory || '',
+    region: link.region || '',
+    source_type: 'SYSTEM EVENT',
+    source_reference: clip(link.origin, 60),
+    record_id: key,
+    reason_saved: reason,
+    verification_status: clip(link.status, 40),
+    detail: {
+      from_id: safeText(from, 120, 'id withheld'),
+      to_id: safeText(to, 120, 'id withheld'),
+      from_title: fromTitle,
+      to_title: toTitle,
+      reason,
+      basis: clip(link.basis, 40),
+      status: clip(link.status, 40),
+      origin: clip(link.origin, 60),
+    },
+  }, now);
+}
+
+const GRAPH_SEEN_KEY = 'graph_links_seen';
+const GRAPH_SEEN_CAP = 4000;
+const GRAPH_REASON = {
+  cluster: () => 'the same ML cluster',
+  kind: (kind) => `the same kind (${kind}) and shared words`,
+  locale: () => 'the same language',
+  related: (_, w) => `shared words (token overlap ${Math.round(Number(w || 0) * 100)}%)`,
+  explicit: () => 'listed as related on the note',
+};
+
+/**
+ * The neural map's links (research_memory.buildBrainGraph) are recomputed on every /api/brain/graph read, so only a
+ * link that was not there before is a connection CHE created. The first read is a baseline: it remembers every
+ * current link and records none (an old link is not news). Later reads record each new link, at most [cap] per read.
+ */
+export function recordGraphConnections(storage, graph = {}, { now = new Date(), cap = 24 } = {}) {
+  const ledger = new BrainLedger(storage);
+  if (!ledger.sql) return { recorded: 0, baseline: false, skipped: 0 };
+  const links = Array.isArray(graph.links) ? graph.links : [];
+  const nodes = new Map((Array.isArray(graph.nodes) ? graph.nodes : []).map((n) => [String(n.id), n]));
+  const seenList = ledger.meta(GRAPH_SEEN_KEY, null);
+  const keyed = links.filter((l) => l?.source != null && l?.target != null).map((l) => ({ link: l, key: connectionKey(l.source, l.target) }));
+  if (!Array.isArray(seenList)) {
+    ledger.setMeta(GRAPH_SEEN_KEY, [...new Set(keyed.map((k) => k.key))].slice(-GRAPH_SEEN_CAP));
+    return { recorded: 0, baseline: true, skipped: 0 };
+  }
+  const seen = new Set(seenList);
+  const fresh = keyed.filter((k) => !seen.has(k.key));
+  if (!fresh.length) return { recorded: 0, baseline: false, skipped: 0 };
+  let recorded = 0;
+  for (const { link } of fresh.slice(0, cap)) {
+    const a = nodes.get(String(link.source)) || {};
+    const b = nodes.get(String(link.target)) || {};
+    const words = GRAPH_REASON[link.relation] || (() => `a ${link.relation || 'related'} link`);
+    const e = recordConnection(storage, {
+      from: link.source, to: link.target, from_title: a.title, to_title: b.title,
+      reason: words(a.kind, link.weight), basis: link.relation, status: link.relation === 'explicit' || link.relation === 'cluster' ? 'derived' : 'candidate',
+      origin: 'brain_graph', region: a.region || '',
+    }, now);
+    if (e) recorded += 1;
+  }
+  for (const { key } of fresh) seen.add(key);
+  ledger.setMeta(GRAPH_SEEN_KEY, [...seen].slice(-GRAPH_SEEN_CAP));
+  return { recorded, baseline: false, skipped: Math.max(0, fresh.length - cap) };
+}
+
 export const WRITE_PATHS = Object.freeze(['brain_store.write', 'knowledge_library.catalog', 'knowledge_library.index', 'knowledge_library.index_failed', 'capability_engine.KnowledgeItems.put', 'storage.put:che.memory_records', 'storage.put:che:capabilities_v1', 'storage.put:che:workflow_engine', 'storage.put:evr:*', 'storage.put:evidence_runs', 'storage.put:backtest_matrix']);
 
 /** The /api/brain/ledger payload. */
@@ -855,9 +967,11 @@ export async function ledgerApi(storage, query = new URLSearchParams(), { zone =
   if (query.get('event')) return eventDetail(storage, query.get('event'), { zone, now, registry });
   if (query.get('batch')) return { batch_id: query.get('batch'), events: (await ledger.query({ batch_id: query.get('batch'), limit: 2000 })).map((e) => view(e, zone, now)) };
   if (query.get('category')) return { category: query.get('category'), subcategories: CATEGORIES[query.get('category')] || [], events: await categoryView(storage, query.get('category'), { subcategory: query.get('subcategory') || '', zone, now }) };
+  if (query.get('type') === 'CONNECTION_CREATED') return { event_type: 'CONNECTION_CREATED', events: (await ledger.query({ types: ['CONNECTION_CREATED'], limit: 200 })).map((e) => view(e, zone, now)) };
   if (query.get('q')) return { query: query.get('q'), events: (await ledger.query({ text: query.get('q'), limit: 100 })).map((e) => view(e, zone, now)) };
   const cards = await categoryCards(storage, { zone, now });
-  const recent = (await ledger.query({ limit: 25 })).filter((e) => !e.batch_id || e.event_type === 'BATCH_RECEIPT').slice(0, 12).map((e) => view(e, zone, now));
+  const recent = (await ledger.query({ limit: 60 })).filter((e) => e.event_type !== 'CONNECTION_CREATED' && (!e.batch_id || e.event_type === 'BATCH_RECEIPT')).slice(0, 12).map((e) => view(e, zone, now));
+  const connections = (await ledger.query({ types: ['CONNECTION_CREATED'], limit: 20 })).map((e) => view(e, zone, now));
   const totals = cards.reduce((t, c) => ({ knowledge: t.knowledge + c.items, procedures: t.procedures + c.procedures, capabilities: t.capabilities + c.capabilities, pending: t.pending + c.pending, failed: t.failed + c.failed }), { knowledge: 0, procedures: 0, capabilities: 0, pending: 0, failed: 0 });
-  return { version: LEDGER_VERSION, zone, totals, categories: cards, recent, write_paths: WRITE_PATHS };
+  return { version: LEDGER_VERSION, zone, totals, categories: cards, recent, connections, write_paths: WRITE_PATHS };
 }

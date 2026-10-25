@@ -1,5 +1,6 @@
 // The Brain Room's owner regions and sections (owner, 2026-10-24, from his original Brain Room reference):
-// ten colour-coded regions of one neural brain, sixteen sidebar sections, eight dashboard cards, link strength,
+// eleven colour-coded regions of one neural brain (the owner's ten plus Research, 2026-10-25: the graph's own
+// Research lobe, which was folded into Knowledge), sixteen sidebar sections, eight dashboard cards, link strength,
 // the Live Activity feed and the Real-Time Learning events. Pure functions over CHE's real records
 // (CheMemoryDot, the phone's Brain replica and the Worker lists) and the Brain Population Ledger
 // (/api/brain/ledger). Nothing here invents a record, a count, a link or a learning event: an empty input
@@ -10,15 +11,17 @@ import 'package:flutter/material.dart';
 import '../home/che_memory_brain.dart' show CheMemoryDot, cheRelatedMemoryEdgesTyped;
 import 'che_brain_sections.dart';
 
-/// The owner's colour key: blue memories, cyan conversations, purple knowledge, pink creative, orange trading,
-/// green coding, yellow agents, light-blue media, white verified, red errors.
-enum CheBrainRegion { memories, conversations, knowledge, creative, trading, coding, agents, media, verified, errors }
+/// The owner's colour key: blue memories, cyan conversations, purple knowledge, indigo research, pink creative,
+/// orange trading, green coding, yellow agents, light-blue media, white verified, red errors. Eleven regions: nine
+/// domains that partition the records, Verified (counted across every domain) and Errors.
+enum CheBrainRegion { memories, conversations, knowledge, research, creative, trading, coding, agents, media, verified, errors }
 
 extension CheBrainRegionInfo on CheBrainRegion {
   String get label => switch (this) {
     CheBrainRegion.memories => 'Memories',
     CheBrainRegion.conversations => 'Conversations',
     CheBrainRegion.knowledge => 'Knowledge',
+    CheBrainRegion.research => 'Research',
     CheBrainRegion.creative => 'Creative',
     CheBrainRegion.trading => 'Trading',
     CheBrainRegion.coding => 'Coding',
@@ -32,6 +35,7 @@ extension CheBrainRegionInfo on CheBrainRegion {
     CheBrainRegion.memories => const Color(0xFF3D7BFF),
     CheBrainRegion.conversations => const Color(0xFF22E4F2),
     CheBrainRegion.knowledge => const Color(0xFFA35BFF),
+    CheBrainRegion.research => const Color(0xFF5B8CFF),
     CheBrainRegion.creative => const Color(0xFFFF4FC8),
     CheBrainRegion.trading => const Color(0xFFFF9A2E),
     CheBrainRegion.coding => const Color(0xFF2EE57A),
@@ -45,6 +49,7 @@ extension CheBrainRegionInfo on CheBrainRegion {
     CheBrainRegion.memories => Icons.memory_rounded,
     CheBrainRegion.conversations => Icons.forum_rounded,
     CheBrainRegion.knowledge => Icons.menu_book_rounded,
+    CheBrainRegion.research => Icons.science_outlined,
     CheBrainRegion.creative => Icons.auto_awesome_rounded,
     CheBrainRegion.trading => Icons.show_chart_rounded,
     CheBrainRegion.coding => Icons.code_rounded,
@@ -75,8 +80,53 @@ CheBrainRegion cheBrainRegionOf(CheMemoryDot d) {
   if (_creativeWords.hasMatch(kinds)) return CheBrainRegion.creative;
   if (region == 'YouTube and Media' || _mediaWords.hasMatch(kinds)) return CheBrainRegion.media;
   if (region == 'Office Agents' || region == 'Active and Historical Tasks' || d.category == 'Agents') return CheBrainRegion.agents;
+  if (cheBrainSectionOf(d) == CheBrainSection.research || d.category == 'Research') return CheBrainRegion.research;
   return CheBrainRegion.knowledge;
 }
+
+/// The region a spoken or typed name means ("memory", "the trading region", "errors", "region 4"), or null.
+/// A number counts from 1 in [CheBrainRegion.values] order, the order CHE reads the regions aloud.
+CheBrainRegion? cheBrainRegionFromWords(String words) {
+  var t = words.toLowerCase().replaceAll(RegExp(r'[^a-z0-9 ]'), ' ').replaceAll(RegExp(r'\s+'), ' ').trim();
+  t = t.replaceFirst(RegExp(r'^(?:the|my|your|che s|ches) '), '').replaceFirst(RegExp(r' (?:region|lobe|area|part)$'), '').trim();
+  final n = RegExp(r'^(?:region |number |region number )?(\d{1,2}|one|two|three|four|five|six|seven|eight|nine|ten|eleven)$').firstMatch(t);
+  if (n != null) {
+    const names = ['one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven'];
+    final g = n.group(1)!;
+    final i = int.tryParse(g) ?? (names.indexOf(g) + 1);
+    return i >= 1 && i <= CheBrainRegion.values.length ? CheBrainRegion.values[i - 1] : null;
+  }
+  return switch (t) {
+    'memory' || 'memories' || 'personal' || 'personal memory' => CheBrainRegion.memories,
+    'conversation' || 'conversations' || 'chat' || 'chats' => CheBrainRegion.conversations,
+    'knowledge' || 'library' || 'learned knowledge' => CheBrainRegion.knowledge,
+    'research' || 'investigations' => CheBrainRegion.research,
+    'creative' || 'creativity' || 'creations' => CheBrainRegion.creative,
+    'trading' || 'trade' || 'trades' || 'markets' => CheBrainRegion.trading,
+    'coding' || 'code' || 'development' => CheBrainRegion.coding,
+    'agent' || 'agents' || 'office' || 'office agents' => CheBrainRegion.agents,
+    'media' || 'video' || 'videos' || 'images' => CheBrainRegion.media,
+    'verified' || 'verification' => CheBrainRegion.verified,
+    'error' || 'errors' || 'failed' || 'failures' || 'mistakes' => CheBrainRegion.errors,
+    _ => null,
+  };
+}
+
+/// Whether [d] is one of [region]'s records: its domain region, or for Verified any verified record.
+bool cheBrainInRegion(CheBrainRegion region, CheMemoryDot d) =>
+    region == CheBrainRegion.verified ? cheBrainIsVerifiedRecord(d) : cheBrainRegionOf(d) == region;
+
+/// A region's records, newest first (undated last).
+List<CheMemoryDot> cheBrainRegionRecords(CheBrainRegion region, Iterable<CheMemoryDot> dots) {
+  final out = [for (final d in dots) if (cheBrainInRegion(region, d)) d];
+  out.sort((a, b) => (b.at ?? DateTime(0)).compareTo(a.at ?? DateTime(0)));
+  return out;
+}
+
+/// The eleven regions as a numbered spoken list with their real counts ("1, Memories: 2 records; …").
+String cheBrainRegionsSpoken(Map<CheBrainRegion, int> counts) => [
+      for (final (i, r) in CheBrainRegion.values.indexed) '${i + 1}, ${r.label}: ${counts[r] ?? 0} record${(counts[r] ?? 0) == 1 ? '' : 's'}',
+    ].join('; ');
 
 /// Verified with proof: the record's own status (Brain Room list rules, #486).
 bool cheBrainIsVerifiedRecord(CheMemoryDot d) => cheBrainStatusOf(d) == CheBrainStatus.verified;
@@ -232,7 +282,7 @@ extension CheBrainNavInfo on CheBrainNav {
     CheBrainNav.trading => CheBrainRegion.trading.color,
     CheBrainNav.coding => CheBrainRegion.coding.color,
     CheBrainNav.library => CheBrainRegion.knowledge.color,
-    CheBrainNav.research => const Color(0xFF5B8CFF),
+    CheBrainNav.research => CheBrainRegion.research.color,
     CheBrainNav.skills => const Color(0xFF2EE5C0),
     CheBrainNav.learningTasks => const Color(0xFFFFB84D),
     CheBrainNav.connections => const Color(0xFFB98BFF),
@@ -334,7 +384,7 @@ List<CheMemoryDot> cheBrainNavRecords(CheBrainNav s, Iterable<CheMemoryDot> dots
 
 // ─── Live Activity ──────────────────────────────────────────────────────────
 
-enum CheBrainActivityFilter { all, memories, conversations, media, agents, trading, coding, verified }
+enum CheBrainActivityFilter { all, memories, conversations, media, agents, trading, coding, verified, connections }
 
 extension CheBrainActivityFilterInfo on CheBrainActivityFilter {
   String get label => switch (this) {
@@ -346,6 +396,7 @@ extension CheBrainActivityFilterInfo on CheBrainActivityFilter {
     CheBrainActivityFilter.trading => 'Trading',
     CheBrainActivityFilter.coding => 'Coding',
     CheBrainActivityFilter.verified => 'Verified',
+    CheBrainActivityFilter.connections => 'Connections',
   };
 }
 
@@ -358,6 +409,8 @@ bool cheBrainActivityMatches(CheBrainActivityFilter f, CheMemoryDot d) => switch
   CheBrainActivityFilter.trading => cheBrainNavIncludes(CheBrainNav.trading, d),
   CheBrainActivityFilter.coding => cheBrainNavIncludes(CheBrainNav.coding, d),
   CheBrainActivityFilter.verified => cheBrainIsVerifiedRecord(d),
+  // Connections are ledger events (CONNECTION_CREATED), never records: the record feed holds none.
+  CheBrainActivityFilter.connections => false,
 };
 
 /// Dated records only, newest first: an undated record has no place in a timeline.
@@ -489,7 +542,7 @@ const cheBrainLedgerProgression = ['PENDING', 'DISCOVERED', 'INDEXED', 'UNDERSTO
 /// The owner's seven kinds of learning, from the ledger's event type.
 String cheBrainLearningKind(String eventType) => switch (eventType) {
   'SOURCE_DISCOVERED' || 'SOURCE_INDEXED' || 'SOURCE_USED' || 'KNOWLEDGE_EXTRACTED' => 'Reading and indexing',
-  'EVIDENCE_UPDATED' || 'EVIDENCE_STRENGTHENED' => 'Connecting ideas',
+  'EVIDENCE_UPDATED' || 'EVIDENCE_STRENGTHENED' || 'CONNECTION_CREATED' => 'Connecting ideas',
   'OWNER_MEMORY_SAVED' || 'OWNER_PREFERENCE_SAVED' || 'CONVERSATION_REMEMBERED' || 'KNOWLEDGE_SAVED' || 'KNOWLEDGE_UPDATED' => 'Updating memories',
   'PROJECT_KNOWLEDGE_UPDATED' || 'WORKFLOW_PROMOTED' || 'BATCH_RECEIPT' => 'Learning from completed work',
   'PROCEDURE_CREATED' || 'CAPABILITY_TESTED' => 'Developing and testing a skill',
@@ -589,22 +642,109 @@ class CheBrainLearningEvent {
   };
 }
 
+/// One CONNECTION_CREATED ledger event (brain_ledger.js recordConnection): CHE linked two nodes. Both node ids, the
+/// reason and the time come from the ledger row; nothing here infers a link.
+class CheBrainConnectionEvent {
+  const CheBrainConnectionEvent({
+    required this.id,
+    required this.fromId,
+    required this.toId,
+    required this.fromTitle,
+    required this.toTitle,
+    required this.reason,
+    required this.status,
+    required this.origin,
+    required this.at,
+    this.time = '',
+  });
+
+  /// A ledger row as /api/brain/ledger returns it under `connections`; null unless it is a complete connection row.
+  static CheBrainConnectionEvent? fromLedger(Object? raw) {
+    if (raw is! Map || raw['event_type'] != 'CONNECTION_CREATED') return null;
+    final d = raw['detail'] is Map ? raw['detail'] as Map : const {};
+    final id = '${raw['brain_event_id'] ?? ''}';
+    final from = '${d['from_id'] ?? ''}';
+    final to = '${d['to_id'] ?? ''}';
+    final ms = raw['ms'];
+    if (id.isEmpty || from.isEmpty || to.isEmpty || ms is! num) return null;
+    return CheBrainConnectionEvent(
+      id: id,
+      fromId: from,
+      toId: to,
+      fromTitle: '${d['from_title'] ?? ''}',
+      toTitle: '${d['to_title'] ?? ''}',
+      reason: '${d['reason'] ?? raw['reason_saved'] ?? ''}',
+      status: '${d['status'] ?? ''}',
+      origin: '${d['origin'] ?? ''}',
+      at: DateTime.fromMillisecondsSinceEpoch(ms.toInt(), isUtc: true),
+      time: '${raw['time'] ?? ''}',
+    );
+  }
+
+  final String id;
+  final String fromId;
+  final String toId;
+  final String fromTitle;
+  final String toTitle;
+  final String reason;
+
+  /// derived (the rules confirmed it) or candidate (shared words only); empty when not recorded.
+  final String status;
+
+  /// brain_relations (Brain records) or brain_graph (the neural map's token-overlap pass).
+  final String origin;
+  final DateTime at;
+  final String time;
+
+  String get fromLabel => fromTitle.isEmpty ? fromId : fromTitle;
+  String get toLabel => toTitle.isEmpty ? toId : toTitle;
+  String get statusWords => switch (status) {
+    'derived' => 'derived link',
+    'candidate' => 'candidate link',
+    _ => 'link',
+  };
+  String get originWords => switch (origin) {
+    'brain_relations' => 'Brain relationship rules',
+    'brain_graph' => 'neural map word overlap',
+    '' => 'origin not recorded',
+    _ => origin,
+  };
+}
+
+/// The phone record a ledger node id stands for: the same id, or the Worker id inside a phone id ("note:abc" for
+/// "abc"). Null when that record is not on this phone.
+CheMemoryDot? cheBrainDotForNodeId(String id, Iterable<CheMemoryDot> dots) {
+  if (id.isEmpty) return null;
+  CheMemoryDot? suffix;
+  for (final d in dots) {
+    if (d.id == id) return d;
+    if (suffix == null && (d.id.endsWith(':$id') || id.endsWith(':${d.id}'))) suffix = d;
+  }
+  return suffix;
+}
+
 /// What the ledger overview says, parsed. [events] are newest first.
 class CheBrainLearning {
-  const CheBrainLearning({this.events = const [], this.totals = const {}, this.fetchedAt, this.error});
+  const CheBrainLearning({this.events = const [], this.connections = const [], this.totals = const {}, this.fetchedAt, this.error});
 
   factory CheBrainLearning.fromLedger(Map<String, dynamic> v, {DateTime? fetchedAt}) {
     final events = [
       for (final e in (v['recent'] as List?) ?? const []) ?CheBrainLearningEvent.fromLedger(e),
     ]..sort((a, b) => b.at.compareTo(a.at));
+    final connections = [
+      for (final e in (v['connections'] as List?) ?? const []) ?CheBrainConnectionEvent.fromLedger(e),
+    ]..sort((a, b) => b.at.compareTo(a.at));
     final totals = <String, int>{
       for (final MapEntry(:key, :value) in ((v['totals'] as Map?) ?? const {}).entries)
         if (value is num) '$key': value.toInt(),
     };
-    return CheBrainLearning(events: events, totals: totals, fetchedAt: fetchedAt ?? DateTime.now());
+    return CheBrainLearning(events: events, connections: connections, totals: totals, fetchedAt: fetchedAt ?? DateTime.now());
   }
 
   final List<CheBrainLearningEvent> events;
+
+  /// CONNECTION_CREATED events from the ledger, newest first (Live Activity's "New connections").
+  final List<CheBrainConnectionEvent> connections;
   final Map<String, int> totals;
   final DateTime? fetchedAt;
   final String? error;
@@ -629,3 +769,45 @@ class CheBrainLearning {
     return [for (final e in events) if (!seen.contains(e.id) && (newest == null || !e.at.isBefore(newest))) e];
   }
 }
+
+// ─── Connected screens ──────────────────────────────────────────────────────
+
+/// The screens in CHE a Brain record can come from, where the app already has a route to open them.
+enum CheBrainSourceKind { conversation, trade, project, agentDesk }
+
+/// One way back from a record to the screen that holds its source.
+class CheBrainSourceLink {
+  const CheBrainSourceLink(this.kind, this.id, this.label);
+
+  final CheBrainSourceKind kind;
+
+  /// The trade id, project id or name, or agent name; empty for conversations (the conversations list opens).
+  final String id;
+
+  /// Button text and VoiceOver label: says exactly what opens.
+  final String label;
+}
+
+/// The source screens a record names in its own fields, strongest first. Empty when no screen in CHE holds its
+/// source (an indexed fact, a lesson): the details page then says so plainly.
+List<CheBrainSourceLink> cheBrainSourceLinksOf(CheMemoryDot d) {
+  final src = d.sourceInfo;
+  final refs = src['refs'] is Map ? src['refs'] as Map : const {};
+  final out = <CheBrainSourceLink>[];
+  final trade = '${refs['trade_id'] ?? src['trade_id'] ?? ''}'.trim();
+  if (trade.isNotEmpty) out.add(CheBrainSourceLink(CheBrainSourceKind.trade, trade, 'Open the replay of trade $trade'));
+  final project = (d.project.isNotEmpty ? d.project : '${src['project_id'] ?? refs['project_id'] ?? ''}').trim();
+  if (project.isNotEmpty) out.add(CheBrainSourceLink(CheBrainSourceKind.project, project, 'Open project $project'));
+  final agent = d.workers.isNotEmpty ? d.workers.first : '${src['agent'] ?? ''}'.trim();
+  if (agent.isNotEmpty && agent.toLowerCase() != 'che') out.add(CheBrainSourceLink(CheBrainSourceKind.agentDesk, agent, "Open $agent's desk in the Office"));
+  if (cheBrainRegionOf(d) == CheBrainRegion.conversations) {
+    out.add(const CheBrainSourceLink(CheBrainSourceKind.conversation, '', 'Open your conversations'));
+  }
+  return out;
+}
+
+/// Said when a record has no source screen in CHE.
+const cheBrainNoSourceScreen = "No screen in CHE holds this record's source. It lives only in the Brain.";
+
+/// Opens a record's source screen; returns whether it opened. Supplied by the app (lib/home_state/hub_rooms.dart).
+typedef CheOpenBrainSource = Future<bool> Function(CheBrainSourceLink link);
