@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:http/http.dart' as http;
 import 'package:porcupine_flutter/porcupine_error.dart';
@@ -9,6 +10,7 @@ import 'package:porcupine_flutter/porcupine_manager.dart';
 
 typedef CheWakeCallback = FutureOr<void> Function();
 typedef CheWakeStatusCallback = void Function(String status);
+typedef CheWakeErrorCallback = FutureOr<void> Function(String error);
 
 /// Foreground/local wake-word listener for CHE.
 ///
@@ -22,12 +24,32 @@ class CheWakeWordEngine {
     required this.deviceToken,
     required this.onWake,
     this.onStatus,
+    this.onListenerError,
   });
 
   final String baseUrl;
   final String deviceToken;
   final CheWakeCallback onWake;
   final CheWakeStatusCallback? onStatus;
+
+  /// Called when a running listener dies (audio interruption, microphone
+  /// taken, engine error). Without it the app kept showing wake listening
+  /// while nothing listened, until the next relaunch or resume.
+  final CheWakeErrorCallback? onListenerError;
+
+  /// After a listener error Porcupine is not retried for [errorCooldown], so
+  /// recovery hands the microphone to the native listener instead of
+  /// restarting a failing engine in a loop.
+  static const Duration errorCooldown = Duration(minutes: 2);
+  static DateTime? _lastListenerError;
+
+  static bool recentlyFailed([DateTime? now]) {
+    final last = _lastListenerError;
+    return last != null && (now ?? DateTime.now()).difference(last) < errorCooldown;
+  }
+
+  @visibleForTesting
+  static void resetListenerErrors() => _lastListenerError = null;
 
   PorcupineManager? _manager;
   bool _running = false;
@@ -86,6 +108,10 @@ class CheWakeWordEngine {
   Future<bool> start() async {
     if (_running) return true;
     if (_starting) return false;
+    if (recentlyFailed()) {
+      onStatus?.call('Porcupine failed recently; using CHE native wake fallback.');
+      return false;
+    }
     _starting = true;
 
     try {
@@ -131,9 +157,7 @@ class CheWakeWordEngine {
           unawaited(Future<void>.sync(() => onWake()));
         },
         sensitivities: [sensitivity],
-        errorCallback: (PorcupineException error) {
-          onStatus?.call('Porcupine wake listener error: $error');
-        },
+        errorCallback: (PorcupineException error) => handleListenerError(error),
       );
 
       await _manager!.start();
@@ -147,6 +171,17 @@ class CheWakeWordEngine {
     } finally {
       _starting = false;
     }
+  }
+
+  /// A running listener stopped with an error: it no longer listens, so say
+  /// so and let the owner of the microphone recover.
+  @visibleForTesting
+  void handleListenerError(Object error) {
+    _running = false;
+    _lastListenerError = DateTime.now();
+    onStatus?.call('Porcupine wake listener error: $error');
+    final recover = onListenerError;
+    if (recover != null) unawaited(Future<void>.sync(() => recover(error.toString())));
   }
 
   Future<void> stop({bool disposeManager = false}) async {
