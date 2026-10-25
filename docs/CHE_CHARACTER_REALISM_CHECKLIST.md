@@ -38,6 +38,21 @@ Branch: `claude/che-character-realism` (from main `afb8de1`). Lanes push to `lan
     hair/clothing/body/voice (say what preserves rig) → in CHE's Office → save, reopen, use. Every segment labelled
     REAL / PROTOTYPE / NOT AT $0. Lane E `lane/char-demo`; doc `docs/CHE_CREATE_ROOM_DEMO.md`.
 
+16. GPU Connect (2026-10-25): "Connect GPU" → CHE operates Colab Connect in its existing browser with the CHE Office
+    Google account preferred, session kept across screens; sign-in/confirmation steps handed to the owner then resumed.
+    Verify separately: right account, Colab GPU runtime, fresh worker heartbeat, a real test job completes and opens.
+    "GPU connected" only after the heartbeat. No promise of permanent Colab; jobs/checkpoints survive disconnects.
+    Lane F `lane/gpu-connect`; doc `docs/CHE_GPU_CONNECT.md`.
+17. Realism + cinematic (2026-10-25): one Create workflow → optimized interactive rigged model AND cinematic videos of the
+    same character. Blender/Cycles, MPFB2, existing skeleton (+Rigify/retarget only if needed), licensed mocap clips,
+    blending, foot contact, natural transitions; facial shape keys, blink, eyes, expressions, speech-driven mouth
+    (evaluate Rhubarb, MediaPipe); licensed skin/eye/hair/cloth/lighting assets (Poly Haven etc.); local ComfyUI/Wan2.2
+    only with a GPU, paid nodes disabled. First a real 15–20 s sample (walk in, turn, sit, gesture, speak, close-up,
+    skeleton overlay) + rigged model; honest comparison with the owner's two reference videos. AI video is never proof
+    of rig motion. Lane G `lane/char-realism`; doc `docs/CHE_REALISM_STACK.md`.
+    BLOCKER: the two reference videos did not reach this container (no video files in the session); owner asked to
+    re-send. Comparison waits for them.
+
 ## Infrastructure facts (inspected, not assumed)
 - Cloudflare Worker: queue, storage, routing only. No GPU, no Blender.
 - Free GitHub Actions CPU worker (ubuntu, 4 cores, Blender 5.0.1, MPFB2): verified live. Run 40153146586 built a
@@ -73,6 +88,8 @@ Branch: `claude/che-character-realism` (from main `afb8de1`). Lanes push to `lan
 | G12 | World population + benchmarks | D | in progress |
 | G13 | Create Room demo video + walkthrough | E | in progress |
 | G14 | "Open and display saved image <id>" listed all 26 media items | me | fixed `dfd3f48`: Worker 19/19 media tests, full Worker 3990/0; Flutter che_chat_image 2/2; iPhone display unverified |
+| G15 | GPU Connect flow with 4 separate verifications | F | in progress |
+| G16 | Realism stack + 15–20 s CHE sample | G | in progress |
 | G9 | e2e server "k.startsWith" (research queue never ran in e2e) | me | done `4ad45c9`; e2e 2/2 |
 
 ## Integration and release
