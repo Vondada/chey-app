@@ -9,6 +9,10 @@
 // - Stable: the card has a fixed height, prices use fixed-width figures, and live ticks never reset zoom or pan.
 // - Pinch to zoom, drag to pan, plus Zoom and timeframe buttons for VoiceOver and voice. Silent: it never speaks.
 // - Read only: no orders.
+// - Ticker switching on Home (owner, 2026-10-25): MNQ and NQ on the Rithmic feed (the contract Rithmic is subscribed to;
+//   another contract says so instead of drawing the wrong one), BTC and ETH on the exchange's public trade stream
+//   (che_crypto_stream.dart, no account). One status model for both (CheLiveStatus: LIVE, DELAYED, WAITING, STALE,
+//   DISCONNECTED). The chosen ticker is remembered; the source is not.
 import 'dart:async';
 import 'dart:math' as math;
 
@@ -17,11 +21,18 @@ import 'package:flutter/semantics.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../che_ui/che_hud.dart';
+import 'che_crypto_candles.dart';
+import 'che_crypto_stream.dart';
 import 'che_live_feed_hub.dart';
 import 'che_live_status.dart';
 import 'che_market_feed.dart';
 
 const kLiveChartMinutesPref = 'che_live_chart_minutes';
+const kLiveChartTickerPref = 'che_live_chart_ticker';
+
+/// The primary symbols Home switches between.
+const kLiveChartTickers = ['MNQ', 'NQ', 'BTC', 'ETH'];
+bool cheIsCryptoTicker(String t) => t == 'BTC' || t == 'ETH';
 
 class CheLiveChartCard extends StatefulWidget {
   const CheLiveChartCard({
@@ -33,10 +44,16 @@ class CheLiveChartCard extends StatefulWidget {
     this.delayedBuilder,
     this.chartHeight = 150,
     this.recheckEvery = const Duration(seconds: 20),
+    this.cryptoHub,
+    this.initialTicker = 'MNQ',
   });
 
   /// Null uses [CheLiveFeedHub.instance].
   final CheLiveFeedHub? hub;
+
+  /// The BTC and ETH streams. Null uses [CheCryptoStreamHub.appWide] (none under flutter test).
+  final CheCryptoStreamHub? cryptoHub;
+  final String initialTicker;
   final DateTime Function()? now;
 
   /// Opens the Rithmic connection screen.
@@ -58,6 +75,10 @@ class CheLiveChartCard extends StatefulWidget {
 
 class CheLiveChartCardState extends State<CheLiveChartCard> {
   int _minutes = 1;
+  late String _ticker = kLiveChartTickers.contains(widget.initialTicker) ? widget.initialTicker : 'MNQ';
+  CheCryptoStream? _crypto;
+  CheCryptoStreamHub? get _cryptoHub => widget.cryptoHub ?? CheCryptoStreamHub.appWide;
+  String get ticker => _ticker;
   CheLiveLease? _lease;
   Timer? _recheck;
   bool _showDelayed = false;
@@ -78,7 +99,7 @@ class CheLiveChartCardState extends State<CheLiveChartCard> {
 
   int get panFromRight => _panFromRight;
   set panFromRight(int v) {
-    final candles = _lease?.channel.candles ?? const <CheCandle>[];
+    final candles = _lease == null ? const <CheCandle>[] : _candles;
     _panFromRight = v.clamp(0, math.max(0, candles.length - 1));
     final end = candles.length - _panFromRight;
     _anchor = _panFromRight == 0 || end <= 0 ? null : candles[end - 1].start;
@@ -88,6 +109,7 @@ class CheLiveChartCardState extends State<CheLiveChartCard> {
   void initState() {
     super.initState();
     _attach(_minutes);
+    _attachCrypto();
     unawaited(_restoreMinutes());
     _hub.noteState(status.state); // the first reading: no haptic
     _recheck = Timer.periodic(widget.recheckEvery, (_) {
@@ -102,6 +124,8 @@ class CheLiveChartCardState extends State<CheLiveChartCard> {
       final prefs = await SharedPreferences.getInstance();
       final saved = prefs.getInt(kLiveChartMinutesPref);
       if (mounted && saved != null && kCheFeedMinutes.contains(saved) && saved != _minutes) _setMinutes(saved, save: false);
+      final tick = prefs.getString(kLiveChartTickerPref);
+      if (mounted && tick != null && kLiveChartTickers.contains(tick) && tick != _ticker) setTicker(tick, save: false);
     } catch (_) {
       // No saved timeframe: 1 minute.
     }
@@ -112,6 +136,34 @@ class CheLiveChartCardState extends State<CheLiveChartCard> {
     _lease?.release();
     _lease = _hub.acquire(minutes);
     _lease!.channel.addListener(_onChannel);
+  }
+
+  /// The public stream for BTC or ETH, shared with the Trading Room's chart; released when leaving crypto.
+  void _attachCrypto() {
+    final hub = _cryptoHub;
+    if (_crypto != null) {
+      _crypto!.removeListener(_onCrypto);
+      hub?.release(_crypto!);
+      _crypto = null;
+    }
+    if (!cheIsCryptoTicker(_ticker) || hub == null) return;
+    _crypto = hub.acquire('$_ticker-USD')..addListener(_onCrypto);
+  }
+
+  void _onCrypto() {
+    if (mounted) setState(() {});
+  }
+
+  /// Switches the card to [t] (MNQ, NQ, BTC or ETH) by tap or voice; remembered for next time.
+  void setTicker(String t, {bool save = true}) {
+    if (t == _ticker || !kLiveChartTickers.contains(t)) return;
+    setState(() {
+      _ticker = t;
+      panFromRight = 0;
+      _showDelayed = false;
+      _attachCrypto();
+    });
+    if (save) unawaited(SharedPreferences.getInstance().then((p) => p.setString(kLiveChartTickerPref, t)).catchError((_) => false));
   }
 
   void _onChannel() {
@@ -146,25 +198,60 @@ class CheLiveChartCardState extends State<CheLiveChartCard> {
     _recheck?.cancel();
     _lease?.channel.removeListener(_onChannel);
     _lease?.release();
+    if (_crypto != null) {
+      _crypto!.removeListener(_onCrypto);
+      _cryptoHub?.release(_crypto!);
+    }
     super.dispose();
   }
 
   CheLiveStatus get status {
+    final now = (widget.now ?? DateTime.now)();
+    if (cheIsCryptoTicker(_ticker)) {
+      final c = _crypto;
+      if (c == null) {
+        return CheLiveStatus(state: CheLiveState.disconnected, word: 'DISCONNECTED', detail: 'The $_ticker public stream is not available here', source: 'Coinbase public', symbol: '$_ticker-USD');
+      }
+      return CheLiveStatus.fromCrypto(c.describe(restAvailable: false), symbol: '$_ticker-USD', lastPrice: c.lastTrade?.price, lastTradeAt: c.lastTrade?.time);
+    }
     final ch = _lease!.channel;
-    return CheLiveStatus.fromFeed(ch.current, hasCandles: ch.candles.isNotEmpty, now: (widget.now ?? DateTime.now)());
+    final s = CheLiveStatus.fromFeed(ch.current, hasCandles: ch.candles.isNotEmpty, now: now);
+    // Rithmic streams one contract; a different futures ticker says so instead of drawing the wrong market.
+    final subscribed = ch.current.symbol;
+    if (subscribed.isNotEmpty && !subscribed.startsWith(_ticker)) {
+      return CheLiveStatus(state: CheLiveState.connecting, word: 'WAITING', detail: 'Rithmic is streaming $subscribed, not $_ticker. Choose $_ticker on the Rithmic screen to stream it.', source: 'Rithmic', symbol: _ticker);
+    }
+    return s;
+  }
+
+  /// The candles for the chosen ticker: Rithmic for futures, the public stream for crypto. Empty for a contract
+  /// Rithmic is not streaming.
+  List<CheCandle> get _candles {
+    if (cheIsCryptoTicker(_ticker)) {
+      final now = (widget.now ?? DateTime.now)().toUtc();
+      return [
+        for (final c in _crypto?.candles(_minutes) ?? const <CryptoCandle>[])
+          CheCandle(start: c.start, minutes: c.minutes, open: c.open, high: c.high, low: c.low, close: c.close, volume: c.volume.round(), trades: c.trades,
+              closed: !now.isBefore(c.end), source: 'coinbase', symbol: '$_ticker-USD'),
+      ];
+    }
+    final ch = _lease!.channel;
+    final subscribed = ch.current.symbol;
+    return subscribed.isNotEmpty && !subscribed.startsWith(_ticker) ? const [] : ch.candles;
   }
 
   @override
   Widget build(BuildContext context) {
     final s = status;
-    final candles = _lease!.channel.candles;
-    final canAct = !s.isLive && s.state != CheLiveState.quiet && s.state != CheLiveState.connecting;
+    final candles = _candles;
+    final canAct = !cheIsCryptoTicker(_ticker) && !s.isLive && s.state != CheLiveState.quiet && s.state != CheLiveState.connecting;
     return CheGlass(
       radius: 22,
       padding: const EdgeInsets.fromLTRB(14, 12, 14, 10),
       child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, mainAxisSize: MainAxisSize.min, children: [
         _header(s),
-        const SizedBox(height: 8),
+        _tickers(),
+        const SizedBox(height: 6),
         SizedBox(
           height: widget.chartHeight,
           child: Stack(children: [
@@ -193,7 +280,7 @@ class CheLiveChartCardState extends State<CheLiveChartCard> {
 
   Widget _header(CheLiveStatus s) {
     final price = s.lastPrice == null || _showDelayed ? '—' : _fmt(s.lastPrice!);
-    final symbol = s.symbol.isEmpty ? 'MNQ' : s.symbol;
+    final symbol = s.symbol.isEmpty ? _ticker : s.symbol;
     return Row(children: [
       Expanded(
         child: Semantics(
@@ -236,6 +323,31 @@ class CheLiveChartCardState extends State<CheLiveChartCard> {
       for (final m in kCheFeedMinutes) _tf(m),
     ]);
   }
+
+  /// MNQ · NQ · BTC · ETH, one tap each (44 points tall for VoiceOver).
+  Widget _tickers() => Row(children: [
+        for (final t in kLiveChartTickers)
+          Expanded(
+            child: Semantics(
+              button: true,
+              selected: t == _ticker,
+              label: '$t chart${t == _ticker ? ', selected' : ''}',
+              excludeSemantics: true,
+              child: InkWell(
+                key: ValueKey('che-live-ticker-$t'),
+                borderRadius: BorderRadius.circular(10),
+                onTap: () => setTicker(t),
+                child: SizedBox(
+                  height: 44,
+                  child: Center(
+                    child: Text(t,
+                        style: CheHud.label.copyWith(fontSize: 12, color: t == _ticker ? CheHud.ice : CheHud.chromeLo, fontWeight: t == _ticker ? FontWeight.w800 : FontWeight.w400)),
+                  ),
+                ),
+              ),
+            ),
+          ),
+      ]);
 
   Widget _tf(int m) {
     final on = m == _minutes;
