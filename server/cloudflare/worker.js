@@ -5915,6 +5915,12 @@ export class CheState extends DurableObject {
       if (!ask) return ndjsonReply('Say the length and the subject, for example "/film-make 10-minute movie about a lighthouse keeper".', { source: 'che_film_studio', ok: false, command: command.id, model_calls: 0 });
       return withDoneFields(await this.filmChat(request, ask), { command: command.id });
     }
+    // Master profile: form filling runs only on the owner's iPhone, in CHE's browser. The Worker never
+    // receives profile values or passwords, so it only says where to do it. Nothing is filled from here.
+    if (command.local === 'master_profile') {
+      return ndjsonReply('Form filling runs only on your iPhone, sir: open the form in CHE\'s browser there and say "use my master profile". Your profile and passwords never come to this server, so nothing was filled from here.',
+        { source: 'che_master_profile', ok: false, on_device_only: true, command: command.id, model_calls: 0 });
+    }
     // Recording Studio: an app screen; the Worker only says so and asks the app to open it.
     if (command.local === 'recording_studio') return ndjsonReply('Opening the Recording Studio, sir.', { source: 'che_recording_studio', ok: true, command: command.id, model_calls: 0, open_screen: 'recording_studio' });
     // Owner Improvements: the command's words go through the same intent the owner's chat uses.

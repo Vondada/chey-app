@@ -5169,6 +5169,46 @@
    "status": "available",
    "missing": [],
    "optional_missing": []
+  },
+  {
+   "id": "master-profile",
+   "category": "office",
+   "title": "Master Profile",
+   "summary": "Fill the open form from your approved profiles.",
+   "does": "Fills the form open in CHE's iPhone browser from your approved Personal or CHE Office profile, remembered answers and the on-device password vault, then reads back each field. It never submits: say \"submit it\" separately, and paying needs your yes.",
+   "mode": "BUILD",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": {
+    "name": "profile",
+    "required": false,
+    "hint": "personal, business, or everything for all pages"
+   },
+   "examples": [
+    "CHE, use my master profile",
+    "Fill this with my business profile",
+    "Fill everything with my personal profile"
+   ],
+   "needs": [],
+   "optional": [],
+   "handler": "app: CheFormFiller (lib/browser/che_form_filler.dart) + assets/browser/che_form_fill.js",
+   "route": "che_master_profile",
+   "produces": "filled form",
+   "evidence": "Each field's value read back from the page on the phone; the report names fields, never values.",
+   "cost": "Free. Runs on the iPhone; nothing is sent to a model.",
+   "keywords": [
+    "master profile",
+    "fill this form",
+    "fill out the form",
+    "autofill",
+    "business profile",
+    "personal profile"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
   }
  ],
  "templates": [

@@ -27,6 +27,10 @@ abstract class CheFormPage {
 class CheFormFillVoice {
   CheFormFillVoice._();
   static Future<String?> Function(String words)? handler;
+
+  /// Masked detail for the owner's SCREEN only (never spoken: speech may use a
+  /// cloud voice). Chat shows it and clears it after a details reply.
+  static String? screenDetail;
 }
 
 enum _Pending { none, profileChoice, captcha, verification, nextPage, submitConfirm }
@@ -581,13 +585,18 @@ class CheFormFiller {
     return 'Remembered your ${byLabel.length} ${byLabel.length == 1 ? 'answer' : 'answers'} for $_host on this iPhone: ${byLabel.keys.join(', ')}. I\'ll reuse them next time.';
   }
 
-  /// The owner's on-screen detail: labels, statuses and MASKED values only.
+  /// Spoken detail: labels and statuses only. The masked values go to
+  /// [CheFormFillVoice.screenDetail] for the owner's screen.
   String details() {
     if (_outcomes.isEmpty) return 'I haven\'t filled anything on this page yet.';
-    return [
-      for (final o in _outcomes) '${o.label}: ${_statusWords(o)}${o.value.isNotEmpty && o.status == 'filled' ? ' (${_mask(o)})' : ''}',
-    ].join('\n');
+    CheFormFillVoice.screenDetail = maskedDetails();
+    return '${[for (var i = 0; i < _outcomes.length; i++) '${i + 1}. ${_outcomes[i].label}: ${_statusWords(_outcomes[i])}'].join('. ')}. The values are on screen, partly hidden.';
   }
+
+  /// The owner's on-screen detail: labels, statuses and MASKED values only.
+  String maskedDetails() => [
+        for (final o in _outcomes) '${o.label}: ${_statusWords(o)}${o.value.isNotEmpty && o.status == 'filled' ? ' (${_mask(o)})' : ''}',
+      ].join('\n');
 
   String _mask(_FieldOutcome o) {
     final v = o.value;

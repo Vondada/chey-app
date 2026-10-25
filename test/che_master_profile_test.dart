@@ -200,6 +200,13 @@ void main() {
       for (final v in ['Jordan', 'Rivera', 'jordan.rivera', '602']) {
         expect(reply.contains(v), isFalse, reason: v);
       }
+      // "Read the fill details": spoken part names fields only; masked values go to the screen.
+      final spokenDetails = (await f.handle('read the fill details'))!;
+      expect(spokenDetails, contains('1. First name: filled and checked'));
+      expect(spokenDetails.contains('Jordan') || spokenDetails.contains('jordan') || spokenDetails.contains('J•••'), isFalse);
+      expect(CheFormFillVoice.screenDetail, contains('Email: filled and checked (j•••@gmail.com)'));
+      expect(CheFormFillVoice.screenDetail!.contains('jordan.rivera'), isFalse);
+      CheFormFillVoice.screenDetail = null;
       // "submit it" is a separate command and presses submit.
       final sent = (await f.handle('submit it'))!;
       expect(page.submitted, 1);

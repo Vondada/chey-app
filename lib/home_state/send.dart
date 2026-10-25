@@ -465,6 +465,18 @@ extension _CheHomeSend on _CHEHomeState {
     if (fill == null) return false;
     final answer = await fill(message);
     if (answer == null) return false;
+    // "Read the fill details": masked values on screen only; the spoken part names fields.
+    final screen = CheFormFillVoice.screenDetail;
+    CheFormFillVoice.screenDetail = null;
+    if (screen != null) {
+      if (mounted) {
+        _set(() => controller.clear());
+        _showSpokenReply(screen);
+      }
+      HapticFeedback.mediumImpact();
+      await speakText(answer, record: false);
+      return true;
+    }
     await reply(answer);
     return true;
   }

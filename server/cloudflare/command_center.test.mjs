@@ -38,7 +38,7 @@ const MISSION_IDS = {
   money: ['money-dashboard', 'cashflow', 'budget', 'expenses', 'invoices', 'money-forecast', 'pricing', 'profit-report'],
   clients: ['lead-scout', 'lead-audit', 'lead-score', 'lead-match', 'lead-proposal', 'lead-outreach', 'lead-crm', 'lead-followup', 'client-deliver'],
   marketing: ['brand-build', 'marketing-plan', 'social-content', 'ads-plan', 'seo-growth', 'sales-funnel', 'business-launch'],
-  office: ['office-status', 'office-delegate', 'office-org', 'office-calendar', 'office-coordinate', 'office-jobs', 'warroom', 'automate', 'skill-learn', 'connect', 'voice-test', 'create-3d', 'cloud-open', 'cloud-gpu', 'cloud-blender', 'cloud-render', 'cloud-tests', 'cloud-prs', 'cloud-install', 'cloud-agents', 'cloud-control'],
+  office: ['office-status', 'office-delegate', 'office-org', 'office-calendar', 'office-coordinate', 'office-jobs', 'warroom', 'automate', 'skill-learn', 'connect', 'voice-test', 'create-3d', 'cloud-open', 'cloud-gpu', 'cloud-blender', 'cloud-render', 'cloud-tests', 'cloud-prs', 'cloud-install', 'cloud-agents', 'cloud-control', 'master-profile'],
   // Creator Studio (owner issue #347).
   studio: ['studio-bible', 'studio-pilot', 'studio-render', 'studio-export', 'studio-post', 'studio-growth', 'film-make', 'music-studio', 'film-status'],
 };
@@ -112,8 +112,8 @@ async function owner({ saved = new Map(), model = () => 'Here is the answer, sir
 // ─── 1. Catalog identities ────────────────────────────────────────────────
 
 test('1. the owner\'s 71 commands exist exactly as listed, plus ten REA, six Creator Studio, two Strategy Control Center, two strategy learning commands, the historical study, the timeframe matrix, the CHE paper account and the two calendars, in 9 categories, each fully described', () => {
-  assert.equal(COMMANDS.length, 131);
-  assert.equal(new Set(COMMANDS.map((c) => c.id)).size, 131, 'ids are unique');
+  assert.equal(COMMANDS.length, 132);
+  assert.equal(new Set(COMMANDS.map((c) => c.id)).size, 132, 'ids are unique');
   assert.deepEqual(CATEGORIES.map((c) => c.id), Object.keys(MISSION_IDS));
   for (const [category, ids] of Object.entries(MISSION_IDS)) {
     assert.deepEqual(COMMANDS.filter((c) => c.category === category).map((c) => c.id), ids, category);
@@ -164,7 +164,7 @@ test('2. availability comes from real configuration: ready, needs setup, unsuppo
   const expired = connectorStatus({ CHE_TRADOVATE_OAUTH_CLIENT_ID: 'x', CHE_TRADOVATE_OAUTH_CLIENT_SECRET: 'y' }, { broker: { expired: true } });
   assert.equal(expired.broker.state, 'needs_reconnect');
   const view = catalogView(bare);
-  assert.equal(view.commands.length, 131);
+  assert.equal(view.commands.length, 132);
   assert.ok(view.commands.every((c) => ['available', 'setup_required', 'unsupported', 'temporarily_unavailable'].includes(c.status)));
 });
 
@@ -245,6 +245,28 @@ test('3. a slash command and its plain-English request reach the same handler', 
   assert.match((await che.say('/che-flagstaff-import')).reply, /needs setup[\s\S]*GitHub/, 'without GitHub the command says what it needs');
   assert.deepEqual(parseSlashCommand('/Trade-Chart  NQ please'), { name: 'trade-chart', command: commandById('trade-chart'), input: 'NQ please' });
   assert.equal(parseSlashCommand('Analyze the NQ chart'), null);
+});
+
+test('/master-profile routes to the on-device form filler: the Worker answers where to do it, calls no model, fills nothing and stores nothing', async () => {
+  const c = commandById('master-profile');
+  assert.equal(c.route, 'che_master_profile');
+  assert.equal(c.local, 'master_profile');
+  assert.equal(c.confirm, '', 'filling never costs money; submitting is a separate command');
+  const che = await owner();
+  const before = JSON.stringify([...che.saved.entries()]);
+  for (const said of ['/master-profile', '/master-profile business everything']) {
+    const out = await che.say(said);
+    assert.equal(out.route, 'che_master_profile', said);
+    assert.equal(out.modelCalls, 0, said);
+    assert.equal(out.done.ok, false, 'nothing was filled from the Worker');
+    assert.equal(out.done.on_device_only, true);
+    assert.match(out.reply, /only on your iPhone[\s\S]*nothing was filled from here/);
+  }
+  // No profile store or form answers appear in the Worker's state.
+  // (The route name may appear in ordinary command receipts; the on-device stores' keys never do.)
+  const after = JSON.stringify([...che.saved.entries()]);
+  assert.ok(before.length <= after.length);
+  assert.ok(!/che_master_profiles_v1|che_form_answers_v1|che_profile_site_choice_v1/.test(after), 'no profile data stored by the Worker');
 });
 
 test('/che-cancel-job and its spoken forms reach the coding-job cancel route with no model, no approval and no delete hold', async () => {
@@ -771,7 +793,7 @@ test('the Flutter catalog fixture matches what the Worker serves (regenerate: no
   const { fixtureCatalog } = await import('../../tool/dump_command_catalog.mjs');
   const fixture = JSON.parse(readFileSync(new URL('../../test/fixtures/command_catalog.json', import.meta.url), 'utf8'));
   assert.deepEqual(fixture, JSON.parse(JSON.stringify(fixtureCatalog())));
-  assert.equal(fixture.commands.length, 131);
+  assert.equal(fixture.commands.length, 132);
   assert.ok(fixture.templates.length >= 4);
 });
 
@@ -890,7 +912,7 @@ test('the owner\'s six spoken phrases are answered from the catalog with no mode
   for (const words of variants('CHE, open your Commands page.')) {
     const out = await che.say(words);
     assert.equal(out.route, 'che_command_center', words);
-    assert.match(out.reply, /131 commands in 9 groups[\s\S]*2\. YouTube, 11[\s\S]*9\. Creator Studio, 9[\s\S]*Nothing was run/, words);
+    assert.match(out.reply, /132 commands in 9 groups[\s\S]*2\. YouTube, 11[\s\S]*9\. Creator Studio, 9[\s\S]*Nothing was run/, words);
   }
   for (const words of variants('CHE, search for YouTube.')) {
     const out = await che.say(words);
