@@ -10007,6 +10007,8 @@ export class CheState extends DurableObject {
         return json({ objective, started, duplicate: out.duplicate === true, spoken: speakObjective(objective) });
       }
       if (path === '/api/objectives') {
+        // Family and guest devices share this store; the owner's objectives are his alone.
+        if (!ownerDevice) return json({ detail: 'Only the CHE owner can read objectives.' }, 403);
         const list = Array.isArray(data.objectives) ? data.objectives : [];
         return json({ objectives: list, spoken: list.map(speakObjective) });
       }

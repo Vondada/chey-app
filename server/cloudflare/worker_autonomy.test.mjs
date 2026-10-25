@@ -4195,3 +4195,19 @@ test('a real outage mixed with size skips is still the busy path, never "too lon
     globalThis.fetch = original;
   }
 });
+
+// The owner's objectives (mission plans and step outputs) are not readable from a family/guest device on the same store.
+test('objectives list: the owner reads it; a family device gets 403', async () => {
+  const saved = new Map();
+  const env = { CHE_PAIR_CODE: '123456', CHE_DISABLE_KEYLESS_AI: '1', AI: { run: async () => ({ response: 'ok' }) } };
+  const { send, owner, family } = await ownerAndFamily(env, saved);
+  const data = saved.get('che');
+  data.objectives = [{ id: 'obj-1', objective: 'Owner private plan', status: 'running', nodes: [] }];
+  saved.set('che', data);
+  const denied = await send('/api/objectives', {}, family);
+  assert.equal(denied.status, 403);
+  assert.doesNotMatch(await denied.text(), /Owner private plan/);
+  const mine = await send('/api/objectives', {}, owner);
+  assert.equal(mine.status, 200);
+  assert.equal((await mine.json()).objectives[0].objective, 'Owner private plan');
+});
