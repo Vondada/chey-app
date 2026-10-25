@@ -138,3 +138,13 @@ test('"playable" needs MP4 bytes: a stored record whose bytes are not a video is
   assert.equal(report.playable, 0);
   assert.equal(report.missing, 1);
 });
+
+test('an older film record that says r2 while no bucket is bound is read from CHE\'s own store, where the film really is', async () => {
+  const mp4 = new Uint8Array(readFileSync(new URL('./fixtures/media/tiny.mp4', import.meta.url)));
+  const saved = new Map();
+  const storage = { get: async (k) => saved.get(k), put: async (k, v) => saved.set(k, v), delete: async (k) => saved.delete(k) };
+  await mediaStore({}, storage).put('film/f1/film.mp4', mp4, { contentType: 'video/mp4' });
+  const item = { id: 'vid-film-old', kind: 'video', mode: 'film', mime_type: 'video/mp4', title: 'Old film', created_at: '2026-10-22T05:00:00Z', blob: 'r2', blob_key: 'film/f1/film.mp4' };
+  assert.deepEqual(new Uint8Array(await readBlob({}, storage, item)), mp4);
+  assert.equal((await mediaLibraryReport({}, storage, [item])).playable, 1);
+});
