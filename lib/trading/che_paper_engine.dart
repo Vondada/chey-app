@@ -138,6 +138,10 @@ class ChePaperEngine extends ChangeNotifier {
   /// After a failed load, so the next open tries again.
   static void forgetShared() => _shared = null;
 
+  /// Widget tests hand the room an in-memory account instead of the phone's file.
+  @visibleForTesting
+  static set sharedForTest(Future<ChePaperEngine>? engine) => _shared = engine;
+
   static Future<ChePaperEngine> load(ChePaperStore store, {DateTime Function()? clock}) async {
     final e = ChePaperEngine._(store, clock ?? DateTime.now);
     final s = await store.readState();
