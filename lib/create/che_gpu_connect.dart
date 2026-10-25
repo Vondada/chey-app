@@ -44,7 +44,7 @@ bool cheGpuConnectCommand(String words) {
 }
 
 /// "continue", "done", "I'm signed in": the owner finished the step CHE handed him.
-bool cheGpuContinueCommand(String words) => RegExp(r"^(?:continue|go on|resume|done|i'?m done|ok(?:ay)? done|i(?:'?ve| have)? signed in|signed in|ready|next)$")
+bool cheGpuContinueCommand(String words) => RegExp(r"^(?:continue|go on|resume|done|i'?m done|ok(?:ay)? done|i(?:'?ve| have|'?m| am)? signed in|signed in|ready|next)$")
     .hasMatch(words.trim().toLowerCase().replaceAll(RegExp(r'[.!?]+$'), ''));
 
 /// "my CHE Office Google account is name at gmail dot com" → the address, or null.
@@ -802,7 +802,8 @@ class _CheGpuConnectPanelState extends State<CheGpuConnectPanel> {
               Padding(padding: const EdgeInsets.only(top: 6), child: Semantics(
                 image: true, label: 'Test job picture from your GPU, front view',
                 child: ClipRRect(borderRadius: BorderRadius.circular(10),
-                    child: Image.memory(c.testImage!, key: const ValueKey('gpu-test-image'), height: 120, fit: BoxFit.contain)),
+                    child: Image.memory(c.testImage!, key: const ValueKey('gpu-test-image'), height: 120, fit: BoxFit.contain,
+                        errorBuilder: (_, _, _) => const Text('The picture could not be shown.'))),
               )),
             const SizedBox(height: 6),
             Wrap(spacing: 8, runSpacing: 4, children: [
