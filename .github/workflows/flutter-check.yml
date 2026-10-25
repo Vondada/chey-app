@@ -145,6 +145,8 @@ jobs:
           python3 -m unittest discover -s tools -p 'test_che_gpu_worker.py'
           python3 -m unittest discover -s tools -p 'test_che_gpu_face_preview.py'
           python3 -m unittest discover -s tools -p 'test_che_gpu_push_results.py'
+          # CHE's Modal app: allowlisted arguments, idempotency and pins (no Modal SDK needed).
+          python3 -m unittest discover -s tools -p 'test_che_modal_app.py'
           python3 -m unittest discover -s tools -p 'test_avatar_body_verify.py'
           # Reference photo fit on synthetic fixtures (mediapipe Apache-2.0; the model is pinned by SHA-256 in photo_fit.py),
           # the person job's reference stage, GLB measurements and body macros.

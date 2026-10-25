@@ -23,7 +23,8 @@ export const KEY_PROVIDERS = {
   // GPU is never started by a key alone: the owner must also set a GPU budget ("allow up to $20 for GPUs").
   runpod: { name: 'RunPod (prepaid GPUs)', env: 'RUNPOD_API_KEY', page: 'https://www.runpod.io/console/user/settings', test: 'https://api.runpod.io/graphql', method: 'POST', body: '{"query":"query { myself { id } }"}', accounts: 'one account per person; you add prepaid credit yourself; CHE never pays' },
   vast: { name: 'Vast.ai (prepaid GPUs)', env: 'VAST_API_KEY', page: 'https://cloud.vast.ai/manage-keys/', test: 'https://console.vast.ai/api/v0/users/current/', accounts: 'one account per person; you add prepaid credit yourself; CHE never pays' },
-  modal: { name: 'Modal (GPU functions)', env: 'MODAL_TOKEN', page: 'https://modal.com/settings/tokens', test: null, accounts: 'paste as token_id:token_secret (ak-…:as-…); Modal has no plain HTTP check, so CHE cannot verify it for free' },
+  // Modal: a Proxy Auth Token for CHE's own deployed app (modal_gpu.js), verified by an authenticated /health call there.
+  modal: { name: 'Modal (GPU functions)', env: 'MODAL_TOKEN', page: 'https://modal.com/settings', test: null, accounts: 'paste as wk-ID:ws-SECRET@https://<workspace>--che-gpu.modal.run (a Proxy Auth Token and the endpoint the CHE Modal deploy workflow printed); verified by calling that app' },
   youtube: { name: 'YouTube · @Cognitive.Horizon.Engine', env: 'YOUTUBE_GOOGLE_SIGNIN', page: 'https://console.cloud.google.com/apis/credentials', test: null, accounts: 'connected with Google sign-in (Connect YouTube), not a pasted key' },
 };
 

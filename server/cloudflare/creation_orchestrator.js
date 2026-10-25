@@ -16,6 +16,7 @@ import {
 } from './gpu_queue.js';
 // Compute pool (compute_pool.js): held or reserved jobs are not dispatched, a cooling provider is not started, a
 // rate-limited dispatch cools GitHub down, and a Kaggle character session starts when it is the best allowed choice.
+import { modalCreditGate, modalStateOf } from './modal_gpu.js';
 import { applyPending, cooling, dispatchable, heldReason, isQuotaAnswer, loadPool, coolDown, poolSchedule, savePool, workerUsable } from './compute_pool.js';
 
 export const DISPATCHES_KEY = 'gpu:dispatches';
@@ -130,11 +131,17 @@ export async function ensureCapacity(env = {}, { storage, now, fetcher = fetch, 
   // Waiting jobs carry what they wait for (display_state / status_line); written only when it changed.
   let jobsChanged = false;
   const cpuIds = new Set(cap.cpu_runnable.map((j) => j.id));
+  // A GPU-only job the owner allowed onto Modal's included credit but whose credit check stops it waits for HIS approval,
+  // with the reason (modal_gpu.js); it is not dispatched.
+  const mGate = modalStateOf(pool).opt_in ? modalCreditGate(pool, t) : null;
+  const modalWait = mGate && !mGate.ok && mGate.kind !== 'off' ? mGate.reason : '';
   for (const j of jobs) {
     if ((j.state !== 'queued' && j.state !== 'paused') || j.owner_paused) continue;
     const held = heldReason(pool, j, t);
     const next = held ? { state: 'waiting', reason: held, at: iso(t) } : cpuIds.has(j.id) ? (cloudState ? { state: cloudState, reason: '', at: recent.filter((d) => d.ok).at(-1)?.at || iso(t) } : reason ? { state: 'waiting', reason, at: iso(t) } : null)
       : j.requires?.gpu === 'preferred' && cap.gpu_online ? { state: 'waiting', reason: 'A GPU worker is online and takes it next.', at: iso(t) }
+        : (j.requires?.gpu || 'required') === 'required' && !cap.gpu_online && modalWait
+          ? { state: 'waiting_approval', reason: modalWait, at: iso(t) }
         : (j.requires?.gpu || 'required') === 'required' && !cap.gpu_online
           ? { state: 'waiting_gpu', reason: 'This needs a GPU, and none is online. It resumes from its saved stages when your Colab GPU checks in.', at: iso(t) } : null;
     const same = JSON.stringify({ ...(j.cloud || {}), at: 0 }) === JSON.stringify({ ...(next || {}), at: 0 }) && Boolean(j.cloud) === Boolean(next);
@@ -142,7 +149,7 @@ export async function ensureCapacity(env = {}, { storage, now, fetcher = fetch, 
   }
   // The pool may start a Kaggle character session (only with a token the owner already saved; see compute_pool.js).
   const sched = await poolSchedule(env, { storage, now: () => t, fetcher, jobs, workers, pool, base: (await storage.get('film:base')) || '' }).catch(() => null);
-  if (sched?.started) poolJobsChanged = true;
+  if (sched?.started || sched?.jobs_changed) poolJobsChanged = true;
   if (jobsChanged || poolJobsChanged) await q.save(jobs);
   if ((rec.waiting_reason || '') !== reason) { rec.waiting_reason = reason; rec.waiting_at = iso(t); recChanged = true; }
   if (recChanged) await storage.put(ENGINE_KEY, rec);
