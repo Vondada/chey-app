@@ -48,11 +48,12 @@ from mathutils import Matrix, Quaternion, Vector
 HERE = os.path.dirname(os.path.abspath(__file__))
 FACE_DIR = os.path.join(HERE, '..', 'avatar_face')
 sys.path.insert(0, FACE_DIR)
-from mpfb_base import MPFB, apply_sliders, load_base, macro_woman, slider_deltas, target, to_blender  # noqa: E402
+from mpfb_base import MPFB, apply_sliders, load_base, macro_from_settings, slider_deltas, target, to_blender  # noqa: E402
 
 FPS = 30
 CLIPS = ('idle', 'walk', 'run', 'wave', 'talk')
 CLIP_EXTRAS = {}   # clip -> glTF animation extras (the gaits' declared ground speed), written into the GLB on export
+CHARACTER = {}     # what built this character (face sliders, body macros, hair style, reference), in the GLB asset extras
 MORPHS = {   # shape key -> MakeHuman expression unit(s)
     'blink_l': ['expression/units/african/eye-left-closure'],
     'blink_r': ['expression/units/african/eye-right-closure'],
@@ -93,11 +94,11 @@ def build():
     sc.render.fps = FPS
     verts, uvs, faces, groups = load_base()
     n = len(verts)
-    race = {k: float(x) for k, x in (kv.split('=') for kv in os.environ.get('RACE', 'african=0.7,caucasian=0.3').split(','))}
     fitw = float(os.environ.get('FIT_W', '0' if os.environ.get('IDENTITY') else '1'))   # as mpfb_dress.py: CHE's own fit
     win = json.load(open(os.environ['FIT']))['winner'] if fitw and os.environ.get('FIT') and os.path.exists(os.environ['FIT']) else {'weights': {}, 'youth': 0.0}
-    v = apply_sliders(macro_woman(verts, race, youth=win.get('youth', 0.0) * fitw, mature=float(os.environ.get('MATURE', '0')),
-                                  sex=float(os.environ.get('SEX', '0'))),
+    # Body macros (BODY_GENDER, BODY_AGE, BODY_HEIGHT, BODY_WEIGHT, BODY_MUSCLE, BODY_PROPORTIONS; MakeHuman 0..1 values):
+    # with none set this is exactly the previous macro_woman body, so existing presets build the same model.
+    v = apply_sliders(macro_from_settings(verts, os.environ, youth=win.get('youth', 0.0) * fitw),
                       slider_deltas(n), {k: w * fitw for k, w in win.get('weights', {}).items()})
     style_face = {
         'photoreal': '',
@@ -107,6 +108,19 @@ def build():
     }.get(os.environ.get('STYLE', 'photoreal'), '')
     for item in [x for x in (os.environ.get('FACE', '') + ',' + style_face).split(',') if x.strip()]:
         tname, tw = item.split('='); v = v + target(tname.strip(), n) * float(tw)
+    from mpfb_base import body_values, has_body_macros
+    ref = os.environ.get('REFERENCE') or ''
+    try: ref_sha = json.loads(ref).get('sha256') if ref else None
+    except ValueError: ref_sha = None
+    CHARACTER.clear(); CHARACTER.update({   # written into the GLB (asset.extras.che_character) by export()
+        'face_sliders': {k: round(w * fitw, 4) for k, w in win.get('weights', {}).items() if w * fitw},
+        'face_targets': [x.strip() for x in os.environ.get('FACE', '').split(',') if x.strip()],
+        'style': os.environ.get('STYLE', 'photoreal'), 'race': os.environ.get('RACE', 'african=0.7,caucasian=0.3'),
+        'body_macros': {k: round(x, 4) for k, x in body_values(os.environ, win.get('youth', 0.0) * fitw).items()},
+        'body_macro_system': 'makehuman_full' if has_body_macros(os.environ) else 'legacy_macro_woman',
+        'hair_style': os.environ.get('HAIR_STYLE') or 'close_crop', 'reference_sha256': ref_sha,
+        'outfit_top': os.environ.get('OUTFIT_TOP') or 'long_sleeved_top',
+        'outfit_top_built': 't_shirt' if os.environ.get('OUTFIT_TOP') == 't_shirt' else 'long_sleeved_top'})
     co = to_blender(v)
     co[:, 2] -= co[sorted(groups['body']), 2].min()   # feet on the floor (z = 0)
 
@@ -178,6 +192,11 @@ def build():
         if bones & {'neck_01', 'spine_03', 'clavicle_l', 'clavicle_r', 'head'}:
             collar = neck.z + 0.012 - 0.03 * min(1.0, max(0.0, (neck.y - c.y) / 0.08)) ** 2
             return 'top' if c.z < collar else 'skin'
+        if os.environ.get('OUTFIT_TOP') == 't_shirt':   # short sleeves ending half-way down the upper arm
+            for s in 'lr':
+                if bones & {f'upperarm_{s}', f'lowerarm_{s}', f'hand_{s}'}:
+                    h, t = B[f'upperarm_{s}']; d = t - h
+                    return 'top' if (c - h).dot(d) / d.length_squared < 0.45 and not bones & {f'lowerarm_{s}', f'hand_{s}'} else 'skin'
         for s in 'lr':
             if bones & {f'lowerarm_{s}', f'hand_{s}'}:
                 h, t = B[f'lowerarm_{s}']; d = t - h
@@ -305,16 +324,21 @@ def build():
     for gname, name in (('helper-l-eye', 'Eye_l'), ('helper-r-eye', 'Eye_r')):
         pts = co[sorted(groups[gname])]; c = Vector(pts.mean(0)); r = float(np.linalg.norm(pts - pts.mean(0), axis=1).max()) * 0.97
         em = bpy.data.meshes.new(name)
-        bm = bmesh.new(); bmesh.ops.create_uvsphere(bm, u_segments=32, v_segments=16, radius=r); bm.to_mesh(em); bm.free()
+        # The sphere's pole looks forward (-Y), so its rings are concentric with the pupil and iris: the vertex colours
+        # then draw a round pupil, iris and limbal ring instead of a smear across a few coarse rows (realism pass,
+        # 2026-10-25: the 32x16 sphere with a vertical pole rendered the eye as one orange blot).
+        bm = bmesh.new(); bmesh.ops.create_uvsphere(bm, u_segments=48, v_segments=40, radius=r)
+        bmesh.ops.rotate(bm, verts=bm.verts, cent=(0, 0, 0), matrix=Matrix.Rotation(math.radians(90), 3, 'X'))
+        bm.to_mesh(em); bm.free()
         cols = []
         for vx in em.vertices:
             p = vx.co / r   # unit sphere; the eye looks along -Y
             rad = math.hypot(p.x, p.z)
-            if p.y > 0: c3 = (0.82, 0.8, 0.78)
-            elif rad < 0.19: c3 = (0.01, 0.01, 0.01)
-            elif rad < 0.6: c3 = tuple(min(1.0, x * (1.0 if rad > 0.3 else 0.75)) for x in iris)
-            elif rad < 0.67: c3 = tuple(x * 0.35 for x in iris)
-            else: c3 = (0.82, 0.8, 0.78)
+            if p.y > 0: c3 = (0.66, 0.62, 0.58)
+            elif rad < 0.15: c3 = (0.01, 0.01, 0.01)
+            elif rad < 0.44: c3 = tuple(min(1.0, x * (1.0 if rad > 0.26 else 0.75)) for x in iris)
+            elif rad < 0.5: c3 = tuple(x * 0.35 for x in iris)
+            else: c3 = (0.66, 0.62, 0.58)
             cols.append(c3)
         a = em.color_attributes.new('Col', 'FLOAT_COLOR', 'POINT'); a.data.foreach_set('color', [x for c3 in cols for x in (*c3, 1.0)])
         em.materials.append(eye_m)
@@ -347,12 +371,149 @@ def build():
         rz = vx.co.z - eye_mid[2]
         thick = 0.005 + 0.012 * min(1.0, max(0.0, (rz + 0.02) / 0.12))
         vx.co += hnorm[k] * (0.003 if k in rim else thick)
+    style = os.environ.get('HAIR_STYLE') or 'close_crop'
+    extra, hair_info = hair_style(style, sc, arm, hair, hme, Vector(eye_mid))
 
     suit = refine_suit(me, [order.index('top'), order.index('trousers')]) if os.environ.get('SUIT_REFINE', '1') != '0' else None
     if suit: print('SUIT ' + json.dumps(suit, separators=(',', ':')), flush=True)
     info = {'covered_fraction': round(covered, 3), 'skin_bones': skin_bones, 'body_vertices': len(me.vertices), 'suit': suit,
-            'hair': 'scalp-cap hair mesh in the preset colour (strand hair is not in the 3D model)'}
-    return sc, arm, [body, shoes, hair, *eyes], info
+            'hair': hair_info, 'hair_style': hair_info.split(':')[0]}
+    print('HAIR ' + json.dumps({'style': hair_info.split(':')[0], 'objects': [o.name for o in [hair, *extra]],
+                                'vertices': sum(len(o.data.vertices) for o in [hair, *extra])}), flush=True)
+    return sc, arm, [body, shoes, hair, *eyes, *extra], info
+
+
+# ── Hair styles (owner, 2026-10-25: real hair for every style, in the GLB, following the head) ─────────────────────
+HAIR_STYLES = ('close_crop', 'curly_short', 'afro', 'bun_high', 'bun_low', 'long_wavy', 'wavy_medium', 'beanie')
+
+
+def sphere_fit(P):
+    """Least-squares sphere through points P (n, 3): (centre, radius)."""
+    A = np.c_[2 * P, np.ones(len(P))]; b = (P ** 2).sum(1)
+    x = np.linalg.lstsq(A, b, rcond=None)[0]
+    return Vector(x[:3]), float(np.sqrt(x[3] + (x[:3] ** 2).sum()))
+
+
+def _rigid_to_head(ob, arm):
+    for vg in list(ob.vertex_groups): ob.vertex_groups.remove(vg)
+    ob.vertex_groups.new(name='head').add(list(range(len(ob.data.vertices))), 1.0, 'REPLACE')
+    if not any(m.type == 'ARMATURE' for m in ob.modifiers):
+        mod = ob.modifiers.new('Armature', 'ARMATURE'); mod.object = arm
+    ob.parent = arm
+
+
+def _curl(p, f=1.0):
+    """Deterministic lumpy noise in -1..1 (tight curls), from the vertex position."""
+    return (math.sin(p.x * 210 * f + 1.3) * math.sin(p.y * 190 * f + 0.7) * math.sin(p.z * 230 * f + 2.1)
+            + 0.5 * math.sin((p.x + p.z) * 330 * f + 0.4) * math.sin((p.y - p.z) * 290 * f + 1.9)) / 1.5
+
+
+def hair_style(style, sc, arm, hair, hme, eye_mid):
+    """Shapes the scalp cap (built above) into `style` and adds any separate pieces (a bun, a long curtain). Every
+    piece is a mesh in the hair material, rigidly weighted to the head bone, so it is exported in the GLB and moves
+    with the head. close_crop is the cap exactly as before. Returns (extra objects, description)."""
+    if style not in HAIR_STYLES:
+        return [], f'close_crop: hair style {style!r} is not one CHE builds; close-cropped cap instead'
+    if style == 'close_crop':
+        return [], 'close_crop: scalp-cap hair mesh in the preset colour'
+    mat = hme.materials[0]
+    P = np.array([v.co[:] for v in hme.vertices])
+    c, R = sphere_fit(P)
+    bm = bmesh.new(); bm.from_mesh(hme)
+    if style in ('curly_short', 'afro', 'beanie'):
+        bmesh.ops.subdivide_edges(bm, edges=list(bm.edges), cuts=1, use_grid_fill=True, smooth=0.6)
+    bm.verts.ensure_lookup_table(); bm.normal_update()
+    rim_edges = [e for e in bm.edges if e.is_boundary]
+    rim = {v for e in rim_edges for v in e.verts}
+    orig = {v: v.co.copy() for v in bm.verts}
+    ring = {v: 0 for v in rim}; front_ = list(rim)   # rings of vertices counted in from the edge (the afro tapers)
+    while front_:
+        nxt = []
+        for v in front_:
+            for e in v.link_edges:
+                o = e.other_vert(v)
+                if o not in ring: ring[o] = ring[v] + 1; nxt.append(o)
+        front_ = nxt
+    for v in bm.verts:
+        d = (v.co - c); dist = d.length; d.normalize()
+        front = max(0.0, -d.y)                      # the face looks along -Y: less hair over the forehead
+        edge = (0.35 if v in rim else 1.0) if style != "afro" else min(1.0, 0.3 + 0.14 * ring[v])
+        if style == 'curly_short':
+            v.co = v.co + v.normal * edge * (0.010 + 0.006 * _curl(v.co))
+        elif style == 'afro':
+            # Rounder than a beret: full volume on top, tapering toward the lower edge over the ears and the nape.
+            low = min(1.0, max(0.3, (d.z + 0.35) / 0.6))
+            bulk = (0.05 + 0.012 * max(0.0, d.z)) * (1.0 - 0.55 * front) * low
+            v.co = c + d * max(dist, R + edge * bulk) + v.normal * 0.006 * _curl(v.co, 0.6) * edge
+        elif style == 'beanie':
+            v.co = v.co + v.normal * (0.004 if v in rim else 0.011)
+        else:   # buns and long hair: hair pulled back close to the head
+            v.co = v.co + v.normal * (-0.004 if v not in rim else -0.001)
+    if style in ('curly_short', 'afro', 'beanie'):
+        # A skirt from the outer edge back to the scalp, so no gap shows under the volume from below or the side.
+        inner = {v: bm.verts.new(orig[v] - (orig[v] - c).normalized() * 0.002) for v in rim}
+        for e in rim_edges:
+            a, b = e.verts
+            try: bm.faces.new((a, b, inner[b], inner[a]))
+            except ValueError: pass
+    bm.normal_update(); bm.to_mesh(hme); bm.free(); hme.update()
+    for p in hme.polygons: p.use_smooth = True
+    _rigid_to_head(hair, arm)
+    extra = []
+    if style == 'beanie':
+        knit = material('Beanie', rgb_env('BEANIE_SRGB', os.environ.get('OUTFIT_SRGB', '31,111,120')), 0.85, 0.15, cull=False)
+        hme.materials[0] = knit
+    if style in ('bun_high', 'bun_low'):
+        dirn = Vector((0, 0.45, 0.89) if style == 'bun_high' else (0, 0.97, -0.25)).normalized()
+        bme = bpy.data.meshes.new('HairBun'); b2 = bmesh.new()
+        bmesh.ops.create_uvsphere(b2, u_segments=32, v_segments=20, radius=0.042)
+        for v in b2.verts:
+            v.co = Vector((v.co.x, v.co.y * 0.9, v.co.z * 0.78))
+            v.co += v.co.normalized() * 0.003 * math.sin(math.atan2(v.co.y, v.co.x) * 9 + v.co.z * 120)   # twisted strands
+        b2.to_mesh(bme); b2.free()
+        bme.materials.append(mat)
+        for p in bme.polygons: p.use_smooth = True
+        bun = bpy.data.objects.new('HairBun', bme); sc.collection.objects.link(bun)
+        bun.location = c + dirn * (R + 0.022)
+        bun.rotation_euler = dirn.to_track_quat('Z', 'Y').to_euler()
+        bpy.context.view_layer.update()
+        bme.transform(bun.matrix_world); bun.matrix_world = Matrix.Identity(4)   # bake, so the skin binds at rest
+        _rigid_to_head(bun, arm); extra.append(bun)
+    if style in ('long_wavy', 'wavy_medium'):
+        length = 0.34 if style == 'long_wavy' else 0.17
+        loops = []   # rim vertices at the sides and back (behind the eyes), in order around the head
+        hme.update()
+        bmr = bmesh.new(); bmr.from_mesh(hme); bmr.verts.ensure_lookup_table()
+        pts = [v.co.copy() for v in bmr.verts if v.is_boundary and v.co.y > eye_mid.y + 0.035]
+        bmr.free()
+        pts.sort(key=lambda p: math.atan2(p.x, p.y - c.y))
+        if len(pts) > 4:
+            seg = 14
+            cme = bpy.data.meshes.new('HairLong'); cb = bmesh.new()
+            grid = []
+            for i, p in enumerate(pts):
+                out = Vector((p.x - c.x, p.y - c.y, 0)); out = out.normalized() if out.length > 1e-6 else Vector((0, 1, 0))
+                col = []
+                for s in range(seg + 1):
+                    t = s / seg
+                    wave = 0.012 * math.sin(t * math.pi * 3.0 + i * 0.35) * t
+                    q = p + out * (0.006 + 0.05 * t + wave) + Vector((0, 0, -length * t))
+                    col.append(cb.verts.new(q))
+                grid.append(col)
+            for i in range(len(grid) - 1):
+                if (pts[i] - pts[i + 1]).length > 0.05: continue   # a gap in the rim (the face side): no sheet across it
+                for s in range(seg):
+                    cb.faces.new((grid[i][s], grid[i + 1][s], grid[i + 1][s + 1], grid[i][s + 1]))
+            cb.to_mesh(cme); cb.free()
+            cme.materials.append(mat)
+            for p in cme.polygons: p.use_smooth = True
+            curtain = bpy.data.objects.new('HairLong', cme); sc.collection.objects.link(curtain)
+            _rigid_to_head(curtain, arm); extra.append(curtain)
+    names = {'curly_short': 'tight curls, a lumpy volume 1-1.6 cm deep', 'afro': 'a rounded volume about 6-7 cm deep',
+             'beanie': 'a knit cap over the scalp', 'bun_high': 'hair pulled back into a bun on top',
+             'bun_low': 'hair pulled back into a bun at the nape', 'long_wavy': 'long wavy hair to the shoulders',
+             'wavy_medium': 'medium wavy hair to the jaw'}
+    return extra, f'{style}: {names[style]}, mesh in the preset colour, rigid to the head bone'
 
 
 def refine_suit(me, garment_mats, passes=4):
@@ -624,10 +785,11 @@ def animate(sc, arm, body):
     return clips
 
 
-def annotate_glb(path, extras_by_clip):
-    """Adds extras to the GLB's animations by name. Blender's exporter does not write an action's custom properties
-    in NLA-track mode, so the declared ground speed is put into the JSON chunk here (the binary chunk is unchanged)."""
-    if not extras_by_clip: return
+def annotate_glb(path, extras_by_clip, character=None):
+    """Adds extras to the GLB's animations by name, and what built the character to asset.extras.che_character.
+    Blender's exporter does not write an action's custom properties in NLA-track mode, so the declared ground speed is
+    put into the JSON chunk here (the binary chunk is unchanged)."""
+    if not extras_by_clip and not character: return
     import struct
     with open(path, 'rb') as f: data = f.read()
     clen, ctype = struct.unpack_from('<I4s', data, 12)
@@ -637,6 +799,7 @@ def annotate_glb(path, extras_by_clip):
     missing = sorted(set(extras_by_clip) - set(named))
     if missing: raise ValueError(f'no exported animation for {missing}')
     for name, ex in extras_by_clip.items(): named[name].setdefault('extras', {}).update(ex)
+    if character: gl.setdefault('asset', {}).setdefault('extras', {})['che_character'] = character
     js = json.dumps(gl, separators=(',', ':')).encode()
     js += b' ' * (-len(js) % 4)
     rest = data[20 + clen:]
@@ -655,7 +818,7 @@ def export(path, arm, meshes, clips, info):
                               export_skins=True, export_morph=True, export_animations=True, export_animation_mode='NLA_TRACKS',
                               export_vertex_color='ACTIVE', export_materials='EXPORT', export_cameras=False, export_lights=False,
                               export_force_sampling=True)
-    annotate_glb(path, CLIP_EXTRAS)
+    annotate_glb(path, CLIP_EXTRAS, dict(CHARACTER, hair=info.get('hair')))
     nv = sum(len(o.data.vertices) for o in meshes)
     print('MODEL', os.path.abspath(path), os.path.getsize(path), 'bytes', nv, 'vertices',
           f"(full-body clothed character, {len(arm.data.bones)}-bone skeleton, skin weights, face shape keys, clips; hair: {info['hair']})", flush=True)

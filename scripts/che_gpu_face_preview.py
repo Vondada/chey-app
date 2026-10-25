@@ -67,6 +67,7 @@ DEFAULTS = {
 }
 VIEW_NAMES = {0: 'front', 45: 'three-quarter', 90: 'side', 180: 'back'}
 BODY = os.path.join(ROOT, 'tools', 'avatar_body')
+JOB_T0 = time.monotonic()
 
 
 def sha256(path):
@@ -204,6 +205,114 @@ def rig_summary(rec):
     return {k: rec[k] for k in keep if k in rec}
 
 
+def parse_reference(value):
+    """settings REFERENCE (JSON text or a dict): {"url", "sha256", "bytes", "consent": "self" | "fictional"}. None when
+    absent; ValueError (the refusal reason) when it is malformed or has no consent."""
+    if value in (None, '', {}): return None
+    try: ref = json.loads(value) if isinstance(value, str) else dict(value)
+    except (ValueError, TypeError): raise ValueError('REFERENCE is not JSON')
+    sha = str(ref.get('sha256', '')).lower()
+    if not re.fullmatch(r'[0-9a-f]{64}', sha): raise ValueError('REFERENCE has no valid sha256')
+    if ref.get('consent') not in ('self', 'fictional'):
+        raise ValueError('REFERENCE needs consent "self" (a photo of the owner) or "fictional" (a made-up face)')
+    try: size = int(ref.get('bytes') or 0)
+    except (TypeError, ValueError): raise ValueError('REFERENCE bytes is not a number')
+    return {'url': str(ref.get('url') or ''), 'sha256': sha, 'bytes': size, 'consent': ref['consent']}
+
+
+def cpu_model():
+    try:
+        with open('/proc/cpuinfo') as f:
+            m = re.search(r'^model name\s*:\s*(.+)$', f.read(), re.M)
+        return m.group(1).strip() if m else ''
+    except OSError:
+        return ''
+
+
+def device_summary(kind, names, threads, a, settings):
+    """receipt.device_summary: what rendered this job and what that device limits (measured times are in stage_seconds
+    and process_seconds). limits is a list of sentences (gpu_queue.js trimDeviceSummary)."""
+    if kind == 'CPU':
+        return {'kind': 'CPU', 'name': cpu_model() or f'CPU ({threads} threads)', 'threads': threads,
+                'limits': [f'No GPU: Cycles renders on {threads} CPU threads, several times slower than a GPU.',
+                           f'At most {a.samples} samples per pixel (adaptive) and {a.res} px on the long edge, to keep CPU time short.',
+                           'Stage and process seconds in this receipt are measured on this machine.']}
+    return {'kind': 'GPU', 'name': names or kind, 'threads': threads,
+            'limits': [f'Cycles on {kind}: at most {a.samples} samples per pixel and {a.res} px on the long edge.',
+                       'Stage and process seconds in this receipt are measured on this machine.']}
+
+
+REFERENCE_KEYS = ('sha256', 'method', 'model', 'image', 'landmarks', 'sliders', 'not_measured', 'colors', 'color_notes',
+                  'fit_error', 'calibration', 'limits', 'seconds')
+
+
+def reference_stage(a, job, receipt, receipt_path, env, log, reference, ref_file, raw):
+    """STAGE reference: check the photo's SHA-256, fit it (tools/avatar_face/photo_fit.py, cached in the job folder by
+    that SHA-256, so a resumed job does not fit again), and hand the face sliders and colours to the build. Returns 0,
+    or the exit code after a refusal (2) or a failure (4). The photo itself is never copied into the job folder."""
+    print('STAGE reference', flush=True)
+    t0 = time.monotonic()
+    sys.path.insert(0, FACE)
+    import photo_fit
+    sha = reference['sha256']
+    cache = os.path.join(job, f'reference_fit_{sha[:16]}.json')
+    base = {'sha256': sha, 'bytes': reference['bytes'], 'consent': reference['consent']}
+
+    def stop(status, msg, code, **extra):
+        receipt['reference_fit'] = dict(base, status=status, **extra)
+        receipt.update(status=status, finished_at=now()); write_json(receipt_path, receipt)
+        print(msg, flush=True); return code
+    fit = None
+    if os.path.isfile(cache):
+        try:
+            fit = json.load(open(cache))
+            if fit.get('reference_fit', {}).get('method') != photo_fit.METHOD or fit.get('sha256') != sha: fit = None
+        except ValueError:
+            fit = None
+    cached = fit is not None
+    if cached:
+        print(f'SKIP reference fit: cached for this photo ({sha[:12]})', flush=True)
+    else:
+        if not ref_file or not os.path.isfile(ref_file):
+            return stop('reference_missing', 'REFERENCE FAILED: the reference photo was not delivered to this worker', 4)
+        got = photo_fit.sha256_file(ref_file)
+        if got != sha:
+            return stop('reference_mismatch', 'REFERENCE REFUSED: the photo does not match its SHA-256', 2)
+        out = cache + '.part'
+        code, lines = run([sys.executable, os.path.join(FACE, 'photo_fit.py'), '--image', ref_file, '--out', out], env, log, 900)
+        try: fit = json.load(open(out))
+        except (OSError, ValueError): fit = None
+        if code == 3 and fit and fit.get('refused'):
+            return stop('reference_refused', f"REFERENCE REFUSED: {fit['refused']}", 2, refused=fit['refused'], method=fit.get('method'))
+        if code != 0 or not fit or 'winner' not in fit:
+            tail = next((l for _, l in reversed(lines) if l.strip()), '')[:200]
+            return stop('reference_failed', f'REFERENCE FAILED (exit {code}): {tail}', 4)
+        fit['sha256'] = sha
+        write_json(cache, fit); os.remove(out)
+    # The build reads the fitted sliders as FIT (mpfb_body.py / mpfb_dress.py) and the sampled colours, unless the job
+    # set a colour itself (an explicit request wins over the photo).
+    env['FIT'], env['FIT_W'] = cache, '1'
+    applied = {'FIT': os.path.basename(cache), 'FIT_W': '1'}
+    for key, name in (('TARGET_SRGB', 'skin'), ('HAIR_SRGB', 'hair'), ('IRIS_SRGB', 'eyes')):
+        c = (fit['reference_fit'].get('colors') or {}).get(name)
+        if c and key not in raw: env[key] = c; applied[key] = c
+    rf = fit['reference_fit']
+    # The contract CHE's Worker reads (gpu_queue.js trimReferenceFit): colours as #rrggbb, landmarks as a count,
+    # fit_error as one number (rms landmark error in eye gaps), limits as sentences; the detail stays beside them.
+    hexc = lambda c: '#' + ''.join(f'{int(x):02x}' for x in c.split(','))
+    detail = {k: rf[k] for k in REFERENCE_KEYS if k in rf and k not in ('sha256', 'colors', 'landmarks', 'fit_error', 'limits')}
+    receipt['reference_fit'] = dict(base, status='ok', cached=cached, applied=applied, **detail,
+                                    colors={k: hexc(v) for k, v in (rf.get('colors') or {}).items()},
+                                    colors_srgb=rf.get('colors') or {},
+                                    landmarks=int(rf['landmarks']['count']), landmark_ratios=rf['landmarks'],
+                                    fit_error=rf['fit_error']['landmark_rms_eye_gaps'], fit_error_detail=rf['fit_error'],
+                                    limits=[x.strip() + ('' if x.strip().endswith('.') else '.') for x in rf['limits'].split('. ') if x.strip()])
+    receipt.setdefault('stage_seconds', {})['reference'] = round(time.monotonic() - t0, 2)
+    write_json(receipt_path, receipt)
+    print(f"REFERENCE OK: {len(fit['winner']['weights'])} face sliders, fit error {rf['fit_error']['landmark_rms_eye_gaps']} eye gaps", flush=True)
+    return 0
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--blender', required=True); ap.add_argument('--project', required=True); ap.add_argument('--out', required=True)
@@ -213,9 +322,23 @@ def main():
     ap.add_argument('--model', action='store_true', help='also export the 3D model (model.glb): full body by default')
     ap.add_argument('--resume-model', help='a model.glb from an earlier worker, reused when --resume-sha matches')
     ap.add_argument('--resume-sha', default='')
+    ap.add_argument('--reference-file', help='the reference photo named by settings REFERENCE (its sha256 is checked)')
     a = ap.parse_args()
+    global JOB_T0
+    JOB_T0 = time.monotonic()
 
-    settings = dict(DEFAULTS, **(json.load(open(a.settings)) if a.settings else {}))
+    raw = json.load(open(a.settings)) if a.settings else {}
+    ref_file = a.reference_file or raw.pop('REFERENCE_FILE', None)   # a local copy (tests, or what the worker fetched)
+    try:
+        reference = parse_reference(raw.get('REFERENCE'))
+    except ValueError as e:
+        print(f'REFERENCE REFUSED: {e}', flush=True); return 2
+    if reference:
+        # The photo is named by its SHA-256 (the URL may carry a short-lived token and never enters the job id or the
+        # receipt). Its face replaces CHE's built-in face features unless the job set FACE itself.
+        raw['REFERENCE'] = json.dumps({k: reference[k] for k in ('sha256', 'bytes', 'consent')}, sort_keys=True)
+    settings = dict(DEFAULTS, **raw)
+    if reference and 'FACE' not in raw: settings['FACE'] = ''
     mode = (settings.get('MODEL_MODE') or 'full_body') if a.model else None
     if mode not in (None, 'full_body', 'bust'):
         print(f'UNKNOWN MODEL_MODE: only full_body and bust are built', flush=True); return 2
@@ -271,7 +394,13 @@ def main():
         return 3
     receipt.update(device=kind, cycles_gpus='' if cpu else names)
     if cpu: receipt.update(cores=threads, threads=threads)
+    receipt['device_summary'] = device_summary(kind, names, threads, a, settings)
+    write_json(receipt_path, receipt)
     print(f'CPU: {names}' if cpu else f'GPU {kind}: {names}', flush=True)
+
+    if reference:
+        code_r = reference_stage(a, job, receipt, receipt_path, env, log, reference, ref_file, raw)
+        if code_r: return code_r
 
     views = [int(v) for v in a.views.split(',') if v.strip()]
     if mode == 'full_body':
@@ -492,6 +621,7 @@ def full_body(a, job, receipt, receipt_path, env, log, kind, views, threads):
             receipt['exit_code'] = code
             return fail('render_failed', f'RENDER FAILED (exit {code}); finished views are kept, rerun to resume', 4)
     print('STAGE save', flush=True)
+    receipt['process_seconds'] = round(time.monotonic() - JOB_T0, 1)   # this run, measured end to end
     if env.get('EXPORT_ROBLOX') == '1': roblox(a, job, receipt, receipt_path, env, log, blender, model_path)
     receipt.update(status='complete', finished_at=now()); write_json(receipt_path, receipt)
     print('RECEIPT', receipt_path, flush=True)

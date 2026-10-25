@@ -146,6 +146,14 @@ jobs:
           python3 -m unittest discover -s tools -p 'test_che_gpu_face_preview.py'
           python3 -m unittest discover -s tools -p 'test_che_gpu_push_results.py'
           python3 -m unittest discover -s tools -p 'test_avatar_body_verify.py'
+          # Reference photo fit on synthetic fixtures (mediapipe Apache-2.0; the model is pinned by SHA-256 in photo_fit.py),
+          # the person job's reference stage, GLB measurements and body macros.
+          sudo apt-get -qq install -y libegl1 libgles2 > /dev/null   # mediapipe's native library links libEGL
+          python3 -m pip install --quiet mediapipe==1.1.1 pillow
+          python3 -m unittest discover -s tools -p 'test_photo_fit.py' -v
+          python3 -m unittest discover -s tools -p 'test_photo_reference_job.py'
+          python3 -m unittest discover -s tools -p 'test_glb_inspect.py'
+          python3 -m unittest discover -s tools -p 'test_body_macros.py'
       - name: Claude Code project skills (.claude/skills) tests
         run: node --test .claude/skills/tests/*.test.mjs
       - name: CHE free-first coding and paid cap regression tests

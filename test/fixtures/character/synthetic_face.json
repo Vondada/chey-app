@@ -1,0 +1,31 @@
+{
+ "colors": {
+  "eyes": "58,84,62",
+  "hair": "64,38,20",
+  "skin": "160,108,80"
+ },
+ "env": {
+  "RES": "480"
+ },
+ "eyes_px": [
+  [
+   229.5,
+   198.2
+  ],
+  [
+   154.5,
+   198.2
+  ]
+ ],
+ "note": "render of the CC0 MakeHuman/MPFB2 base by tools/avatar_face/photo_fixture.py; not a real person",
+ "sliders": {
+  "chin_h": 0.35,
+  "chin_w": -0.4,
+  "head_w": 0.45,
+  "lip_lower": 0.4,
+  "mouth_w": 0.4,
+  "nose_h": 0.4,
+  "nose_w": 0.55
+ },
+ "synthetic": true
+}

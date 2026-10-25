@@ -75,12 +75,13 @@ def exists(path):
     return os.path.exists(os.path.join(T, path + '.target.gz'))
 
 
-def macro_woman(verts, race=None, youth=0.0, mature=0.0, sex=0.0):
+def macro_woman(verts, race=None, youth=0.0, mature=0.0, sex=0.0, target_fn=None):
     """Young adult: race mix, universal average body, half-way to ideal proportions. sex runs 0 (woman) .. 1 (man) and
     blends MakeHuman's female and male shapes the way its gender slider does.
     youth (0..0.4) blends toward MakeHuman's child shape the way its age slider does below 25 (0.2 is about 21);
     mature (0..0.3) blends toward its old shape the way the slider does above 25 (0.1 is about 31)."""
     v = verts.copy(); n = len(v)
+    target = target_fn or globals()['target']
     for g, gw in (('female', 1.0 - sex), ('male', sex)):
         if not gw: continue
         for age, aw in (('young', 1.0 - youth - mature), ('child', youth), ('old', mature)):
@@ -90,6 +91,86 @@ def macro_woman(verts, race=None, youth=0.0, mature=0.0, sex=0.0):
             v += target(f'macrodetails/universal-{g}-{age}-averagemuscle-averageweight', n) * aw * gw
         v += target(f'macrodetails/proportions/{g}-young-averagemuscle-averageweight-idealproportions', n) * 0.5 * gw
     return v
+
+
+# MakeHuman's body macros (macrodetails/macro.json): each 0..1 value blends its two neighbouring shapes.
+BODY_KEYS = ('BODY_GENDER', 'BODY_AGE', 'BODY_HEIGHT', 'BODY_WEIGHT', 'BODY_MUSCLE', 'BODY_PROPORTIONS')
+BODY_PARTS = {
+    'age': [(0.0, 0.1875, 'baby', 'child'), (0.1875, 0.5, 'child', 'young'), (0.5, 1.0, 'young', 'old')],
+    'muscle': [(0.0, 0.5, 'minmuscle', 'averagemuscle'), (0.5, 1.0, 'averagemuscle', 'maxmuscle')],
+    'weight': [(0.0, 0.5, 'minweight', 'averageweight'), (0.5, 1.0, 'averageweight', 'maxweight')],
+    'height': [(0.0, 0.5, 'minheight', ''), (0.5, 1.0, '', 'maxheight')],
+    'proportions': [(0.0, 0.5, 'uncommonproportions', ''), (0.5, 1.0, '', 'idealproportions')],
+}
+
+
+def blend(kind, x):
+    """{shape: weight} for one macro value, as MakeHuman blends it ('' is the average with no target of its own)."""
+    x = min(1.0, max(0.0, float(x)))
+    for lo, hi, a, b in BODY_PARTS[kind]:
+        if x <= hi:
+            t = (x - lo) / (hi - lo)
+            return {k: w for k, w in ((a, 1.0 - t), (b, t)) if k and w > 1e-9}
+    return {}
+
+
+def body_values(settings, youth=0.0):
+    """The six macro values (0..1) of a job. Unset keys keep today's look: gender = SEX, age from MATURE (0.1 is about
+    31: 0.5 + MATURE / 2) and the fit's youth (0.5 - 0.3125 * youth), average muscle, weight and height, proportions
+    0.75 (half-way to ideal, as macro_woman applies them)."""
+    def f(k, d):
+        x = settings.get(k)
+        return float(x) if x not in (None, '') else float(d)
+    age = 0.5 + 0.5 * f('MATURE', 0.0) - 0.3125 * youth
+    # BODY_PROPORTIONS is the Create room's slider, where 0.5 is today's look (half-way to MakeHuman's ideal
+    # proportions, MakeHuman 0.75; server/cloudflare/creation_studio.js BODY_DEFAULTS): 0..0.5 maps to 0..0.75, 0.5..1
+    # to 0.75..1. The other values are MakeHuman's own (age 0.5 = 25 years, 1 = 90).
+    pv = min(1.0, max(0.0, f('BODY_PROPORTIONS', 0.5)))
+    prop = 1.5 * pv if pv <= 0.5 else 0.75 + 0.5 * (pv - 0.5)
+    return {'gender': f('BODY_GENDER', f('SEX', 0.0)), 'age': f('BODY_AGE', age), 'muscle': f('BODY_MUSCLE', 0.5),
+            'weight': f('BODY_WEIGHT', 0.5), 'height': f('BODY_HEIGHT', 0.5), 'proportions': prop}
+
+
+def macro_full(verts, race, vals, target_fn=None):
+    """MakeHuman's full macro system: race x gender x age shapes, the universal gender x age x muscle x weight shapes,
+    and the height and proportions shapes on top of those (macrodetails/height, macrodetails/proportions)."""
+    target = target_fn or globals()['target']
+    v = verts.copy(); n = len(v)
+    G = {k: w for k, w in (('female', 1.0 - vals['gender']), ('male', vals['gender'])) if w > 1e-9}
+    A, M, W = blend('age', vals['age']), blend('muscle', vals['muscle']), blend('weight', vals['weight'])
+    H, P = blend('height', vals['height']), blend('proportions', vals['proportions'])
+    for g, gw in G.items():
+        for a, aw in A.items():
+            for r, rw in race.items():
+                if rw: v += target(f'macrodetails/{r}-{g}-{a}', n) * rw * gw * aw
+            for m, mw in M.items():
+                for wt, ww in W.items():
+                    k = gw * aw * mw * ww
+                    v += target(f'macrodetails/universal-{g}-{a}-{m}-{wt}', n) * k
+                    for h, hw in H.items():
+                        v += target(f'macrodetails/height/{g}-{a}-{m}-{wt}-{h}', n) * k * hw
+                    for p, pw in P.items():
+                        if a != 'baby':   # MakeHuman has no proportions shapes for babies
+                            v += target(f'macrodetails/proportions/{g}-{a}-{m}-{wt}-{p}', n) * k * pw
+    return v
+
+
+def parse_race(s):
+    return {k.strip(): float(x) for k, x in (kv.split('=') for kv in (s or 'african=0.7,caucasian=0.3').split(','))}
+
+
+def has_body_macros(settings):
+    return any(settings.get(k) not in (None, '') for k in BODY_KEYS)
+
+
+def macro_from_settings(verts, settings, youth=0.0, target_fn=None):
+    """The body before identity sliders. With no BODY_* setting this is exactly macro_woman (the same vertices, so
+    existing presets build the same model); with any BODY_* setting it is MakeHuman's full macro system."""
+    race = parse_race(settings.get('RACE'))
+    if not has_body_macros(settings):
+        return macro_woman(verts, race, youth=youth, mature=float(settings.get('MATURE') or 0), sex=float(settings.get('SEX') or 0),
+                           target_fn=target_fn)
+    return macro_full(verts, race, body_values(settings, youth), target_fn)
 
 
 def slider_deltas(n):
