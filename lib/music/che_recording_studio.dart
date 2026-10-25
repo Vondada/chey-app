@@ -843,6 +843,12 @@ class _CheRecordingStudioState extends State<CheRecordingStudio> with SingleTick
       Wrap(spacing: 8, runSpacing: 8, children: [
         FilledButton(onPressed: () => _do(() => c.master()), child: const Text('Master and measure')),
         OutlinedButton(onPressed: () => _do(() => c.play(from: 0)), child: const Text('Play the master')),
+        OutlinedButton.icon(
+          key: const ValueKey('studio-listen-mix'),
+          onPressed: () => _do(c.listen),
+          icon: const Icon(Icons.hearing_rounded),
+          label: const Text('Listen to this mix'),
+        ),
         OutlinedButton.icon(onPressed: () => _do(c.export), icon: const Icon(Icons.save_rounded), label: const Text('Export WAV')),
         OutlinedButton.icon(onPressed: () => _do(() => c.export(format: 'm4a')), icon: const Icon(Icons.save_outlined), label: const Text('Export M4A')),
       ]),

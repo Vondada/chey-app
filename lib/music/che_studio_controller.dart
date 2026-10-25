@@ -8,6 +8,7 @@ import 'dart:isolate';
 import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
 
+import 'che_audio_ear.dart';
 import 'che_dsp.dart';
 import 'che_engineer.dart';
 import 'che_song.dart';
@@ -892,6 +893,17 @@ class CheStudioController extends ChangeNotifier {
     });
     return _say('Mastered: peak ${report.peakBefore.toStringAsFixed(1)} to ${report.peakAfter.toStringAsFixed(1)} dB, '
         'average level ${report.rmsBefore.toStringAsFixed(1)} to ${report.rmsAfter.toStringAsFixed(1)} dB RMS. Play it to hear the master.');
+  }
+
+  /// CHE's ear: measures the current mix (tempo, key, loudness, dynamics, balance) and says what it hears.
+  Future<String> listen() async {
+    if (song.end == 0) return _say('Nothing to listen to yet. Record a take, build a beat, or import a file.');
+    final job = CheRenderJob(song: song.toJson(), sources: sources, applyMaster: false);
+    final report = await Isolate.run(() {
+      final mix = cheRenderMix(job);
+      return cheListen(mix[0], mix[1], rate: cheStudioRate);
+    });
+    return _say([report.summary(), ...report.notes()].join(' '));
   }
 
   /// Renders the whole song and saves it in Files, On My iPhone, CHE, CHE Songs, Exports: a WAV, or an AAC .m4a
