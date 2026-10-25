@@ -250,6 +250,16 @@ Decisions logged 2026-10-24: the face moved to the MPFB2 (CC0) base; CHE keeps a
 - Installed build/patch on the owner's phone: UNVERIFIED from here (needs the CHE Updates screen on the device).
 - Restrictions unchanged: no spending, no deletion, no live orders, no schedules.
 
+**Claude, 2026-10-25 — PROTECT-AND-CONTINUE INVENTORY (read before taking any task).**
+- main `262924ba`. Open PRs: 97. Mine: #531 github-app-token, #532 owner-ui-batch, #533 studio-mastering (CHE's ear), #535 coding-eval, #536 gpu-browser-login, #627 coding-routing-gaps. Codex: #534 music-audio-truth (owner: Codex). The other 90 (#537-#626) are one PR per conflicting branch from the earlier triage: they DUPLICATE each other by topic and are NOT canonical. Do not add more PRs for a topic that already has one.
+- Duplicate clusters (pick ONE canonical branch per topic; the others are reference only): trading-room (claude/che-trading-*, che-hud-trading, lane/trading-room-v3, wip/lane/trading-room-v3); HUD (claude/che-hud-*); brain (lane/ui-brain, claude/che-brain-*, codex/brain-reliability-takeover); memory and personal recall (claude/che-memory-*, claude/che-personal-recall-date); music (claude/che-music-*, lane/ui-studio, codex #534); creative studio and film (claude/che-creative-studio, claude/che-film-studio, claude/che-visual-studio); security (claude/che-security-*, wip/lane/security-hardening); reliability (lane/reliability, claude/che-reliability, claude/che-stability).
+- Live work lanes with no open PR (owner = the lane name): lane/char-photo, lane/char-world, lane/char-demo, lane/char-pool, lane/gpu-budget, lane/gpu-connect, lane/private-voice, lane/master-profile, lane/service-onboarding, lane/usage-center, lane/privacy-center, lane/rel-trust, lane/rel-infra-app, lane/rel-markets-studio, lane/ui-office, lane/che-earn (wip only).
+- Stale, do NOT merge: codex/strategy-learning-dashboard, codex/verified-market-feeds, grok/* (4 branches), desk/office-native-grok-chat (400-1,500 commits diverged; review only for missing fixes).
+- Already on main, mark done: codex/rithmic-connection-repair-20261025 and codex/rithmic-template-version (no unique commits).
+- Owner-facing decision needed: close the 90 duplicate batch PRs (keep branches), or keep only one per topic. Not done without the owner's yes.
+
+**Delegation for the whole mission (Claude, Codex, Grok, CHE, ChatGPT):** one owner per topic above; take a topic only if its canonical branch is yours or unowned; file ownership: lib/create = Creation, lib/music = Music, server/cloudflare/coding_* = Coding, server/cloudflare/trading_* = Trading, lib/browser = Browser (do not edit without the owner). ChatGPT: post a live status line per topic in the mailbox after each push. Nobody force-pushes or resets another branch.
+
 ## 3. Queue: the owner's open requests, in order
 
 Do them top to bottom. Mark each one `DONE (PR #, SHA)` or `WIP (branch, next step)` here.
