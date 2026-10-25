@@ -867,6 +867,34 @@ export const COMMANDS = Object.freeze([
     examples: ['Profit report for this month'],
     prompt: `Make a profit report from: {input}. ${NUMBERS_RULE}`, produces: 'profit report', keywords: ['profit', 'revenue', 'report', 'p&l'],
   }),
+  // Usage Center (Stage 4, docs/CHE_MODAL_FREE_FIRST_USAGE_PRIVACY.md): one evidence-backed view over CHE's existing records.
+  C('usage-center', 'money', 'EXPLORE', 'Providers, tokens, GPU time, credits and costs, with evidence.', {
+    title: 'Usage Center',
+    does: 'Opens the Usage Center and reads it when you ask: every AI engine and compute provider with its real status (connected only when a key test, call, quota or balance read proved it), tokens, GPU seconds, CPU hours, jobs, credits, quotas, the GPU budget, subscriptions you told CHE, and alerts for quotas, spending caps and unknown charges. Every number says whether it is observed, estimated, entered by you or unavailable, and why. With "subscriptions" or "alerts" it reads just those. It never buys, cancels or changes an account.',
+    needs: [], route: 'che_usage_center', local: 'usage_center', handler: 'usage_center.usageView + speakUsageCenter (over resilience key_health, ai_router ai_usage, compute_pool.providerStatuses, compute_budget)',
+    input: { name: 'part', required: false, hint: 'subscriptions or alerts (optional)' },
+    examples: ["What's my usage?", 'Open the Usage Center', 'What subscriptions do I have?', 'Any usage alerts?'],
+    prompt: 'Read my Usage Center {input}', produces: 'usage view', evidence: 'Each figure carries OBSERVED, ESTIMATED (with the price source), USER_ENTERED (your words and time) or UNAVAILABLE (with why).',
+    cost: 'Free: no AI engine is used.', keywords: ['usage', 'usage center', 'tokens', 'credits', 'quota', 'subscriptions', 'gpu seconds', 'spending', 'alerts', 'invoice'],
+  }),
+  C('usage-subscription-add', 'money', 'BUILD', 'Record a subscription you tell CHE about.', {
+    title: 'Add a subscription',
+    does: 'Saves a subscription exactly as you say it ("my ChatGPT subscription is 20 dollars a month, renews on the 3rd") with your words and the time, marked "you told me". CHE looks nothing up and never renews, buys or cancels anything.',
+    needs: [], route: 'che_usage_center', local: 'usage_sub_add', handler: 'usage_center.addSubscription',
+    input: { name: 'subscription', required: false, hint: 'Name, price, how often and renewal day' },
+    examples: ['My ChatGPT subscription is 20 dollars a month, renews on the 3rd', 'Add a subscription'],
+    prompt: 'Note this subscription in my Usage Center: {input}', produces: 'subscription record', evidence: 'The saved record read back, with your exact words and the time.',
+    cost: 'Free: no AI engine is used.', keywords: ['add subscription', 'record subscription', 'my subscription'],
+  }),
+  C('usage-subscription-remove', 'money', 'BUILD', 'Take a subscription record off the Usage Center.', {
+    title: 'Remove a subscription',
+    does: 'Asks you to confirm, then removes a subscription record from CHE\'s Usage Center list. It only removes CHE\'s note; it never cancels the subscription with the provider.',
+    needs: [], route: 'che_usage_center', local: 'usage_sub_remove', handler: 'usage_center.findSubscriptions → owner yes → removeSubscription',
+    input: { name: 'subscription', required: false, hint: 'Which subscription' },
+    examples: ['Remove my ChatGPT subscription', 'Remove a subscription'],
+    prompt: 'Take the {input} subscription off my Usage Center list', produces: 'removal receipt', evidence: 'Your yes on the next turn, then the record read back as gone.',
+    cost: 'Free: no AI engine is used.', keywords: ['remove subscription', 'subscription record'],
+  }),
 
   // ── Client Scouting & Service Fulfillment ─────────────────────────────
   C('lead-scout', 'clients', 'EXPLORE', 'Find potential clients using lawful business information.', {
