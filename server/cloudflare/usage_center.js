@@ -555,7 +555,6 @@ const ADD_BARE = /^(?:add|record|save|note)\s+(?:a|another|a new)\s+subscription
 const ADD = /^(?:add|record|save|note)\s+(?:a\s+|my\s+|the\s+)?(?:subscription\s+(?:to|for|called)\s+.+|.+?\s+subscription\b.*)$|^my\s+.+?\s+subscription\s+(?:is|costs?|=)\s+.+$/i;
 const REMOVE_BARE = /^(?:remove|delete|take off)\s+(?:a|one|the)\s+subscription$/i;
 const REMOVE = /^(?:remove|delete|forget|take off|drop)\s+(?:my|the)\s+(.+?)\s+subscription(?:\s+(?:record|entry))?(?:\s+from\s+(?:my\s+|the\s+)?(?:usage(?:\s+center)?|list))?$/i;
-const CANCEL = /^(?:cancel|end|stop|unsubscribe from|close)\s+(?:my|the)\s+(.+?)\s+(?:subscription|plan|membership)$/i;
 
 /** The owner's words as { command, input } for the Usage Center commands, or null. */
 export function usageCenterIntent(message) {
@@ -564,8 +563,6 @@ export function usageCenterIntent(message) {
   if (OPEN.test(t) || WHAT.test(t)) return { command: 'usage-center', input: '' };
   if (ALERTS.test(t)) return { command: 'usage-center', input: 'alerts' };
   if (SUBS.test(t)) return { command: 'usage-center', input: 'subscriptions' };
-  const cancel = CANCEL.exec(t);
-  if (cancel) return { command: 'usage-center', input: `cancel ${cancel[1]}` };
   if (REMOVE_BARE.test(t)) return { command: 'usage-subscription-remove', input: '' };
   const rm = REMOVE.exec(t);
   if (rm) return { command: 'usage-subscription-remove', input: rm[1] };

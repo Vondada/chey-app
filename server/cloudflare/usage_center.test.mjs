@@ -253,12 +253,11 @@ test('spoken forms map to the three catalog commands; other phrases are left to 
     ['any usage alerts', 'usage-center', 'alerts'], ['add a subscription', 'usage-subscription-add', ''],
     ['my ChatGPT subscription is $20 a month, renews on the 3rd', 'usage-subscription-add', 'my ChatGPT subscription is $20 a month, renews on the 3rd'],
     ['remove my ChatGPT subscription', 'usage-subscription-remove', 'ChatGPT'], ['remove a subscription', 'usage-subscription-remove', ''],
-    ['cancel my Netflix subscription', 'usage-center', 'cancel Netflix'],
   ]) {
     assert.deepEqual(usageCenterIntent(said), { command, input }, said);
     assert.equal(commandById(command).route, 'che_usage_center');
   }
-  for (const other of ['how much GPU money is left', 'how many subscribers do I have on YouTube', 'how many tokens today', 'subscribe me to Netflix']) assert.equal(usageCenterIntent(other), null, other);
+  for (const other of ['cancel my Netflix subscription', 'how much GPU money is left', 'how many subscribers do I have on YouTube', 'how many tokens today', 'subscribe me to Netflix']) assert.equal(usageCenterIntent(other), null, other);
 });
 
 // ─── Through the real Worker ──────────────────────────────────────────────────────────────────────────────────────
@@ -334,10 +333,12 @@ test('voice: a subscription is saved with words and time, survives a restart, an
   assert.equal(usage.modelCalls, 0);
   assert.match(usage.reply, /^Usage Center\./);
 
+  // Cancelling with the provider is an account change: CHE's existing owner gate holds it for a yes.
   const cancel = await che.say('cancel my ChatGPT subscription');
-  assert.equal(cancel.route, 'che_usage_center');
-  assert.equal(cancel.done.account_change, 'not_performed');
-  assert.match(cancel.reply, /Nothing was cancelled/);
+  assert.equal(cancel.route, 'held');
+  assert.equal(cancel.modelCalls, 0);
+  await che.say('no');
+  assert.ok((await che.get('/api/usage')).body.subscriptions.some((s) => s.name === 'ChatGPT'), 'nothing changed');
 
   const ask = await che.say('remove my ChatGPT subscription');
   assert.equal(ask.route, 'held', 'removal asks first (AGENTS.md delete rule)');
