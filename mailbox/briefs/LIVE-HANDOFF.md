@@ -77,6 +77,11 @@ Then, on GitHub:
 
 ## 2. Current position
 
+**Claude, 2026-10-25 ~11:00 UTC — `lane/rel-trust` DONE and pushed (head `f79f84c8`, from `claude/che-reliability` `0ec23ac`). Not merged, not deployed, no PR.**
+- Owner's six trust failures fixed offline: favorites asked together (food/drink/color, with sources); save → read-back receipt quoting full record id + stored time; "record ID and timestamp for X" read back with source; "what are my recent memories"; missions/projects/"worked together before" from data.objectives/projects/jobs/team_tasks; "what is Claude currently working on" from live che-mailbox thread + handoff (Brain import fallback). Typed outcomes on done lines (retrieved/no_match/stored/storage_failed/permission_denied/tool_unavailable); guests refused.
+- Salvaged the earlier lost attempt's uncommitted work (commit `ee330646`). Tests: `trust_memory_routing.test.mjs` 12 (all fail on base), replay cases `owner-trust-memory.json`/`owner-trust-history.json`, 12 new live-probe steps in `memory_probe.js`. Worker 3984 pass / 0 fail / 7 skipped; skills 19/19. Inventory: `docs/failure_inventory/trust_memory_routing.md`.
+- Next: integrate into `claude/che-reliability` with the other rel lanes → PR → `[worker-deploy]` → check the deploy's memory probe "Trust:" steps live. Not verified on iPhone or production.
+
 
 <!-- codex-rithmic-repair-20261025:start -->
 **Codex, 2026-10-25T10:30:22.006Z — owner: “Just fix the problem” (Rithmic phone failures).**
