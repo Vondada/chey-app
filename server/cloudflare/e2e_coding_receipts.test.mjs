@@ -112,17 +112,16 @@ test('no run record at all: "No coding job has started yet", never the model\'s 
   assert.doesNotMatch(out.reply, /#777|merged/i);
 });
 
-// KNOWN BUG (reliability lane, 2026-10-25), recorded as todo so the suite stays green until the owner of
-// coding_runtime.js fixes it: speakRuntimeStatus (coding_runtime.js, `case 'merged'` ~line 399 and `case 'pr_open'`
+// Fixed 2026-10-25 (found by the reliability lane): speakRuntimeStatus (coding_runtime.js, `case 'merged'` ~line 399 and `case 'pr_open'`
 // ~line 396) says "I merged its pull request" / "opened a pull request" when the record has NO pr_number, while the
 // same reply then says "Pull request: none recorded." A merge or PR is claimed without its receipt.
-test('a "merged" record with NO PR number must not claim a merge', { todo: 'known bug: coding_runtime.js speakRuntimeStatus claims a merge without pr_number' }, async () => {
+test('a "merged" record with NO PR number must not claim a merge', async () => {
   const out = await status({ state: 'merged' });
   assert.match(out.reply, /Pull request: none recorded\./);
   assert.doesNotMatch(out.reply, /\bI merged\b/, out.reply);
 });
 
-test('a "pr_open" record with NO PR number must not claim a PR was opened', { todo: 'known bug: coding_runtime.js speakRuntimeStatus claims an opened PR without pr_number' }, async () => {
+test('a "pr_open" record with NO PR number must not claim a PR was opened', async () => {
   const out = await status({ state: 'pr_open' });
   assert.doesNotMatch(out.reply, PR_OPENED, out.reply);
 });

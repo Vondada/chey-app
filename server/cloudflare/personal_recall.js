@@ -411,8 +411,24 @@ export function storedStatementQuestion(message) {
   const text = stripWake(message);
   if (!text || !isQuestionLike(text)) return null;
   if (/\b(?:story|pretend|imagine|hypothetical|poem|joke)\b/i.test(text)) return null;
-  const asked = keyWords(text.split(/[?!]/)[0]);
-  return asked.length >= 2 ? { words: asked, learn: LEARN.test(text) } : null;
+  const first = text.split(/[?!]/)[0];
+  const asked = keyWords(first);
+  return asked.length >= 2 ? { words: asked, names: namedWords(first), learn: LEARN.test(text) } : null;
+}
+
+/**
+ * The capitalised words that name the question's subject ("Copper Lantern" in "What phrase opens the vault Copper
+ * Lantern?"), lowercased; the first word of the sentence, "I" and CHE's own name are not names.
+ */
+function namedWords(text) {
+  const tokens = String(text || '').split(/\s+/).filter(Boolean);
+  const names = [];
+  tokens.forEach((tok, i) => {
+    const w = tok.replace(/[^A-Za-z0-9]/g, '');
+    if (i === 0 || !/^[A-Z][a-z0-9]/.test(w) || /^(?:I|CHE|Che|Chey|Sir)$/.test(w)) return;
+    names.push(...words(w).filter((x) => x.length > 1 && !ASK_WORDS.has(x))); // the same filter as keyWords
+  });
+  return [...new Set(names)];
 }
 
 /**
@@ -430,6 +446,8 @@ export function recallStoredStatement(data = {}, question = {}, brainRecords = [
     const text = statementText(r.text);
     if (!text || HEDGED.test(text)) continue;
     const own = keyWords(text);
+    // A question that names its subject is about that subject: a statement missing the name answers something else.
+    if ((question.names || []).some((n) => !own.includes(n))) continue;
     const shared = own.filter((w) => asked.has(w)).length;
     const extra = own.filter((w) => !asked.has(w)).length;
     if (shared >= Math.min(3, asked.size) && shared / asked.size >= 0.6 && extra > 0) scored.push({ ...r, statement: text, score: shared / asked.size });

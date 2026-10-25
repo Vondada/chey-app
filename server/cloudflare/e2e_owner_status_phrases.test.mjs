@@ -62,11 +62,11 @@ test('"Is live trading on?" is a trading-mode question, not a deployment check',
   assert.notEqual(out.route, 'che_self_update', out.reply);
 });
 
-// KNOWN BUG: worker.js selfUpdateChatIntent (~line 2662) treats any "is … live" question as a deployment check. Its
+// Fixed 2026-10-25 (found by the reliability lane): worker.js selfUpdateChatIntent treats any "is … live" question as a deployment check. Its
 // negative lookahead only excludes "live data / live feed / live chart …", so the owner's word order "Is the MNQ
 // data live?" / "Is the crypto feed live?" is answered with "I could not verify the Worker deployment from GitHub".
 for (const phrase of ['Is the MNQ data live?', 'Is the crypto feed live?']) {
-  test(`"${phrase}" is answered about market data freshness, not the Worker deployment`, { todo: 'known bug: worker.js selfUpdateChatIntent misroutes "<market> data live?" to che_self_update' }, async () => {
+  test(`"${phrase}" is answered about market data freshness, not the Worker deployment`, async () => {
     const say = await owner();
     const out = await say(phrase);
     assert.notEqual(out.route, 'che_self_update', out.reply);
@@ -74,11 +74,11 @@ for (const phrase of ['Is the MNQ data live?', 'Is the crypto feed live?']) {
   });
 }
 
-// GAP: these release/device phrasings reach the model (route=model) and the reply is replaced by an unrelated activity
+// Fixed 2026-10-25 (reliability lane gap 10): these release/device phrasings once reach the model (route=model) and the reply is replaced by an unrelated activity
 // line ("Nothing is running right now, sir …"). Honest, but it does not answer. "What version is installed on my
 // iPhone?" already has a deterministic answer (che_runtime_status); these phrasings should reach it too.
 for (const phrase of ['Is the new build installed on my phone?', 'What\'s on my iPhone right now?', 'Did the update go through?']) {
-  test(`"${phrase}" is answered from the runtime/install record, not the model`, { todo: 'gap: install/update phrasings fall through to the model' }, async () => {
+  test(`"${phrase}" is answered from the runtime/install record, not the model`, async () => {
     const say = await owner();
     const out = await say(phrase);
     assert.equal(out.modelCalls, 0, `${out.route}: ${out.reply}`);

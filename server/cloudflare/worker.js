@@ -2665,7 +2665,9 @@ export function selfUpdateChatIntent(message) {
     return { kind: 'merge' };
   }
   // "Is live trading on?" asks about the trading mode, not a deployment (comprehension audit).
-  if (/\b(?:is|did|was|has)\b[\s\S]{0,30}\b(?:deploy(?:ed|ment)?|live(?!\s+(?:trading|trades?|account|orders?|mode|feed|data|chart|prices?|stream|market|money|broker))|in production)\b|\b(?:deploy(?:ment)?|production)\s+(?:status|check|health)\b|\bverify\s+(?:the\s+)?deploy(?:ment)?\b/i.test(text)) {
+  // "Is the MNQ data live?" / "Is the crypto feed live?" ask about market-data freshness in the other word order.
+  const marketLive = /\b(?:data|feed|chart|prices?|quotes?|candles?|stream|ticker|market)\s+(?:still\s+)?live\b/i.test(text);
+  if (!marketLive && /\b(?:is|did|was|has)\b[\s\S]{0,30}\b(?:deploy(?:ed|ment)?|live(?!\s+(?:trading|trades?|account|orders?|mode|feed|data|chart|prices?|stream|market|money|broker))|in production)\b|\b(?:deploy(?:ment)?|production)\s+(?:status|check|health)\b|\bverify\s+(?:the\s+)?deploy(?:ment)?\b/i.test(text)) {
     return { kind: 'deploy-status' };
   }
   return null;

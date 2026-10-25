@@ -119,12 +119,11 @@ test('e2e memory: save → durable record → restart → recall cites the same 
   assert.doesNotMatch(why.reply, /Falcon Nine/);
 });
 
-// KNOWN BUG (reliability lane, 2026-10-25), recorded as todo so the suite stays green until the owner of personal_recall.js
-// fixes it: recallStoredStatement (personal_recall.js ~line 430) matches on shared generic words. "What phrase opens the
+// Fixed 2026-10-25 (found by the reliability lane): recallStoredStatement (personal_recall.js ~line 430) matches on shared generic words. "What phrase opens the
 // fictional vault Copper Lantern?" shares what/phrase/opens/the/fictional/vault (5 of 8 key words, >= 60%) with the
 // stored Amber Kestrel statement, so CHE answers a question about a vault it was never told about with another vault's
 // phrase. "what" and "the" are not in ASK_WORDS, and the distinctive name words (copper, lantern) are not required.
-test('e2e memory: a different subject is not answered from a stored statement after a restart', { todo: 'known bug: personal_recall.js recallStoredStatement matches a different named subject on generic words' }, async () => {
+test('e2e memory: a different subject is not answered from a stored statement after a restart', async () => {
   const store = durable();
   const first = await phone(store);
   await first.say(FACT);
