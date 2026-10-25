@@ -28,6 +28,8 @@ import { mediaStore, sha256Hex } from './che_media_store.js';
 import { verifyGithubOidc } from './gpu_oidc.js';
 import { ensureCapacity } from './creation_orchestrator.js';
 import { verifyLine } from './creation_objects.js';
+// Compute pool hooks (compute_pool.js): provider stamps, cooldowns, bounded provider attempts and handoffs.
+import { applyPending, classifyFailure, loadPool, poolAllows, poolNote, poolOnClaim, poolTokenAuth, providerLabel, providerOf, providerOfAuth, stampReceipt } from './compute_pool.js';
 
 const RATE_KEY = 'gpu:rate';            // per-tenant token buckets for new jobs (job_quota.js rateLimit)
 export const LEASE_MS = 3 * 60_000;           // a claimed job pauses after 3 minutes without a heartbeat
@@ -136,6 +138,7 @@ function settle(jobs, now) {
   for (const j of jobs) {
     if (j.state === 'rendering' && (!j.lease || j.lease.expires_ms <= now)) {
       const who = j.lease?.class === 'github_cpu' ? 'The GitHub cloud worker' : 'The Colab session';
+      poolNote(j, j.lease, 'timeout', now, 'the worker stopped answering (lease expired)');
       note(j, now, 'paused', `${who} stopped answering (last heartbeat ${j.lease ? iso(j.lease.expires_ms - LEASE_MS) : 'unknown'}). The next compatible worker resumes it; finished views and checkpoints are kept.`);
       j.lease = null; changed = true;
     }
@@ -175,7 +178,7 @@ export class GpuQueue {
       await this.storage.put(SEEDED_KEY, iso(t));
       await this.storage.put(JOBS_KEY, jobs);
     }
-    if (settle(jobs, this.now())) { this.paused = true; await this.save(jobs); }
+    if (settle(jobs, this.now())) { this.paused = true; await applyPending(this.storage, jobs, this.now()); await this.save(jobs); }
     return jobs;
   }
 
@@ -285,7 +288,8 @@ export class GpuQueue {
       device: cls === 'github_cpu' ? 'cpu' : String(info.gpu || w.gpu || info.device || '').slice(0, 120),
       cores: num(info.cores, w.cores || null), ram_gb: num(info.ram_gb, w.ram_gb || null),
       job_id: info.job_id !== undefined ? (String(info.job_id || '').slice(0, 40) || null) : (w.job_id || null),
-      state: String(info.state || 'idle').slice(0, 40), last_seen_ms: t };
+      state: String(info.state || 'idle').slice(0, 40), last_seen_ms: t,
+      provider: String(info.provider || w.provider || (cls === 'github_cpu' ? 'github_actions_cpu' : 'colab_gpu')).slice(0, 40) };
     const ids = Object.keys(workers).sort((a, b) => workers[b].last_seen_ms - workers[a].last_seen_ms);
     for (const old of ids.slice(10)) delete workers[old];
     await this.storage.put(WORKERS_KEY, workers);
@@ -300,8 +304,11 @@ export class GpuQueue {
   async claim(workerId, info = {}, auth = { class: 'colab' }) {
     const cls = auth.class === 'github_cpu' ? 'github_cpu' : 'colab';
     if (cls === 'colab' && !isGpuName(info.gpu)) return { ok: false, detail: 'No GPU reported; a Colab worker without a GPU is handed nothing.' };
-    await this.touchWorker(workerId, { ...info, class: cls, state: 'claiming' });
+    const provider = providerOfAuth(auth);
+    await this.touchWorker(workerId, { ...info, class: cls, provider, state: 'claiming' });
     const jobs = await this.jobs(); const t = this.now(); const workers = await this.workers();
+    if (await applyPending(this.storage, jobs, t)) await this.save(jobs);
+    const pool = await loadPool(this.storage);
     const mine = jobs.find((j) => j.state === 'rendering' && j.lease?.worker_id === workerId);
     let next = mine;
     if (!next) {
@@ -312,12 +319,13 @@ export class GpuQueue {
       }
       const gpuOnline = Object.entries(workers).some(([id, w]) => id !== workerId && isGpuWorker(w) && t - (w.last_seen_ms || 0) < ONLINE_MS);
       // Fair across tenants (job_quota.js): priority, then least recent use per plan weight, then paused, then oldest.
-      next = jobs.filter((j) => waiting(j) && compatible(j, cls === 'colab', gpuOnline)).sort(fairOrder(jobs, t))[0];
+      next = jobs.filter((j) => waiting(j) && compatible(j, cls === 'colab', gpuOnline) && poolAllows(pool, j, provider, t, auth.job_ids || null)).sort(fairOrder(jobs, t))[0];
     }
     if (!next) return { ok: true, job: null };
     const resumed = next.state === 'paused' || Boolean(!mine && Object.keys(next.checkpoints || {}).length);
     const device = cls === 'github_cpu' ? 'cpu' : String(info.gpu).slice(0, 60);
-    next.lease = { worker_id: workerId, expires_ms: t + LEASE_MS, class: cls, device }; next.sessions = (next.sessions || 0) + (mine ? 0 : 1);
+    next.lease = { worker_id: workerId, expires_ms: t + LEASE_MS, class: cls, device, provider }; next.sessions = (next.sessions || 0) + (mine ? 0 : 1);
+    if (!mine) poolOnClaim(next, provider, workerId, t);
     next.cloud = null;
     next.progress = { ...(next.progress || {}), message: resumed ? 'Resuming: finished views and stages are reused.' : cls === 'github_cpu' ? 'Starting on a GitHub cloud CPU.' : 'Starting on the GPU.' };
     if (!mine) {
@@ -325,6 +333,7 @@ export class GpuQueue {
         : `the Colab worker on ${String(info.gpu).slice(0, 60)}`;
       note(next, t, 'rendering', `${resumed ? 'Resumed' : 'Claimed'} by ${on}.`);
     }
+    await applyPending(this.storage, jobs, t);
     await this.save(jobs);
     await this.touchWorker(workerId, { class: cls, state: 'working', job_id: next.id });
     const job = publicJob(next);
@@ -485,8 +494,15 @@ export class GpuQueue {
     j.lease = null; j.drive_path = String(body.drive_path || '').slice(0, 300) || j.drive_path || null;
     if (r) j.receipt = trimReceipt(r);
     const status = String(body.status || '');
+    const providerFail = status === 'complete' || status === 'checks_failed' ? null : classifyFailure(status, body.error);
     if (status === 'gpu_unavailable') {
+      poolNote(j, lease, 'gpu_unavailable', t, 'the session had no GPU');
       note(j, t, 'queued', 'The Colab session had no GPU; waiting for a session with the T4. Nothing rendered on a CPU.');
+    } else if (providerFail) {
+      // The computer's fault (quota, out of memory, session ended), not the job's: no attempt is used up; the pool
+      // cools that provider down and the job waits for the next computer with its checkpoints kept.
+      poolNote(j, lease, providerFail, t, String(body.error || status).slice(0, 200));
+      note(j, t, 'queued', `${providerLabel(providerOf(lease))} could not finish it (${providerFail === 'quota' ? 'quota or rate limit' : String(body.error || status).slice(0, 120)}); handed to the next computer with finished stages kept.`);
     } else if (status === 'complete') {
       const views = r?.views || {};
       // Each view must name the device class of the worker that held the job: a GPU line from a Colab worker, a CPU
@@ -508,6 +524,7 @@ export class GpuQueue {
           modelBad ? 'the 3D model was not uploaded or does not match the receipt' : '',
           rigBad ? 'the full-body model has no verified skeleton and animation check' : '',
           measureBad ? 'the model was not re-read and measured (meshes, triangles, size) or did not pass' : ''].filter(Boolean).join('; ');
+        poolNote(j, lease, 'job_failed', t, why);
         note(j, t, j.failures >= MAX_FAILURES ? 'failed' : 'queued', `Not accepted as complete: ${why}.${j.failures >= MAX_FAILURES ? '' : ` Attempt ${j.failures} of ${MAX_FAILURES}; queued again.`}`);
       } else {
         const rig = j.receipt?.model?.rig;
@@ -524,6 +541,8 @@ export class GpuQueue {
           j.history = [...(j.history || []), { at: iso(t), state: j.state, note: `Suit smoothed: ${suit.garment_vertices_before} to ${suit.garment_vertices_after} garment vertices (${suit.method}).` }].slice(-20);
         }
         j.progress = { views_done: [...j.views], message: `All views rendered on the ${cpu ? 'CPU' : 'GPU'}.`, pct: 100, stage: 'save' };
+        poolNote(j, lease, 'completed', t);
+        stampReceipt(j, lease);
         j.rendered_on = { class: cpu ? 'github_cpu' : 'colab', device: cpu ? 'CPU' : String(r.nvidia_smi || r.cycles_gpus || lease?.device || 'GPU').slice(0, 80), worker_id: lease?.worker_id || null };
         note(j, t, 'completed', cpu
           ? `Rendered on the CPU of a GitHub cloud runner${r.cores ? ` (${Number(r.cores)} cores)` : ''} with ${String(r.blender_version || 'Blender').slice(0, 40)}; worker: ${workerName(j)}.`
@@ -533,9 +552,11 @@ export class GpuQueue {
       // A failed run (not a failed check, not an owner cancel) re-queues the job with its checkpoints and finished
       // views kept, up to MAX_FAILURES attempts; then it fails with the real reason.
       j.failures += 1; j.error = String(body.error || status || 'render failed').slice(0, 300);
+      poolNote(j, lease, 'job_failed', t, j.error);
       const final = status === 'checks_failed' || j.failures >= MAX_FAILURES;
       note(j, t, final ? 'failed' : 'queued', `${status === 'checks_failed' ? (THING_KINDS.includes(j.kind) ? 'The spec or model check failed' : 'A face check failed before rendering') : 'The render failed'}: ${j.error}${final ? '' : ` Attempt ${j.failures} of ${MAX_FAILURES}; queued again with finished work kept.`}`);
     }
+    await applyPending(this.storage, jobs, t);
     await this.save(jobs);
     return { ok: true, job: publicJob(j) };
   }
@@ -755,7 +776,10 @@ export async function workerAuth({ storage, env = {}, now, fetcher }, request, q
     const v = await verifyGithubOidc(bearer[1], env, { fetcher: fetcher || fetch, now: (now || Date.now)() });
     return v.ok ? { class: 'github_cpu', run_id: v.claims.run_id } : null;
   }
-  return (await q.tokenOpens(request.headers.get('X-CHE-GPU-Token'))) ? { class: 'colab' } : null;
+  const token = request.headers.get('X-CHE-GPU-Token');
+  if (await q.tokenOpens(token)) return { class: 'colab' };
+  // A pool session token (compute_pool.js: a Kaggle character kernel): scoped to its jobs, expiring, stored as a hash.
+  return poolTokenAuth(storage, token, (now || Date.now)());
 }
 
 /** A worker id the caller may use: gha-<its own run id>-<n> for a cloud worker; any other id (not gha-) for Colab. */
@@ -820,7 +844,7 @@ async function workerRouteInner(ctx, route, request) {
   const worker = String(body.worker_id || '').slice(0, 64);
   if (!/^[\w.-]{4,64}$/.test(worker)) return done(json({ detail: 'worker_id is required.' }, 400));
   if (!workerIdOk(auth, worker)) return done(json({ detail: auth.class === 'github_cpu' ? 'A cloud worker id is gha-<its run id>-<n>.' : 'gha- worker ids belong to cloud workers.' }, 403));
-  const info = { ...body, class: auth.class };
+  const info = { ...body, class: auth.class, provider: providerOfAuth(auth) };
   const out = route === 'heartbeat' ? await q.heartbeat(worker, info)
     : route === 'claim' ? await q.claim(worker, info, auth)
       : route === 'progress' ? await q.progress(worker, body)
