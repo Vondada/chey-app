@@ -29,6 +29,15 @@ export async function creationProbeRoute(ctx, path, request) {
       if (!made.ok) return json({ ok: false, stage: 'create', detail: made.detail }, 409);
       id = made.project.id;
     }
+    // Optional reference fixture (character realism): a synthetic, fictional image the check sends as
+    // { reference_base64 }; always recorded as consent "fictional". A run without one builds without a photo.
+    const opts = await request.json().catch(() => ({}));
+    if (opts?.reference_base64) {
+      const ref = await studio.setReference(id, { image_base64: opts.reference_base64, consent: 'fictional' });
+      if (!ref.ok) return json({ ok: false, stage: 'reference', project_id: id, detail: ref.detail }, 409);
+    } else if ((({ p }) => p?.versions?.[p.current]?.reference)(await studio.find(id))) {
+      await studio.removeReference(id);
+    }
     const out = await studio.generate(id);
     if (!out.ok) return json({ ok: false, stage: 'generate', project_id: id, detail: out.detail }, 409);
     rec.project_id = id;
@@ -49,7 +58,7 @@ export async function creationProbeRoute(ctx, path, request) {
     const dispatches = ((await storage.get('gpu:dispatches')) || []).slice(-5);
     return json({ ok: true, project_id: rec.project_id, job: { id: view.id, state: view.state, display_state: view.display_state, status_line: view.status_line,
       worker_id: view.worker_id, worker_class: view.worker_class, worker_name: view.worker_name, model: view.model, rig: view.rig, checkpoints: view.checkpoints, history: (job.history || []).slice(-20),
-      receipt: job.receipt || null, previews: Object.keys(job.previews || {}), error: job.error || '' }, dispatches });
+      receipt: job.receipt || null, device_line: view.device_line, reference_line: view.reference_line, previews: Object.keys(job.previews || {}), error: job.error || '' }, dispatches });
   }
   if (path === '/api/creations/probe/model.glb' && request.method === 'GET') {
     const bytes = await q.modelBytes(env, jobId);

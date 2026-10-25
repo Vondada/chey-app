@@ -20,7 +20,8 @@
 import { ASSUMPTIONS, PROFILES, estimateVideo, scenarios } from './capacity_model.js';
 import { r2Status } from './object_storage.js';
 import { BUILT_IN, HAIR_BUILT, STYLES, STYLE_LABELS, listIdentities, skinOk, toSettings, validate } from './avatar_identity.js';
-import { GpuQueue, VIEW_NAMES, engineRecord, engineSettingsOf, gpuOwnerRoute, rigLine } from './gpu_queue.js';
+import { GpuQueue, VIEW_NAMES, engineRecord, engineSettingsOf, gpuOwnerRoute, referenceKey, rigLine } from './gpu_queue.js';
+import { mediaStore, sha256Hex } from './che_media_store.js';
 import { cloudUsable, engineRoute, ensureCapacity } from './creation_orchestrator.js';
 import { CREATION_PROFILES, profileSettings } from './creation_profiles.js';
 import * as OBJ from './creation_objects.js';
@@ -93,6 +94,37 @@ export function renderSettings(r) {
   return { ...profileSettings(r.target === 'roblox' ? 'roblox' : 'person'), MODEL_MODE: r.mode, QUALITY: q.id, LIGHTING: r.lighting,
     SUBDIV: String(q.subdiv), TEXTURE_PX: String(q.texture_px), STRANDS: String(q.strands) };
 }
+
+// ── Reference photos (character realism, Workstream B) ───────────────────────────────────────────────────────────
+// A Create Person version may carry one reference photo: JPEG or PNG, at most 8 MB, stored once by SHA-256 in CHE's
+// media store (che_media_store.js) and named on the version, so undo and redo bring it back with the rest. Generate
+// sends it to the person job as settings.REFERENCE; the worker fetches the bytes with its own worker credential
+// (gpu_queue.js /api/gpu/worker/reference), never with the owner's device token.
+export const MAX_REFERENCE_BYTES = 8 * 1024 * 1024;
+export const REFERENCE_CONSENTS = { self: 'this is me', fictional: 'fictional or generated' };
+export const REFERENCE_RULE = 'CHE builds characters only from your own photo or from fictional or generated images, never from photos of other real private people or of children.';
+export const REFERENCE_CHOICES = 'Who is in the photo? 1. This is me. 2. Fictional or generated.';
+const ascii = (b) => String.fromCharCode(...b);
+
+/** image/jpeg, image/png or image/heic from the file's own first bytes (never its name or a claimed type), else null. */
+export function imageTypeOf(bytes) {
+  if (bytes?.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return 'image/jpeg';
+  if (bytes?.length >= 8 && ascii(bytes.subarray(0, 8)) === '\x89PNG\r\n\x1a\n') return 'image/png';
+  if (bytes?.length >= 12 && ascii(bytes.subarray(4, 8)) === 'ftyp' && /^(?:heic|heix|hevc|hevx|heim|heis|mif1|msf1)$/.test(ascii(bytes.subarray(8, 12)))) return 'image/heic';
+  return null;
+}
+
+function decodeBase64(text) {
+  const s = String(text || '').replace(/^data:[^,]*,/, '').replace(/\s+/g, '');
+  if (!/^[A-Za-z0-9+/]*={0,2}$/.test(s)) return null;
+  const bin = atob(s); const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i += 1) out[i] = bin.charCodeAt(i);
+  return out;
+}
+
+const refView = (p, r) => (r ? { sha256: r.sha256, bytes: r.bytes, content_type: r.content_type, consent: r.consent,
+  consent_label: REFERENCE_CONSENTS[r.consent] || r.consent, at: r.at, url: `/api/creations/${p.id}/reference` } : null);
+const kb = (n) => `${Math.max(1, Math.round(n / 1024))} KB`;
 
 const iso = (ms) => new Date(ms).toISOString();
 const json = (data, status = 200) => new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json' } });
@@ -388,6 +420,7 @@ function summary(p, jobs) {
       owner_paused: Boolean(j.owner_paused), display_state: j.display_state || null, status_line: j.status_line || null } : null,
     previews: j ? { ...(j.previews || {}) } : {}, model_url: j?.model?.url || null,
     render: renderView(p, v), rig: j?.rig || null,
+    ...(isThing(p) ? {} : { reference: refView(p, v.reference), reference_line: j?.reference_line || '', device_line: j?.device_line || '' }),
     ...(isThing(p) ? { described: OBJ.describeSpec(p.kind, v.params), measured: j?.measured || null } : {}),
   };
 }
@@ -407,10 +440,20 @@ function stagesOf(job) {
   });
 }
 
+/** Which compute would build the next model right now, in one sentence. */
+export function engineDeviceLine(engine) {
+  const gpu = engine?.gpu && !/^CPU/.test(engine.gpu) ? engine.gpu : null;
+  if (gpu) return `A GPU worker is connected: ${gpu}. It builds the next model.`;
+  if (engine?.online || engine?.automatic) return 'No GPU is connected: your Colab GPU notebook is not open, so only the free GitHub cloud CPU worker is available. It builds on the CPU, which is slower than a GPU.';
+  return 'No worker is connected right now: no GPU, and no free cloud CPU worker can start.';
+}
+
 function detail(p, jobs, engine) {
   const v = cur(p); const raw = v.job_id ? jobs.find((x) => x.id === v.job_id) : null;
   const { jobs: _all, ...eng } = engine;
   const sum = summary(p, jobs);
+  // Before a build finishes, the device line says which compute is there now, and never calls the CPU a GPU.
+  if (!isThing(p) && !sum.device_line) sum.device_line = engineDeviceLine(engine);
   // detail.versions is the version list (the summary's count stays as versions_count).
   return { ...sum, versions_count: sum.versions, params: v.params, resources: isThing(p) ? OBJ.resourceLine(v.render) : resourceLine(renderOf(v)),
     versions: p.versions.map((x) => ({ n: x.n, at: x.at, note: x.note, style: x.style, render: isThing(p) ? renderView(p, x) : renderOf(x), job_id: x.job_id })),
@@ -553,9 +596,19 @@ export class CreationStudio {
         settings: OBJ.specSettings(v.params), queued_by: 'Live Studio', priority: 'high', requires: { gpu: 'none' } });
     } else {
       const r = renderOf(v); const q = qualityOf(r);
+      const settings = { ...toSettings(v.params, v.style), ...renderSettings(r) };
+      if (v.reference) {
+        // The photo must still be stored: a version whose photo was deleted is not built as if it had one.
+        const ref = v.reference;
+        if (!(await mediaStore(this.env, this.storage).head(referenceKey(ref.sha256)))) {
+          return { ok: false, detail: 'The reference photo for this version is no longer stored. Say remove the reference photo, or add it again, then generate.' };
+        }
+        // The worker's URL is resolved when a worker claims the job (gpu_queue.js claim: worker and job in the URL).
+        settings.REFERENCE = JSON.stringify({ url: `/api/gpu/worker/reference?sha256=${ref.sha256}`, sha256: ref.sha256, bytes: ref.bytes, consent: ref.consent });
+      }
       // Owner-interactive: high priority; a GPU is preferred, and a free cloud CPU worker takes it when none is online.
       out = await this.queue.enqueue({ kind: 'person_model', title: `${p.title} v${v.n}: 3D model and previews`, views: VIEWS, samples: q.samples, res: q.res,
-        settings: { ...toSettings(v.params, v.style), ...renderSettings(r) }, queued_by: 'Live Studio', priority: 'high', requires: { gpu: 'preferred' } });
+        settings, queued_by: 'Live Studio', priority: 'high', requires: { gpu: 'preferred' } });
     }
     if (!out.ok) return { ok: false, detail: out.detail };
     v.job_id = out.job.id; p.updated_at = iso(this.now()); await store(this.storage, list);
@@ -588,7 +641,8 @@ export class CreationStudio {
       if (bad.length) return { ok: true, changed: false, applied: [], unsupported: [`That change was not saved: ${bad.join('; ')}.`], viewport: r.viewport, spoken: `That change was not saved: ${bad.join('; ')}.`, project: await this.detailOf(p) };
       const t = this.now();
       p.versions = p.versions.slice(0, p.current + 1);
-      p.versions.push({ n: Math.max(...p.versions.map((x) => x.n)) + 1, at: iso(t), note: String(text).slice(0, 200), params: r.params, style: r.style, render: r.render, job_id: null });
+      p.versions.push({ n: Math.max(...p.versions.map((x) => x.n)) + 1, at: iso(t), note: String(text).slice(0, 200), params: r.params, style: r.style, render: r.render, job_id: null,
+        ...(v.reference ? { reference: v.reference } : {}) });
       if (p.versions.length > MAX_VERSIONS) p.versions = p.versions.slice(-MAX_VERSIONS);
       p.current = p.versions.length - 1; p.updated_at = iso(t);
       await store(this.storage, list);
@@ -627,6 +681,98 @@ export class CreationStudio {
     return { ok: true, changed, applied, unsupported, viewport: vi?.viewport || null, critique: null, spoken: spoken.trim(), project: await this.detailOf(p) };
   }
 
+  /** A new version from the current one with `changes` applied (the redo branch is dropped, as for an edit). */
+  pushVersion(p, note, changes) {
+    const v = cur(p); const t = this.now();
+    p.versions = p.versions.slice(0, p.current + 1);
+    const next = { ...clone(v), n: Math.max(...p.versions.map((x) => x.n)) + 1, at: iso(t), note: String(note).slice(0, 200), job_id: null, ...changes };
+    for (const [k, val] of Object.entries(next)) if (val === undefined) delete next[k];
+    p.versions.push(next);
+    if (p.versions.length > MAX_VERSIONS) p.versions = p.versions.slice(-MAX_VERSIONS);
+    p.current = p.versions.length - 1; p.updated_at = iso(t);
+    return next;
+  }
+
+  /**
+   * Adds a reference photo to a Create Person project as a new version. body: { image_base64, consent }. Consent must be
+   * self (this is me) or fictional (fictional or generated); anything else is refused with the reason. JPEG or PNG only,
+   * at most 8 MB, checked from the bytes; HEIC is refused with the reason (the app converts to JPEG before sending).
+   */
+  async setReference(id, body = {}) {
+    const { list, p } = await this.find(id);
+    if (!p) return { ok: false, status: 404, detail: 'No such creation.' };
+    if (isThing(p)) return { ok: false, status: 422, detail: 'Reference photos are for Create Person characters only.' };
+    const consent = String(body.consent || '').toLowerCase();
+    if (!REFERENCE_CONSENTS[consent]) {
+      return { ok: false, status: 422, refused: true, detail: `Not added. ${REFERENCE_RULE} Choose 1, this is me, or 2, fictional or generated.` };
+    }
+    const raw = String(body.image_base64 || '');
+    if (!raw) return { ok: false, status: 400, detail: 'No photo was sent.' };
+    if (raw.length > Math.ceil(MAX_REFERENCE_BYTES / 3) * 4 + 64) return { ok: false, status: 413, detail: 'Not added: the photo is larger than 8 MB. Choose a smaller photo.' };
+    const bytes = decodeBase64(raw);
+    if (!bytes?.length) return { ok: false, status: 400, detail: 'Not added: the photo could not be read.' };
+    if (bytes.length > MAX_REFERENCE_BYTES) return { ok: false, status: 413, detail: 'Not added: the photo is larger than 8 MB. Choose a smaller photo.' };
+    const type = imageTypeOf(bytes);
+    if (type === 'image/heic') {
+      return { ok: false, status: 415, detail: 'Not added: this photo is HEIC, which CHE\'s server cannot read. The CHE app converts photos to JPEG before sending; send a JPEG or PNG.' };
+    }
+    if (!type) return { ok: false, status: 415, detail: 'Not added: only JPEG or PNG photos are accepted.' };
+    const sha = await sha256Hex(bytes);
+    const v = cur(p);
+    if (v.reference?.sha256 === sha && v.reference.consent === consent) {
+      return { ok: true, changed: false, spoken: `This version already uses that reference photo (${REFERENCE_CONSENTS[consent]}).`, project: await this.detailOf(p) };
+    }
+    const saved = await mediaStore(this.env, this.storage).put(referenceKey(sha), bytes, { contentType: type });
+    if (!saved.ok) return { ok: false, status: 507, detail: `Not added: the photo could not be stored. ${saved.error || ''}`.trim() };
+    const kind = type === 'image/png' ? 'PNG' : 'JPEG';
+    const next = this.pushVersion(p, `Reference photo added (${REFERENCE_CONSENTS[consent]}).`,
+      { reference: { sha256: sha, bytes: bytes.length, content_type: type, consent, at: iso(this.now()) } });
+    await store(this.storage, list);
+    return { ok: true, changed: true, reference: refView(p, next.reference),
+      spoken: `Reference photo added: ${kb(bytes.length)} ${kind}, ${REFERENCE_CONSENTS[consent]}. Saved as version ${next.n}. Say generate to build the character from it; the likeness is approximate, not an exact copy.`,
+      project: await this.detailOf(p) };
+  }
+
+  /**
+   * The owner asked to remove the reference photo. Default: a new version without it (undo brings it back; the stored
+   * photo stays while an earlier version names it). purge: removed from every version of this project and, when no
+   * other creation uses it, deleted from storage; undo cannot bring it back.
+   */
+  async removeReference(id, { purge = false } = {}) {
+    const { list, p } = await this.find(id);
+    if (!p) return { ok: false, status: 404, detail: 'No such creation.' };
+    const v = cur(p);
+    if (!purge) {
+      if (!v.reference) return { ok: false, detail: 'This version has no reference photo, so nothing was removed.', project: await this.detailOf(p) };
+      const next = this.pushVersion(p, 'Reference photo removed.', { reference: undefined });
+      await store(this.storage, list);
+      return { ok: true, changed: true, spoken: `Removed the reference photo from this character, as you asked. Saved as version ${next.n}; say undo to bring it back. The photo stays stored while an earlier version uses it; say delete the reference photo completely to erase it.`, project: await this.detailOf(p) };
+    }
+    const shas = new Set(p.versions.map((x) => x.reference?.sha256).filter(Boolean));
+    if (!shas.size) return { ok: false, detail: 'No version of this character has a reference photo, so nothing was deleted.', project: await this.detailOf(p) };
+    for (const x of p.versions) delete x.reference;
+    p.updated_at = iso(this.now());
+    await store(this.storage, list);
+    const media = mediaStore(this.env, this.storage); let erased = 0;
+    for (const sha of shas) {
+      const used = list.some((o) => o.id !== p.id && (o.versions || []).some((x) => x.reference?.sha256 === sha));
+      if (!used) { await media.delete(referenceKey(sha)); erased += 1; }
+    }
+    const kept = shas.size - erased;
+    return { ok: true, changed: true, purged: true, erased,
+      spoken: `Deleted the reference photo${shas.size === 1 ? '' : 's'} from every version of this character${erased ? ' and from CHE\'s storage' : ''}, as you asked. Undo cannot bring ${shas.size === 1 ? 'it' : 'them'} back.${kept ? ` ${kept} stay stored because another creation uses ${kept === 1 ? 'it' : 'them'}.` : ''}`,
+      project: await this.detailOf(p) };
+  }
+
+  /** Owner: the current version's reference photo bytes and type, or null. */
+  async referenceBytes(id) {
+    const { p } = await this.find(id);
+    const r = p && cur(p).reference;
+    if (!r) return null;
+    const got = await mediaStore(this.env, this.storage).get(referenceKey(r.sha256));
+    return got?.body?.length ? { bytes: got.body, contentType: r.content_type || got.contentType } : null;
+  }
+
   async step(id, action) {
     const { list, p } = await this.find(id);
     if (!p) return { ok: false, status: 404, detail: 'No such creation.' };
@@ -662,8 +808,21 @@ export async function creationRoute(ctx, path, request, body = {}) {
     if (request.method === 'POST') { const out = await studio.create(body || {}); return json(out, out.ok ? 201 : 422); }
     return json({ detail: 'Use GET or POST.' }, 405);
   }
-  const m = /^\/api\/creations\/(cr_[a-f0-9]{12})(?:\/(generate|edit|undo|redo|save))?$/.exec(path);
+  const m = /^\/api\/creations\/(cr_[a-f0-9]{12})(?:\/(generate|edit|undo|redo|save|reference))?$/.exec(path);
   if (!m) return json({ detail: 'Unknown creation route.' }, 404);
+  if (m[2] === 'reference') {
+    if (request.method === 'GET') {
+      const got = await studio.referenceBytes(m[1]);
+      if (!got) return json({ detail: 'This version has no reference photo.' }, 404);
+      return new Response(got.bytes, { status: 200, headers: { 'Content-Type': got.contentType, 'Content-Length': String(got.bytes.length), 'Cache-Control': 'private, no-store' } });
+    }
+    if (request.method === 'POST') return send(await studio.setReference(m[1], body || {}), 201);
+    if (request.method === 'DELETE') {
+      const purge = /^(?:1|true|yes)$/.test(new URL(request.url).searchParams.get('purge') || '');
+      return send(await studio.removeReference(m[1], { purge }));
+    }
+    return json({ detail: 'Use GET, POST or DELETE.' }, 405);
+  }
   if (!m[2]) return request.method === 'GET' ? send(await studio.get(m[1])) : json({ detail: 'Use GET.' }, 405);
   if (request.method !== 'POST') return json({ detail: 'Use POST.' }, 405);
   if (m[2] === 'generate') return send(await studio.generate(m[1]), 202);
