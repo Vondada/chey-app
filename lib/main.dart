@@ -60,6 +60,7 @@ import 'che_speech_pipeline.dart';
 import 'che_notifications.dart';
 import 'platform/che_platform_client.dart';
 import 'platform/che_platform_screens.dart';
+import 'widgets/che_chat_image.dart';
 import 'widgets/che_render_bench.dart';
 import 'che_stream_batcher.dart';
 import 'che_spoken_text.dart';
