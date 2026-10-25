@@ -40,3 +40,6 @@ server/cloudflare/node_modules/
 .*.test.generated.mjs
 test/failures/
 .chat_retrieval.generated.mjs
+
+# Agent worktrees (each is its own checkout; push its branch, never commit the folder)
+.claude/worktrees/
