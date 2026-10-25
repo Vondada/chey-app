@@ -20,6 +20,7 @@ import 'che_live_paper.dart';
 import 'che_strategy_controls.dart';
 import 'che_trading_chart.dart';
 import 'che_trading_connections.dart';
+import 'che_trading_dashboard.dart';
 import 'che_trading_expanded.dart';
 import 'che_trading_intelligence.dart';
 import 'che_trading_ledgers.dart';
@@ -210,12 +211,24 @@ class _CheTradingRoomState extends State<CheTradingRoom> {
   }
 
   /// A small expandable card: its title and one line first, the full panel only when opened (owner, 2026-10-23).
-  Widget _fold(String key, String title, String summary, Widget child, {bool open = false}) => _pad(CheTradingFold(
+  Widget _fold(String key, String title, String summary, Widget child, {bool open = false, String id = ''}) => _pad(CheTradingFold(
         key: Key('fold_$key'),
+        id: id,
         title: title,
         summary: summary,
         initiallyExpanded: open,
         child: child,
+      ));
+
+  /// A titled card on the first screen.
+  Widget _card(String key, String title, Widget child) => _pad(CheTradingPanel(
+        key: Key('card_$key'),
+        padding: const EdgeInsets.all(12),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+          Semantics(header: true, child: Text(title, style: CheHud.label.copyWith(fontSize: 12.5, color: cheHudActive ? CheHud.ice : Colors.white))),
+          const SizedBox(height: 6),
+          child,
+        ]),
       ));
 
   /// The compact chart's height from the space it gets: a preview, never a full screen.
@@ -267,11 +280,11 @@ class _CheTradingRoomState extends State<CheTradingRoom> {
   List<Widget> _sectionChildren() {
     final p = (baseUrl: widget.baseUrl, headers: widget.headers, onAsk: widget.onAsk, client: widget.client);
     switch (_section) {
+      // Trading Room v3 (owner, 2026-10-25), the first screen in this order: the chart with its source and time, the
+      // selected account's P&L, win rate, open positions and drawdown, its recent trades and journal, the unified
+      // P&L calendar, the strategy slot, then research, backtesting, replay and advanced controls folded.
       case CheTradingSection.chart:
         return [
-          _pad(Wrap(spacing: 10, runSpacing: 6, crossAxisAlignment: WrapCrossAlignment.center, children: [
-            Semantics(header: true, child: Text('LIVE MARKET', style: CheHud.label.copyWith(fontSize: 12))),
-          ])),
           _pad(CheTickerSelector(selected: _ticker, onSelect: _setMarket, baseUrl: p.baseUrl, headers: p.headers, client: p.client)),
           if (_ticker != 'futures:MNQ' && _ticker != 'futures:NQ')
             _pad(Text('Strategy research below is for $_market.',
@@ -294,10 +307,39 @@ class _CheTradingRoomState extends State<CheTradingRoom> {
               onExpand: _expandChart,
             ),
           )),
-          CheTradingResearchStrip(key: const Key('research_strip'), client: _research, market: _market, onRead: widget.onRead),
-          // The older overview (index chart, quotes, 3D scene) is folded so nothing heavy builds until asked for.
-          if (widget.chartExtras.isNotEmpty)
-            _fold('market_overview', 'MARKET OVERVIEW', 'Index chart and quotes', Column(children: widget.chartExtras)),
+          _pad(CheTradingDashboard(baseUrl: p.baseUrl, headers: p.headers, client: p.client, onRead: widget.onRead)),
+          _card('calendar', 'P&L CALENDAR', CheUnifiedCalendar(baseUrl: p.baseUrl, headers: p.headers, client: p.client, onRead: widget.onRead)),
+          // The strategy rankings slot: the integrator swaps the Strategy Matrix widget in here (lane trading-strategy-v3).
+          KeyedSubtree(
+            key: const Key('strategy_matrix_slot'),
+            child: CheTradingResearchStrip(key: const Key('research_strip'), client: _research, market: _market, onRead: widget.onRead, showStatusRow: false),
+          ),
+          const SizedBox(height: 4),
+          _fold('research', 'RESEARCH & BACKTESTING', 'Evidence by strategy and timeframe, historical study',
+              Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+                CheTradingResearchDashboard(client: _research, market: _market, onRead: widget.onRead),
+                const SizedBox(height: 8),
+                CheTradingIntelligencePanel(baseUrl: p.baseUrl, headers: p.headers, onAsk: p.onAsk, onRead: widget.onRead, client: p.client),
+              ]),
+              id: 'research'),
+          _fold('replay', 'REPLAY', 'Replay CHE\'s latest closed trade on the chart',
+              Align(
+                alignment: Alignment.centerLeft,
+                child: OutlinedButton.icon(
+                  key: const Key('replay_latest'),
+                  onPressed: _openReplay,
+                  icon: const Icon(Icons.replay_rounded),
+                  label: const Text('Replay the latest closed trade', semanticsLabel: 'Replay CHE\'s latest closed trade'),
+                ),
+              ),
+              id: 'replay'),
+          _fold('advanced', 'ADVANCED CONTROLS', 'Strategy limits and the market overview',
+              Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+                CheStrategyControlsPanel(baseUrl: p.baseUrl, headers: p.headers, onAsk: p.onAsk, client: p.client),
+                // The older overview (index chart, quotes, 3D scene) builds only when this fold is opened.
+                ...widget.chartExtras,
+              ]),
+              id: 'advanced'),
         ];
       case CheTradingSection.setups:
         return [_pad(CheSetupBoard(desk: _desk, onRead: widget.onRead))];
@@ -320,7 +362,7 @@ class _CheTradingRoomState extends State<CheTradingRoom> {
               key: const Key('trading_calendar_button'),
               onPressed: () => unawaited(Navigator.of(context).push(CheTradingCalendarPage.route(baseUrl: p.baseUrl, headers: p.headers, onRead: widget.onRead))),
               icon: const Icon(Icons.calendar_month_rounded),
-              label: const Text('P&L calendar and learning'),
+              label: const Text('Per-source calendar and "Is CHE improving?"'),
             ),
           )),
           _fold('history', 'TRADE HISTORY', 'Simulation, paper journal and broker ledgers, each labelled',
@@ -399,18 +441,30 @@ class _CheTradingRoomState extends State<CheTradingRoom> {
     );
   }
 
-  /// One-tap access: four per row on a phone, all in one row when the screen is wide.
+  /// One-tap access in one row that scrolls sideways on a phone (v3: three rows of buttons pushed the chart down);
+  /// all in one fixed row when the screen is wide.
   Widget _nav() => _pad(LayoutBuilder(builder: (context, box) {
         final items = <(String, IconData, bool, VoidCallback, Key)>[
           for (final e in kTradingSectionLabels.entries)
             (e.value, _sectionIcons[e.key]!, e.key == _section, () => _go(e.key), Key('trading_nav_${e.key.name}')),
           ('REPLAY', Icons.replay_rounded, false, _openReplay, const Key('trading_nav_replay')),
         ];
-        final perRow = box.maxWidth >= 720 ? items.length : 4;
-        final w = (box.maxWidth - (perRow - 1) * 6) / perRow;
-        return Wrap(spacing: 6, runSpacing: 6, children: [
-          for (final (label, icon, sel, tap, key) in items) SizedBox(width: w, child: _navButton(label, icon, sel, tap, key: key)),
-        ]);
+        if (box.maxWidth >= 720) {
+          final w = (box.maxWidth - (items.length - 1) * 6) / items.length;
+          return Row(children: [
+            for (final (i, (label, icon, sel, tap, key)) in items.indexed) ...[
+              if (i > 0) const SizedBox(width: 6),
+              SizedBox(width: w, child: _navButton(label, icon, sel, tap, key: key)),
+            ],
+          ]);
+        }
+        return SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: Row(children: [
+            for (final (label, icon, sel, tap, key) in items)
+              Padding(padding: const EdgeInsets.only(right: 6), child: SizedBox(width: 118, child: _navButton(label, icon, sel, tap, key: key))),
+          ]),
+        );
       }));
 
   @override

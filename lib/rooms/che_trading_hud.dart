@@ -71,18 +71,47 @@ Color cheTradingPage(Color fallback) => cheHudActive ? CheColors.screen : fallba
 /// A small expandable Trading Room card (owner, 2026-10-23): a HUD label title and one summary line first, the full
 /// panel only when opened. The panel is built only while open, so a folded card costs nothing.
 class CheTradingFold extends StatefulWidget {
-  const CheTradingFold({super.key, required this.title, required this.summary, required this.child, this.initiallyExpanded = false});
+  const CheTradingFold({super.key, required this.title, required this.summary, required this.child, this.initiallyExpanded = false, this.id = ''});
 
   final String title, summary;
   final Widget child;
   final bool initiallyExpanded;
+
+  /// The name voice opens it by (CheTradingFold.requested): "advanced", "research", "replay".
+  final String id;
+
+  /// A voice route sets this to a fold's [id]; that fold opens and clears it (Trading Room v3, 2026-10-25).
+  static final requested = ValueNotifier<String?>(null);
 
   @override
   State<CheTradingFold> createState() => _CheTradingFoldState();
 }
 
 class _CheTradingFoldState extends State<CheTradingFold> {
-  late bool _open = widget.initiallyExpanded;
+  late bool _open = widget.initiallyExpanded || (widget.id.isNotEmpty && CheTradingFold.requested.value == widget.id);
+
+  @override
+  void initState() {
+    super.initState();
+    CheTradingFold.requested.addListener(_onRequest);
+    if (_open && CheTradingFold.requested.value == widget.id) WidgetsBinding.instance.addPostFrameCallback((_) => CheTradingFold.requested.value = null);
+  }
+
+  @override
+  void dispose() {
+    CheTradingFold.requested.removeListener(_onRequest);
+    super.dispose();
+  }
+
+  void _onRequest() {
+    if (widget.id.isEmpty || CheTradingFold.requested.value != widget.id || !mounted) return;
+    setState(() => _open = true);
+    CheTradingFold.requested.value = null;
+    // Brought into view so the owner (and VoiceOver) lands on what was opened.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) Scrollable.ensureVisible(context, duration: const Duration(milliseconds: 250));
+    });
+  }
 
   @override
   Widget build(BuildContext context) {

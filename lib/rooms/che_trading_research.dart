@@ -260,8 +260,12 @@ Widget _panel({required Widget child, Key? key}) => Material(
 
 /// The research part of the CHART section: status row, BEST NOW and the strategy cards. Loads once per market.
 class CheTradingResearchStrip extends StatefulWidget {
-  const CheTradingResearchStrip({super.key, required this.client, required this.market, this.onRead});
+  const CheTradingResearchStrip({super.key, required this.client, required this.market, this.onRead, this.showStatusRow = true});
   final CheTradingResearchClient client;
+
+  /// The Trading Room (v3) shows the account dashboard instead: the research overview's `live` block is today's
+  /// paper P&L only, with no open count or drawdown, so it is not an account's figures.
+  final bool showStatusRow;
   final String market;
   final void Function(String text)? onRead;
 
@@ -322,7 +326,7 @@ class _CheTradingResearchStripState extends State<CheTradingResearchStrip> {
       if (s.id.isNotEmpty) strategies.putIfAbsent(s.id, () => s); // one card per strategy, never duplicated
     }
     return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-      Padding(padding: const EdgeInsets.fromLTRB(12, 10, 12, 0), child: CheTradingStatusRow(data: d)),
+      if (widget.showStatusRow) Padding(padding: const EdgeInsets.fromLTRB(12, 10, 12, 0), child: CheTradingStatusRow(data: d)),
       Padding(
         padding: const EdgeInsets.fromLTRB(12, 12, 12, 0),
         child: CheBestNowCard(

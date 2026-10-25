@@ -5,6 +5,7 @@ import 'dart:convert';
 
 import 'package:chey/rooms/che_trading_chart.dart';
 import 'package:chey/rooms/che_trading_research.dart';
+import 'package:chey/rooms/che_ticker_selector.dart';
 import 'package:chey/rooms/che_trading_room.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
@@ -176,13 +177,13 @@ Future<void> _scrollTo(WidgetTester tester, Finder f) async {
 }
 
 void main() {
-  testWidgets('the live market comes first: NQ | MNQ above the chart, then status, BEST NOW and one card per strategy', (tester) async {
+  testWidgets('the live market comes first: the ticker above the chart, then the account, BEST NOW and one card per strategy', (tester) async {
     final api = _Api();
     final read = <String>[];
     await _pump(tester, api, read: read);
-    final liveY = tester.getTopLeft(find.text('LIVE MARKET')).dy;
+    final liveY = tester.getTopLeft(find.byType(CheTickerSelector)).dy;
     final chartY = tester.getTopLeft(find.byType(CheTradingChart)).dy;
-    expect(liveY, lessThan(chartY), reason: 'the live market toggle leads the page');
+    expect(liveY, lessThan(chartY), reason: 'the ticker selector leads the page');
     await _scrollTo(tester, find.byKey(const Key('best_now'), skipOffstage: false));
     final chartNow = find.byType(CheTradingChart, skipOffstage: false);
     if (chartNow.evaluate().isNotEmpty) {
@@ -191,11 +192,9 @@ void main() {
     expect(find.text('EMA Pullback'), findsWidgets);
     expect(find.text('5m · NY Morning · Trend up'), findsOneWidget);
     expect(find.text('Evidence 84/100 · 143 trades · +0.31R'), findsOneWidget);
-    // One status row: P&L, win rate, open, drawdown (mode and data source live in the chart header, not repeated).
-    expect(find.bySemanticsLabel(RegExp(r'^Win Rate: 55%$')), findsOneWidget);
-    expect(find.bySemanticsLabel(RegExp(r'^P&L: ')), findsOneWidget);
-    expect(find.bySemanticsLabel(RegExp(r'^Open: ')), findsOneWidget);
-    expect(find.bySemanticsLabel(RegExp(r'^Drawdown: ')), findsOneWidget);
+    // Trading Room v3: the research overview's `live` block (today's paper P&L only) is no longer shown as account
+    // figures; the account dashboard (che_trading_dashboard.dart) shows the selected account's own stats instead.
+    expect(find.byKey(const Key('trading_status_row')), findsNothing);
     expect(find.bySemanticsLabel(RegExp(r'^Mode: ')), findsNothing);
     expect(read, isEmpty, reason: 'nothing is spoken on open');
     // One card per strategy even when the answer repeats one; the count is per timeframe, never global.

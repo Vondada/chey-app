@@ -65,33 +65,96 @@ List<Map<String, dynamic>> fixturePaperTrades() => [
       {'id': 'T0CRY000000002', 'kind': 'forward_paper', 'symbol': 'ETH', 'market': 'crypto', 'strategy': 'Opening Range', 'side': 'short', 'entry_time': '2026-10-23T02:00:00Z', 'exit_time': '2026-10-23T03:30:00Z', 'net': 6.3, 'r': 1.1, 'result': 'win'},
     ];
 
-Map<String, dynamic> fixtureAccounts({bool empty = false}) => {
-      'ok': true,
-      'view': 'accounts',
-      'time_zone': 'America/New_York',
-      'excluded': ['historical_backtest'],
-      'accounts': [
-        {
-          'id': 'forward_paper', 'label': 'CHE forward paper', 'kind': 'forward_paper', 'unit': 'USD',
-          'trades': empty ? const [] : fixturePaperTrades(), 'open_positions': empty ? 0 : 1, 'updated_at': empty ? null : '2026-10-23T03:30:00Z', 'read': true,
-          'journal': empty
-              ? const []
-              : [
-                  {'time': '2026-10-23T14:55:00Z', 'strategy': 'VWAP Reversion', 'reason': 'Skipped: the feed was 12 minutes old.'},
-                ],
-        },
-        {
-          'id': 'simulation', 'label': 'Strategy simulation', 'kind': 'simulation', 'unit': 'R',
-          'trades': empty
-              ? const []
-              : [
-                  {'id': 'T0SIM000000001', 'kind': 'simulation', 'symbol': 'MNQ', 'market': 'futures', 'strategy': 'ORB', 'side': 'long', 'entry_time': '2026-10-22T13:31:00Z', 'exit_time': '2026-10-22T13:52:00Z', 'net': null, 'r': 2.0, 'result': 'win'},
-                  {'id': 'T0SIM000000002', 'kind': 'simulation', 'symbol': 'BTC', 'market': 'crypto', 'strategy': 'ORB', 'side': 'short', 'entry_time': '2026-10-22T16:00:00Z', 'exit_time': '2026-10-22T16:12:00Z', 'net': null, 'r': -1.0, 'result': 'loss'},
-                ],
-          'open_positions': 0, 'updated_at': empty ? null : '2026-10-22T16:12:00Z', 'read': true, 'journal': const [],
-        },
-      ],
+List<Map<String, dynamic>> fixtureSimTrades() => [
+      {'id': 'T0SIM000000001', 'kind': 'simulation', 'symbol': 'MNQ', 'market': 'futures', 'strategy': 'ORB', 'side': 'long', 'entry_time': '2026-10-22T13:31:00Z', 'exit_time': '2026-10-22T13:52:00Z', 'net': null, 'r': 2.0, 'result': 'win', 'unit': 'R'},
+      {'id': 'T0SIM000000002', 'kind': 'simulation', 'symbol': 'BTC', 'market': 'crypto', 'strategy': 'ORB', 'side': 'short', 'entry_time': '2026-10-22T16:00:00Z', 'exit_time': '2026-10-22T16:12:00Z', 'net': null, 'r': -1.0, 'result': 'loss', 'unit': 'R'},
+    ];
+
+Map<String, dynamic> fixtureAccounts({bool empty = false}) {
+  final paper = empty ? <Map<String, dynamic>>[] : fixturePaperTrades();
+  Map<String, dynamic> account(String id, String label, String kind, String unit, List<Map<String, dynamic>> trades, int open, List<Map<String, dynamic>> journal) => {
+        'id': id, 'label': label, 'kind': kind, 'unit': unit, 'trades': trades, 'open_positions': open,
+        'updated_at': trades.isEmpty ? null : trades.last['exit_time'], 'read': true, 'error': null, 'journal': journal,
+      };
+  return {
+    'ok': true,
+    'view': 'accounts',
+    'time_zone': 'America/New_York',
+    'checked_at': '2026-10-23T15:40:00Z',
+    'excluded': ['historical_backtest'],
+    'accounts': [
+      account('forward_paper_futures', 'CHE forward paper · futures', 'forward_paper', 'USD', [for (final t in paper) if (t['market'] == 'futures') t], empty ? 0 : 1, empty
+          ? const []
+          : [
+              {'time': '2026-10-23T14:55:00Z', 'strategy': 'VWAP Reversion', 'reason': 'Skipped: the feed was 12 minutes old.'},
+            ]),
+      account('forward_paper_crypto', 'CHE forward paper · crypto', 'forward_paper', 'USD', [for (final t in paper) if (t['market'] == 'crypto') t], empty ? 0 : 16, const []),
+      account('simulation', 'Strategy simulation (R)', 'simulation', 'R', empty ? const [] : fixtureSimTrades(), 0, const []),
+    ],
+  };
+}
+
+String _nyDate(String iso, String market) {
+  final t = DateTime.parse(iso).toUtc();
+  // October 2026 is daylight time in New York (UTC−4) until November 1.
+  final ny = t.subtract(const Duration(hours: 4));
+  final d = market == 'futures' && ny.hour >= 18 ? DateTime.utc(ny.year, ny.month, ny.day + 1) : DateTime.utc(ny.year, ny.month, ny.day);
+  return '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
+}
+
+/// GET /api/trading/calendar?view=unified for October 2026 (or one [day]), built from the same records.
+Map<String, dynamic> fixtureUnified({bool empty = false, String market = 'all', String day = ''}) {
+  final rows = <Map<String, dynamic>>[
+    if (!empty)
+      for (final t in [...fixturePaperTrades(), ...fixtureSimTrades()])
+        if (market == 'all' || t['market'] == market)
+          {
+            ...t,
+            'kind_label': t['kind'] == 'simulation' ? 'Strategy simulation' : 'CHE forward paper',
+            'unit': t['kind'] == 'simulation' ? 'R' : 'USD',
+            'date': _nyDate('${t['exit_time']}', '${t['market']}'),
+            'date_basis': t['market'] == 'futures' ? 'CME trading date' : 'New York calendar date',
+            'replay': true,
+          },
+  ];
+  Map<String, dynamic> totals(List<Map<String, dynamic>> list) {
+    final kinds = <String, dynamic>{};
+    for (final kind in ['forward_paper', 'simulation']) {
+      final ks = list.where((t) => t['kind'] == kind).toList();
+      if (ks.isEmpty) continue;
+      final unit = kind == 'simulation' ? 'R' : 'USD';
+      final vals = [for (final t in ks) (unit == 'R' ? t['r'] : t['net']) as num];
+      kinds[kind] = {'label': kind == 'simulation' ? 'Strategy simulation' : 'CHE forward paper', 'unit': unit, 'trades': ks.length,
+        'wins': ks.where((t) => t['result'] == 'win').length, 'losses': ks.where((t) => t['result'] == 'loss').length,
+        'net': (vals.fold<num>(0, (a, b) => a + b) * 100).round() / 100};
+    }
+    final net = kinds['forward_paper']?['net'] as num?;
+    return {
+      'trades': list.length, 'wins': list.where((t) => t['result'] == 'win').length, 'losses': list.where((t) => t['result'] == 'loss').length,
+      'instruments': ({for (final t in list) '${t['symbol']}'}.toList()..sort()), 'strategies': ({for (final t in list) '${t['strategy']}'}.toList()..sort()), 'kinds': kinds,
+      'color': list.isEmpty ? null : (net == null ? null : (net.abs() <= 25 ? 'yellow' : (net > 0 ? 'green' : 'red'))),
     };
+  }
+
+  final base = {'ok': true, 'view': 'unified', 'market': market, 'time_zone': 'America/New_York', 'errors': const []};
+  if (day.isNotEmpty) {
+    final list = rows.where((t) => t['date'] == day).toList();
+    return {...base, 'day': day, 'totals': totals(list), 'trades': list};
+  }
+  final weeks = <Map<String, dynamic>>[];
+  var week = <Map<String, dynamic>>[];
+  for (var d = 1; d <= 31; d++) {
+    final date = DateTime.utc(2026, 10, d);
+    final key = '2026-10-${d.toString().padLeft(2, '0')}';
+    final t = totals(rows.where((r) => r['date'] == key).toList());
+    week.add({'date': key, ...t});
+    if (date.weekday == DateTime.sunday || d == 31) {
+      weeks.add({'days': week});
+      week = [];
+    }
+  }
+  return {...base, 'month': '2026-10', 'prev': '2026-09', 'next': '2026-11', 'weeks': weeks, 'totals': totals(rows), 'empty': rows.isEmpty};
+}
 
 Map<String, dynamic> fixtureLedgers({bool empty = false}) => {
       'paper_only': true,
@@ -168,6 +231,8 @@ http.Client fixtureWorker({bool empty = false, List<Uri>? seen, Map<String, Obje
         body = fixtureResearch(empty: empty);
       } else if (p == '/api/trading/calendar' && q['view'] == 'accounts') {
         body = fixtureAccounts(empty: empty);
+      } else if (p == '/api/trading/calendar' && q['view'] == 'unified') {
+        body = fixtureUnified(empty: empty, market: q['market'] ?? 'all', day: q['day'] ?? '');
       } else if (p == '/api/trading/ledgers') {
         body = fixtureLedgers(empty: empty);
       } else if (p == '/api/trading/crypto') {
@@ -179,5 +244,6 @@ http.Client fixtureWorker({bool empty = false, List<Uri>? seen, Map<String, Obje
       } else {
         return http.Response(jsonEncode({'ok': false, 'detail': 'Not served in this test.'}), 404);
       }
-      return http.Response(jsonEncode(body), 200);
+      // UTF-8, as the Worker sends it (labels carry '·' and '—').
+      return http.Response.bytes(utf8.encode(jsonEncode(body)), 200, headers: {'content-type': 'application/json; charset=utf-8'});
     });

@@ -180,6 +180,9 @@ void main() {
     await tester.pump(const Duration(milliseconds: 600));
     expect(find.byType(CheTradeReplayPage), findsNothing);
     final before = pushed.length;
+    // The section row scrolls sideways on a phone (Trading Room v3); REPLAY is its last button.
+    await tester.ensureVisible(find.byKey(const Key('trading_nav_replay')));
+    await tester.pump();
     await tester.tap(find.byKey(const Key('trading_nav_replay')));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
