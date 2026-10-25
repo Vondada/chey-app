@@ -972,6 +972,19 @@ extension _CheHomeHubRooms on _CHEHomeState {
     );
   }
 
+  /// Usage Center (lib/rooms/che_usage_center_room.dart): providers, tokens, GPU time, credits and costs with their
+  /// provenance. Opening it speaks nothing; Read Aloud and actions speak.
+  Future<void> _openUsageCenter() async {
+    HapticFeedback.selectionClick();
+    await Navigator.of(context).push(
+      CheUsageCenterRoom.route(
+        client: CheUsageCenterClient(baseUrl: cheAgentBaseUrl, headers: () => _authHeaders),
+        onSpeak: (text) => unawaited(speakText(text, record: false, readOnDemand: true)),
+        onListen: () => unawaited(toggleListening()),
+      ),
+    );
+  }
+
   /// The Capability Showroom's real states, from the Worker (owner device token; nothing is spoken).
   /// The Capability Showroom, reachable from the Creation Room and More. Opening it speaks nothing.
   void _openShowroom() {

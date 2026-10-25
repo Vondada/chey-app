@@ -40,6 +40,7 @@ import 'brain/che_brain_overview.dart';
 import 'brain/che_brain_regions.dart' show CheBrainNav, CheBrainSourceKind, CheBrainSourceLink;
 import 'brain/che_brain_truth_screen.dart';
 import 'rooms/che_cloud_computer_room.dart';
+import 'rooms/che_usage_center_room.dart';
 import 'brain/che_brain_list.dart' show CheBrainRecordLinks;
 import 'brain/che_brain_sections.dart' show CheBrainEvidence, CheEvidenceKind, cheRecordIdsOf;
 import 'che_ui/che_owner_improvements.dart';
@@ -2421,6 +2422,13 @@ OWNER AGENCY
           title: 'Cloud Computer',
           subtitle: 'Where CHE\'s jobs run, what each environment has, approvals and costs',
           onTap: () => unawaited(_openCloudComputer()),
+          hue: kit.CheColors.apps,
+        ),
+        CheMoreItem(
+          icon: Icons.receipt_long_rounded,
+          title: 'Usage Center',
+          subtitle: 'Providers, tokens, GPU time, credits and costs, each with its evidence',
+          onTap: () => unawaited(_openUsageCenter()),
           hue: kit.CheColors.apps,
         ),
         CheMoreItem(

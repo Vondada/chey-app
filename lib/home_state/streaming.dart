@@ -499,6 +499,8 @@ extension _CheHomeStreaming on _CHEHomeState {
         if (data['open_screen'] == 'cloud_computer' && data['source'] == 'che_cloud_computer' && mounted) unawaited(_openCloudComputer());
         // "How many characters live in CHE World?": the Worker's population answer also shows the three counts on screen.
         if (data['open_screen'] == 'world_population' && data['source'] == 'che_world_population' && mounted) unawaited(_openWorldPopulation());
+        // "What's my usage?" / "open the Usage Center": only the Usage Center's own reply opens it (silent on open).
+        if (data['open_screen'] == 'usage_center' && data['source'] == 'che_usage_center' && mounted) unawaited(_openUsageCenter());
         // "Connect GPU" matched by the Worker (/cloud-gpu connect): the owner's own command, so the flow may open Colab.
         if (data['open_screen'] == 'gpu_connect' && data['source'] == 'che_cloud_computer' && mounted) {
           _configureGpuConnect();
