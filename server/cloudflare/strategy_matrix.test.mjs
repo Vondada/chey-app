@@ -66,6 +66,8 @@ test('demotion follows the written statistical rules only', () => {
   assert.equal(demotion(row({ trades: 20, exp: -0.9, lo: -1.4, hi: -0.4 })).demoted, false, 'a small sample never demotes');
   assert.equal(demotion(row({ trades: 60, exp: -0.05, lo: -0.2, hi: 0.1 })).demoted, false, 'negative but not significant');
   assert.match(demotion(row({ trades: 60, exp: 0.05, dd: DEMOTE_MAX_DD_R + 1 })).reasons[0], /drawdown/);
+  assert.equal(demotion(row({ trades: 321, exp: 0.12, lo: -0.05, hi: 0.29, dd: 16.3 })).demoted, false, 'the drawdown limit scales with the sample (32.1R at 321 trades)');
+  assert.equal(demotion(row({ trades: 321, exp: -0.03, dd: 34.8 })).demoted, true);
   assert.match(demotion(row({ look: 'FAILED' })).reasons[0], /look-ahead/);
   assert.equal(demotion(row(), { trades: 25, expectancy_r: -0.4, expectancy_r_95ci: { low: -0.7, high: -0.1 } }).demoted, true, 'forward paper can demote');
   assert.equal(demotion(row(), { trades: 10, expectancy_r: -0.4, expectancy_r_95ci: { low: -0.9, high: -0.1 } }).demoted, false);

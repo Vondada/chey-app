@@ -192,7 +192,7 @@ export function sentenceFor(row) {
   const o = row.oos;
   if (!(o.trades >= MIN_SAMPLE)) return `${where}: ${o.trades} out-of-sample trades from ${row.trades_tested} tested, an insufficient sample, so it is not ranked.`;
   const hrs = row.hours.best ? ` Best New York hour ${hourWords(row.hours.best.hour)} (${row.hours.best.expectancy_r}R)${row.hours.worst ? `, worst ${hourWords(row.hours.worst.hour)} (${row.hours.worst.expectancy_r}R)` : ''}.` : '';
-  return `${where}: ${o.trades} out-of-sample trades after costs, ${o.win_rate}% winners, average win ${money(o.avg_winner)}, average loss ${money(Math.abs(o.avg_loser))}, net ${money(o.net_pnl)}, ${o.expectancy_r}R per trade, profit factor ${o.profit_factor ?? 'n/a'}, worst drawdown ${money(o.max_drawdown)}.${hrs} Confidence ${row.confidence}.`;
+  return `${where}: ${o.trades} out-of-sample trades after costs, ${o.win_rate}% winners after costs, average win ${money(o.avg_winner)}, average loss ${money(Math.abs(o.avg_loser))}, net ${money(o.net_pnl)}, ${o.expectancy_r}R per trade, profit factor ${o.profit_factor ?? 'n/a'}, worst drawdown ${money(o.max_drawdown)}.${hrs} Confidence ${row.confidence}.`;
 }
 
 // ─── The matrix view (route and voice) ───────────────────────────────────────

@@ -12,7 +12,8 @@ import { cmeOpen } from './trading_research.js';
 
 export const MIN_SAMPLE = 30;            // out-of-sample trades before a row may be ranked
 export const MIN_REGIME_TRADES = 8;      // trades in a regime bucket before it counts toward stability
-export const DEMOTE_MAX_DD_R = 15;       // out-of-sample drawdown, in R, that demotes a row
+export const DEMOTE_MAX_DD_R = 15;       // out-of-sample drawdown floor, in R, that demotes a row ...
+export const DEMOTE_DD_PER_TRADE = 0.1;  // ... scaled with the sample: limit = max(15R, 0.1R × trades)
 export const DEMOTE_MIN_PAPER = 20;      // forward-paper trades before paper results can demote
 export const PAPER_LIMITS = Object.freeze({ per_market: 2, total: 4 });
 export const FUTURES = Object.freeze(['MNQ', 'NQ']);
@@ -26,10 +27,13 @@ export const rowKey = (strategy, market, tf) => `${strategy}|${market}|${tf}`;
  *   1. the look-ahead audit failed;
  *   2. at least MIN_SAMPLE out-of-sample trades and the upper end of the 95% interval of expectancy (R, after costs)
  *      is below zero: the strategy loses money with statistical confidence;
- *   3. at least MIN_SAMPLE out-of-sample trades and an out-of-sample drawdown deeper than DEMOTE_MAX_DD_R;
+ *   3. at least MIN_SAMPLE out-of-sample trades and an out-of-sample drawdown deeper than the larger of DEMOTE_MAX_DD_R
+ *      and DEMOTE_DD_PER_TRADE × the trade count (a drawdown in R grows with the number of trades, so a fixed limit
+ *      would punish a long, positive record for its length);
  *   4. at least DEMOTE_MIN_PAPER forward-paper trades and the upper end of their 95% expectancy interval is below zero.
  * A small sample never demotes and never promotes.
  */
+export const ddLimit = (trades) => Math.max(DEMOTE_MAX_DD_R, Math.round(DEMOTE_DD_PER_TRADE * trades * 10) / 10);
 export function demotion(row, paper = null) {
   const reasons = [];
   if (row?.look_ahead === 'FAILED') reasons.push('the look-ahead audit failed: the rules read future bars');
@@ -37,7 +41,8 @@ export function demotion(row, paper = null) {
   if (o && o.trades >= MIN_SAMPLE) {
     const hi = o.expectancy_r_95ci?.high;
     if (Number.isFinite(hi) && hi < 0) reasons.push(`out-of-sample expectancy ${o.expectancy_r}R on ${o.trades} trades, 95% upper bound ${hi}R is below zero`);
-    if (o.max_drawdown_r > DEMOTE_MAX_DD_R) reasons.push(`out-of-sample drawdown ${o.max_drawdown_r}R is deeper than the ${DEMOTE_MAX_DD_R}R limit`);
+    const limit = ddLimit(o.trades);
+    if (o.max_drawdown_r > limit) reasons.push(`out-of-sample drawdown ${o.max_drawdown_r}R is deeper than its ${limit}R limit`);
   }
   if (paper && paper.trades >= DEMOTE_MIN_PAPER && Number.isFinite(paper.expectancy_r_95ci?.high) && paper.expectancy_r_95ci.high < 0) {
     reasons.push(`forward paper expectancy ${paper.expectancy_r}R on ${paper.trades} trades, 95% upper bound below zero`);
