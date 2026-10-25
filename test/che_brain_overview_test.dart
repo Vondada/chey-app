@@ -161,9 +161,10 @@ void main() {
       await tester.tap(find.byKey(const ValueKey('brain-back')));
       await tester.pumpAndSettle();
     }
+    // A region label opens that region's own page of real records (lane brain-visual; it opened the section before).
     await tester.tap(find.byKey(const ValueKey('brain-region-trading')));
     await tester.pumpAndSettle();
-    expect(find.byKey(const ValueKey('brain-section-trading')), findsOneWidget);
+    expect(find.byKey(const ValueKey('brain-region-details-trading')), findsOneWidget);
     expect(find.text('BTC short setup analysed'), findsOneWidget);
   });
 

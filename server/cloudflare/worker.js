@@ -258,7 +258,7 @@ import { securityChief, securityChiefIntent, speakChiefReport } from './security
 import { acquire as acquireCapability, applyPolicy as applyCapabilityPolicy, capabilityIntent, engineSummary as capabilityEngineSummary, learnFromOutcome, loadPolicy as loadCapabilityPolicy, populate as populateKnowledge, retrieve as retrieveKnowledge, rollbackTool, savePolicy as saveCapabilityPolicy, projectBlocked, speakCapabilities, speakLearned as speakLearnedKnowledge, useTool, LAST_USED_KEY as KNOWLEDGE_USED_KEY } from './capability_engine.js';
 import { EGRESS_KEY, SNAPSHOT_KEY, holdEgress, installEgressGuard, setEgressOwner, setEgressPolicy, storeEgressPolicy, SESSION_SCOPES, bump as securityBump, checkSession, createSession, dependencyAdvisories, detectThreats, issueNonce, loadSecurity, recordFindings, redact as redactSecretText, redactDeep, respondToIncident, restoreTrustedState, revokeSessions, saveSecurity, securityIntent, snapshotTrustedState, speakStatus as speakSecurityStatus } from './security_intelligence.js';
 import { loadRegistry as loadCapabilityRegistry } from './capability_registry.js';
-import { BrainLedger, answerLedger, decidePending as decideBrainPending, installBrainLedger, ledgerApi, ledgerIntent as brainLedgerIntent, DEFAULT_ZONE as LEDGER_DEFAULT_ZONE } from './brain_ledger.js';
+import { BrainLedger, answerLedger, decidePending as decideBrainPending, installBrainLedger, ledgerApi, recordGraphConnections, ledgerIntent as brainLedgerIntent, DEFAULT_ZONE as LEDGER_DEFAULT_ZONE } from './brain_ledger.js';
 import { FilmStore, filmIntent, filmProgress, farmProviders, loadRates, loadUsage, speakFarm, speakPlan, speakStatus as speakFilmStatus } from './film_studio.js';
 import { GpuQueue, gpuWorkerRoute, speakGpuSummary } from './gpu_queue.js';
 import { CreationStudio, studioOwnerRoute } from './creation_studio.js';
@@ -7883,6 +7883,15 @@ export class CheState extends DurableObject {
         if (!ownerDevice) return json({ detail: 'Not found.' }, 404);
         return json(await performanceReport(this.ctx.storage));
       }
+      // Brain room neural map — unlimited memory_notes nodes + related links, plus live Office agent tasks (real
+      // queued/running/reviewing work only). It sat after the POST-only gate, so a GET never reached it; the phone
+      // reads the same graph from /api/state. A link that is new since the last read is one CONNECTION_CREATED event.
+      const brainGraphRead = request.method === 'GET' && (path === '/api/brain/graph' || path === '/api/state')
+        ? buildBrainGraph(data, { liveNodes: buildAgentTaskNodes(data) }) : null;
+      if (brainGraphRead) {
+        try { recordGraphConnections(this.ctx.storage, brainGraphRead); } catch (_) { /* a ledger failure never blocks the map */ }
+        if (path === '/api/brain/graph') return json(brainGraphRead);
+      }
       if (request.method === 'GET' && path === '/api/state') {
         const capabilityRegistry = runtimeCapabilityRegistry(this.env, data);
         return json({
@@ -7894,7 +7903,7 @@ export class CheState extends DurableObject {
           memory_notes: listMemoryNotes(data),
           conversation_memories: ownerDevice ? await listConversationMemories(this.ctx.storage).catch(() => []) : [],
           conversation_memory_total: ownerDevice ? await conversationMemoryCount(this.ctx.storage).catch(() => 0) : 0,
-          brain_graph: buildBrainGraph(data, { liveNodes: buildAgentTaskNodes(data) }),
+          brain_graph: brainGraphRead,
           preference_memory: data.preference_memory,
           owner_context: data.owner_context.map(ownerContextPreview),
           personal_sources: {
@@ -10177,12 +10186,6 @@ export class CheState extends DurableObject {
 
       if (path === '/api/ml/readiness' && request.method === 'GET') {
         return json(mlReadiness(this.env));
-      }
-
-      // Brain room neural map — unlimited memory_notes nodes + related links,
-      // plus live Office agent tasks (real queued/running/reviewing work only).
-      if (path === '/api/brain/graph' && request.method === 'GET') {
-        return json(buildBrainGraph(data, { liveNodes: buildAgentTaskNodes(data) }));
       }
 
       if (path === '/api/translate' && request.method === 'POST') {

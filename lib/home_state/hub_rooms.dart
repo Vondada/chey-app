@@ -57,6 +57,7 @@ extension _CheHomeHubRooms on _CHEHomeState {
       loadLearning: ledger?.overview,
       onReadAloud: (t) => speakText(t, record: false, readOnDemand: true),
       onOpenEvidence: _openBrainEvidence,
+      onOpenSource: _openBrainSource,
       onOpenLedger: () => unawaited(_openBrainLedger()),
       brain: CheMemoryBrainRoom(
         active: active,
@@ -73,6 +74,33 @@ extension _CheHomeHubRooms on _CHEHomeState {
         onOpenEvidence: _openBrainEvidence,
       ),
     );
+  }
+
+  /// Brain Room → Memory Details → Source screen: opens the screen a record came from, through the routes the app
+  /// already has (the trade replay, the project editor, the agent's Office desk, the conversations list). Returns
+  /// false when the record names something CHE cannot open (an unknown project), so the details page says so.
+  Future<bool> _openBrainSource(CheBrainSourceLink link) async {
+    if (!mounted) return false;
+    switch (link.kind) {
+      case CheBrainSourceKind.trade:
+        return _openBrainEvidence(CheBrainEvidence(CheEvidenceKind.replay, link.label, id: link.id));
+      case CheBrainSourceKind.agentDesk:
+        _openOfficeFloor(agentName: link.id);
+        return true;
+      case CheBrainSourceKind.conversation:
+        _openConversations();
+        return true;
+      case CheBrainSourceKind.project:
+        bool same(Map<String, dynamic> p) => '${p['id']}' == link.id || '${p['title'] ?? p['name'] ?? ''}'.toLowerCase() == link.id.toLowerCase();
+        var project = projects.where(same).firstOrNull;
+        if (project == null) {
+          await _loadAgentState(silent: true);
+          project = projects.where(same).firstOrNull;
+        }
+        if (project == null || !mounted) return false;
+        await _openProjectEditor(project);
+        return true;
+    }
   }
 
   void _runHubPrompt(String prompt) {

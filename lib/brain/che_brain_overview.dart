@@ -13,6 +13,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/semantics.dart' show CustomSemanticsAction;
 import 'package:flutter/services.dart';
 
 import '../che_ui/che_hud.dart';
@@ -44,6 +45,7 @@ class CheBrainOverview extends StatefulWidget {
     this.onReadAloud,
     this.onOpenEvidence,
     this.onOpenLedger,
+    this.onOpenSource,
     this.initialSection = CheBrainNav.overview,
     this.clock,
     this.pollEvery = const Duration(seconds: 30),
@@ -64,6 +66,9 @@ class CheBrainOverview extends StatefulWidget {
 
   /// Opens the full Brain Ledger page (More → Brain Ledger), when the app provides it.
   final VoidCallback? onOpenLedger;
+
+  /// Opens a record's source screen (conversation, trade replay, project, agent desk) where the app has a route.
+  final CheOpenBrainSource? onOpenSource;
   final CheBrainNav initialSection;
 
   /// Test clock; DateTime.now otherwise.
@@ -133,6 +138,7 @@ class _CheBrainOverviewState extends State<CheBrainOverview> {
     super.initState();
     _derive();
     CheBrainOverview.voiceHandler = _voice;
+    CheBrainSpaceController.regionOpener = _openRegion;
     _syncPolling();
   }
 
@@ -148,6 +154,7 @@ class _CheBrainOverviewState extends State<CheBrainOverview> {
     _poll?.cancel();
     _query.dispose();
     if (CheBrainOverview.voiceHandler == _voice) CheBrainOverview.voiceHandler = null;
+    if (CheBrainSpaceController.regionOpener == _openRegion) CheBrainSpaceController.regionOpener = null;
     super.dispose();
   }
 
@@ -187,7 +194,7 @@ class _CheBrainOverviewState extends State<CheBrainOverview> {
     } catch (e) {
       if (!mounted) return;
       final msg = '$e'.replaceFirst('Exception: ', '');
-      setState(() => _learning = CheBrainLearning(events: _learning.events, totals: _learning.totals, fetchedAt: _learning.fetchedAt, error: msg));
+      setState(() => _learning = CheBrainLearning(events: _learning.events, connections: _learning.connections, totals: _learning.totals, fetchedAt: _learning.fetchedAt, error: msg));
     } finally {
       _loading = false;
     }
@@ -242,7 +249,9 @@ class _CheBrainOverviewState extends State<CheBrainOverview> {
         return 'Brain overview: $total record${total == 1 ? '' : 's'}. ${[for (final r in CheBrainRegion.values) if (_regions[r]! > 0) '${_regions[r]} ${r.label.toLowerCase()}'].join(', ')}.';
       case CheBrainNav.activity:
         final a = cheBrainActivity(widget.dots, limit: 3);
-        return a.isEmpty ? 'Live Activity: no dated records yet.' : 'Live Activity. Newest: ${a.map((d) => '${d.title}, ${cheBrainAgo(d.at, now: _now)}').join('; ')}.';
+        final links = _learning.connections;
+        final linked = links.isEmpty ? '' : ' ${links.length} new connection${links.length == 1 ? '' : 's'}. Newest: ${links.first.fromLabel} and ${links.first.toLabel}, ${links.first.reason}.';
+        return a.isEmpty ? 'Live Activity: no dated records yet.$linked' : 'Live Activity. Newest: ${a.map((d) => '${d.title}, ${cheBrainAgo(d.at, now: _now)}').join('; ')}.$linked';
       case CheBrainNav.search:
         return 'Search the Brain. Say search my brain for, then the words.';
       case CheBrainNav.connections:
@@ -269,6 +278,41 @@ class _CheBrainOverviewState extends State<CheBrainOverview> {
         links: _links,
         onReadAloud: widget.onReadAloud,
         onOpenEvidence: widget.onOpenEvidence,
+        onOpenSource: widget.onOpenSource,
+        now: _now,
+      ),
+    ));
+  }
+
+  /// A region's own page: its real records, newest first, each opening Memory Details. Voice ("open the memory
+  /// region"), VoiceOver (the region labels) and touch all come here.
+  void _openRegion(CheBrainRegion r) {
+    if (!mounted) return;
+    HapticFeedback.selectionClick();
+    Navigator.of(context).push(MaterialPageRoute<void>(
+      builder: (_) => CheBrainRegionDetails(
+        region: r,
+        dots: widget.dots,
+        links: _links,
+        onReadAloud: widget.onReadAloud,
+        onOpenEvidence: widget.onOpenEvidence,
+        onOpenSource: widget.onOpenSource,
+        now: _now,
+      ),
+    ));
+  }
+
+  /// One CONNECTION_CREATED event's page: both records, the reason, the status and when.
+  void _openConnection(CheBrainConnectionEvent e) {
+    HapticFeedback.selectionClick();
+    Navigator.of(context).push(MaterialPageRoute<void>(
+      builder: (_) => CheBrainConnectionDetails(
+        event: e,
+        dots: widget.dots,
+        links: _links,
+        onReadAloud: widget.onReadAloud,
+        onOpenEvidence: widget.onOpenEvidence,
+        onOpenSource: widget.onOpenSource,
         now: _now,
       ),
     ));
@@ -456,7 +500,7 @@ class _CheBrainOverviewState extends State<CheBrainOverview> {
             children: [
               Positioned.fill(child: widget.brain),
               // Region labels with real counts, like the reference's floating labels. Tap one to open its records.
-              Positioned(left: 6, top: 96, child: _regionColumn(const [CheBrainRegion.memories, CheBrainRegion.conversations, CheBrainRegion.knowledge, CheBrainRegion.creative, CheBrainRegion.media])),
+              Positioned(left: 6, top: 96, child: _regionColumn(const [CheBrainRegion.memories, CheBrainRegion.conversations, CheBrainRegion.knowledge, CheBrainRegion.research, CheBrainRegion.creative, CheBrainRegion.media])),
               Positioned(right: 6, top: 96, child: _regionColumn(const [CheBrainRegion.trading, CheBrainRegion.coding, CheBrainRegion.agents, CheBrainRegion.verified, CheBrainRegion.errors])),
             ],
           ),
@@ -467,17 +511,6 @@ class _CheBrainOverviewState extends State<CheBrainOverview> {
     );
   }
 
-  CheBrainNav _navForRegion(CheBrainRegion r) => switch (r) {
-    CheBrainRegion.memories => CheBrainNav.memories,
-    CheBrainRegion.conversations => CheBrainNav.conversations,
-    CheBrainRegion.knowledge => CheBrainNav.library,
-    CheBrainRegion.creative || CheBrainRegion.media => CheBrainNav.media,
-    CheBrainRegion.trading => CheBrainNav.trading,
-    CheBrainRegion.coding => CheBrainNav.coding,
-    CheBrainRegion.agents => CheBrainNav.agents,
-    CheBrainRegion.verified || CheBrainRegion.errors => CheBrainNav.verification,
-  };
-
   Widget _regionColumn(List<CheBrainRegion> regions) => Column(
         mainAxisSize: MainAxisSize.min,
         children: [for (final r in regions) Padding(padding: const EdgeInsets.only(bottom: 6), child: _regionBadge(r))],
@@ -485,13 +518,19 @@ class _CheBrainOverviewState extends State<CheBrainOverview> {
 
   Widget _regionBadge(CheBrainRegion r) {
     final n = _regions[r] ?? 0;
+    // Each region is one VoiceOver node with its name and real count; activating it opens its records, and its
+    // custom action (or a long press) flies the brain there.
     return Semantics(
       button: true,
-      label: '${r.label}: $n record${n == 1 ? '' : 's'}. Opens them.',
+      label: '${r.label} region: $n record${n == 1 ? '' : 's'}. Opens its records.',
+      customSemanticsActions: {
+        CustomSemanticsAction(label: 'Fly to the ${r.label} region'): () => _flyToRegion(r),
+      },
       excludeSemantics: true,
       child: GestureDetector(
         key: ValueKey('brain-region-${r.name}'),
-        onTap: () => _open(_navForRegion(r)),
+        onTap: () => _openRegion(r),
+        onLongPress: () => _flyToRegion(r),
         child: Container(
           constraints: const BoxConstraints(minWidth: 74, minHeight: 34),
           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
@@ -512,6 +551,14 @@ class _CheBrainOverviewState extends State<CheBrainOverview> {
         ),
       ),
     );
+  }
+
+  /// Flies the neural brain to a region; the reply is shown and, being an explicit owner action, read aloud.
+  void _flyToRegion(CheBrainRegion r) {
+    final space = CheBrainSpaceController.current;
+    HapticFeedback.selectionClick();
+    final said = space == null ? 'The neural brain is not on screen, so I cannot fly to the ${r.label} region.' : space.flyToRegion(r);
+    unawaited(widget.onReadAloud?.call(said));
   }
 
   Widget _learningPanel() {
@@ -725,8 +772,43 @@ class _CheBrainOverviewState extends State<CheBrainOverview> {
     ]);
   }
 
+  Widget _connectionRow(CheBrainConnectionEvent e) {
+    final when = e.time.isEmpty ? cheBrainAgo(e.at, now: _now) : e.time;
+    const color = Color(0xFFB98BFF);
+    return Semantics(
+      button: true,
+      label: 'Connection created: ${e.fromLabel} and ${e.toLabel}. Reason: ${e.reason}. ${e.statusWords}. $when. Opens the connection.',
+      excludeSemantics: true,
+      child: InkWell(
+        key: ValueKey('brain-connection-${e.id}'),
+        borderRadius: BorderRadius.circular(14),
+        onTap: () => _openConnection(e),
+        child: Container(
+          margin: const EdgeInsets.only(bottom: 8),
+          padding: const EdgeInsets.all(10),
+          decoration: BoxDecoration(color: _glass, borderRadius: BorderRadius.circular(14), border: Border.all(color: color.withValues(alpha: .35))),
+          child: Row(children: [
+            const Icon(Icons.hub_rounded, color: color, size: 26),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                const Text('Connection created', style: TextStyle(fontSize: 14.5, color: Colors.white, fontWeight: FontWeight.w600)),
+                Text('${e.fromLabel}  ↔  ${e.toLabel}', maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 13, color: Colors.white70)),
+                const SizedBox(height: 3),
+                Text('$when · ${e.reason}', maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 11.5, color: Colors.white54)),
+              ]),
+            ),
+            _chip(e.statusWords, color),
+          ]),
+        ),
+      ),
+    );
+  }
+
   Widget _activity() {
-    final list = cheBrainActivity(widget.dots, filter: _filter);
+    final onlyLinks = _filter == CheBrainActivityFilter.connections;
+    final list = onlyLinks ? const <CheMemoryDot>[] : cheBrainActivity(widget.dots, filter: _filter);
+    final links = _filter == CheBrainActivityFilter.all ? _learning.connections.take(3).toList() : onlyLinks ? _learning.connections : const <CheBrainConnectionEvent>[];
     return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
       SizedBox(
         height: 46,
@@ -755,18 +837,25 @@ class _CheBrainOverviewState extends State<CheBrainOverview> {
         ),
       ),
       Expanded(
-        child: list.isEmpty
-            ? _empty(_filter == CheBrainActivityFilter.all ? 'No dated activity on this phone yet.' : 'No ${_filter.label.toLowerCase()} activity yet.')
+        child: list.isEmpty && links.isEmpty
+            ? _empty(onlyLinks
+                ? (widget.loadLearning == null
+                    ? 'Connections come from the Brain Ledger, which is read once this iPhone is paired with CHE.'
+                    : 'No connection has been recorded yet. One appears when CHE really links two records.')
+                : _filter == CheBrainActivityFilter.all
+                ? 'No dated activity on this phone yet.'
+                : 'No ${_filter.label.toLowerCase()} activity yet.')
             : ListView.builder(
                 padding: const EdgeInsets.fromLTRB(10, 0, 10, 24),
-                itemCount: list.length,
-                itemBuilder: (_, i) => _recordTile(list[i], activity: true),
+                itemCount: links.length + list.length,
+                itemBuilder: (_, i) => i < links.length ? _connectionRow(links[i]) : _recordTile(list[i - links.length], activity: true),
               ),
       ),
     ]);
   }
 
   String _activityVerb(CheMemoryDot d) => switch (cheBrainRegionOf(d)) {
+    CheBrainRegion.research => 'Research',
     CheBrainRegion.memories => 'Memory saved',
     CheBrainRegion.conversations => 'Conversation',
     CheBrainRegion.media => 'Media saved',
@@ -1107,13 +1196,36 @@ Widget _thumb(CheBrainRegion region, String? url, double size) {
 /// when it was saved, where it came from, its type and confidence (only when recorded), its evidence, and the records
 /// it really connects to.
 class CheBrainRecordDetails extends StatelessWidget {
-  const CheBrainRecordDetails({super.key, required this.dot, this.links = const [], this.onReadAloud, this.onOpenEvidence, this.now});
+  const CheBrainRecordDetails({super.key, required this.dot, this.links = const [], this.onReadAloud, this.onOpenEvidence, this.onOpenSource, this.now});
 
   final CheMemoryDot dot;
   final List<CheBrainLink> links;
   final Future<void> Function(String text)? onReadAloud;
   final CheOpenBrainEvidence? onOpenEvidence;
+
+  /// Opens the screen that holds the record's source; null where the app gives no route (the page then says so).
+  final CheOpenBrainSource? onOpenSource;
   final DateTime? now;
+
+  /// Opens one source screen and says what really happened (the owner pressed it, so it is read aloud).
+  Future<void> _openSource(BuildContext context, CheBrainSourceLink link) async {
+    HapticFeedback.selectionClick();
+    final open = onOpenSource;
+    var opened = false;
+    if (open != null) {
+      try {
+        opened = await open(link);
+      } catch (_) {
+        opened = false;
+      }
+    }
+    final said = opened ? '${link.label}: opened.' : 'I could not open that screen: ${link.label.replaceFirst('Open ', '').trim()} has no route in CHE right now.';
+    if (!opened && context.mounted) {
+      HapticFeedback.heavyImpact();
+      ScaffoldMessenger.maybeOf(context)?.showSnackBar(SnackBar(content: Text(said, style: const TextStyle(fontSize: 16))));
+    }
+    await onReadAloud?.call(said);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -1122,6 +1234,7 @@ class CheBrainRecordDetails extends StatelessWidget {
     final status = cheBrainStatusOf(d);
     final evidence = cheBrainEvidenceOf(d);
     final related = cheBrainRelated(d, links);
+    final sources = cheBrainSourceLinksOf(d);
     final at = d.at?.toLocal();
     String two(int n) => n.toString().padLeft(2, '0');
     const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -1140,6 +1253,7 @@ class CheBrainRecordDetails extends StatelessWidget {
       if (d.confidence != null) 'Confidence ${(d.confidence! * 100).round()} percent.',
       evidence.isEmpty ? 'No evidence links are recorded.' : 'Evidence: ${evidence.map((e) => e.label).join(', ')}.',
       if (related.isNotEmpty) 'Connected to ${related.length} records.',
+      sources.isEmpty ? cheBrainNoSourceScreen : 'Source screens: ${sources.map((x) => x.label.replaceFirst('Open ', '')).join(', ')}.',
       d.body,
     ].join(' ');
     return Scaffold(
@@ -1217,6 +1331,33 @@ class CheBrainRecordDetails extends StatelessWidget {
           else
             for (final e in evidence) CheEvidenceTile(evidence: e, onOpenEvidence: onOpenEvidence),
           const SizedBox(height: 14),
+          Semantics(header: true, child: const Text('Source screen', style: TextStyle(fontSize: 16, color: Colors.white, fontWeight: FontWeight.w700))),
+          const SizedBox(height: 4),
+          if (sources.isEmpty)
+            const Text(cheBrainNoSourceScreen, key: ValueKey('brain-source-none'), style: TextStyle(color: Colors.white60))
+          else if (onOpenSource == null)
+            const Text('Source screens open from the Brain Room in the app; this view has no route to them.', style: TextStyle(color: Colors.white60))
+          else
+            Wrap(spacing: 8, runSpacing: 6, children: [
+              for (final link in sources)
+                Semantics(
+                  button: true,
+                  label: link.label,
+                  excludeSemantics: true,
+                  child: OutlinedButton.icon(
+                    key: ValueKey('brain-source-${link.kind.name}'),
+                    onPressed: () => _openSource(context, link),
+                    icon: Icon(switch (link.kind) {
+                      CheBrainSourceKind.conversation => Icons.forum_rounded,
+                      CheBrainSourceKind.trade => Icons.replay_rounded,
+                      CheBrainSourceKind.project => Icons.account_tree_rounded,
+                      CheBrainSourceKind.agentDesk => Icons.business_center_rounded,
+                    }, size: 18),
+                    label: Text(link.label),
+                  ),
+                ),
+            ]),
+          const SizedBox(height: 14),
           Semantics(header: true, child: Text('Related · ${related.length}', style: const TextStyle(fontSize: 16, color: Colors.white, fontWeight: FontWeight.w700))),
           const SizedBox(height: 6),
           if (related.isEmpty)
@@ -1238,7 +1379,7 @@ class CheBrainRecordDetails extends StatelessWidget {
                     child: GestureDetector(
                       key: ValueKey('brain-related-${r.id}'),
                       onTap: () => Navigator.of(context).push(MaterialPageRoute<void>(
-                        builder: (_) => CheBrainRecordDetails(dot: r, links: links, onReadAloud: onReadAloud, onOpenEvidence: onOpenEvidence, now: now),
+                        builder: (_) => CheBrainRecordDetails(dot: r, links: links, onReadAloud: onReadAloud, onOpenEvidence: onOpenEvidence, onOpenSource: onOpenSource, now: now),
                       )),
                       child: SizedBox(
                         width: 96,
@@ -1256,6 +1397,208 @@ class CheBrainRecordDetails extends StatelessWidget {
             ),
           const SizedBox(height: 14),
           SelectableText(d.body, style: const TextStyle(fontSize: 14.5, color: Colors.white70, height: 1.35)),
+        ],
+      ),
+    );
+  }
+}
+
+/// One region's page (lane brain-visual): its name, real count and verified share, a way to fly the neural brain there,
+/// Read Aloud, and its real records newest first, each opening Memory Details. An empty region says so.
+class CheBrainRegionDetails extends StatelessWidget {
+  const CheBrainRegionDetails({
+    super.key,
+    required this.region,
+    required this.dots,
+    this.links = const [],
+    this.onReadAloud,
+    this.onOpenEvidence,
+    this.onOpenSource,
+    this.now,
+  });
+
+  final CheBrainRegion region;
+  final List<CheMemoryDot> dots;
+  final List<CheBrainLink> links;
+  final Future<void> Function(String text)? onReadAloud;
+  final CheOpenBrainEvidence? onOpenEvidence;
+  final CheOpenBrainSource? onOpenSource;
+  final DateTime? now;
+
+  @override
+  Widget build(BuildContext context) {
+    final r = region;
+    final list = cheBrainRegionRecords(r, dots);
+    final verified = list.where(cheBrainIsVerifiedRecord).length;
+    final summary = list.isEmpty
+        ? 'The ${r.label} region has no records on this phone yet. Nothing is shown until CHE really records something here.'
+        : '${r.label} region: ${list.length} record${list.length == 1 ? '' : 's'}, $verified verified. Newest: ${list.take(3).map((d) => d.title).join('; ')}.';
+    return Scaffold(
+      backgroundColor: const Color(0xFF02050A),
+      appBar: AppBar(
+        backgroundColor: Colors.transparent,
+        title: Text('${r.label} region'),
+        actions: [
+          if (onReadAloud != null) IconButton(tooltip: 'Read aloud', icon: const Icon(Icons.volume_up_rounded), onPressed: () => onReadAloud!(summary)),
+        ],
+      ),
+      body: Column(
+        key: ValueKey('brain-region-details-${r.name}'),
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+            child: Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: _glass,
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: r.color.withValues(alpha: .5)),
+                boxShadow: [BoxShadow(color: r.color.withValues(alpha: .25), blurRadius: 16)],
+              ),
+              child: Row(children: [
+                Icon(r.icon, color: r.color, size: 30),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Semantics(
+                    label: summary,
+                    excludeSemantics: true,
+                    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                      Text(_fmt(list.length), style: const TextStyle(fontSize: 26, fontWeight: FontWeight.w800, color: Colors.white)),
+                      Text(list.isEmpty ? 'no records yet' : '${list.length == 1 ? 'record' : 'records'} · $verified verified', style: const TextStyle(fontSize: 13, color: Colors.white70)),
+                    ]),
+                  ),
+                ),
+                if (list.isNotEmpty)
+                  Semantics(
+                    button: true,
+                    label: 'Fly to the ${r.label} region in the brain',
+                    excludeSemantics: true,
+                    child: TextButton.icon(
+                      key: const ValueKey('brain-region-fly'),
+                      onPressed: () {
+                        final space = CheBrainSpaceController.current;
+                        final said = space == null ? 'The neural brain is not on screen, so I cannot fly there.' : space.flyToRegion(r);
+                        Navigator.of(context).maybePop();
+                        onReadAloud?.call(said);
+                      },
+                      icon: const Icon(Icons.travel_explore_rounded, size: 18),
+                      label: const Text('Fly there'),
+                    ),
+                  ),
+              ]),
+            ),
+          ),
+          Expanded(
+            child: list.isEmpty
+                ? Padding(padding: const EdgeInsets.all(24), child: Text(summary, textAlign: TextAlign.center, style: const TextStyle(color: Colors.white60, fontSize: 15)))
+                : ListView.builder(
+                    padding: const EdgeInsets.fromLTRB(12, 0, 12, 24),
+                    itemCount: list.length,
+                    itemBuilder: (context, i) {
+                      final d = list[i];
+                      final status = cheBrainStatusOf(d);
+                      return Semantics(
+                        button: true,
+                        label: '${d.title}. ${status.label}. ${cheBrainAgo(d.at, now: now)}. Opens the record.',
+                        excludeSemantics: true,
+                        child: ListTile(
+                          key: ValueKey('brain-region-record-${d.id}'),
+                          onTap: () => Navigator.of(context).push(MaterialPageRoute<void>(
+                            builder: (_) => CheBrainRecordDetails(dot: d, links: links, onReadAloud: onReadAloud, onOpenEvidence: onOpenEvidence, onOpenSource: onOpenSource, now: now),
+                          )),
+                          leading: _thumb(cheBrainRegionOf(d), cheBrainThumbnailOf(d), 44),
+                          title: Text(d.title, maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Colors.white, fontSize: 14.5)),
+                          subtitle: Text('${cheBrainAgo(d.at, now: now)} · ${status.label}', style: const TextStyle(color: Colors.white54, fontSize: 12)),
+                          trailing: const Icon(Icons.chevron_right_rounded, color: Colors.white38),
+                        ),
+                      );
+                    },
+                  ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// One CONNECTION_CREATED event (lane brain-visual): the two records CHE linked, the reason, the link's status, where
+/// the link came from and when. A record that is on this phone opens its Memory Details; one that is not says so.
+class CheBrainConnectionDetails extends StatelessWidget {
+  const CheBrainConnectionDetails({
+    super.key,
+    required this.event,
+    required this.dots,
+    this.links = const [],
+    this.onReadAloud,
+    this.onOpenEvidence,
+    this.onOpenSource,
+    this.now,
+  });
+
+  final CheBrainConnectionEvent event;
+  final List<CheMemoryDot> dots;
+  final List<CheBrainLink> links;
+  final Future<void> Function(String text)? onReadAloud;
+  final CheOpenBrainEvidence? onOpenEvidence;
+  final CheOpenBrainSource? onOpenSource;
+  final DateTime? now;
+
+  @override
+  Widget build(BuildContext context) {
+    final e = event;
+    final when = e.time.isEmpty ? cheBrainAgo(e.at, now: now) : e.time;
+    final spoken = 'Connection created $when: ${e.fromLabel} and ${e.toLabel}. Reason: ${e.reason}. It is a ${e.statusWords}, from the ${e.originWords}.';
+    Widget side(String label, String id, String title) {
+      final dot = cheBrainDotForNodeId(id, dots);
+      return Semantics(
+        button: dot != null,
+        label: dot == null ? '$label: ${title.isEmpty ? id : title}. This record is not on this phone yet.' : '$label: ${dot.title}. Opens the record.',
+        excludeSemantics: true,
+        child: ListTile(
+          key: ValueKey('brain-connection-side-$id'),
+          onTap: dot == null
+              ? null
+              : () => Navigator.of(context).push(MaterialPageRoute<void>(
+                    builder: (_) => CheBrainRecordDetails(dot: dot, links: links, onReadAloud: onReadAloud, onOpenEvidence: onOpenEvidence, onOpenSource: onOpenSource, now: now),
+                  )),
+          leading: Icon(dot == null ? Icons.cloud_outlined : cheBrainRegionOf(dot).icon, color: dot == null ? Colors.white38 : cheBrainRegionOf(dot).color),
+          title: Text(dot?.title ?? (title.isEmpty ? id : title), style: const TextStyle(color: Colors.white, fontSize: 15)),
+          subtitle: Text(dot == null ? '$label · id $id · not on this phone yet' : '$label · ${cheBrainRegionOf(dot).label}', style: const TextStyle(color: Colors.white54, fontSize: 12)),
+          trailing: dot == null ? null : const Icon(Icons.chevron_right_rounded, color: Colors.white38),
+        ),
+      );
+    }
+
+    return Scaffold(
+      backgroundColor: const Color(0xFF02050A),
+      appBar: AppBar(
+        backgroundColor: Colors.transparent,
+        title: const Text('Connection'),
+        actions: [
+          if (onReadAloud != null) IconButton(tooltip: 'Read aloud', icon: const Icon(Icons.volume_up_rounded), onPressed: () => onReadAloud!(spoken)),
+        ],
+      ),
+      body: ListView(
+        key: const ValueKey('brain-connection-details'),
+        padding: const EdgeInsets.fromLTRB(12, 4, 12, 24),
+        children: [
+          Semantics(header: true, child: const Padding(padding: EdgeInsets.fromLTRB(4, 0, 4, 6), child: Text('Connection created', style: TextStyle(fontSize: 19, color: Colors.white, fontWeight: FontWeight.w700)))),
+          side('From', e.fromId, e.fromTitle),
+          side('To', e.toId, e.toTitle),
+          const Divider(color: _rimDim),
+          for (final (k, v) in [('Reason', e.reason.isEmpty ? 'Not recorded' : e.reason), ('Status', e.statusWords), ('From', e.originWords), ('When', when)])
+            Semantics(
+              label: '$k: $v',
+              excludeSemantics: true,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
+                child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  SizedBox(width: 74, child: Text(k, style: const TextStyle(color: Colors.white60, fontSize: 13.5))),
+                  Expanded(child: Text(v, style: const TextStyle(color: Colors.white, fontSize: 14))),
+                ]),
+              ),
+            ),
         ],
       ),
     );
