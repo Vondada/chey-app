@@ -77,7 +77,13 @@ void main() {
     test('replies ask for ElevenLabs and Fish only, and a silent clip is shown instead', () {
       expect(voice, contains('CheEdgeVoice.speak(text, purpose: purpose, premiumOnly: true, turn: turn, index: index, lock: lock)'));
       expect(voice, contains('_staySilent(text, why, outcome)'));
-      expect(voice, isNot(contains('synthesizeNeural')));
+      // The on-device Kokoro voice speaks only under Private voice (owner question 2026-10-25,
+      // docs/CHE_PRIVATE_VOICE.md), where ElevenLabs and Fish must not get the words. Never otherwise.
+      expect('synthesizeNeural'.allMatches(voice).length, 1);
+      final privateBranch = voice.indexOf('if (privateVoice) {');
+      expect(privateBranch, greaterThan(0));
+      expect(voice.indexOf('synthesizeNeural'), greaterThan(privateBranch));
+      expect(voice.indexOf('synthesizeNeural') - privateBranch, lessThan(200));
       expect(voice, isNot(contains('/api/voice/synthesize')));
     });
 

@@ -42,6 +42,9 @@ What still leaves the phone in Private voice, said plainly:
 - The text of your words, to CHE's own Worker (Cloudflare), which runs Workers AI in your Cloudflare account to answer.
   Cloudflare is the host of CHE's server in every mode; Private voice removes every *other* recipient.
 - The Worker keeps the conversation in CHE's own storage (memory, history) as it does in every mode.
+- The egress guard still lets the Worker reach CHE's own hosts and the owner's own compute: his GitHub repository
+  (`api.github.com` for that repository only), his Cloudflare account API, and his own Ollama or computer server if
+  one is configured. These belong to the owner, not to an AI company.
 - One-time model downloads with no personal data: the Kokoro voice model from GitHub (`k2-fsa/sherpa-onnx` releases).
 
 ## How it is enforced (code, not instructions)
