@@ -292,14 +292,14 @@ class CheLiveChart {
       final r = await c.get(Uri.parse('$baseUrl/api/markets/quote?symbol=${Uri.encodeQueryComponent(s.id)}'), headers: headers).timeout(const Duration(seconds: 15));
       final j = jsonDecode(r.body);
       if (j is! Map || j['price'] is! num) {
-        return 'I could not get a price for ${s.name} right now${j is Map && j['error'] != null ? ': ${j['error']}' : '.'} The chart itself is still live.';
+        return 'I could not get a price for ${s.name} right now${j is Map && j['error'] != null ? ': ${j['error']}' : '.'} Whether the chart is still updating is not confirmed.';
       }
       final price = (j['price'] as num).toDouble();
       final change = (j['change_pct'] as num?)?.toDouble();
       final dir = change == null ? '' : change >= 0 ? ', up ${change.toStringAsFixed(2)} percent since the open' : ', down ${(-change).toStringAsFixed(2)} percent since the open';
       return '${s.name}: ${price.toStringAsFixed(price >= 100 ? 2 : 4)}$dir. Delayed quote${j['as_of'] != null ? ' as of ${j['as_of']}' : ''}.';
     } catch (_) {
-      return 'I could not reach the price source for ${s.name} right now. The chart itself is still live.';
+      return 'I could not reach the price source for ${s.name} right now. Whether the chart is still updating is not confirmed.';
     }
   }
 }
