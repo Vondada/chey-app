@@ -26,7 +26,7 @@
 //   open call is cancelled (or confirmed ended) before its job goes to any other provider: never billed twice.
 // - The proxy token is read from the owner's key store, sent only in those two headers to *.modal.run, and never put
 //   in a view, a log, a letter or a reply.
-import { storedKeys } from './resilience.js';
+import { MODAL_PASTE_REFUSAL, storedKeys } from './resilience.js';
 import { PAID_GPU_PRICES } from './compute_budget.js';
 
 export const MODAL_APP_VERSION = 'che-modal-1';          // tools/modal/che_modal_app.py APP_VERSION
@@ -59,6 +59,19 @@ export const creditStopUsd = (credit) => Math.max(0, Math.round((Number(credit |
  * pasted as `wk-…:ws-…@https://<workspace>--che-gpu.modal.run` (or `@<workspace>`). Only *.modal.run hosts of the
  * che-gpu label are accepted, so the token can never be sent anywhere else. Returns null when malformed.
  */
+/** The Keys row for Modal: connected by the deploy workflow, so there is no key to paste (owner, 2026-10-25). */
+export async function modalKeyRowFor(env, storage) { return modalKeyRow({ exists: (await modalCredential(env, storage)).exists }); }
+export function modalKeyRow({ exists = false, page = 'https://modal.com/settings' } = {}) {
+  return {
+    id: 'modal', name: 'Modal (CHE GPU app)', page,
+    status: exists ? 'not tried yet' : 'not set up',
+    last4: '',
+    detail: MODAL_PASTE_REFUSAL,
+    readonly: true,
+    check: 'modal',
+  };
+}
+
 export function parseModalCredential(raw) {
   const text = String(raw || '').trim();
   // `bearer:<token>@<endpoint>`: the form the "CHE Modal deploy" workflow writes into the Worker secret MODAL_TOKEN

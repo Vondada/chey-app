@@ -139,6 +139,7 @@ import { CHE_SELF_BRIEF, starredFocus, studyLesson } from './che_self_knowledge.
 import { connectServiceIntent, onboardingChatReply, onboardingIntent, onboardingRoute } from './service_onboarding.js';
 import { privateChatGate, privateTurn } from './private_voice.js';
 import { KEY_PROVIDERS, MEMORY_DB, hasStoredMemoryDatabase, memorySetupIntent, memorySetupSteps, removeMemoryDatabase, saveMemoryDatabase, removeKey, storedKeys, withStoredKeys, cachedAnswer, checkAllKeys, fileLetter, fileTech, forgetAnswer, isLockedDown, listLetters, looksLikeAttack, markLetter, nextLetter, rememberAnswer, resilienceIntent, runScout, saveKey, setLockdown, setupSteps, speakKeyHealth, speakMailboxSummary, speakTech, techItems } from './resilience.js';
+import { modalKeyRowFor } from './modal_gpu.js';
 import { applyCorrections, correctedPrevious, correctionsContext, detectCorrection, learnCorrection, loadCorrections } from './speech_learning.js';
 import { applyModelReading, asksAboutScreen, clipKeepingLimits, interpretOwnerTurn, interpretWithModel } from './speech_intent.js';
 import { intentFrame, understoodAs } from './intent_frame.js';
@@ -8663,7 +8664,8 @@ export class CheState extends DurableObject {
           .map(([model, row]) => `${model}: ${row.requests} clips, ${row.chars} characters, ${row.cache_hits} from cache`).join('; ');
         return json({
           providers: [
-            ...Object.entries(KEY_PROVIDERS).map(([id, p]) => ({ id, name: p.name, page: p.page, status: health[id]?.status || 'not set up', last4: health[id]?.last4 || '' })),
+            ...Object.entries(KEY_PROVIDERS).filter(([id]) => id !== 'modal').map(([id, p]) => ({ id, name: p.name, page: p.page, status: health[id]?.status || 'not set up', last4: health[id]?.last4 || '' })),
+            await modalKeyRowFor(this.keyEnv || this.env, this.ctx.storage),
             { id: 'elevenlabs', name: 'ElevenLabs (CHE voice)', page: 'https://elevenlabs.io', status: mary.status, last4: mary.last4, detail: mary.detail, readonly: true },
             { id: 'fish', name: 'Fish Audio (backup voice)', page: 'https://fish.audio', status: fish.status, last4: fish.last4, detail: fishUsage ? `${fish.detail} Today ${fishUsage}.` : fish.detail, readonly: true },
           ],
