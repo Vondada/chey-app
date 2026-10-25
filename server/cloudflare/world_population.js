@@ -10,10 +10,13 @@
 // Identical seed + SCHEMA_VERSION always give an identical record (world_population.test.mjs). Changing any list below
 // changes records, so it must bump SCHEMA_VERSION.
 import { FACE_TARGETS, HAIR_BUILT, HAIR_STYLES, STYLES, STYLE_LABELS, skinOk, toSettings, validate } from './avatar_identity.js';
-import { TOP_VOICES } from './voice_catalog.js';
-import { DEFAULT_RENDER, VIEWS, qualityOf, renderSettings } from './creation_studio.js';
+import {
+  CHARACTER_VOICES, COLOURS, DEFAULT_RENDER, EYE_COLOURS, SKIN_TONES as NAMED_SKIN, VIEWS, personExtras, qualityOf, renderSettings, shapeSettings,
+} from './creation_studio.js';
 
-export const SCHEMA_VERSION = 1;
+// 2: records use Create Person's own vocabulary (named colours, CHARACTER_VOICES, BODY_* shape) and carry a
+// description that describePerson() reads back to the same look (world_population.test.mjs checks the round trip).
+export const SCHEMA_VERSION = 2;
 export const WORLD_KEY = 'world:populations';
 export const BUCKETS_KEY = 'world:buckets';
 export const overridesKey = (world) => `world:overrides:${world}`;
@@ -28,21 +31,25 @@ export const CLOTHING = Object.freeze(['jacket', 'hoodie', 'sweater']);   // the
 export const BUCKET_AXES = Object.freeze({ style: STYLES, body: BODY_TYPES, hair: HAIR_STYLES, top: CLOTHING });
 export const BUCKET_COUNT = STYLES.length * BODY_TYPES.length * HAIR_STYLES.length * CLOTHING.length;
 
-// ── Per-instance palettes ─────────────────────────────────────────────────────────────────────────────────────────
-// Skin tones the renderer accepts (the same list the Character Generator offers; skinOk filters any it would refuse).
-export const SKIN_TONES = Object.freeze(['#e4bb9c', '#e3b597', '#e7b48e', '#e2b089', '#dca27a', '#d7a986', '#d29a72', '#c98b62',
-  '#a8704a', '#8c5a3c', '#7a4a2e', '#603826', '#502e20'].filter(skinOk));
-export const IRIS = Object.freeze(['#4a2e1c', '#4a3220', '#5a3a22', '#5e3e28', '#6a4a2e', '#4e3a52', '#5f6b45', '#4f7fb5', '#6f8a9a']);
-export const HAIR_COLORS = Object.freeze(['#141010', '#16110e', '#1a1210', '#2a1a12', '#3b2416', '#4a2c1c', '#6a2e1a', '#8a2a16',
-  '#b0521e', '#d8b46a', '#8a8580', '#8d64d6']);
-export const OUTFIT_COLORS = Object.freeze(['#1f6f78', '#b79be6', '#e8732e', '#e9dcc8', '#3e5f86', '#56603e', '#d89a2a', '#3a5574',
-  '#1d2b4a', '#4a525c', '#8a2a3a', '#2f6b3f', '#c8c2b4', '#202226']);
-// Voices: the Edge neural voices from the existing voice catalog (voice_catalog.js, the one that needs no key or server).
-const EDGE = TOP_VOICES.find((v) => v.id === 'edge');
+// ── Per-instance palettes: Create Person's own named colours (creation_studio.js), so a record's description names
+// exactly the colour it holds. [name, hex] pairs; skin tones are filtered by the renderer's skin rule.
+const named = (table, names) => Object.freeze(names.map((n) => [n, table[n]]));
+export const SKIN_TONES = Object.freeze(Object.entries(NAMED_SKIN).filter(([, h]) => skinOk(h)));
+export const IRIS = named(EYE_COLOURS, ['brown', 'dark brown', 'light brown', 'hazel', 'amber', 'green', 'blue', 'light blue', 'grey']);
+export const HAIR_COLORS = named(COLOURS, ['black', 'jet black', 'dark brown', 'brown', 'light brown', 'chestnut', 'auburn', 'red', 'ginger', 'blonde',
+  'platinum blonde', 'grey', 'silver', 'purple', 'pink']);
+export const OUTFIT_COLORS = named(COLOURS, ['teal', 'navy', 'grey', 'orange', 'gold', 'green', 'beige', 'cream', 'black', 'white', 'red', 'purple', 'blue', 'pink']);
+// Voices: Create Person's character voices (CHE's on-device Kokoro list, CHARACTER_VOICES). Voice 0 is CHE's own
+// signature voice and is kept for her.
 export const VOICES = Object.freeze({
-  feminine: ['en-US-AvaNeural', 'en-US-EmmaNeural', 'en-US-JennyNeural', 'en-US-AriaNeural', 'en-GB-SoniaNeural', 'en-AU-NatashaNeural'],
-  masculine: ['en-US-AndrewNeural', 'en-US-BrianNeural', 'en-US-GuyNeural', 'en-US-ChristopherNeural', 'en-GB-RyanNeural', 'en-AU-WilliamNeural'],
+  feminine: CHARACTER_VOICES.filter((v) => v.id !== 0 && /Feminine/.test(v.name)),
+  masculine: CHARACTER_VOICES.filter((v) => /Masculine/.test(v.name)),
 });
+// Hair words describePerson() maps back to each style (creation_studio.hairStyleIn).
+const HAIR_PHRASE = { long_wavy: (c) => `long wavy ${c} hair`, wavy_medium: (c) => `shoulder-length wavy ${c} hair`, bun_high: (c) => `${c} hair in a bun`,
+  bun_low: (c) => `${c} hair in a low bun`, curly_short: (c) => `short curly ${c} hair`, afro: (c) => `${c} afro hair`, beanie: (c) => `${c} hair and a beanie`,
+  close_crop: (c) => `close-cropped ${c} hair` };
+const STYLE_PHRASE = { photoreal: 'photorealistic', hybrid: 'game style', stylized: 'stylized' };
 // Fictional given names built from syllables (never a real person's record).
 const SYL_A = ['ka', 'mi', 'lo', 'ra', 'ze', 'no', 'ta', 'vi', 'sa', 'jo', 'ne', 'ri', 'da', 'lu', 'be', 'ko'];
 const SYL_B = ['ren', 'la', 'mir', 'tan', 'ya', 'vel', 'so', 'dan', 'ra', 'lin', 'ko', 'sha', 'ver', 'mo', 'ni', 'th'];
@@ -99,6 +106,8 @@ export function expandRecord(seed, overrides = null) {
   const top = pick(rand, CLOTHING);
   const fem = body.startsWith('feminine');
   const full = body.endsWith('full');
+  const [skinName, skinHex] = pick(rand, SKIN_TONES); const [eyeName, eyeHex] = pick(rand, IRIS);
+  const [hairName, hairHex] = pick(rand, HAIR_COLORS); const [outfitName, outfitHex] = pick(rand, OUTFIT_COLORS);
   const sex = r2(fem ? rand() * 0.25 : 0.75 + rand() * 0.25);
   // MakeHuman ethnic mix: one dominant weight and a second share, always summing to 1.
   const races = ['african', 'asian', 'caucasian'];
@@ -110,26 +119,46 @@ export function expandRecord(seed, overrides = null) {
     const v = r2(neg === null ? rand() * 0.6 : (rand() * 2 - 1) * 0.6);
     if (v) face[k] = v;
   }
+  const heightScale = r2(0.92 + rand() * 0.16);
+  // BODY_* macros (creation_studio.js shapeSettings): height follows the instance scale; weight follows the bucket build.
+  const shape = { height: r2(0.5 + (heightScale - 1) * 2.5), weight: r2(full ? 0.55 + rand() * 0.15 : 0.3 + rand() * 0.15), muscle: r2(0.4 + rand() * 0.3) };
   const name = (pick(rand, SYL_A) + pick(rand, SYL_B) + (rand() < 0.4 ? pick(rand, SYL_A) : ''));
   const rec = {
     seed, schema_version: SCHEMA_VERSION, kind: 'record',
     name: name[0].toUpperCase() + name.slice(1), style,
-    body: { type: body, sex, age: r2(rand() * 0.3), race, build: full ? 'full' : 'slim', height_scale: r2(0.92 + rand() * 0.16) },
+    body: { type: body, sex, age: r2(rand() * 0.3), race, build: full ? 'full' : 'slim', height_scale: heightScale },
+    shape,
     face,
-    skin: { tone: pick(rand, SKIN_TONES), pores: r2(0.1 + rand() * 0.2) },
-    eyes: { iris: pick(rand, IRIS), brightness: r2(2 + rand() * 0.8) },
+    skin: { tone: skinHex, name: skinName, pores: r2(0.1 + rand() * 0.2) },
+    eyes: { iris: eyeHex, name: eyeName, brightness: r2(2 + rand() * 0.8) },
     brows: { density: 600 + Math.floor(rand() * 600), width: r2(1 + rand()) },
     lashes: { length: r2(0.45 + rand() * 0.25) },
-    hair: { style: hair, color: pick(rand, HAIR_COLORS), density: 90, built: HAIR_BUILT.includes(hair) },
-    outfit: { top, color: pick(rand, OUTFIT_COLORS), ...(rand() < 0.2 ? { glasses: '#1d1a18' } : {}) },
-    voice: { catalog: EDGE ? EDGE.id : 'edge', name: pick(rand, fem ? VOICES.feminine : VOICES.masculine) },
+    hair: { style: hair, color: hairHex, name: hairName, density: 90, built: HAIR_BUILT.includes(hair) },
+    outfit: { top, color: outfitHex, name: outfitName, ...(rand() < 0.2 ? { glasses: '#1d1a18' } : {}) },
+    voice: (({ id, name: n, speaker }) => ({ catalog: 'character_voices', id, name: n, speaker }))(pick(rand, fem ? VOICES.feminine : VOICES.masculine)),
   };
   if (overrides && typeof overrides === 'object') applyOverrides(rec, overrides);
   const key = bucketKey(rec.style, rec.body.type, rec.hair.style, rec.outfit.top);
   rec.bucket = { key, index: bucketIndex(key) };
   // What the shared bucket GLB needs to look like this record (the viewer applies these per instance).
+  rec.description = describeRecord(rec);
   rec.variation = { scale: rec.body.height_scale, skin: rec.skin.tone, hair: rec.hair.color, outfit: rec.outfit.color, face_sliders: Object.keys(rec.face).length };
   return rec;
+}
+
+/**
+ * The record in Create Person's own words, e.g. "a slim woman in her 30s, long wavy black hair, brown skin, green
+ * eyes, a teal hoodie, game style". POST /api/creations {kind: 'person', description} builds the same person.
+ */
+export function describeRecord(rec) {
+  const fem = rec.body.sex < 0.5;
+  const years = Math.round(25 + rec.body.age * 150);
+  const build = rec.shape?.weight >= 0.6 ? 'heavyset ' : rec.shape?.weight <= 0.4 ? 'slim ' : '';
+  const tall = rec.shape?.height >= 0.65 ? 'tall ' : '';
+  const hairName = rec.hair.name || 'dark';
+  return [`a ${tall}${build}${fem ? 'woman' : 'man'} in ${fem ? 'her' : 'his'} ${Math.floor(years / 10) * 10}s`,
+    (HAIR_PHRASE[rec.hair.style] || HAIR_PHRASE.close_crop)(hairName), `${rec.skin.name || 'medium'} skin`, `${rec.eyes.name || 'brown'} eyes`,
+    `${/^[aeiou]/.test(rec.outfit.name || 'grey') ? 'an' : 'a'} ${rec.outfit.name || 'grey'} ${rec.outfit.top}`, STYLE_PHRASE[rec.style]].join(', ');
 }
 
 const OVERRIDABLE = { name: 'string', style: STYLES, body: 'object', face: 'object', skin: 'object', eyes: 'object', hair: 'object', outfit: 'object', voice: 'object' };
@@ -142,15 +171,23 @@ function applyOverrides(rec, o) {
   if (!BODY_TYPES.includes(rec.body.type)) rec.body.type = rec.body.sex < 0.5 ? 'feminine_slim' : 'masculine_slim';
   if (!CLOTHING.includes(rec.outfit.top)) rec.outfit.top = 'jacket';
   rec.hair.built = HAIR_BUILT.includes(rec.hair.style);
+  // A colour changed by hex keeps its name only if the name still names that colour; a colour named without a hex
+  // takes that name's colour.
+  for (const [part, table] of [['skin', NAMED_SKIN], ['eyes', EYE_COLOURS], ['hair', COLOURS], ['outfit', COLOURS]]) {
+    const hexKey = part === 'skin' ? 'tone' : part === 'eyes' ? 'iris' : 'color';
+    const byName = o[part]?.name && table[o[part].name];
+    if (byName && !o[part]?.[hexKey]) rec[part][hexKey] = byName;
+    else if (rec[part].name && table[rec[part].name] !== rec[part][hexKey]) delete rec[part].name;
+  }
 }
 
 /** A record as an identity preset (avatar_identity.validate passes), so one record can still get its own model. */
 export function recordPreset(rec) {
   const p = {
     id: `w${rec.seed.toString(36)}`.slice(0, 24), name: rec.name, role: 'CHE World resident',
-    body: { sex: rec.body.sex, age: rec.body.age, race: rec.body.race }, face: rec.face, skin: rec.skin, eyes: rec.eyes,
+    body: { sex: rec.body.sex, age: rec.body.age, race: rec.body.race }, face: rec.face, skin: { tone: rec.skin.tone, pores: rec.skin.pores }, eyes: { iris: rec.eyes.iris, brightness: rec.eyes.brightness },
     brows: rec.brows, lashes: rec.lashes, hair: { style: rec.hair.style, color: rec.hair.color, density: rec.hair.density },
-    outfit: rec.outfit, references: `CHE World record ${rec.seed} (schema ${rec.schema_version}); generated parameters, never a photo fit.`,
+    outfit: { top: rec.outfit.top, color: rec.outfit.color, ...(rec.outfit.glasses ? { glasses: rec.outfit.glasses } : {}) }, references: `CHE World record ${rec.seed} (schema ${rec.schema_version}); generated parameters, never a photo fit.`,
   };
   return p;
 }
@@ -168,7 +205,10 @@ export function bucketPreset(key) {
     hair: { style: hair, color: '#2a1a12', density: 90 }, outfit: { top, color: '#4a525c' },
     references: `Shared base for bucket ${key}; every CHE World record in it reuses this model with its own colours and scale.`,
   };
-  return { key, index: i, style, body, hair, top, preset };
+  // Build follows the bucket: BODY_WEIGHT for slim/full (creation_studio.js BODY_* settings); height stays average,
+  // since every instance scales its own height.
+  const shape = { weight: body.endsWith('full') ? 0.65 : 0.35 };
+  return { key, index: i, style, body, hair, top, preset, shape };
 }
 
 // ── Populations: stored as ranges ────────────────────────────────────────────────────────────────────────────────
@@ -247,7 +287,7 @@ export async function generateBucket(storage, key, { studio, render } = {}) {
   if (!b) return { ok: false, status: 404, detail: `${key} is not a CHE World bucket. Buckets are style.body.hair.top, for example photoreal.feminine_slim.long_wavy.jacket.` };
   const r = { ...DEFAULT_RENDER, ...(render || {}) }; const q = qualityOf(r);
   const out = await studio.queue.enqueue({ kind: 'person_model', title: `CHE World base model ${b.index}: ${STYLE_LABELS[b.style]}, ${b.body.replace('_', ' ')}, ${b.hair.replace('_', ' ')}, ${b.top}`,
-    views: VIEWS, samples: q.samples, res: q.res, settings: { ...toSettings(b.preset, b.style), ...renderSettings(r) }, queued_by: 'CHE World population', priority: 'normal', requires: { gpu: 'preferred' } });
+    views: VIEWS, samples: q.samples, res: q.res, settings: { ...toSettings(b.preset, b.style), ...renderSettings(r), ...shapeSettings(b.shape), ...personExtras({ params: b.preset }) }, queued_by: 'CHE World population', priority: 'normal', requires: { gpu: 'preferred' } });
   if (!out.ok) return { ok: false, detail: out.detail, limited: Boolean(out.limited) };
   const map = (await storage.get(BUCKETS_KEY)) || {};
   map[key] = { job_id: out.job.id, queued_at: map[key]?.job_id === out.job.id ? map[key].queued_at : new Date(studio.now()).toISOString() };
@@ -277,7 +317,7 @@ export function speakPopulation(world, counts) {
 
 const json = (data, status = 200) => new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json' } });
 const summaryOf = (r) => ({ seed: r.seed, name: r.name, style: r.style, body: r.body.type, hair: r.hair.style, top: r.outfit.top, bucket: r.bucket.key, bucket_index: r.bucket.index,
-  variation: r.variation, voice: r.voice.name });
+  variation: r.variation, voice: r.voice.name, description: r.description });
 
 /** The spoken answer for the Command Center's /world-population (no model call). */
 export async function populationAnswer(storage, queue, world = DEFAULT_WORLD.id) {
@@ -293,6 +333,8 @@ export async function populationAnswer(storage, queue, world = DEFAULT_WORLD.id)
  *   POST /api/world/population {world, seed_start, count} sets a world's range (records only; nothing is built)
  *   GET  /api/world/record/<seed>?world=               one full record
  *   POST /api/world/record/<seed> {world, overrides}   saves the owner's change to one record
+ *   POST /api/world/record/<seed>/create {generate}    makes this resident a Live Studio creation from its description
+ *                                                      (Create Person's describe-a-person path); generate defaults to false
  *   GET  /api/world/buckets                            the 288 buckets and which have models
  *   POST /api/world/buckets/<key>/generate             queues that bucket's shared model (person_model job)
  * `makeStudio()` returns a CreationStudio; it is only built when a route needs the queue.
@@ -315,6 +357,15 @@ export async function worldRoute(ctx, path, request, body = {}) {
     const studio = makeStudio();
     const counts = summarizeCounts(w, modelCounts(await bucketStates(storage, studio.queue)));
     return json({ ok: true, world: w, schema_version: SCHEMA_VERSION, counts, offset, limit, records, spoken: speakPopulation(w, counts) });
+  }
+  const cm = /^\/api\/world\/record\/(\d{1,10})\/create$/.exec(path);
+  if (cm) {
+    if (request.method !== 'POST') return json({ detail: 'Use POST.' }, 405);
+    const seed = Number(cm[1]); const w = await getWorld(storage, worldId);
+    if (!w || !validSeed(seed) || seed < w.seed_start || seed >= w.seed_start + w.count) return json({ ok: false, detail: `Seed ${seed} is not in ${worldId}.` }, 404);
+    const rec = expandRecord(seed, (await loadOverrides(storage, worldId))[seed] || null);
+    const out = await makeStudio().create({ kind: 'person', description: rec.description, title: rec.name, generate: body?.generate === true });
+    return json({ ...out, record_seed: seed, description: rec.description }, out.ok ? 201 : 422);
   }
   const rm = /^\/api\/world\/record\/(\d{1,10})$/.exec(path);
   if (rm) {

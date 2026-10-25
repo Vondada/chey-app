@@ -8,7 +8,7 @@ import {
   expandRecord, populationAnswer, recordPreset, worldPopulationIntent, worldRoute,
 } from './world_population.js';
 import { FACE_TARGETS, HAIR_STYLES, STYLES, skinOk, validate } from './avatar_identity.js';
-import { CreationStudio } from './creation_studio.js';
+import { CHARACTER_VOICES, CreationStudio, describePerson, shapeErrors } from './creation_studio.js';
 
 function memStorage() {
   const m = new Map();
@@ -34,7 +34,7 @@ test('same seed and schema give the identical record; neighbouring seeds differ'
   // A fixed golden so a silent change to the generator (without a schema bump) fails here.
   const g = expandRecord(1);
   assert.deepEqual({ name: g.name, style: g.style, bucket: g.bucket.key, skin: g.skin.tone, voice: g.voice.name },
-    { name: 'Novellu', style: 'stylized', bucket: 'stylized.masculine_slim.afro.sweater', skin: '#e2b089', voice: 'en-US-AndrewNeural' },
+    { name: 'Kadan', style: 'hybrid', bucket: 'hybrid.masculine_slim.bun_high.jacket', skin: '#a06a44', voice: 'American Masculine — Michael' },
     'seed 1 changed: bump SCHEMA_VERSION and update this golden');
   assert.throws(() => expandRecord(-1)); assert.throws(() => expandRecord(2 ** 32)); assert.throws(() => expandRecord(1.5));
 });
@@ -49,11 +49,30 @@ test('every expanded record is a valid identity preset within the schema ranges'
     assert.ok(r.body.age >= 0 && r.body.age <= 0.3 && r.body.sex >= 0 && r.body.sex <= 1);
     assert.ok(Math.abs(Object.values(r.body.race).reduce((x, y) => x + y, 0) - 1) < 0.011);
     assert.ok(r.body.height_scale >= 0.92 && r.body.height_scale <= 1.08);
-    assert.match(r.voice.name, /^en-(US|GB|AU)-\w+Neural$/);
-    assert.equal(r.voice.catalog, 'edge');
+    // Create Person's character voices (CHARACTER_VOICES); voice 0 stays CHE's own; masculine bodies get masculine voices.
+    const v = CHARACTER_VOICES.find((x) => x.id === r.voice.id);
+    assert.ok(v && v.id !== 0 && v.name === r.voice.name && v.speaker === r.voice.speaker && r.voice.catalog === 'character_voices');
+    assert.match(v.name, r.body.sex < 0.5 ? /Feminine/ : /Masculine/);
+    assert.deepEqual(shapeErrors(r.shape), [], `shape ${JSON.stringify(r.shape)}`);
     assert.equal(bucketIndex(r.bucket.key), r.bucket.index);
   }
-  assert.ok(SKIN_TONES.length >= 10 && SKIN_TONES.every(skinOk));
+  assert.ok(SKIN_TONES.length >= 8 && SKIN_TONES.every(([, h]) => skinOk(h)));
+});
+
+test('a record\'s description reads back through Create Person (describePerson) to the same look', () => {
+  for (let s = 1; s <= 400; s += 1) {
+    const r = expandRecord(s * 104729);
+    const d = describePerson(r.description);
+    assert.equal(d.ok, true, r.description);
+    assert.equal(d.style, r.style, r.description);
+    assert.equal(d.params.body.sex, r.body.sex < 0.5 ? 0 : 1, r.description);
+    assert.equal(d.params.hair.style, r.hair.style, r.description);
+    assert.equal(d.params.hair.color, r.hair.color, r.description);
+    assert.equal(d.params.skin.tone, r.skin.tone, r.description);
+    assert.equal(d.params.eyes.iris, r.eyes.iris, r.description);
+    assert.equal(d.params.outfit.color, r.outfit.color, r.description);
+    assert.deepEqual(d.unused, [], r.description);
+  }
 });
 
 test('buckets are bounded (288), round-trip, and records spread across them', () => {
@@ -120,6 +139,8 @@ test('generate bucket queues the existing person_model job once, at normal prior
   const j = jobs.find((x) => x.id === g.body.job.id);
   assert.equal(j.kind, 'person_model'); assert.equal(j.priority, 'normal'); assert.equal(j.settings.STYLE, 'hybrid'); assert.equal(j.settings.HAIR_STYLE, 'long_wavy');
   assert.equal(j.queued_by, 'CHE World population');
+  assert.equal(j.settings.BODY_WEIGHT, '0.65', 'full build: Create Person BODY_* settings');
+  assert.equal(j.settings.OUTFIT_TOP, 'hoodie');
   const again = await call(`/api/world/buckets/${key}/generate`, 'POST', {});
   assert.equal(again.body.duplicate, true);
   assert.equal((await call('/api/world/buckets/not.a.bucket.key/generate', 'POST', {})).status, 404);
@@ -136,6 +157,18 @@ test('generate bucket queues the existing person_model job once, at normal prior
   assert.ok(storage.m.get(BUCKETS_KEY)[key].job_id);
   const ans = await populationAnswer(storage, makeStudio().queue);
   assert.match(ans.spoken, /1 of 288 shared base models are generated, 1 building/);
+});
+
+test('one resident becomes a Live Studio creation through describe-a-person, not built until asked', async () => {
+  const { makeStudio, call } = setup();
+  const out = await call('/api/world/record/7/create', 'POST', {});
+  assert.equal(out.status, 201, JSON.stringify(out.body));
+  assert.equal(out.body.description, expandRecord(7).description);
+  assert.notEqual(out.body.generated, true);
+  const list = await makeStudio().list();
+  assert.equal(list.projects.length, 1);
+  assert.equal(list.projects[0].title, expandRecord(7).name);
+  assert.equal((await call('/api/world/record/0/create', 'POST', {})).status, 404);
 });
 
 test('spoken intent: how many characters live in CHE World', () => {
