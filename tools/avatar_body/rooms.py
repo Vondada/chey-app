@@ -32,6 +32,8 @@ LIGHT = {'warm': (1.0, 0.78, 0.55), 'neutral': (1.0, 0.95, 0.88), 'cool': (0.8, 
 WINDOW = {'warm': (1.0, 0.86, 0.68), 'neutral': (0.92, 0.95, 1.0), 'cool': (0.82, 0.9, 1.0)}
 FLOOR = {'oak': ((0.30, 0.17, 0.08), 0.4), 'walnut': ((0.12, 0.06, 0.03), 0.38), 'tile': ((0.62, 0.62, 0.6), 0.22),
          'concrete': ((0.33, 0.33, 0.32), 0.8), 'carpet': ((0.36, 0.34, 0.31), 1.0)}
+FLOOR_TEXTURE = {'oak': 'wood', 'walnut': 'wood', 'tile': 'tile', 'concrete': 'concrete', 'carpet': 'fabric'}
+FLOOR_REPEAT_M = {'oak': 1.0, 'walnut': 1.0, 'tile': 1.2, 'concrete': 2.0, 'carpet': 1.0}   # metres one image covers
 SOFA = {'modern': '#4a5a60', 'classic': '#7a2a2a', 'industrial': '#5a4030'}
 
 
@@ -64,6 +66,12 @@ def shell(spec):
         boxes('room_floor_grout', O.mat('Grout', (0.3, 0.3, 0.29), 0.9), [((0, 0, -t / 2), (W, D, 0.002))])
     else:
         boxes('room_floor', floor, [((0, 0, -t / 2), (W, D, t))])
+    # A CC0 floor texture when the job fetched one (cc0_textures.py: oak and walnut take wood, tile, concrete, carpet
+    # takes fabric), tiled at real scale by box-projected UVs; otherwise the plain floor colour above stays.
+    tex = O.textured(FLOOR_TEXTURE[spec['floor']], rgb, rough, metres=FLOOR_REPEAT_M[spec['floor']])
+    if tex is not None:
+        fo = bpy.data.objects['room_floor']; fo.data.materials.clear(); fo.data.materials.append(tex)
+        bpy.context.view_layer.update(); O.box_uv(fo)
     wall = O.mat('Walls', hex_rgb(spec['wall_color']), 0.85)
     boxes('room_wall_back', wall, [((-WALL / 2, D / 2 + WALL / 2, H / 2), (W + WALL, WALL, H))])
     boxes('room_wall_left', wall, [((-W / 2 - WALL / 2, 0, H / 2), (WALL, D, H))])

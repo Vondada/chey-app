@@ -35,7 +35,7 @@ export const CAPABILITIES = [
   { id: 'person', title: 'Create Person', status: 'available',
     detail: 'Start from CHE or a crew preset, edit by voice or typing, and build a clothed full-body 3D character on your Creation Engine: skeleton, face shapes, idle, walk, wave and talk clips, each verified before it is shown as working.' },
   { id: 'object', title: 'Create Object', status: 'available', choices: OBJ.FAMILIES,
-    detail: `Choose a lamp, chair, table, desk, mug, vase or shelf, then change its size, colour, finish and style by voice or typing; your Creation Engine builds it in Blender, measures the file and renders previews. ${OBJ.CAPABILITY_NOTE[0].toUpperCase()}${OBJ.CAPABILITY_NOTE.slice(1)}.` },
+    detail: `Choose a lamp, chair, table, desk, mug, vase or shelf, or describe one in your own words (a snowman, a wooden crate, a red ball on top of a blue box), then change its size, colour and finish by voice or typing; your Creation Engine builds it in Blender, measures the file and renders previews. ${OBJ.CAPABILITY_NOTE[0].toUpperCase()}${OBJ.CAPABILITY_NOTE.slice(1)}.` },
   { id: 'room', title: 'Create Room', status: 'available', choices: OBJ.ROOM_TYPES,
     detail: `Choose a living room, bedroom, office or studio, then change its size in metres, walls, floor, furniture and light by voice or typing; your Creation Engine builds it in Blender, measures it and renders previews. ${OBJ.CAPABILITY_NOTE[0].toUpperCase()}${OBJ.CAPABILITY_NOTE.slice(1)}.` },
   { id: 'animation', title: 'Create Animation', status: 'partial',
@@ -478,10 +478,30 @@ export class CreationStudio {
     return { ok: true, project: await this.detailOf(p) };
   }
 
-  /** Create Object / Create Room: base is a family (lamp, chair, table, desk, mug, vase, shelf) or a room type. */
+  /**
+   * Create Object / Create Room: base is a family (lamp, chair, table, desk, mug, vase, shelf) or a room type. An object
+   * may instead come from `description` (free text): a family word starts that family with the description's colour and
+   * finish words applied; anything else is composed from primitives (creation_freeform.js) or refused with the reason.
+   */
   async createThing(kind, body) {
-    const base = String(body.base || (kind === 'object' ? 'lamp' : 'living_room')).toLowerCase();
-    const spec = OBJ.defaultSpec(kind, base);
+    const said = kind === 'object' ? String(body.description || '').trim().slice(0, 200) : '';
+    let base = String(body.base || (kind === 'object' ? 'lamp' : 'living_room')).toLowerCase();
+    let spec; let composed = null; let firstNote = '';
+    if (said) {
+      const fam = /\b(?:desk|lamp|chair|table|mug|cup|vase|shelf|bookshelf|bookcase)\b/.exec(said.toLowerCase())?.[0];
+      const famBase = fam && { cup: 'mug', bookshelf: 'shelf', bookcase: 'shelf' }[fam] || fam;
+      const plain = famBase && OBJ.defaultSpec('object', famBase);
+      // "a red chair" starts the chair family and applies "red"; "a chair made of balls" is still a chair (said back).
+      if (plain && !OBJ.describedObject(said.replace(new RegExp(`\\b${fam}\\b`, 'i'), '')).ok) {
+        base = famBase; const edit = OBJ.parseObjectEdit(said, plain);
+        spec = OBJ.specErrors('object', edit.spec).length ? plain : edit.spec;
+        firstNote = edit.applied.join(' ');
+      } else {
+        composed = OBJ.describedObject(said);
+        if (!composed.ok) return { ok: false, unsupported: true, detail: composed.detail };
+        spec = composed.spec; base = 'custom';
+      }
+    } else spec = OBJ.defaultSpec(kind, base);
     if (!spec) {
       return { ok: false, detail: kind === 'object'
         ? `CHE builds only these objects: ${[...OBJ.FAMILIES, 'desk'].join(', ')}. ${OBJ.CAPABILITY_NOTE[0].toUpperCase()}${OBJ.CAPABILITY_NOTE.slice(1)}.`
@@ -494,11 +514,17 @@ export class CreationStudio {
     const t = this.now(); const id = `cr_${crypto.randomUUID().replaceAll('-', '').slice(0, 12)}`;
     const p = { id, kind, title: String(body.title || OBJ.titleOf(kind, spec)).slice(0, 80), base_id: kind === 'object' ? (base === 'desk' ? 'desk' : spec.family) : spec.type,
       created_at: iso(t), updated_at: iso(t), saved_at: null, current: 0,
-      versions: [{ n: 1, at: iso(t), note: `Started from the ${kind === 'object' ? (base === 'desk' ? 'desk' : spec.family) : OBJ.ROOM_LABELS[spec.type]} defaults.`,
+      versions: [{ n: 1, at: iso(t), note: composed ? `Composed from your description: "${said}".` : said ? `Started from the ${base === 'desk' ? 'desk' : spec.family} defaults with "${said}".`
+        : `Started from the ${kind === 'object' ? (base === 'desk' ? 'desk' : spec.family) : OBJ.ROOM_LABELS[spec.type]} defaults.`,
         params: spec, style: spec.style, render: { quality: 'standard' }, job_id: null }] };
     list.push(p); await store(this.storage, list);
     const project = await this.detailOf(p);
-    return { ok: true, project, spoken: `${p.title} started: ${OBJ.describeSpec(kind, spec)}. Say a change, or say generate to build it.` };
+    if (composed) {
+      const unused = composed.unused?.length ? ` I did not use these words: ${composed.unused.join(', ')}.` : '';
+      return { ok: true, project, composed: true, unused: composed.unused || [],
+        spoken: `${p.title} started: ${composed.made}.${unused} Say a change, or say generate to build it.` };
+    }
+    return { ok: true, project, spoken: `${p.title} started: ${OBJ.describeSpec(kind, spec)}.${firstNote ? ` ${firstNote}` : ''} Say a change, or say generate to build it.` };
   }
 
   async find(id) { const list = await load(this.storage); return { list, p: list.find((x) => x.id === id) || null }; }

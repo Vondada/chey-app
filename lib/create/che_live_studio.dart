@@ -590,7 +590,10 @@ class CheLiveStudioState extends State<CheLiveStudio> with WidgetsBindingObserve
         // A CPU worker has no nvidia-smi: say where it really ran, never an error text as a device name.
         final cpu =
             j['worker_class'] == 'github_cpu' || (j['rendered_on'] is Map && (j['rendered_on'] as Map)['class'] == 'github_cpu');
-        if (cpu) {
+        final worker = '${j['worker_name'] ?? ''}'.trim();
+        if (worker.isNotEmpty && worker != 'unknown worker') {
+          gpu = 'the $worker';
+        } else if (cpu) {
           gpu = 'a cloud CPU';
         } else if (gpu.startsWith('unavailable')) {
           gpu = '';

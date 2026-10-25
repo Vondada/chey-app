@@ -436,11 +436,16 @@ def full_body(a, job, receipt, receipt_path, env, log, kind, views, threads):
         for (k, st), en in zip(marks.items(), ends): timings[k] = round(en - st, 1)
         mm = next((re.match(r'MODEL (\S+) (\d+) bytes (\d+) vertices', l) for _, l in lines if l.startswith('MODEL ')), None)
         rig_line = next((l for _, l in lines if l.startswith('RIG ')), '')
+        suit_line = next((l for _, l in lines if l.startswith('SUIT ')), '')
         if code == 124: return fail('timeout', f'TIMEOUT after {a.timeout} s while building the model; rerun to resume', 4)
         if code != 0 or not mm or not os.path.isfile(mm.group(1)):
             return fail('model_failed', f'MODEL FAILED (exit {code}): no full-body model from Blender; see log.txt', 4)
         shutil.move(mm.group(1), model_path)
         record(model_path, int(mm.group(3)), 'built', rig_line)
+        # The suit's measured refinement (mpfb_body.py refine_suit): garment vertex and face counts before and after.
+        try: suit = json.loads(suit_line[len('SUIT '):]) if suit_line else None
+        except ValueError: suit = None
+        if isinstance(suit, dict): receipt['model']['suit'] = suit; write_json(receipt_path, receipt)
         for st in ('model', 'rig', 'animate'): checkpoint(st, model_path)
 
     # ── verify: the file is re-read and its skeleton, clips, morphs and motion measured ──────────────────────────────

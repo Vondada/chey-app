@@ -16,6 +16,11 @@ MakeHuman's expression units (blink left/right, mouth open, smile, brows up).
   and shoes are a closed shell over each foot (the foot's convex hull). No skin exists under the clothes or shoes, so
   nothing pokes through when the body moves, and no unclothed body is ever exported or rendered. Skin shows only on the
   head, neck and hands.
+- The suit is refined, not left at the base mesh's density (creation-gaps, 2026-10-25: "less blocky"): every top and
+  trousers face is split in four (weights, UVs and shape keys interpolated, so it still bends with the skeleton), then
+  Taubin-smoothed (shrink-free: a +0.5 pass, a -0.53 pass) on the garment's inner vertices, so the sleeves, chest and legs
+  read as rounded cloth instead of facets. Garment edges (neckline, cuffs, hem, shoe line) do not move. The SUIT line
+  prints the garment's vertex and face counts before and after: a measurement, not a description. SUIT_REFINE=0 skips it.
 - Hair is a scalp-cap mesh cut from the body's own scalp (thicker at the crown) in the preset's hair colour: no strands
   in the 3D model.
 - Clips (30 fps), each its own NLA track so the GLB holds one animation per clip: idle, walk, run, wave, talk. Bone
@@ -343,9 +348,52 @@ def build():
         thick = 0.005 + 0.012 * min(1.0, max(0.0, (rz + 0.02) / 0.12))
         vx.co += hnorm[k] * (0.003 if k in rim else thick)
 
-    info = {'covered_fraction': round(covered, 3), 'skin_bones': skin_bones, 'body_vertices': len(me.vertices),
+    suit = refine_suit(me, [order.index('top'), order.index('trousers')]) if os.environ.get('SUIT_REFINE', '1') != '0' else None
+    if suit: print('SUIT ' + json.dumps(suit, separators=(',', ':')), flush=True)
+    info = {'covered_fraction': round(covered, 3), 'skin_bones': skin_bones, 'body_vertices': len(me.vertices), 'suit': suit,
             'hair': 'scalp-cap hair mesh in the preset colour (strand hair is not in the 3D model)'}
     return sc, arm, [body, shoes, hair, *eyes], info
+
+
+def refine_suit(me, garment_mats, passes=4):
+    """Splits each garment face in four and Taubin-smooths the garment's inner vertices; returns the measured counts.
+
+    The mesh keeps its shape keys and skin weights: bmesh interpolates both onto the new vertices. Only vertices whose
+    faces are all one garment material move, and each smoothed vertex keeps its own shape-key offsets (morph targets
+    are face-only, so the suit's offsets are zero and stay zero)."""
+    bm = bmesh.new(); bm.from_mesh(me)
+    G = set(garment_mats)
+    gfaces = [f for f in bm.faces if f.material_index in G]
+    before_v = len({v for f in gfaces for v in f.verts}); before_f = len(gfaces)
+    edges = list({e for f in gfaces for e in f.edges})
+    bmesh.ops.subdivide_edges(bm, edges=edges, cuts=1, use_grid_fill=True, smooth=0.0)
+    bm.verts.ensure_lookup_table(); bm.faces.ensure_lookup_table()
+    gfaces = [f for f in bm.faces if f.material_index in G]
+    for f in gfaces: f.smooth = True
+    inner = [v for v in {v for f in gfaces for v in f.verts}
+             if v.link_faces and len({f.material_index for f in v.link_faces}) == 1 and all(f.material_index in G for f in v.link_faces)
+             and not v.is_boundary]
+    idx = {v: i for i, v in enumerate(inner)}
+    keys = list(bm.verts.layers.shape.values())
+    basis = bm.verts.layers.shape.get('Basis') if keys else None
+    offsets = [{k.name: v[k] - v.co for k in keys} for v in inner] if keys else None
+    pos = np.array([v.co[:] for v in inner])
+    nbrs = [[e.other_vert(v) for e in v.link_edges] for v in inner]
+    for _ in range(passes):
+        for lam in (0.5, -0.53):
+            allpos = {v: (pos[idx[v]] if v in idx else np.array(v.co[:])) for v in {n for ns in nbrs for n in ns} | set(inner)}
+            avg = np.array([np.mean([allpos[n] for n in ns], axis=0) for ns in nbrs])
+            pos = pos + lam * (avg - pos)
+    for v, p in zip(inner, pos): v.co = Vector(p)
+    if keys:
+        for v, off in zip(inner, offsets):
+            for k in keys: v[k] = v.co + off[k.name]
+        if basis is not None:
+            for v in inner: v[basis] = v.co.copy()
+    after_v = len({v for f in gfaces for v in f.verts}); after_f = len(gfaces)
+    bm.normal_update(); bm.to_mesh(me); bm.free(); me.update()
+    return {'garment_vertices_before': before_v, 'garment_vertices_after': after_v, 'garment_faces_before': before_f, 'garment_faces_after': after_f,
+            'smoothed_vertices': len(inner), 'method': f'each garment face split in four, then {passes} Taubin passes (0.5 / -0.53) on inner vertices'}
 
 
 # ── Animation ─────────────────────────────────────────────────────────────────────────────────────────────────────

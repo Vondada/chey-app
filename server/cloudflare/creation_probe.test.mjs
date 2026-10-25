@@ -67,6 +67,16 @@ test('deploy check: Generate on the test project dispatches the free worker, whi
   const done = await (await probe(`/api/creations/probe/status?job=${id}`)).json();
   assert.equal(done.job.state, 'completed', JSON.stringify(done.job.history.at(-1)));
   assert.equal(done.job.rig.ok, true); assert.equal(done.job.rig.bones, 53);
+  // Regression (live creation_check notice named the worker "?"): a completed job has no lease, and the status still
+  // names the runner that built it, in the history and in worker_name, which the deploy notice prints.
+  assert.equal(done.job.worker_id, 'gha-555-1'); assert.equal(done.job.worker_class, 'github_cpu');
+  assert.equal(done.job.worker_name, 'free GitHub cloud CPU runner gha-555-1 (GitHub Actions run 555)');
+  assert.match(done.job.status_line, /on the free GitHub cloud CPU runner gha-555-1/);
+  assert.match(done.job.history.at(-1).note, /worker: free GitHub cloud CPU runner gha-555-1/);
+  const deployYml = readFileSync(new URL('../../.github/workflows/che-worker-deploy.yml', import.meta.url), 'utf8');
+  const noticeLine = deployYml.split('\n').find((l) => /const worker = /.test(l) && /creation|worker_name|worker_class/.test(l)) || '';
+  assert.match(noticeLine, /job\.worker_name \|\| 'unknown worker'/, 'the deploy notice prints the Worker\'s worker name');
+  assert.doesNotMatch(noticeLine, /'\?'/, 'never a question mark for the worker');
   assert.deepEqual(done.job.previews.sort(), ['0', '45', '90']);
   assert.equal(done.dispatches.at(-1).ok, true);
   const bytes = new Uint8Array(await (await probe(`/api/creations/probe/model.glb?job=${id}`)).arrayBuffer());
