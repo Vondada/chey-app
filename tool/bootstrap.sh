@@ -1875,8 +1875,10 @@ struct CHEAppShortcuts: AppShortcutsProvider {
       reverb.bypass = mix <= 0
       reverb.wetDryMix = mix * 60
     }
-    // The monitor level is the reverb-to-mixer connection (AVAudioMixing), never the iPhone's own volume.
-    monitorReverb?.volume = max(0, min(1, (args["volume"] as? NSNumber)?.floatValue ?? 1.0))
+    // The monitor level is the chain's own EQ gain in dB (0 to 1 maps to -96 to 0 dB), never the iPhone's volume.
+    // (AVAudioUnitReverb has no `volume`; that broke the iOS compile check on PR #524.)
+    let level = max(0, min(1, (args["volume"] as? NSNumber)?.floatValue ?? 1.0))
+    monitorEQ?.globalGain = level > 0.0000158 ? 20 * log10(level) : -96
   }
 
   private func stopMonitor() {
