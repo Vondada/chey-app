@@ -637,7 +637,9 @@ class CheCreativeStudioState extends State<CheCreativeStudio> {
       case 0:
         if (a.loadPeople == null || a.onCreatePerson == null) return 'Create Person is not connected in this build.';
         unawaited(showCreatePerson());
-        return 'Create Person. Choose who to start from: say a number.';
+        return a.onCreateThing != null
+            ? 'Create Person. Say 1 to describe your character in your own words, or a number for who to start from.'
+            : 'Create Person. Choose who to start from: say a number.';
       case 1:
         return _thingChoice('object');
       case 2:

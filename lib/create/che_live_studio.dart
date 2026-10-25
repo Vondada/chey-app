@@ -594,7 +594,7 @@ class CheLiveStudioState extends State<CheLiveStudio> with WidgetsBindingObserve
                   ? _http.delete(uri, headers: widget.headers)
                   : _http.post(uri, headers: _json, body: jsonEncode(body ?? const {})))
               .timeout(Duration(seconds: body != null && body.containsKey('image_base64') ? 60 : 15));
-      final d = jsonDecode(r.body);
+      final d = jsonDecode(utf8.decode(r.bodyBytes, allowMalformed: true)); // the Worker sends JSON with no charset
       if (d is! Map) return null;
       return {...Map<String, dynamic>.from(d), '_status': r.statusCode};
     } catch (_) {
