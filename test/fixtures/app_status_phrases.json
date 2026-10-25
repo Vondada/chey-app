@@ -13,7 +13,10 @@
     "Is the new version on my iPhone?",
     "What's on my iPhone right now?",
     "Chay, what's installed on my phone?",
-    "What GitHub commit is deployed?"
+    "What GitHub commit is deployed?",
+    "chay whats on my iphone right now",
+    "whats the backend version",
+    "whats my installed build number"
   ],
   "receipt": [
     "What changed in commit f37bc3ac and what can I test on my iPhone?",
@@ -29,6 +32,7 @@
     "Is the MNQ data live?",
     "Did the email go through?",
     "Is the new song on my phone?",
-    "What's on my calendar right now?"
+    "What's on my calendar right now?",
+    "whats new on youtube"
   ]
 }

@@ -686,15 +686,15 @@ export function appStatusIntent(message = '') {
   if (/\b(?:added|introduced|was running|used to|previously|back then|at the time|when .*was)\b/.test(t)) return null;
   // "What changed in commit X and what can I test on my iPhone" asks about a commit's content (deploy_receipt.js),
   // not the running version; "my iPhone" plus "commit" once matched here and repeated the status answer.
-  if (/\bwhat(?:'s| is| was)? (?:changed|new|in)\b|\bchanged in\b|\bchanges? (?:in|from|made)\b|\bsummar(?:y|ize|ise)\b|\bwhat (?:can|should|do) i test\b|\bto test\b/.test(t)) return null;
+  if (/\bwhat(?:'?s| is| was)? (?:changed|new|in)\b|\bchanged in\b|\bchanges? (?:in|from|made)\b|\bsummar(?:y|ize|ise)\b|\bwhat (?:can|should|do) i test\b|\bto test\b/.test(t)) return null;
   if (/^(?:open|show)(?: me)? (?:settings|about)(?:\s*(?:\/|and)\s*(?:about|show(?: me)?))?.*\b(?:app )?version\b/.test(t)) return { kind: 'settings' };
   // Install and update questions about the owner's phone (reliability lane, gap 10): "Is the new build installed on my
   // phone?", "Did the update go through?", "What's on my iPhone right now?". The device report answers, not the model.
   if (/^(?:is|are|did|has|have)\b/.test(t)
     && /\b(?:new|latest|last)?\s*(?:build|update|patch|version|ipa)\b/.test(t)
     && /\b(?:installed|go(?:ne)? through|went through|land(?:ed)?|arrived?|reach(?:ed)?|on my (?:phone|iphone))\b/.test(t)) return { kind: 'runtime' };
-  if (/^what(?:'s| is)\s+(?:installed\s+)?on my (?:phone|iphone)(?: right now| now)?$/.test(t)) return { kind: 'runtime' };
-  if (!/^(?:what(?:'s| is| are)?|which|tell me|show me|check|read|give me)\b/.test(t)) return null;
+  if (/^what(?:'?s| is)\s+(?:installed\s+)?on my (?:phone|iphone)(?: right now| now)?$/.test(t)) return { kind: 'runtime' };
+  if (!/^(?:what(?:'?s| is| are)?|which|tell me|show me|check|read|give me)\b/.test(t)) return null;
   // The subject must be CHE itself: "what version of Python should my project use" is not a status question.
   if (/\b(?:version|build number|deployment (?:identifier|id|status)|commit|sha)\b/.test(t)
     && /\b(?:installed|backend|worker|connected|deployed|deployment|running|che|(?:my|the|this) (?:app|build|iphone app|phone app))\b/.test(t)) return { kind: /\b(?:commit|sha|last verified deployment|deployment status)\b/.test(t) ? 'deployment' : 'runtime' };
