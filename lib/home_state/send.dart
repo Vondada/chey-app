@@ -862,6 +862,10 @@ extension _CheHomeSend on _CHEHomeState {
     // not recorded, so nothing reaches the Worker, a model, chat history or memory.
     if (_pendingAttachment == null && await _runMasterProfileTurn(message)) return;
 
+    // Private voice (che_private_voice.dart): turned on, off or explained on the
+    // phone from the actual current settings, by voice or typing.
+    if (_pendingAttachment == null && await _runPrivateVoiceTurn(message)) return;
+
     // Security Intelligence: a password, key or token typed or spoken into ordinary chat never leaves the phone.
     if (_pendingAttachment == null && cheChatLooksSecret(message)) {
       if (mounted) _set(() => controller.clear());

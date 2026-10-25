@@ -77,6 +77,7 @@ import 'che_wake_match.dart';
 import 'che_voice_health.dart';
 import 'che_voice_state.dart';
 import 'che_local_voice_loop.dart';
+import 'che_private_voice.dart';
 import 'che_cloud_voice_picker.dart';
 import 'che_voice_studio.dart';
 import 'che_voice_ui.dart';
@@ -1447,6 +1448,7 @@ OWNER AGENCY
     _screenToken = CheScreenAwareness.register(context, _shellScreenReport);
     unawaited(CheNotifications.requestPermission());
     unawaited(_syncUiVoicePrefs());
+    unawaited(ChePrivateVoice.load());
     CheUiPreferences.instance.addListener(_onUiPrefsChanged);
     WidgetsBinding.instance.addObserver(this);
     // No wake listening at launch: the mic opens only from the mic button,
@@ -1710,6 +1712,11 @@ OWNER AGENCY
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
+        // Private voice: one quiet line while it is on (never spoken by itself).
+        ChePrivateVoiceBanner(onTurnOff: () {
+          controller.text = 'turn off private voice';
+          unawaited(sendMessage());
+        }),
         ChePatchBanner(onSpeak: (text) => speakText(text, record: false, readOnDemand: true)),
         CheJobActivityBanner(
           fetch: (path, body) => _postAgentJson(path, body),
@@ -2273,6 +2280,11 @@ OWNER AGENCY
                 _isSpeaking = false;
               }());
             }
+          },
+          onPrivateVoiceChanged: (on) {
+            if (!mounted) return;
+            controller.text = on ? 'turn on private voice' : 'turn off private voice';
+            unawaited(sendMessage());
           },
           onVoiceVolumeChanged: (_) {
             unawaited(flutterTts.setVolume(CheUiPreferences.instance.voiceVolume));

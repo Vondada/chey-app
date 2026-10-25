@@ -146,6 +146,14 @@ extension _CheHomeStreaming on _CHEHomeState {
       caseSensitive: false,
     ).firstMatch(trimmedRequest);
 
+    // Private voice: coding jobs and new projects are worked by outside AI
+    // services, so CHE says so instead of sending the words.
+    if (ChePrivateVoice.isOn && (codeRequest || (!installedSkillRequest && !terminalChatOnly && projectMatch != null))) {
+      const reply = 'Private voice is on, so I did not start that: coding jobs and new projects are worked on by outside AI services, and that would send your words to them. Nothing was sent. Say "turn off private voice" if you want me to go ahead.';
+      onPartial(reply);
+      return reply;
+    }
+
     if (!installedSkillRequest && !terminalChatOnly && !codeRequest && projectMatch != null) {
       var projectType = projectMatch.group(1)!.toLowerCase();
       if (projectType == 'site') projectType = 'website';
@@ -322,6 +330,9 @@ extension _CheHomeStreaming on _CHEHomeState {
       'explain_level': explainLevel,
       'reply_language': _replyLanguage,
       'plugin_recommendations': true,
+      // Private voice: the Worker answers with Cloudflare Workers AI only and
+      // refuses tools that would send these words to anyone else.
+      ...ChePrivateVoice.chatFields(),
       'client': {
         'platform': kIsWeb ? 'web' : 'flutter',
         'open_conversation': openConversation,
