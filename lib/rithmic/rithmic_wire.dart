@@ -1,7 +1,7 @@
 // Rithmic R | Protocol API, the messages CHE needs for read-only market data: system and gateway discovery, login,
 // heartbeat, logout, the market-data subscription, and the last-trade and best-bid/offer updates it receives. Built from the
-// protocol files in Rithmic's R | Protocol API kit (version 0.90.0.0). Each WebSocket frame is one protobuf
-// message, with no length prefix. Fields are written in ascending field-number order, the same order the
+// protocol files in Rithmic's R | Protocol API kit (version 0.90.0.0). Encoders below produce protobuf payloads;
+// the WebSocket transport wraps each in a four-byte big-endian length header. Fields are written in ascending field-number order, the same order the
 // official client produces. There is deliberately no order-entry message here: CHE's Rithmic connection
 // reads market data only.
 import 'dart:convert';
@@ -9,6 +9,24 @@ import 'dart:typed_data';
 
 /// R | Protocol login template version; independent of CHE's application version.
 const kRithmicTemplateVersion = '3.9';
+
+/// R | Protocol's envelope, inside the WebSocket binary message (not its own frame header).
+Uint8List encodeRithmicPacket(Uint8List payload) {
+  if (payload.isEmpty || payload.length > 0x7fffffff) {
+    throw const FormatException('Invalid Rithmic message length.');
+  }
+  final packet = Uint8List(payload.length + 4);
+  ByteData.sublistView(packet).setUint32(0, payload.length, Endian.big);
+  packet.setRange(4, packet.length, payload);
+  return packet;
+}
+
+Uint8List decodeRithmicPacket(Uint8List packet) {
+  if (packet.length < 5 || ByteData.sublistView(packet).getUint32(0, Endian.big) != packet.length - 4) {
+    throw const FormatException('Rithmic message length header does not match its payload.');
+  }
+  return Uint8List.sublistView(packet, 4);
+}
 
 class RithmicTemplate {
   // Discovery, sent to the bootstrap endpoint before any login (request_rithmic_system_info.proto,
