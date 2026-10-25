@@ -16,7 +16,7 @@ import {
 } from './gpu_queue.js';
 // Compute pool (compute_pool.js): held or reserved jobs are not dispatched, a cooling provider is not started, a
 // rate-limited dispatch cools GitHub down, and a Kaggle character session starts when it is the best allowed choice.
-import { applyPending, cooling, dispatchable, heldReason, isQuotaAnswer, loadPool, coolDown, poolSchedule, savePool } from './compute_pool.js';
+import { applyPending, cooling, dispatchable, heldReason, isQuotaAnswer, loadPool, coolDown, poolSchedule, savePool, workerUsable } from './compute_pool.js';
 
 export const DISPATCHES_KEY = 'gpu:dispatches';
 export const DISPATCH_WINDOW_MS = 8 * 60_000;     // a dispatch counts as a worker on its way for 8 minutes
@@ -78,7 +78,8 @@ export async function ensureCapacity(env = {}, { storage, now, fetcher = fetch, 
   const settings = engineSettingsOf(rec);
   let poolJobsChanged = await applyPending(storage, jobs, t);
   const pool = await loadPool(storage);
-  const cap = capacityOf(jobs, workers, t, settings);
+  const usable = Object.fromEntries(Object.entries(workers).filter(([, w]) => workerUsable(pool, w, t)));
+  const cap = capacityOf(jobs, usable, t, settings);
   cap.cpu_runnable = cap.cpu_runnable.filter((j) => dispatchable(pool, j, t));
   const ghCool = cooling(pool, 'github_actions_cpu', t);
   let recChanged = false; let reason = ''; let dispatched = 0; let cloudState = null;

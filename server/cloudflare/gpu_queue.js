@@ -29,7 +29,7 @@ import { verifyGithubOidc } from './gpu_oidc.js';
 import { ensureCapacity } from './creation_orchestrator.js';
 import { verifyLine } from './creation_objects.js';
 // Compute pool hooks (compute_pool.js): provider stamps, cooldowns, bounded provider attempts and handoffs.
-import { applyPending, classifyFailure, loadPool, poolAllows, poolNote, poolOnClaim, poolTokenAuth, providerLabel, providerOf, providerOfAuth, stampReceipt } from './compute_pool.js';
+import { applyPending, classifyFailure, loadPool, poolAllows, poolNote, poolOnClaim, poolTokenAuth, providerLabel, providerOf, providerOfAuth, stampReceipt, workerUsable } from './compute_pool.js';
 
 const RATE_KEY = 'gpu:rate';            // per-tenant token buckets for new jobs (job_quota.js rateLimit)
 export const LEASE_MS = 3 * 60_000;           // a claimed job pauses after 3 minutes without a heartbeat
@@ -317,7 +317,7 @@ export class GpuQueue {
         const busy = jobs.filter((j) => j.state === 'rendering' && j.lease?.class === 'github_cpu').length;
         if (busy >= max) return { ok: true, job: null, detail: `${busy} cloud workers are already busy (the limit is ${max}).` };
       }
-      const gpuOnline = Object.entries(workers).some(([id, w]) => id !== workerId && isGpuWorker(w) && t - (w.last_seen_ms || 0) < ONLINE_MS);
+      const gpuOnline = Object.entries(workers).some(([id, w]) => id !== workerId && isGpuWorker(w) && t - (w.last_seen_ms || 0) < ONLINE_MS && workerUsable(pool, w, t));
       // Fair across tenants (job_quota.js): priority, then least recent use per plan weight, then paused, then oldest.
       next = jobs.filter((j) => waiting(j) && compatible(j, cls === 'colab', gpuOnline) && poolAllows(pool, j, provider, t, auth.job_ids || null)).sort(fairOrder(jobs, t))[0];
     }

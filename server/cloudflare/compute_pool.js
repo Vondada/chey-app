@@ -187,7 +187,7 @@ export function poolAllows(pool, j, provider, t, scope = null) {
   if (r && r.until_ms > t && r.provider !== provider) return false;
   const c = cooling(pool, provider, t);
   if (c?.block_claims) return false;
-  if ((j.pool?.hold_until_ms || 0) > t && roundFailures(j).some((a) => a.provider === provider)) return false;
+  if ((j.pool?.hold_until_ms || 0) > t && (j.pool.held_providers || []).includes(provider)) return false;
   return true;
 }
 
@@ -198,6 +198,9 @@ export function heldReason(pool, j, t) {
   if (p.reserved && p.reserved.until_ms > t) return `A ${providerLabel(p.reserved.provider)} session is starting for it (started ${hhmm(Date.parse(p.reserved.at))} UTC); if it does not pick the job up by ${hhmm(p.reserved.until_ms)} UTC, CHE hands it to the next computer.`;
   return '';
 }
+
+/** A worker whose provider is out of quota (cooldown with block_claims) does not count as an online GPU. */
+export const workerUsable = (pool, w, t) => !cooling(pool, w?.provider || (w?.class === 'github_cpu' ? 'github_actions_cpu' : 'colab_gpu'), t)?.block_claims;
 
 /** Whether a job is free for the CPU dispatcher (not held, not reserved for a GPU session). */
 export const dispatchable = (pool, j, t) => !heldReason(pool, j, t) && poolAllows(pool, j, 'github_actions_cpu', t);
@@ -241,7 +244,7 @@ export async function applyPending(storage, jobs, t, pool = null) {
           const ends = fails.map((f) => cooling(pool, f.provider, t)?.until_ms || 0).filter(Boolean);
           const until = Math.min(at + BACKOFF_MAX_MS, Math.max(at + MIN_HOLD_MS, ends.length ? Math.min(...ends) : 0));
           const tried = fails.map((f) => `${providerLabel(f.provider)}: ${f.outcome.replace('_', ' ')}`).join('; ');
-          p.hold_until_ms = until; p.round_start_ms = until;
+          p.hold_until_ms = until; p.round_start_ms = until; p.held_providers = [...new Set(fails.map((f) => f.provider))];
           p.hold_reason = `Waiting until ${hhmm(until)} UTC: ${fails.length} attempts could not finish it (${tried}). It stays queued with its finished stages; another computer may still take it, and CHE tries again then.`;
         }
       } else if (a.outcome === 'completed') {
@@ -429,8 +432,9 @@ export function selectProvider(statuses, job, { pool = null, t = Date.now(), all
   for (const id of order) {
     if (need === 'required' && !s[id]?.gpu) continue;
     if (ready(id)) return { provider: id, why: s[id].reason };
+    if (id === 'kaggle' && allowUnverified && ok(id) && s[id].status === 'unverified') return { provider: id, why: s[id].reason, unverified: true };
   }
-  if ((need === 'required' || allowUnverified) && ok('kaggle') && s.kaggle.status === 'unverified') return { provider: 'kaggle', why: s.kaggle.reason, unverified: true };
+  if (need === 'required' && ok('kaggle') && s.kaggle.status === 'unverified') return { provider: 'kaggle', why: s.kaggle.reason, unverified: true };
   const gpuish = statuses.filter((p) => p.compatible === true && (need !== 'required' || p.gpu));
   const why = gpuish.map((p) => `${p.label}: ${p.reason}`).join(' ');
   return { provider: null, why: need === 'required' ? `This job needs a GPU and none is ready. ${why}` : `No computer can take it now. ${why}` };
