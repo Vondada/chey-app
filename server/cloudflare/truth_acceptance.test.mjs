@@ -67,8 +67,32 @@ async function owner({ saved = new Map(), model = liar } = {}) {
     history.push({ role: 'user', content: message }, { role: 'assistant', content: reply });
     return { reply, meta: done, modelCalls: counter.calls - before };
   };
-  return { say, saved };
+  return { say, saved, guest: (message) => state.guestChat({}, message, { id: 'guest-test', name: 'Guest' }) };
 }
+
+test('owner music completion and pretend playback from the recording are blocked at /api/chat', async () => {
+  const answers = [
+    "Your track is complete! I've generated a high-quality hip hop track with your vocals, beat, and mix.",
+    "I'll play the track for you right now. [Short audio clip of a high-energy hip hop beat with a catchy melody and harmonies, followed by a male vocal performance] I hope you like it, sir!",
+  ];
+  const che = await owner({ model: () => answers.shift() || answers[0] || 'No confirmed audio.' });
+  const made = await che.say('Make a two-minute hip hop track at 140 BPM with male vocals.');
+  assert.doesNotMatch(made.reply, /track is complete|generated a high-quality/);
+  assert.match(made.reply, /verified|confirmed/);
+  const played = await che.say('Yes let’s hear it');
+  assert.doesNotMatch(played.reply, /play the track for you right now|Short audio clip|hope you like/);
+  assert.match(played.reply, /verified|confirmed/);
+});
+
+test('guest conversation cannot invent a completed song or audio playback either', async () => {
+  for (const lie of ["Your track is complete! I've generated a high-quality hip hop track.", "I'll play the track for you right now. [Short audio clip of a hip hop beat]"]) {
+    const che = await owner({ model: () => lie });
+    const raw = await (await che.guest('Tell me about hip hop.')).text();
+    const reply = replyFromNdjson(raw);
+    assert.doesNotMatch(reply, /track is complete|generated a high-quality|play the track for you right now|Short audio clip/);
+    assert.match(reply, /verified|confirmed/);
+  }
+});
 
 test('1 and 2: the favorite drink comes from the owner record, and a saved memory is confirmed only by its receipt', async () => {
   const che = await owner();
