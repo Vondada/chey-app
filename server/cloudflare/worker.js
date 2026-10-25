@@ -5777,6 +5777,10 @@ export class CheState extends DurableObject {
     if (GUEST_OWNER_ACTION.test(message)) {
       return ndjsonReply('Only the CHE owner can do that. Nothing was changed. I can still talk it through with you.', { source: 'che_guest', ok: false, model_calls: 0 });
     }
+    // The owner's records: refused, not the model's "no access".
+    if (workHistoryIntent(message) || ownerMemorySearchIntent(message)) {
+      return ndjsonReply('Only the CHE owner can read his mission, project, job and memory records. Nothing was read.', { source: 'che_guest', ok: false, model_calls: 0, outcome: RECALL_OUTCOMES.PERMISSION_DENIED });
+    }
     // The Flagstaff correspondence is the owner's: a guest's model has none of it and must not guess it.
     if (outsideCorrespondenceIntent(message)) {
       return ndjsonReply('Only the CHE owner can read the outside correspondence in his Brain. Nothing was read or changed.', { source: 'che_guest', ok: false, model_calls: 0 });
@@ -14324,7 +14328,7 @@ export class CheState extends DurableObject {
               source: 'che_personal_recall', model_calls: 0, records: answer.records.length, record_ids: answer.records,
               outcome: readOutcome({ failed: answer.kind === 'none' && brainUnreadable, records: answer.records.length ? answer.records : (r ? [r] : []) }),
               recall_receipt: r ? { record_id: r.id || null, stored_at: r.created_at || null, store, owner_attested: !r.legacy && !r.phone } : null,
-              ...(Array.isArray(answer.found) && answer.found.length > 1 ? { recall_receipts: answer.found.map((x) => ({ record_id: x.id || null, stored_at: x.created_at || null, store: x.phone ? 'phone_brain_notes' : x.legacy ? 'saved_preferences' : x.brain ? 'brain' : 'memory_records', source: x.source || x.origin || null })) } : {}),
+              ...(answer.receipts ? { recall_receipts: answer.receipts } : {}),
             });
           }
         }

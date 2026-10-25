@@ -348,6 +348,8 @@ export function answerPersonalFact(data = {}, question = {}, brainRecords = [], 
       records: found.map((r) => r.id).filter(Boolean),
       record: found[0],
       found,
+      // One receipt per answered subject: its record, stored time, store and source.
+      receipts: found.length > 1 ? found.map((x) => ({ record_id: x.id || null, stored_at: x.created_at || null, store: x.phone ? 'phone_brain_notes' : x.legacy ? 'saved_preferences' : x.brain ? 'brain' : 'memory_records', source: x.source || x.origin || null })) : null,
       answer: `From what you told me, sir: ${[first, ...lines.slice(1)].join('; ')}.${sourceLine}`,
     };
   }

@@ -140,7 +140,8 @@ export function workHistoryIntent(message) {
   return null;
 }
 
-const shortId = (id) => String(id || '').slice(0, 8) || 'no id';
+// The full stored id, so the owner can ask for that exact record later.
+const shortId = (id) => String(id || '').slice(0, 40) || 'no id';
 const dayOf = (iso) => { const t = Date.parse(String(iso || '')); return Number.isFinite(t) ? new Date(t).toISOString().slice(0, 10) : 'no date'; };
 const newest = (items, limit) => (Array.isArray(items) ? items.filter(Boolean) : [])
   .map((item, i) => ({ item, i, t: Date.parse(item.updated_at || item.created_at || '') }))
