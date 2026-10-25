@@ -58,3 +58,15 @@ test('an ID that is the current runtime session is left to the runtime answer', 
 test('no named job means no change to the existing answer', () => {
   assert.deepEqual(namedJobAnswer('What is the status of the coding job?', jobs, ''), {});
 });
+
+test('the job ID alone, without the word coding, is still one named record', () => {
+  assert.equal(codingHistoryIntent('What is the status of job f1a27d86, the assigned engine and the GitHub workflow run?'), true);
+  assert.equal(codingHistoryIntent('Did coding job f1a27d86 pass or fail?'), true);
+  assert.equal(namedJobId('Did job f1a27d86 pass or fail?'), 'f1a27d86');
+});
+
+test('an outcome question about a named job never becomes an action on it', () => {
+  assert.equal(codingHistoryIntent('Cancel job f1a27d86 and tell me if it passed'), false);
+  assert.equal(codingHistoryIntent('Fix coding job f1a27d86 and redeploy when it passes'), false);
+  assert.equal(codingHistoryIntent('Rerun job f1a27d86 if it failed'), false);
+});
