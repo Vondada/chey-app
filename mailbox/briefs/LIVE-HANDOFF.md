@@ -77,6 +77,11 @@ Then, on GitHub:
 
 ## 2. Current position
 
+**Claude, 2026-10-25 (owner decision: part knowledge source) — option A chosen.**
+- Parts for any object (boat, engine, body part, room) come from CHE's own knowledge plus research. Every part carries a source label (researched, CHE-knowledge, or unverified) and a cost band. No licensed model library for now.
+- Next build step: a general part-tree format (children, size, material, cost band, source label) with the jet engine as one instance; decomposition answers "I don't know the parts of X yet" instead of inventing them. Not started.
+- Coding test: nine cases posted to CHE in Flagstaff (commit 70de6229); awaiting replies, then scored with tools/coding_eval/run.mjs.
+
 **Claude, 2026-10-25 (owner: 3D PERFORMANCE + CHE MATHEMATICAL GENIUS) — stage 1 pushed.**
 - `lane/engineering-math` `1dca3782` (from main): `server/cloudflare/engineering_math.js`, same contract as `atlas_math.js`. Helix length, headroom, rotation, shaft power, spin-up, gear train, box clearance, cantilever deflection. Each result carries a second method (chord sum, numeric integration, double integration of curvature) and a dimension check. Tests 11/11, reference values from sympy. First-order only, marked not certified.
 - `lane/invention-jet-engine` `af54bb17`: `tools/bench/invention_scene_bench.mjs` measures CPU time in Node: explode 0.04 ms, resize 0.02 ms, GLB build 0.48 ms, 20 KB, 15 parts. NOT measured: rendering, iPhone FPS, the Kimi-scale complexity.
