@@ -69,7 +69,7 @@ Branch: `claude/che-character-realism` (from main `afb8de1`). Lanes push to `lan
 | G7 | Regenerate/variation; reopen from My Creations | B | done `789e155` (VARIATION seed + face variant, last_model), Flutter reopen test `6712d12` |
 | G8 | Real samples per style, inspected; measured CPU times | A | in progress |
 | G10 | Acceptance driver + publish job | me | pushed `6651850`; lane B accept routes merged |
-| G11 | Compute pool (providers, cooldowns, handoff) | C | in progress |
+| G11 | Compute pool (providers, cooldowns, handoff) | C | merged (lane C `5de754f`); compute_pool 10/10, Worker 4001/0; live handoff with real files NOT yet proven; Kaggle token presence unknown |
 | G12 | World population + benchmarks | D | in progress |
 | G13 | Create Room demo video + walkthrough | E | in progress |
 | G14 | "Open and display saved image <id>" listed all 26 media items | me | fixed `dfd3f48`: Worker 19/19 media tests, full Worker 3990/0; Flutter che_chat_image 2/2; iPhone display unverified |

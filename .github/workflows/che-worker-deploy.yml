@@ -205,7 +205,7 @@ jobs:
       - name: Deploy
         working-directory: server/cloudflare
         # Deploy after secret sync so the final live version retains its SHA tag.
-        run: npx --yes wrangler@4 deploy --tag "${GITHUB_SHA::12}" --message "deploy ${GITHUB_SHA::12}"
+        run: npx --yes wrangler@4 deploy --tag "${GITHUB_SHA::12}" --message "deploy ${GITHUB_SHA::12}" --var "CHE_POOL_COMMIT:${GITHUB_SHA}"
 
       - name: Verify live deployed commit
         env:
