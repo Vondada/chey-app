@@ -18,6 +18,8 @@ void main() {
   final binding = IntegrationTestWidgetsFlutterBinding.ensureInitialized();
 
   testWidgets('every main tab opens with content and no error text', (tester) async {
+    // iOS needs the Flutter surface converted before a screenshot can be taken; without it every capture fails silently.
+    if (defaultTargetPlatform == TargetPlatform.iOS) await binding.convertFlutterSurfaceToImage();
     app.main();
     await tester.pump(const Duration(seconds: 5));
     for (final label in mainTabs) {

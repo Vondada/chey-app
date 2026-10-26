@@ -17,7 +17,8 @@ void main() {
       app.main();
       await tester.pump(const Duration(seconds: 5));
 
-      await tester.tap(find.text('Trading').first);
+      // The Home tile's semantics label starts with its name ("Trading. Paper. Double tap to open.").
+      await _tapFirst(tester, find.bySemanticsLabel(RegExp(r'^Trading\.')), 'the Trading tile');
       await tester.pump(const Duration(seconds: 3));
       expect(tester.takeException(), isNull, reason: 'Opening Trading threw an error');
 
