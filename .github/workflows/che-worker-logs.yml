@@ -80,7 +80,8 @@ jobs:
               counts[str(event.get("outcome"))] += 1
               for exc in event.get("exceptions") or []:
                   if len(messages) < 10:
-                      messages.append(str(exc.get("message") or exc)[:200])
+                      text = exc.get("message") if isinstance(exc, dict) else exc
+                      messages.append(str(text or exc)[:200])
           print(f"events: {sum(counts.values())} (unparsed lines: {bad})")
           print("outcomes: " + ", ".join(f"{k}={v}" for k, v in sorted(counts.items())))
           for m in messages:
@@ -88,6 +89,7 @@ jobs:
           PY
 
       - name: Keep the captured logs
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: che-worker-logs-${{ github.run_id }}
