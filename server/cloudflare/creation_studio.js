@@ -23,6 +23,7 @@ import { BUILT_IN, HAIR_BUILT, HAIR_BUST_BUILT, STYLES, STYLE_LABELS, generateVa
 import { GpuQueue, VIEW_NAMES, engineRecord, engineSettingsOf, gpuOwnerRoute, referenceKey, rigLine } from './gpu_queue.js';
 import { mediaStore, sha256Hex } from './che_media_store.js';
 import { cloudUsable, engineRoute, ensureCapacity } from './creation_orchestrator.js';
+import { providerStatuses } from './compute_pool.js';
 import { CREATION_PROFILES, profileSettings } from './creation_profiles.js';
 import * as OBJ from './creation_objects.js';
 
@@ -615,8 +616,11 @@ async function engineOf(queue, env = {}) {
   const last = v.workers.map((w) => w.last_seen).filter(Boolean).sort().pop() || null;
   // automatic: CHE can start a free cloud CPU worker herself right now (auto_cloud on, GitHub token, repo verified public).
   const automatic = cloudUsable(env, rec);
+  // Modal's real state (compute_pool.providerStatuses: the verified connection, the owner's credit policy and the reason). Colab and the CPU worker are not Modal.
+  const modal = (await providerStatuses(env, { storage: queue.storage, refreshQuota: false }).catch(() => [])).find((p) => p.id === 'modal') || null;
   const status = gpuOn.length ? 'online' : automatic ? 'cloud' : on.length ? 'online' : v.worker_paired ? 'offline' : 'not_paired';
   return { online: Boolean(on.length), gpu: gpuOn[0]?.gpu || (on.length ? 'CPU (GitHub cloud worker)' : null), paired: v.worker_paired, last_seen: last, notebook_url: NOTEBOOK_URL, status,
+    modal: modal ? { status: modal.status, gpu: modal.gpu, reason: modal.reason } : null,
     automatic, workers_online: on.length, max_concurrent: settings.max_cloud_workers + gpuOn.length, waiting_reason: rec.waiting_reason || '',
     label: { online: 'Creation Engine Online', cloud: 'Creation Engine ready: free cloud CPU', offline: 'Creation Engine Offline', not_paired: 'Creation Engine not connected' }[status], jobs: v.jobs };
 }
@@ -677,6 +681,10 @@ function stagesOf(job) {
 export function engineDeviceLine(engine) {
   const gpu = engine?.gpu && !/^CPU/.test(engine.gpu) ? engine.gpu : null;
   if (gpu) return `A GPU worker is connected: ${gpu}. It builds the next model.`;
+  // Modal is named by its real state, never called Colab. "Ready" needs a verified character build; "unverified" says so.
+  if (engine?.modal?.status === 'ready') return `A GPU is ready on Modal: ${engine.modal.gpu}. It builds the next model.`;
+  if (engine?.modal?.status === 'unverified') return `Modal's ${engine.modal.gpu} is connected but has not built a character yet, so it is not proven. ${engine.modal.reason || ''}`.trim();
+  if (engine?.modal?.status === 'offline' && engine.modal.reason) return `Modal's ${engine.modal.gpu} is connected but not used yet. ${engine.modal.reason}`;
   if (engine?.online || engine?.automatic) return 'No GPU is connected: your Colab GPU notebook is not open, so only the free GitHub cloud CPU worker is available. It builds on the CPU, which is slower than a GPU.';
   return 'No worker is connected right now: no GPU, and no free cloud CPU worker can start.';
 }
