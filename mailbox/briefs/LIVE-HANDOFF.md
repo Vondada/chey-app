@@ -77,6 +77,12 @@ Then, on GitHub:
 
 ## 2. Current position
 
+**Claude, 2026-10-26 (owner: master directive, trading + conversation reliability).** Branch `claude/master-recovery-20261026` at `1f775207` (docs only: `docs/CHE_MASTER_RECOVERY.md`, `CHE_MISSION_LEDGER.md`, `CHE_EXECUTION_CHECKPOINT.md`, `CHE_TEST_EVIDENCE.md`). PR #672 (release gate) head `e4ad3894`: trading order-flow test added; first run failed on an unused import (fixed); gate run `40412656254` queued, result NOT known.
+- Blocker: the owner's Trading room hides Alpaca PAPER (`kShowAlpacaPaper=false`, owner decision 2026-10-23), so the Order ticket is not reachable there. The directive asks to make it usable, which conflicts with that decision. Needs owner answer.
+- Blocker: MNQ/futures manual orders not connected (no broker credentials/approval in repo).
+- Not started in this session: conversation reliability, memory, coding-engine fixes. Not re-verified: most missions listed below.
+- Next: read gate result for `e4ad3894`; fix real failures only; then the owner's Alpaca decision.
+
 **Claude, 2026-10-26 (owner: Office full conversation view) — branch `office-conversations`, pushed; NOT merged, NO PR.**
 - Commits: `820c4933` (Worker conversation record), `6fb605b6` (Flutter full-screen view), `bdc77840` (route moved onto the existing `GET /api/agents/:id` response so `worker.js` stays at main's size; main is 27 bytes under `perf_budget`).
 - Done: `server/cloudflare/office_conversation.js` builds the conversation from stored records only (team_tasks, office_goals, meetings, agent_work_log, jobs); exactly six states (Queued, Running, Waiting, Blocked, Failed, Completed) with the raw status beside them; a queued task stays Queued. `agentDetail` carries `conversation`. App: `lib/agents/che_office_conversation.dart` + `che_office_conversation_screen.dart`, opened by "Open full conversation" on a desk and on each task card. Search, filter groups, untruncated text, expandable details, scroll to newest, "Not recorded" where no record exists. Desk header uses the six-state status of the open task.
