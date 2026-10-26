@@ -70,6 +70,22 @@ class CheHomePresence extends StatelessWidget {
             Text(subtitle, maxLines: 1, overflow: TextOverflow.ellipsis, style: CheType.caption),
           ]),
         ),
+        if (orbState == CheOrbState.speaking) ...[
+          const SizedBox(width: CheSpace.sm),
+          Semantics(
+            button: true,
+            label: 'Stop CHE talking',
+            excludeSemantics: true,
+            child: OutlinedButton(
+              key: const ValueKey('che-stop-speaking'),
+              onPressed: () {
+                HapticFeedback.mediumImpact();
+                onOrbTap();
+              },
+              child: const Text('Stop'),
+            ),
+          ),
+        ],
         if (office != null) ...[
           const SizedBox(width: CheSpace.sm),
           office!,

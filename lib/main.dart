@@ -2313,6 +2313,7 @@ OWNER AGENCY
         autoConnect: autoConnect,
         onSpeak: (line) => unawaited(speakText(line, record: false, readOnDemand: true)),
         onCloudComputer: _openCreationEngine,
+        onColabGpu: () => unawaited(_showGpuBrowser()),
         onVoiceSettings: _openVoiceSelector,
         onKeys: () {
           Navigator.of(context).pop();
