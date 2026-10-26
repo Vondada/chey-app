@@ -327,6 +327,9 @@ CheBeatSpec? cheParseBeatRequest(String said) {
   final bars = RegExp(r'\b(\d{1,2}) bars?\b').firstMatch(s);
   // "Make me a beat" alone stays with the Beat Maker's starter groove; the producer answers when a genre, key or
   // tempo is named, or the owner says produce or generate.
-  if (genre == null && key == null && tempo == null && !RegExp(r'\b(produce|generate|cook up)\b').hasMatch(s)) return null;
-  return CheBeatSpec.of(genre ?? 'hip hop', bpm: bpm, key: root == null ? null : root % 12, minor: minor, bars: bars == null ? 4 : int.parse(bars.group(1)!));
+  // "A type of beat" or "in the style of" names a sound, not a genre: the producer makes the closest genre it has
+  // (trap for the rap styles the owner asks for) and says which one it used. It never copies an artist's recording.
+  final styleRequest = RegExp(r'\b(type of beat|style of|sounds? like)\b').hasMatch(s);
+  if (genre == null && key == null && tempo == null && !styleRequest && !RegExp(r'\b(produce|generate|cook up)\b').hasMatch(s)) return null;
+  return CheBeatSpec.of(genre ?? (styleRequest ? 'trap' : 'hip hop'), bpm: bpm, key: root == null ? null : root % 12, minor: minor, bars: bars == null ? 4 : int.parse(bars.group(1)!));
 }

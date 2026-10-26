@@ -45,6 +45,7 @@ import 'brain/che_brain_sections.dart' show CheBrainEvidence, CheEvidenceKind, c
 import 'che_ui/che_owner_improvements.dart';
 import 'workflows/che_workflows_screen.dart';
 import 'film/che_film_studio_screen.dart';
+import 'music/che_beat_producer.dart';
 import 'music/che_recording_studio.dart';
 import 'world/che_meeting_room.dart';
 import 'world/che_meetings.dart';
