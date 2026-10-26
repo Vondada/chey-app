@@ -153,6 +153,14 @@ export async function ensureCapacity(env = {}, { storage, now, fetcher = fetch, 
   if (jobsChanged || poolJobsChanged) await q.save(jobs);
   if ((rec.waiting_reason || '') !== reason) { rec.waiting_reason = reason; rec.waiting_at = iso(t); recChanged = true; }
   if (recChanged) await storage.put(ENGINE_KEY, rec);
+  // Recovery belongs to the backend, including when every phone/browser is closed.
+  // Preserve the shared Durable Object alarm if another room needs an earlier wake.
+  if (jobs.some((j) => !j.owner_paused && ['queued', 'paused', 'rendering'].includes(j.state))) {
+    const wake = t + 60_000;
+    await storage.put('gpu:wake_at', wake);
+    const alarm = await storage.getAlarm?.();
+    if (!alarm || alarm > wake) await storage.setAlarm?.(wake);
+  } else await storage.delete('gpu:wake_at');
   return { ok: true, dispatched, waiting_reason: reason, runnable: cap.cpu_runnable.length, have: have + dispatched, want, pool_started: sched?.started || null };
 }
 
@@ -177,7 +185,7 @@ export const CREATION_PROVIDERS = Object.freeze([
     capabilities: ['blender', 'gpu'], cost: '$0: your own free Colab session.', billing: 'owner_free_session', needs_approval: false,
     manual_step: 'Open the CHE GPU notebook in Colab and run all cells; free Colab cannot be started remotely and stops when idle.',
     device: 'NVIDIA T4 GPU.', evidence: ['notebooks/CHE_GPU_Face_Preview.ipynb', 'scripts/che_gpu_worker.py'],
-    limits: 'Runs only while you have the notebook open; Google stops idle free sessions.' },
+    limits: 'Google controls runtime lifetime and may disconnect or terminate it; CHE cannot guarantee background availability.' },
 ]);
 
 const PROVIDERS = (rec, workers) => CREATION_PROVIDERS.map((p) => ({

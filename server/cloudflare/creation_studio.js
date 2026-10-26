@@ -866,17 +866,23 @@ export class CreationStudio {
     return { ok: true, project: detail(p, engine.jobs, engine), spoken: speakProject(p, engine.jobs, engine) };
   }
 
-  async generate(id) {
+  async generate(id, { fresh = false } = {}) {
     const { list, p } = await this.find(id);
     if (!p) return { ok: false, status: 404, detail: 'No such creation.' };
-    const v = cur(p);
+    let v = cur(p);
+    if (fresh && v.job_id) {
+      const prior = (await this.queue.jobs()).find((j) => j.id === v.job_id);
+      if (prior && ['completed', 'failed', 'cancelled'].includes(prior.state)) v = this.pushVersion(p, 'Explicit new render check.', {});
+    }
     let out;
-    if (isThing(p)) {
+    const previous = (await this.queue.jobs()).find((j) => j.id === v.job_id && ['queued', 'paused', 'rendering', 'completed'].includes(j.state));
+    if (previous) out = { ok: true, job: previous, duplicate: true };
+    else if (isThing(p)) {
       // Objects and rooms are light procedural builds: any worker takes them, a free cloud CPU included.
       const bad = OBJ.specErrors(p.kind, v.params);
       if (bad.length) return { ok: false, detail: `This version cannot be built: ${bad.join('; ')}.` };
       const q = OBJ.qualityOf(v.render);
-      out = await this.queue.enqueue({ kind: OBJ.KIND_JOB[p.kind], title: `${p.title} v${v.n}: 3D model and previews`, views: VIEWS, samples: q.samples, res: q.res,
+      out = await this.queue.enqueue({ request_key: `creation:${p.id}:v${v.n}`, kind: OBJ.KIND_JOB[p.kind], title: `${p.title} v${v.n}: 3D model and previews`, views: VIEWS, samples: q.samples, res: q.res,
         settings: OBJ.specSettings(v.params), queued_by: 'Live Studio', priority: 'high', requires: { gpu: 'none' } });
     } else {
       const r = renderOf(v); const q = qualityOf(r);
@@ -893,7 +899,7 @@ export class CreationStudio {
         settings.REFERENCE = JSON.stringify({ url: `/api/gpu/worker/reference?sha256=${ref.sha256}`, sha256: ref.sha256, bytes: ref.bytes, consent: ref.consent });
       }
       // Owner-interactive: high priority; a GPU is preferred, and a free cloud CPU worker takes it when none is online.
-      out = await this.queue.enqueue({ kind: 'person_model', title: `${p.title} v${v.n}: 3D model and previews`, views: VIEWS, samples: q.samples, res: q.res,
+      out = await this.queue.enqueue({ request_key: `creation:${p.id}:v${v.n}`, kind: 'person_model', title: `${p.title} v${v.n}: 3D model and previews`, views: VIEWS, samples: q.samples, res: q.res,
         settings, queued_by: 'Live Studio', priority: 'high', requires: { gpu: 'preferred' } });
     }
     if (!out.ok) return { ok: false, detail: out.detail };
@@ -901,7 +907,7 @@ export class CreationStudio {
     const cap = await this.capacity();
     const engine = await this.engine();
     const gpuOn = engine.online && engine.gpu && !/^CPU/.test(engine.gpu);
-    const spoken = out.duplicate ? 'This version is already queued or building.'
+    const spoken = out.duplicate ? (out.job.state === 'completed' ? 'This version already has completed output in Projects.' : 'This version is already queued or building.')
       : gpuOn ? `Queued. Your Creation Engine on ${engine.gpu} will build the 3D model, then front, three-quarter and side previews.`
         : cap.dispatched || engine.automatic ? `Queued. ${CLOUD_LINE} It builds the 3D model, then front, three-quarter and side previews.`
           : engine.online ? 'Queued. A cloud worker is online and takes it next.'

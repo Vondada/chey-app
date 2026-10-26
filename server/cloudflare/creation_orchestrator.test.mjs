@@ -21,6 +21,17 @@ const GPU = 'Tesla T4, 550.54.15, 15360 MiB';
 const CPU_DEV = "DEVICE CPU ['AMD EPYC 7763'] 384x480";
 const ENV = { CHE_GITHUB_TOKEN: 'ghp_test_secret_value', CHE_GITHUB_REPO: 'Vondada/chey-app' };
 
+test('a pending creation arms a backend wake without a foreground client', async () => {
+  const s = await setup();
+  let alarm = null;
+  s.storage.getAlarm = async () => alarm;
+  s.storage.setAlarm = async (at) => { alarm = at; };
+  const p = (await s.call('/api/creations', 'POST', {base:'che'})).body.project;
+  await s.call(`/api/creations/${p.id}/generate`, 'POST', {});
+  assert.ok(alarm > 0, 'job must recover even if the owner closes CHE now');
+  assert.equal(await s.storage.get('gpu:wake_at'), alarm);
+});
+
 function glb(extra = 0) {
   const jsonText = JSON.stringify({ asset: { version: '2.0' }, pad: 'x'.repeat(extra) });
   const padded = jsonText + ' '.repeat((4 - (jsonText.length % 4)) % 4);
@@ -183,6 +194,8 @@ test('a lapsed lease pauses the job and CHE dispatches again; the resuming worke
   const sha = (await s.call(`/api/creations/${p.id}`)).body.project.job.model.sha256;
   for (const st of ['model', 'rig', 'animate']) await s.worker('progress', { worker_id: w1.worker_id, job_id: id, stage: st, checkpoint: { stage: st, sha256: sha, bytes: model.length } }, { run: '500' });
   s.advance(DISPATCH_WINDOW_MS + LEASE_MS);                            // the runner died; the old dispatch is stale
+  await ensureCapacity(s.ctx.env, s.ctx); // backend alarm pass: no phone or foreground polling
+  assert.equal(s.github.filter((g) => g.method === 'POST').length, 2, 'backend recovery already dispatched before reopen');
   const d = (await s.call(`/api/creations/${p.id}`)).body.project;
   assert.equal(d.job.state, 'paused'); assert.match(d.job.status_line, /Finished stages kept: model, rig, animate/);
   assert.equal(s.github.filter((g) => g.method === 'POST').length, 2, 'a new worker was dispatched for the paused job');

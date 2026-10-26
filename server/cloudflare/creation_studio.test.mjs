@@ -18,6 +18,18 @@ const GPU = 'Tesla T4, 550.54.15, 15360 MiB';
 const DEV = "DEVICE OPTIX ['Tesla T4'] 384x480";
 const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3, 4]);
 
+test('retrying Render after reopening reuses a completed version instead of submitting a duplicate', async () => {
+  const s = setup();
+  const p = (await s.call('/api/creations', 'POST', {base:'che'})).body.project;
+  const a = (await s.call(`/api/creations/${p.id}/generate`, 'POST', {})).body;
+  const jobs = await s.storage.get('gpu:jobs');
+  jobs.find(j => j.id === a.job.id).state = 'completed';
+  await s.storage.put('gpu:jobs', jobs);
+  const b = (await s.call(`/api/creations/${p.id}/generate`, 'POST', {})).body;
+  assert.equal(b.job.id, a.job.id);
+  assert.equal(b.duplicate, true);
+});
+
 /** A minimal valid GLB v2: 12-byte header, one JSON chunk. */
 function glb(extra = 0) {
   const jsonText = JSON.stringify({ asset: { version: '2.0' }, pad: 'x'.repeat(extra) });
