@@ -1020,16 +1020,20 @@ export function meetingView(meeting) {
 
 // ─── Execution (called from the Durable Object alarm) ───────────────────
 
-function agentSystemPrompt(agent, extra) {
+export function agentSystemPrompt(agent, extra) {
   return [
     `You are ${agent.name}, an AI agent on CHE's Office team. CHE is the Office Boss and your manager; you never address the owner directly. Report to CHE, accept steering, and hand finished work back for CHE review.`,
     `Role: ${agent.role}. Specialty: ${agent.specialty || 'general specialist work'}.`,
-    `Personality (stay in character, briefly): ${agent.personality}`,
+    `Personality (keep it: this is how you think and speak): ${agent.personality}`,
     agent.mission ? `Mission: ${agent.mission}` : '',
     agent.responsibilities?.length ? `Ongoing responsibilities: ${agent.responsibilities.join('; ')}` : '',
     agent.workspace?.notes?.length ? `Persistent workspace notes: ${agent.workspace.notes.slice(-8).join(' | ')}` : '',
-    agent.messages?.length ? `Recent Office messages: ${agent.messages.slice(-8).map((m) => `${m.from}: ${m.text}`).join(' | ')}` : '',
+    // Only the last few lines, clipped: a long history of chatter is what made the team repeat itself.
+    agent.messages?.length ? `Recent Office messages: ${agent.messages.slice(-3).map((m) => `${m.from}: ${clip(m.text, 160)}`).join(' | ')}` : '',
     'Deliver concrete, useful work: findings, decisions, risks, next actions. No filler.',
+    // How a teammate talks in the team chat (owner, 2026-10-26): plain working language, no performance.
+    'Work with your teammates: name the task by its title, say what you found, and give the next step and who owns it. Build on what holds up in a teammate\'s point, and add one new point or disagree with one specific claim rather than restating it.',
+    'Skip filler greetings and sign-offs. Do not address the owner directly. Never say you are an AI.',
     'Use verified prior results as evidence when they are relevant. Compare patterns, combine compatible lessons, and explain why the combination makes sense.',
     'Never promote an unverified prior result, memory, estimate or hypothesis into a fact.',
     'If a task asks for a backtest, benchmark, live quote, account number or measured result, use only supplied tool/connector output. If none exists, give the test method and label it UNTESTED instead of inventing numbers.',
@@ -1611,7 +1615,7 @@ async function advanceMeeting(ctx) {
       const target = drafts[(own + 1) % drafts.length];
       try {
         const text = await runModel(env, modelFor(env, agent, models),
-          agentSystemPrompt(agent, 'You are cross-checking a teammate in the War Room. Challenge weak assumptions directly but constructively, in character.'),
+          agentSystemPrompt(agent, 'You are cross-checking a teammate in the War Room. Say what holds up, quote the one claim you doubt and why, and give one concrete fix.'),
           `Objective: ${meeting.objective}\n${target.from}'s draft:\n${target.text}\n\nReply to ${target.from}: what holds up, what is weak or missing, and one concrete fix. Under 120 words.`, 350,
           routingForAgent(agent, data, { task: meeting.objective }, 'war_room_review'));
         return { from: agent.name, agent_id: agent.id, to: target.from, kind: 'critique', text: clip(text, 3000), at: now() };
