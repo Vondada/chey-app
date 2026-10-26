@@ -266,10 +266,19 @@ extension _CheHomeSend on _CHEHomeState {
       _openAssistantHub(tab: 3);
       return true;
     }
+    // "Play a song from my playlist" is playback, never recording (owner, 2026-10-26). Playback needs the Apple Music
+    // connection; this route says what is real and does not claim a song is playing.
+    if (RegExp(r"\bplay\b.*\b(?:my|the)\s+(?:personal\s+)?playlists?\b|\bplay\s+(?:a\s+)?song\s+from\s+(?:my|the)\s+playlist\b", caseSensitive: false).hasMatch(lower)) {
+      await speakText('I can only play from your playlist once Apple Music is connected and its playback is wired up. I have opened Music so you can check the connection. Nothing is playing.', record: false);
+      if (!mounted) return true;
+      _openAssistantHub(tab: 4);
+      return true;
+    }
     // Music Studio's recording workspace (owner, 2026-10-24): "record my vocals", "open the beat maker", "my songs".
     if (CheRecordingStudio.voiceHandler == null) {
       final rec = RegExp(r'\b(?:open|show|go to)\s+(?:the\s+|my\s+)?(recording studio|music studio|studio recorder|beat maker|my songs|mixer|mastering)\b').firstMatch(lower);
-      final takeNow = RegExp(r'\b(record (my )?(vocals?|voice|a song|a take)|start recording (my )?(vocals?|a song)|new recording|make a beat|play the beat)\b').hasMatch(lower);
+      // "Let's start a song" means make a new song in the recording studio, not play one (owner, 2026-10-26).
+      final takeNow = RegExp(r'\b(record (my )?(vocals?|voice|a song|a take)|start recording (my )?(vocals?|a song)|(?:let.?s\s+)?(?:start|make|begin|create)\s+(?:a|my|the|new)\s+song|new song|new recording|make a beat|play the beat)\b').hasMatch(lower);
       if (rec != null || takeNow) {
         final name = rec?.group(1) ?? '';
         // With words to act on, the studio says the real result itself; otherwise CHE says where she went.
