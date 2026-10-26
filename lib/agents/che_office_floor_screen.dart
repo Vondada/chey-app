@@ -15,6 +15,7 @@ import 'package:flutter/semantics.dart';
 import 'package:flutter/services.dart';
 
 import '../che_ui/che_agents.dart';
+import 'che_crew_pager.dart';
 import '../che_ui/che_chrome_status.dart';
 import '../che_ui/che_hud.dart';
 import '../che_ui/che_rooms.dart';
@@ -452,18 +453,14 @@ class _CheOfficeFloorScreenState extends State<CheOfficeFloorScreen> {
             style: CheType.bodyDim,
           )
         else
-          for (final p in agents)
-            Padding(
-              padding: const EdgeInsets.only(bottom: CheSpace.sm),
-              child: _AgentListCard(
-                agent: p.agent,
-                onTap: () => _openDesk(p.agent.id),
-                onReadAloud: () => _speak(
-                  '${p.agent.name}, ${p.agent.role}. ${p.agent.status.label}. '
-                  '${p.agent.task?.isNotEmpty == true ? p.agent.task : p.agent.specialty}',
-                ),
-              ),
+          CheCrewPager(
+            agents: [for (final p in agents) p.agent],
+            onOpen: (agent) => _openDesk(agent.id),
+            onReadAloud: (agent) => _speak(
+              '${agent.name}, ${agent.role}. ${agent.status.label}. '
+              '${agent.task?.isNotEmpty == true ? agent.task : agent.specialty}',
             ),
+          ),
         const SizedBox(height: CheSpace.lg),
         Text('WAR ROOM', style: cheOfficeLabel(CheType.overline)),
         const SizedBox(height: CheSpace.sm),
@@ -946,94 +943,6 @@ class _FilterPill extends StatelessWidget {
     );
   }
 }
-
-/// Large-chibi agent row matching mockup 03 (not postage-stamp).
-class _AgentListCard extends StatelessWidget {
-  const _AgentListCard({
-    required this.agent,
-    required this.onTap,
-    required this.onReadAloud,
-  });
-  final CheAgent agent;
-  final VoidCallback onTap;
-  final VoidCallback onReadAloud;
-
-  @override
-  Widget build(BuildContext context) {
-    final working = cheAgentIsMoving(agent.status);
-    final task = agent.task?.trim();
-    return Semantics(
-      button: true,
-      label: '${agent.name}, ${agent.role}. ${agent.status.label}. Double tap to open desk.',
-      excludeSemantics: true,
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          onTap: onTap,
-          onLongPress: onReadAloud,
-          borderRadius: BorderRadius.circular(CheRadius.lg),
-          child: CheOfficeInkPanel(
-            padding: const EdgeInsets.fromLTRB(10, 10, 12, 10),
-            glow: working ? CheColors.accent : null,
-            decoration: BoxDecoration(
-              color: CheColors.surfaceHi,
-              borderRadius: BorderRadius.circular(CheRadius.lg),
-              border: Border.all(
-                color: working
-                    ? CheColors.accent.withValues(alpha: 0.65)
-                    : CheColors.stroke,
-              ),
-              boxShadow: working
-                  ? [BoxShadow(color: CheColors.accent.withValues(alpha: 0.18), blurRadius: 16)]
-                  : null,
-            ),
-            child: Row(
-              children: [
-                CheMiniPerson(agent: agent, size: 72, showDesk: false),
-                const SizedBox(width: CheSpace.md),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(agent.name, style: CheType.headline, maxLines: 1, overflow: TextOverflow.ellipsis),
-                      Text(
-                        agent.role.isEmpty ? agent.specialty : agent.role,
-                        style: CheType.caption,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        task?.isNotEmpty == true ? task! : agent.status.label,
-                        style: CheType.caption.copyWith(
-                          color: working ? CheColors.success : CheColors.textDim,
-                        ),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      const SizedBox(height: 6),
-                      ClipRRect(
-                        borderRadius: BorderRadius.circular(99),
-                        child: LinearProgressIndicator(
-                          value: working ? null : (agent.status == CheAgentStatus.done ? 1 : 0.08),
-                          minHeight: 3,
-                          backgroundColor: CheColors.stroke,
-                          color: CheColors.accent,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                Icon(Icons.chevron_right_rounded, color: CheColors.textFaint),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
 
 class _Banner extends StatelessWidget {
   const _Banner({required this.text, required this.color});
