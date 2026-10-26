@@ -323,8 +323,9 @@ class _CheTradingRoomState extends State<CheTradingRoom> {
               label: const Text('P&L calendar and learning'),
             ),
           )),
+          // Collapsed under the calendar button: the ledgers are long; tap the box to open them.
           _fold('history', 'TRADE HISTORY', 'Simulation, paper journal and broker ledgers, each labelled',
-              CheTradingLedgersPanel(baseUrl: p.baseUrl, headers: p.headers, onAsk: p.onAsk, client: p.client), open: true),
+              CheTradingLedgersPanel(baseUrl: p.baseUrl, headers: p.headers, onAsk: p.onAsk, client: p.client)),
         ];
       case CheTradingSection.strategies:
         // The research dashboard first; limits, the registry and the historical study fold under it.
