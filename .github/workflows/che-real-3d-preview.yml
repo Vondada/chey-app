@@ -1,0 +1,58 @@
+name: CHE Real 3D Character Preview
+on:
+  workflow_dispatch:
+    inputs:
+      character:
+        description: Existing CHE crew character
+        required: true
+        type: choice
+        options: [che, atlas, knox, lyra, mira, nova, sage, iris]
+        default: che
+permissions:
+  contents: read
+jobs:
+  preview:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Blender and ffmpeg
+        timeout-minutes: 7
+        run: |
+          set -euo pipefail
+          timeout 360s sudo apt-get update -qq
+          timeout 180s sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends blender ffmpeg
+          blender --version | head -2
+      - name: Render actual GLB frames
+        timeout-minutes: 10
+        run: |
+          set -euo pipefail
+          blender -b -t 2 --python tools/che_character_video_preview.py -- --model "assets/characters/crew/${{ inputs.character }}.glb" --out rendered --frames 36
+          test "$(find rendered -name 'frame_*.png' | wc -l)" -eq 36
+      - name: Encode and independently probe MP4
+        timeout-minutes: 2
+        run: |
+          set -euo pipefail
+          ffmpeg -hide_banner -loglevel error -y -framerate 12 -i rendered/frame_%04d.png -c:v libx264 -pix_fmt yuv420p -movflags +faststart rendered/video.mp4
+          cp rendered/frame_0012.png rendered/thumbnail.png
+          ffprobe -v error -show_entries stream=codec_name,width,height -show_entries format=duration,size -of json rendered/video.mp4 | tee rendered/probe.json
+          test -s rendered/video.mp4
+          test -s rendered/thumbnail.png
+          python3 - <<'PY'
+          import json
+          d=json.load(open('rendered/probe.json'))
+          v=next(s for s in d['streams'] if s.get('codec_name')=='h264')
+          assert v['width']==360 and v['height']==640
+          assert float(d['format']['duration'])>=2.9
+          print('CHE_REAL_3D_VIDEO_VERIFIED', d['format']['duration'])
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: che-real-3d-${{ inputs.character }}-${{ github.run_id }}
+          path: |
+            rendered/video.mp4
+            rendered/thumbnail.png
+            rendered/scene_manifest.json
+            rendered/probe.json
+          if-no-files-found: error
+          retention-days: 30
