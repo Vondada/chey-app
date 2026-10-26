@@ -25,3 +25,12 @@ test('Cloudflare daily-allowance errors are recognised by kind, with the next 00
     assert.equal(cloudDailyLimit(new Error(other), now), null, other);
   }
 });
+
+test('a Flagstaff failure shows only a known category, never raw error text', async () => {
+  const { flagstaffFailureCause } = await import('./che_errors.js');
+  assert.equal(flagstaffFailureCause({ category: 'retryable_provider_error', message: 'token sk-secret' }), 'retryable_provider_error');
+  assert.equal(flagstaffFailureCause({ category: 'message_too_long' }), 'message_too_long');
+  assert.equal(flagstaffFailureCause(new Error('Upstream said: private owner note')), 'unclassified');
+  assert.equal(flagstaffFailureCause({ category: 'made_up' }), 'unclassified');
+  assert.equal(flagstaffFailureCause(null), 'unclassified');
+});
