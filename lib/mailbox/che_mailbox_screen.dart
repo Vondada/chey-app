@@ -12,6 +12,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../che_ui/che_hud.dart';
 import '../che_ui/che_theme.dart';
 import '../platform/che_platform_screens.dart';
+import 'che_fact_check.dart';
 import 'che_mail_time.dart';
 import 'che_message_split.dart';
 
@@ -306,9 +307,38 @@ class _CheMailboxScreenState extends State<CheMailboxScreen> {
               bottomRight: !fromChe || !last ? round : tail,
             ),
           ),
-          child: SelectableText(
-            text,
-            style: CheType.body.copyWith(color: fromChe ? CheColors.bg : CheColors.text),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              SelectableText(
+                text,
+                style: CheType.body.copyWith(color: fromChe ? CheColors.bg : CheColors.text),
+              ),
+              // CHE's own replies can be checked by any AI (owner, 2026-10-26): this copies the reply inside a fact-check
+              // request, so it can be pasted into Claude, ChatGPT or any other app. Nothing is sent by CHE.
+              if (fromChe)
+                Semantics(
+                  button: true,
+                  label: 'Copy this reply with a fact-check request',
+                  excludeSemantics: true,
+                  child: InkWell(
+                    onTap: () {
+                      Clipboard.setData(ClipboardData(text: cheFactCheckRequest(text)));
+                      HapticFeedback.selectionClick();
+                      ScaffoldMessenger.maybeOf(context)?.showSnackBar(const SnackBar(content: Text('Copied. Paste it into Claude, ChatGPT or any AI to fact-check CHE.')));
+                    },
+                    child: Padding(
+                      padding: const EdgeInsets.only(top: 6),
+                      child: Row(mainAxisSize: MainAxisSize.min, children: [
+                        Icon(Icons.fact_check_outlined, size: 16, color: CheColors.bg),
+                        const SizedBox(width: 4),
+                        Text('Copy to fact-check', style: CheType.label.copyWith(color: CheColors.bg)),
+                      ]),
+                    ),
+                  ),
+                ),
+            ],
           ),
         ),
       ),
