@@ -171,3 +171,17 @@ test('agent work ledger never persists owner secrets or provider error bodies', 
   assert.ok(!JSON.stringify(data.agent_work_log).includes('abcdefghijklmnop'));
   assert.equal(entry.agent, 'Mira');
 });
+
+test('a review that repeats the last one is recognised, so the repair loop stops', async () => {
+  const { sameReviewFeedback } = await import('./agent_runtime.js');
+  assert.equal(sameReviewFeedback('NEEDS WORK\n* Claim is unverified.', 'needs work\n* claim is   unverified.'), true);
+  assert.equal(sameReviewFeedback('NEEDS WORK\n* Claim is unverified.', 'NEEDS WORK\n* Missing the file name.'), false);
+  assert.equal(sameReviewFeedback('', 'NEEDS WORK'), false, 'no previous review is not a repeat');
+});
+
+test('an office agent is told never to invent files or records', async () => {
+  const { agentSystemPrompt } = await import('./agent_runtime.js');
+  const prompt = agentSystemPrompt({ name: 'Atlas', role: 'Engineer', personality: 'Steady and numerical.', messages: [] }, '');
+  assert.match(prompt, /Never list files, uploads, record IDs, dates or past results unless they appear in the supplied context/);
+  assert.match(prompt, /Steady and numerical\./, 'the personality is kept');
+});

@@ -48,6 +48,12 @@ export function retryDelayMs(attempt, base = 60_000, cap = 3_600_000) {
 }
 
 /** CHE's review verdict: 'approved', 'needs_work', or null when the review said neither. */
+/** True when a new review says what the last one said (case and spacing ignored): a repair that changed nothing. */
+export function sameReviewFeedback(previous, next) {
+  const norm = (text) => String(text || '').toLowerCase().replace(/\s+/g, ' ').trim();
+  return Boolean(norm(previous)) && norm(previous) === norm(next);
+}
+
 export function reviewVerdict(review) {
   const first = (String(review || '').trim().split('\n')[0] || '').replace(/^\W*(?:(?:CHE\s+)?(?:verdict|review|decision)\s*[:\-]\s*)/i, '');
   // "Not approved" is a rejection, whatever follows it.
@@ -1020,7 +1026,7 @@ export function meetingView(meeting) {
 
 // ─── Execution (called from the Durable Object alarm) ───────────────────
 
-function agentSystemPrompt(agent, extra) {
+export function agentSystemPrompt(agent, extra) {
   return [
     `You are ${agent.name}, an AI agent on CHE's Office team. CHE is the Office Boss and your manager; you never address the owner directly. Report to CHE, accept steering, and hand finished work back for CHE review.`,
     `Role: ${agent.role}. Specialty: ${agent.specialty || 'general specialist work'}.`,
@@ -1033,6 +1039,7 @@ function agentSystemPrompt(agent, extra) {
     'Use verified prior results as evidence when they are relevant. Compare patterns, combine compatible lessons, and explain why the combination makes sense.',
     'Never promote an unverified prior result, memory, estimate or hypothesis into a fact.',
     'If a task asks for a backtest, benchmark, live quote, account number or measured result, use only supplied tool/connector output. If none exists, give the test method and label it UNTESTED instead of inventing numbers.',
+    'Never list files, uploads, record IDs, dates or past results unless they appear in the supplied context. If nothing was supplied, say that nothing was supplied; do not make up a list.',
     'Never claim you searched the web, ran code, traded, paid, or contacted anyone. You only have your own reasoning here unless a connected result is included; label assumptions.',
     extra || '',
   ].filter(Boolean).join('\n');
@@ -1353,6 +1360,7 @@ async function reviewDelegatedResult(ctx, taskId, { saved = false } = {}) {
       'First line must be exactly APPROVED or NEEDS WORK.',
       'Then at most 3 short lines: what is solid, what is weak or unverified, what to do next.',
       'Do not invent facts. Unverifiable claims are weak. A claim that something was deployed, merged, sent, bought or published is unverified without a tool receipt.',
+      'Judge the work against the task only. Do not reject a result for how the agent describes its own role, nature, or knowledge cutoff.',
     ].join('\n'), JSON.stringify({ task: task.task, agent: agent.name, result, receipts: t0.receipts || [] }), 260);
   } catch (_) {
     review = '';
@@ -1420,7 +1428,9 @@ async function reviewDelegatedResult(ctx, taskId, { saved = false } = {}) {
 
   if (!approved) {
     const feedback = clip(verdict === 'needs_work' ? review : receiptNote, 1800);
-    if (Number(t2.revision_count || 0) < MAX_REPAIR_PASSES) {
+    // The same review twice means the repair changed nothing; sending it again would loop. Hold it for the owner.
+    const repeated = sameReviewFeedback(t2.review_feedback, feedback);
+    if (!repeated && Number(t2.revision_count || 0) < MAX_REPAIR_PASSES) {
       t2.prior_result = result;
       t2.review_feedback = feedback;
       t2.revision_count = Number(t2.revision_count || 0) + 1;
@@ -1436,7 +1446,9 @@ async function reviewDelegatedResult(ctx, taskId, { saved = false } = {}) {
     }
     t2.status = 'rejected';
     t2.review_feedback = feedback;
-    t2.error = `CHE did not approve this result after ${MAX_REPAIR_PASSES} repair passes. It is not complete.`;
+    t2.error = repeated
+      ? 'CHE gave the same review twice, so the repair was not sent again. It is held for the owner and is not complete.'
+      : `CHE did not approve this result after ${MAX_REPAIR_PASSES} repair passes. It is not complete.`;
     recordAgentWork(data, { task: t2, agent: a2 || agent, outcome: 'rejected', verified: false, error: t2.error });
     await reportRoomEvent(ctx, officeTaskEvent(t2, { agent: (a2 || agent)?.name, outcome: 'rejected', at: t2.updated_at }));
     if (a2) {
