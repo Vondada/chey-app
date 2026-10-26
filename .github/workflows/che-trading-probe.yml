@@ -11,8 +11,10 @@ on:
 permissions:
   contents: read
 
+# Shares the production deploy's group: the deploy writes CHE_VOICE_PROBE_TOKEN too,
+# so a probe must never run while a deploy is writing it.
 concurrency:
-  group: che-trading-probe
+  group: che-worker-deploy
   cancel-in-progress: false
 
 jobs:
