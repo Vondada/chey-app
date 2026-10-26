@@ -301,6 +301,9 @@ void main() {
   testWidgets('RESEARCH dashboard: real totals, coverage with real years, jobs, and controls that report their real result', (tester) async {
     final api = _Api();
     await _pump(tester, api, section: CheTradingSection.strategies);
+    // RESEARCH is a closed box until tapped (owner, 2026-10-26: small expandable boxes).
+    await tester.tap(find.byKey(const Key('fold_research')));
+    await tester.pumpAndSettle();
     expect(find.byType(CheTradingChart), findsNothing, reason: 'the chart is not built off its section');
     expect(find.bySemanticsLabel(RegExp(r'^7 strategies tested\. 46 strategy and timeframe buckets qualified\. 2418 backtest trades\. 312 forward paper trades\.$')), findsOneWidget);
     expect(find.bySemanticsLabel(RegExp(r'^MNQ daily data: 7\.4 years, from 2019-05-06')), findsOneWidget);
