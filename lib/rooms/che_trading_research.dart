@@ -437,23 +437,26 @@ class CheBestNowCard extends StatelessWidget {
         if (has) ...[
           Semantics(
         container: true,
-            label: 'Best now: ${b['name']}, ${researchTfSpoken(_str(b['timeframe']))}, ${researchWords(b['session'], 'any session')}. $evidence.${b['confidence'] == null ? '' : ' Confidence ${b['confidence']}.'}',
+            button: true,
+            label: 'Best now: ${b['name']}, ${researchTfSpoken(_str(b['timeframe']))}, ${researchWords(b['session'], 'any session')}. $evidence.${b['confidence'] == null ? '' : ' Confidence ${b['confidence']}.'} Tap to open.',
             excludeSemantics: true,
-            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            child: InkWell(
+              key: const Key('best_now_tap'),
+              borderRadius: BorderRadius.circular(8),
+              onTap: () => onOpen(_str(b['strategy_id'] ?? b['id']), _str(b['name'])),
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
               Text(_str(b['name']), style: const TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.w800)),
               const SizedBox(height: 2),
               Text(line, style: const TextStyle(color: Colors.white, fontSize: 16)),
               Text(evidence, style: const TextStyle(color: _gold, fontSize: 16, fontWeight: FontWeight.w700)),
               if (b['window'] != null) Text('Evidence window: ${b['window']}', style: const TextStyle(color: _dim, fontSize: 14)),
             ]),
+            ),
           ),
         ] else
-          Text(
-            // The Worker's own reason, which usually starts with this same sentence.
-            _str(data['best_now_reason']).startsWith('No strategy')
-                ? _str(data['best_now_reason'])
-                : 'No strategy currently meets your threshold.${data['best_now_reason'] == null ? '' : ' ${data['best_now_reason']}'}',
-            style: const TextStyle(color: Colors.white, fontSize: 17, fontWeight: FontWeight.w600),
+          const Text(
+            'No strategy.',
+            style: TextStyle(color: Colors.white, fontSize: 17, fontWeight: FontWeight.w600),
           ),
         const SizedBox(height: 8),
         Wrap(spacing: 8, children: [
