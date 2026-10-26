@@ -1,0 +1,65 @@
+name: Staging CHE Worker
+
+# Deploys server/cloudflare to a separate staging Worker (chey-app-staging) so
+# checks can run on a candidate before production. It has its own Durable
+# Object storage and receives no production secrets. Production is untouched:
+# che-worker-deploy.yml still deploys chey-app.
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - staging-worker
+    paths:
+      - "server/cloudflare/**"
+      - ".github/workflows/che-worker-staging.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: che-worker-staging
+  cancel-in-progress: false
+
+jobs:
+  staging:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: c49b395e8f1138b5fae36ab88222542c
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Worker tests
+        run: |
+          for f in server/cloudflare/*.js; do node --check "$f"; done
+          node --test server/cloudflare/*.test.mjs
+
+      - name: Deploy to the staging Worker
+        working-directory: server/cloudflare
+        run: npx --yes wrangler@4 deploy --name chey-app-staging --tag "${GITHUB_SHA::12}" --message "staging ${GITHUB_SHA::12}" --var "CHE_POOL_COMMIT:${GITHUB_SHA}"
+
+      - name: Verify the staging commit is live
+        env:
+          EXPECTED_TAG: ${{ github.sha }}
+        run: |
+          node --input-type=module <<'JS'
+          const expected = process.env.EXPECTED_TAG.slice(0, 12);
+          const base = 'https://chey-app-staging.henryjavoni.workers.dev';
+          for (let attempt = 0; attempt < 10; attempt++) {
+            try {
+              const response = await fetch(`${base}/health`, { signal: AbortSignal.timeout(10000) });
+              const health = await response.json();
+              if (response.ok && health.ok && health.version_tag === expected) {
+                console.log(`Verified staging CHE commit ${expected}, version ${health.version_id}`);
+                process.exit(0);
+              }
+            } catch { /* propagation or a transient error */ }
+            await new Promise(resolve => setTimeout(resolve, 3000));
+          }
+          throw new Error(`Staging CHE did not confirm commit ${expected}`);
+          JS
