@@ -165,8 +165,14 @@ class _CheTradingChartExpandedPageState extends State<CheTradingChartExpandedPag
                   iconColor: Colors.white,
                   collapsedIconColor: Colors.white70,
                   title: Text(cheMarkerTitle(m), maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.w700)),
-                  subtitle: Text(
-                    [if (m.strategy.isNotEmpty) m.strategy, if (m.raw['r'] is num) '${(m.raw['r'] as num).toStringAsFixed(2)} R', if (m.raw['net_pnl'] is num) _money((m.raw['net_pnl'] as num).toDouble())].join(' · '),
+                  subtitle: Text.rich(
+                    TextSpan(children: [
+                      // The net P&L is coloured on its own; the strategy and R multiple keep the label colour.
+                      for (var i = 0; i < subtitleParts.length; i++) ...[
+                        if (i > 0) const TextSpan(text: ' · '),
+                        subtitleParts[i],
+                      ],
+                    ]),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: CheHud.label.copyWith(fontSize: 11),
