@@ -16,6 +16,7 @@ import 'package:flutter/services.dart';
 
 import '../che_ui/che_agents.dart';
 import 'che_crew_pager.dart';
+import '../che_ui/che_progress_bar.dart';
 import '../che_ui/che_chrome_status.dart';
 import '../che_ui/che_hud.dart';
 import '../che_ui/che_rooms.dart';
@@ -981,7 +982,7 @@ class _MeetingTile extends StatelessWidget {
               maxLines: 1, overflow: TextOverflow.ellipsis, style: CheType.caption),
           if (meeting.live) ...[
             const SizedBox(height: 6),
-            LinearProgressIndicator(value: meeting.progress, color: amber, backgroundColor: CheColors.stroke),
+            CheProgressBar(value: meeting.progress, color: amber, background: CheColors.stroke, height: 6),
           ],
           Align(
             alignment: Alignment.centerLeft,
@@ -1319,13 +1320,7 @@ class _AgentDeskSheetState extends State<_AgentDeskSheet> {
                 child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                   Text('VERIFIED PRODUCTIVITY', style: cheOfficeLabel(CheType.overline.copyWith(color: CheColors.accent))),
                   const SizedBox(height: 6),
-                  LinearProgressIndicator(
-                    value: progress,
-                    minHeight: 7,
-                    color: a.color,
-                    backgroundColor: CheColors.stroke,
-                    borderRadius: BorderRadius.circular(99),
-                  ),
+                  CheProgressBar(value: progress, color: a.color, background: CheColors.stroke),
                   const SizedBox(height: 6),
                   Text(progress == null ? 'Current state: ${_workflowStateLabel(d)}. No measured percent yet.' : '${(progress * 100).round()}% done', style: CheType.label),
                   Text(_verifiedOutputLine(d), style: CheType.caption),

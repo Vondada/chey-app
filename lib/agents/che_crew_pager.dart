@@ -93,7 +93,9 @@ class _ProfileCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final task = agent.task?.isNotEmpty == true ? agent.task! : 'No task right now.';
+    // The real job the member is on, in words (owner, 2026-10-26); idle members say so.
+    final hasTask = agent.task?.isNotEmpty == true;
+    final task = hasTask ? 'Working on: ${agent.task}' : 'Idle. No job right now.';
     return Semantics(
       container: true,
       label: '${agent.name}, ${agent.role}, ${agent.status.label}. $task',
