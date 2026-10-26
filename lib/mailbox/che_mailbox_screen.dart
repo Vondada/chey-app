@@ -263,7 +263,7 @@ class _CheMailboxScreenState extends State<CheMailboxScreen> {
   /// One message as iMessage-style bubbles: CHE on the right in her teal,
   /// the other AI on the left in a dark grey. A long message becomes several
   /// bubbles in order; the name and time sit above the first bubble only.
-  Widget _message(Map m) {
+  Widget _message(Map m, List<Map> thread) {
     final fromChe = '${m['from']}' == 'che';
     // Who typed it (owner, 2026-10-26): the owner's own messages, CHE's automated ones, and other AIs read differently.
     final typedByOwner = '${m['source']}' == 'owner';
@@ -280,6 +280,29 @@ class _CheMailboxScreenState extends State<CheMailboxScreen> {
             child: Text('$who · ${cheMailWhen(m)}', style: CheType.caption),
           ),
           for (var i = 0; i < parts.length; i++) _bubble(m, fromChe, parts[i], i, parts.length, typedByOwner: typedByOwner),
+          if (cheFactCheckStatus(thread, m) != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 4, right: 6, left: 6),
+              child: Semantics(
+                label: 'Fact-check: ${cheFactCheckStatus(thread, m)}',
+                child: Text(cheFactCheckStatus(thread, m)!, style: CheType.caption.copyWith(color: CheColors.textDim)),
+              ),
+            ),
+          if (cheVerdictFor(thread, m) case final verdict?)
+            Container(
+              key: Key('verdict_${verdict['id'] ?? ''}'),
+              margin: const EdgeInsets.only(top: 6),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              constraints: BoxConstraints(maxWidth: MediaQuery.sizeOf(context).width * 0.72),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: CheColors.accentAlt.withValues(alpha: 0.5)),
+              ),
+              child: Semantics(
+                label: "Claude's fact-check: ${verdict['text']}",
+                child: SelectableText("Claude's fact-check: ${verdict['text']}", style: CheType.body.copyWith(color: CheColors.text)),
+              ),
+            ),
         ],
       ),
     );
@@ -327,7 +350,7 @@ class _CheMailboxScreenState extends State<CheMailboxScreen> {
                   label: 'Send this reply to Claude to fact-check',
                   excludeSemantics: true,
                   child: InkWell(
-                    onTap: () => _sendForFactCheck(text),
+                    onTap: () => _sendForFactCheck(text, '${m['id'] ?? ''}'),
                     child: Padding(
                       padding: const EdgeInsets.only(top: 6),
                       child: Row(mainAxisSize: MainAxisSize.min, children: [
@@ -358,21 +381,12 @@ class _CheMailboxScreenState extends State<CheMailboxScreen> {
     return {for (final e in ordered) e.key: e.value};
   }
 
-  /// Posts one CHE reply to Claude's thread with the fact-check request, through the mailbox route the Worker already has.
-  Future<void> _sendForFactCheck(String reply) async {
+  /// Posts one CHE reply to Claude's thread with the fact-check request, through the shared sender.
+  Future<void> _sendForFactCheck(String reply, String messageId) async {
     final messenger = ScaffoldMessenger.maybeOf(context);
     HapticFeedback.selectionClick();
-    try {
-      final res = await http.post(
-        Uri.parse('${widget.baseUrl}/api/mailbox'),
-        headers: {...widget.headers(), 'Content-Type': 'application/json'},
-        body: jsonEncode({'to': 'claude', 'text': cheFactCheckRequest(reply)}),
-      );
-      final sent = res.statusCode >= 200 && res.statusCode < 300;
-      messenger?.showSnackBar(SnackBar(content: Text(sent ? 'Sent to Claude for a fact-check. The verdicts come back in the mailbox.' : 'Not sent (${res.statusCode}). Try again.')));
-    } catch (_) {
-      messenger?.showSnackBar(const SnackBar(content: Text('Not sent: no connection to CHE. Try again.')));
-    }
+    final result = await cheSendFactCheck(baseUrl: widget.baseUrl, headers: widget.headers(), reply: reply, messageId: messageId);
+    messenger?.showSnackBar(SnackBar(content: Text(result)));
   }
 
   String _nice(String peer) => peer.isEmpty ? 'Unknown' : '${peer[0].toUpperCase()}${peer.substring(1)}';
@@ -404,7 +418,7 @@ class _CheMailboxScreenState extends State<CheMailboxScreen> {
           child: ListView(
             reverse: true,
             padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-            children: thread.reversed.map(_message).toList(),
+            children: thread.reversed.map((m) => _message(m, thread)).toList(),
           ),
         ),
       ]);
@@ -555,7 +569,7 @@ class _CheMailboxScreenState extends State<CheMailboxScreen> {
                 children: [
                   Padding(
                     padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-                    child: Column(children: messages.map(_message).toList()),
+                    child: Column(children: messages.map((m) => _message(m, messages)).toList()),
                   ),
                 ],
               ),
