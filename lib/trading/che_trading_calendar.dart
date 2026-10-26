@@ -10,6 +10,7 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 
 import '../che_ui/che_calendar_grid.dart';
+import '../che_ui/che_money_color.dart';
 import '../rooms/che_strategy_learning.dart';
 import 'che_trade_replay.dart';
 
@@ -152,18 +153,20 @@ class _CheTradingCalendarPageState extends State<CheTradingCalendarPage> {
         ]),
         const SizedBox(height: 6),
         if (v != null) Text('${v['note']}', style: const TextStyle(color: Colors.white70, fontSize: 14)),
-        if (v != null) Text('${v['basis_label']} · break-even band ±${cheCalendarAmount(_map(v['break_even'])['within'], unit).substring(1)}', style: const TextStyle(color: Colors.white54, fontSize: 13)),
+        if (v != null) Text('${v['basis_label']} · break-even band ±${cheCalendarAmount(_map(v['break_even'])['within'], unit).substring(1)}', style: const TextStyle(color: cheMoneyGray, fontSize: 13)),
         CheMonthNav(month: _month.isEmpty ? '${v?['month'] ?? ''}' : _month, onPrev: () => _shift('prev'), onNext: () => _shift('next')),
         if (_loading) const Padding(padding: EdgeInsets.all(24), child: Center(child: CircularProgressIndicator())),
         if (_error.isNotEmpty) Text(_error, key: const Key('calendar_error'), style: const TextStyle(color: cheCalendarRed, fontSize: 16)),
         if (!_loading && v != null) ...[
-          Text(_summary(), key: const Key('calendar_summary'), style: const TextStyle(color: Colors.white, fontSize: 17, fontWeight: FontWeight.w600)),
+          Text(_summary(), key: const Key('calendar_summary'), style: TextStyle(color: cheMoneyColor(_map(v['totals'])['net']), fontSize: 17, fontWeight: FontWeight.w600)),
           const SizedBox(height: 8),
           CheCalendarGrid(
             weeks: weeks,
             cellText: (d) => v['source'] == 'broker' && (d['trades'] ?? 0) == 0
                 ? ((d['orders'] ?? 0) == 0 ? '' : '${d['orders']} ord')
                 : ((d['trades'] ?? 0) == 0 ? '' : '${cheCalendarAmount(d['net'], unit, short: true)}\n${d['trades']}t'),
+            // Net money in a day cell takes the sign colour; the order count on a broker day with no fill stays plain.
+            cellTextColor: (d) => (d['trades'] ?? 0) == 0 ? null : cheMoneyColor(d['net']),
             cellLabel: (d) => v['source'] == 'broker' && (d['trades'] ?? 0) == 0
                 ? '${cheDayLabel('${d['date']}')}: ${d['orders'] ?? 0} broker paper orders, no closing fill.'
                 : (d['trades'] ?? 0) == 0
@@ -181,7 +184,7 @@ class _CheTradingCalendarPageState extends State<CheTradingCalendarPage> {
                   child: Padding(
                     padding: const EdgeInsets.symmetric(vertical: 3),
                     child: Text('Week of ${cheDayLabel('${cheCalendarRows(w['days']).first['date']}')}: ${cheCalendarAmount(w['net'], unit)} · ${w['trades']} trades · ${w['wins']}W ${w['losses']}L · ${w['win_rate']}%',
-                        style: TextStyle(color: cheCalendarColor((w['net'] is num && (w['net'] as num) < 0) ? 'red' : 'green'), fontSize: 15)),
+                        style: TextStyle(color: cheMoneyColor(w['net']), fontSize: 15)),
                   ),
                 ),
           if ((v['duplicates_not_counted'] ?? 0) > 0)
@@ -280,18 +283,18 @@ class _CheTradingDayPageState extends State<CheTradingDayPage> {
       body: v == null
           ? Center(child: _error.isEmpty ? const CircularProgressIndicator() : Text(_error, style: const TextStyle(color: cheCalendarRed, fontSize: 16)))
           : ListView(padding: const EdgeInsets.all(12), children: [
-              Text(_spoken(), key: const Key('day_summary'), style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w700)),
+              Text(_spoken(), key: const Key('day_summary'), style: TextStyle(color: cheMoneyColor(_map(v['totals'])['net']), fontSize: 18, fontWeight: FontWeight.w700)),
               if (v['source'] != 'broker' && audit.isNotEmpty)
                 Text('Audit: ${audit['rows']} rows add up to ${cheCalendarAmount(audit['sum'], unit)}; ${audit['duplicates_not_counted']} duplicates not counted. '
                     'By the ${_map(audit['other_basis'])['basis'] == 'cme' ? 'CME trading day' : 'calendar day'}: ${_map(audit['other_basis'])['rows']} rows, ${cheCalendarAmount(_map(audit['other_basis'])['sum'], unit)}.',
-                    key: const Key('day_audit'), style: const TextStyle(color: Colors.white70, fontSize: 14)),
+                    key: const Key('day_audit'), style: TextStyle(color: cheMoneyColor(audit['sum']), fontSize: 14)),
               for (final o in cheCalendarRows(v['orders']))
                 ListTile(title: Text('${o['side']} ${o['qty']} ${o['symbol']} (${o['type']})', style: const TextStyle(color: Colors.white)), subtitle: Text('${o['status']} · ${o['at']}', style: const TextStyle(color: Colors.white70))),
               if (cheCalendarRows(v['strategies']).isNotEmpty) ...[
                 const SizedBox(height: 10),
                 Semantics(header: true, child: const Text('Strategies', style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w800))),
                 for (final s in cheCalendarRows(v['strategies']))
-                  Text('${s['strategy']}: ${s['trades']} trades, ${s['wins']}W ${s['losses']}L, ${cheCalendarAmount(s['net'], unit)}', style: const TextStyle(color: Colors.white, fontSize: 15)),
+                  Text('${s['strategy']}: ${s['trades']} trades, ${s['wins']}W ${s['losses']}L, ${cheCalendarAmount(s['net'], unit)}', style: TextStyle(color: cheMoneyColor(s['net']), fontSize: 15)),
               ],
               if (trades.isNotEmpty) ...[
                 const SizedBox(height: 10),
@@ -305,7 +308,7 @@ class _CheTradingDayPageState extends State<CheTradingDayPage> {
                       title: Text('${t['symbol']} ${t['side']} · ${t['strategy']}', style: const TextStyle(color: Colors.white, fontSize: 16)),
                       subtitle: Text('${t['entry_time']} → ${t['exit_time']} · ${t['exit_reason'] ?? ''} · ${t['evidence_label'] ?? ''}\nID ${t['id']}', style: const TextStyle(color: Colors.white70, fontSize: 13)),
                       trailing: Text(unit == 'R' ? cheCalendarAmount(t['r'], 'R') : cheCalendarAmount(t['net'], 'USD'),
-                          style: TextStyle(color: cheCalendarColor(t['result'] == 'win' ? 'green' : t['result'] == 'loss' ? 'red' : 'yellow'), fontSize: 16, fontWeight: FontWeight.w700)),
+                          style: TextStyle(color: cheMoneyColor(unit == 'R' ? t['r'] : t['net']), fontSize: 16, fontWeight: FontWeight.w700)),
                     ),
                   ),
               ],

@@ -752,22 +752,24 @@ class CheAccountsSummaryPanel extends StatelessWidget {
   final String cheError;
 
   Widget _card(CheAccountSummary? s, CheAccountKind kind) {
+    // Balances have no starting balance on this card to compare with, so they stay gray.
+    // A drawdown is a loss amount: any value above zero is red.
     final rows = s == null
-        ? <(String, String)>[('Status', cheError.isEmpty ? 'Loading' : cheError)]
-        : <(String, String)>[
-            ('Current balance', s.balance == null ? (kind == CheAccountKind.mine ? 'not connected' : 'not set') : cheMoney(s.balance)),
-            ('Available balance', s.available == null ? (kind == CheAccountKind.mine ? 'not connected' : 'not set') : cheMoney(s.available)),
-            ('Equity', s.equity == null ? (kind == CheAccountKind.mine ? 'not connected' : 'not set') : cheMoney(s.equity)),
-            ('Realized P&L', cheMoney(s.realized)),
-            ('Unrealized P&L', cheMoney(s.unrealized)),
-            ('Open positions', '${s.openPositions ?? 'unknown'}'),
-            ('Win rate', _pct(s.winRate)),
-            ('Average win', cheMoney(s.avgWin)),
-            ('Average loss', cheMoney(s.avgLoss)),
-            ('Maximum drawdown', cheMoney(s.maxDrawdown)),
-            ('Current daily risk', cheMoney(s.dailyRisk)),
-            ('Active setups', '${s.activeSetups ?? (kind == CheAccountKind.mine ? 'not tracked' : 'unknown')}'),
-            ('Active trades', '${s.activeTrades ?? 'unknown'}'),
+        ? <(String, String, Color)>[('Status', cheError.isEmpty ? 'Loading' : cheError, Colors.white)]
+        : <(String, String, Color)>[
+            ('Current balance', s.balance == null ? (kind == CheAccountKind.mine ? 'not connected' : 'not set') : cheMoney(s.balance), cheMoneyGray),
+            ('Available balance', s.available == null ? (kind == CheAccountKind.mine ? 'not connected' : 'not set') : cheMoney(s.available), cheMoneyGray),
+            ('Equity', s.equity == null ? (kind == CheAccountKind.mine ? 'not connected' : 'not set') : cheMoney(s.equity), cheMoneyGray),
+            ('Realized P&L', cheMoney(s.realized), cheMoneyColor(s.realized)),
+            ('Unrealized P&L', cheMoney(s.unrealized), cheMoneyColor(s.unrealized)),
+            ('Open positions', '${s.openPositions ?? 'unknown'}', Colors.white),
+            ('Win rate', _pct(s.winRate), Colors.white),
+            ('Average win', cheMoney(s.avgWin), cheMoneyColor(s.avgWin)),
+            ('Average loss', cheMoney(s.avgLoss), cheMoneyColor(s.avgLoss)),
+            ('Maximum drawdown', cheMoney(s.maxDrawdown), (s.maxDrawdown ?? 0) > 0 ? CheEnergy.red : cheMoneyGray),
+            ('Current daily risk', cheMoney(s.dailyRisk), cheMoneyGray),
+            ('Active setups', '${s.activeSetups ?? (kind == CheAccountKind.mine ? 'not tracked' : 'unknown')}', Colors.white),
+            ('Active trades', '${s.activeTrades ?? 'unknown'}', Colors.white),
           ];
     return Container(
       key: Key('sbs_summary_${kind.name}'),
@@ -784,7 +786,7 @@ class CheAccountsSummaryPanel extends StatelessWidget {
               padding: const EdgeInsets.only(bottom: 3),
               child: Row(children: [
                 Expanded(child: Text(r.$1, style: const TextStyle(color: _dim, fontSize: 13))),
-                Text(r.$2, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 13, fontFeatures: [FontFeature.tabularFigures()])),
+                Text(r.$2, style: TextStyle(color: r.$3, fontWeight: FontWeight.w700, fontSize: 13, fontFeatures: const [FontFeature.tabularFigures()])),
               ]),
             ),
           ),
@@ -994,18 +996,30 @@ class CheLiveOrderPreviewPageState extends State<CheLiveOrderPreviewPage> {
     final t = _previewed;
     final live = CheAccountKind.live;
     final rows = t == null
-        ? const <(String, String)>[]
-        : <(String, String)>[
-            ('Account', '${live.label} · ${t.accountName}'),
-            ('Contract', t.contract),
-            ('Side', t.side.toUpperCase()),
-            ('Quantity', '${t.qty}'),
-            ('Entry', _price(t.entry)),
-            ('Stop', _price(t.stop)),
-            ('Target', _price(t.target)),
-            ('Dollar risk', '${cheMoney(t.dollarRisk)} (at the stop, before fees and slippage)'),
-            ('Reward to risk', t.riskReward == null ? 'unknown' : '${t.riskReward!.toStringAsFixed(2)} to 1'),
-            ('Estimated fees', '${cheMoney(t.estimatedFees)} round turn (an estimate; your firm\'s fees may differ)'),
+        ? const <(String, InlineSpan)>[]
+        : <(String, InlineSpan)>[
+            ('Account', _val('${live.label} · ${t.accountName}')),
+            ('Contract', _val(t.contract)),
+            ('Side', _val(t.side.toUpperCase())),
+            ('Quantity', _val('${t.qty}')),
+            ('Entry', _val(_price(t.entry))),
+            ('Stop', _val(_price(t.stop))),
+            ('Target', _val(_price(t.target))),
+            (
+              'Dollar risk',
+              TextSpan(children: [
+                _val(cheMoney(t.dollarRisk), cheMoneyGray),
+                _val(' (at the stop, before fees and slippage)'),
+              ]),
+            ),
+            ('Reward to risk', _val(t.riskReward == null ? 'unknown' : '${t.riskReward!.toStringAsFixed(2)} to 1')),
+            (
+              'Estimated fees',
+              TextSpan(children: [
+                _val(cheMoney(t.estimatedFees), cheMoneyGray),
+                _val(' round turn (an estimate; your firm\'s fees may differ)'),
+              ]),
+            ),
           ];
     return Scaffold(
       backgroundColor: const Color(0xFF05080A),
@@ -1057,13 +1071,13 @@ class CheLiveOrderPreviewPageState extends State<CheLiveOrderPreviewPage> {
           ),
           for (final r in rows)
             Semantics(
-              label: '${r.$1}: ${r.$2}',
+              label: '${r.$1}: ${r.$2.toPlainText()}',
               excludeSemantics: true,
               child: Padding(
                 padding: const EdgeInsets.only(top: 6),
                 child: Text.rich(TextSpan(children: [
                   TextSpan(text: '${r.$1}: ', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800)),
-                  TextSpan(text: r.$2, style: const TextStyle(color: _dim)),
+                  r.$2,
                 ])),
               ),
             ),

@@ -32,7 +32,7 @@ String cheDayLabel(String date) {
 List<Map<String, dynamic>> cheCalendarRows(Object? v) => v is List ? v.whereType<Map>().map((m) => Map<String, dynamic>.from(m)).toList() : [];
 
 class CheCalendarGrid extends StatelessWidget {
-  const CheCalendarGrid({super.key, required this.weeks, required this.cellText, required this.cellLabel, required this.onTapDay});
+  const CheCalendarGrid({super.key, required this.weeks, required this.cellText, required this.cellLabel, required this.onTapDay, this.cellTextColor});
 
   final List<Map<String, dynamic>> weeks;
 
@@ -42,6 +42,9 @@ class CheCalendarGrid extends StatelessWidget {
   /// The whole cell read by VoiceOver: date, result and count.
   final String Function(Map<String, dynamic> day) cellLabel;
   final void Function(String date) onTapDay;
+
+  /// The colour of a cell's text when that text is a money figure (sign colours); null keeps the day's own colour.
+  final Color? Function(Map<String, dynamic> day)? cellTextColor;
 
   @override
   Widget build(BuildContext context) {
@@ -56,7 +59,7 @@ class CheCalendarGrid extends StatelessWidget {
       final lead = i == 0 && first != null ? first.weekday - 1 : 0;
       final cells = <Widget>[for (var k = 0; k < lead; k++) const Expanded(child: SizedBox())];
       for (final d in days) {
-        cells.add(Expanded(child: _Cell(day: d, text: cellText(d), label: cellLabel(d), onTap: () => onTapDay('${d['date']}'))));
+        cells.add(Expanded(child: _Cell(day: d, text: cellText(d), textColor: cellTextColor?.call(d), label: cellLabel(d), onTap: () => onTapDay('${d['date']}'))));
       }
       while (cells.length < 7) {
         cells.add(const Expanded(child: SizedBox()));
@@ -68,9 +71,10 @@ class CheCalendarGrid extends StatelessWidget {
 }
 
 class _Cell extends StatelessWidget {
-  const _Cell({required this.day, required this.text, required this.label, required this.onTap});
+  const _Cell({required this.day, required this.text, required this.textColor, required this.label, required this.onTap});
   final Map<String, dynamic> day;
   final String text;
+  final Color? textColor;
   final String label;
   final VoidCallback onTap;
 
@@ -98,7 +102,7 @@ class _Cell extends StatelessWidget {
             ),
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
               Text(date.length >= 10 ? '${int.tryParse(date.substring(8)) ?? date.substring(8)}' : date, style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w700)),
-              if (text.isNotEmpty) Text(text, maxLines: 2, overflow: TextOverflow.ellipsis, style: TextStyle(color: color ?? Colors.white70, fontSize: 12, fontWeight: FontWeight.w600, height: 1.15)),
+              if (text.isNotEmpty) Text(text, maxLines: 2, overflow: TextOverflow.ellipsis, style: TextStyle(color: textColor ?? color ?? Colors.white70, fontSize: 12, fontWeight: FontWeight.w600, height: 1.15)),
             ]),
           ),
         ),

@@ -17,6 +17,7 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 
 import '../che_ui/che_hud.dart';
+import '../che_ui/che_money_color.dart';
 import '../rooms/che_trading_hud.dart';
 
 const _dim = Color(0xFFB8C2CC);
@@ -534,7 +535,8 @@ class _CheTradeReplayPageState extends State<CheTradeReplayPage> {
             padding: const EdgeInsets.symmetric(vertical: 4),
             child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
               SizedBox(width: 118, child: Text(k, style: const TextStyle(color: _dim, fontSize: 13.5))),
-              Expanded(child: Text(v, style: const TextStyle(color: Colors.white, fontSize: 13.5))),
+              // The outcome cell carries the trade's net money, so it takes the profit, loss or break-even color.
+              Expanded(child: Text(v, style: TextStyle(color: k == 'Outcome' ? cheMoneyColor(e.net) : Colors.white, fontSize: 13.5))),
             ]),
           ),
         ),

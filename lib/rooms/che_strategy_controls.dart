@@ -14,6 +14,7 @@ import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 
 import '../che_ui/che_help.dart';
+import '../che_ui/che_money_color.dart';
 import '../che_ui/che_theme.dart';
 
 const _up = Color(0xFF3DDC97);
@@ -387,7 +388,7 @@ class _CheStrategyControlsPanelState extends State<CheStrategyControlsPanel> {
       Expanded(child: Text(label, style: TextStyle(color: _dim, fontSize: 13))),
       Semantics(button: true, label: 'Decrease $label for $who, now $n', excludeSemantics: true,
           child: IconButton(tooltip: 'Decrease $label', onPressed: _busy || n <= lo ? null : () => set(n - step), icon: const Icon(Icons.remove_circle_outline, color: Colors.white))),
-      Semantics(label: '$label: $n', excludeSemantics: true, child: SizedBox(width: 56, child: Text('$n', textAlign: TextAlign.center, style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w700)))),
+      Semantics(label: '$label: $n', excludeSemantics: true, child: SizedBox(width: 56, child: Text('$n', textAlign: TextAlign.center, style: TextStyle(color: field == 'max_daily_loss' ? cheMoneyGray : Colors.white, fontSize: 16, fontWeight: FontWeight.w700)))),
       Semantics(button: true, label: 'Increase $label for $who, now $n', excludeSemantics: true,
           child: IconButton(tooltip: 'Increase $label', onPressed: _busy || n >= hi ? null : () => set(n + step), icon: const Icon(Icons.add_circle_outline, color: Colors.white))),
     ]));

@@ -13,6 +13,7 @@ import 'package:http/http.dart' as http;
 
 import '../che_app_portal.dart';
 import '../che_ui/che_hud.dart';
+import '../che_ui/che_money_color.dart';
 import '../che_ui/che_rooms.dart';
 import '../che_ui/che_theme.dart';
 import '../widgets/che_native_scene_world.dart';
@@ -749,14 +750,15 @@ class _LiveAccountCard extends StatelessWidget {
           const SizedBox(height: 6),
           Text(
             live ? money(primary, currency) : '—',
-            style: CheType.display.copyWith(fontSize: 38, color: Colors.white, fontWeight: FontWeight.w800),
+            // Balance and equity have no starting figure here to compare with, so they are neutral gray.
+            style: CheType.display.copyWith(fontSize: 38, color: cheMoneyGray, fontWeight: FontWeight.w800),
           ),
           if (accountName.isNotEmpty) Text(accountName, style: CheType.bodyDim),
           if (live) ...[
             const SizedBox(height: CheSpace.sm),
             Wrap(spacing: 18, runSpacing: 6, children: [
-              Text('Balance ${money(a?['balance'], currency)}', style: CheType.caption),
-              Text('Buying power ${money(a?['buying_power'], currency)}', style: CheType.caption),
+              Text('Balance ${money(a?['balance'], currency)}', style: CheType.caption.copyWith(color: cheMoneyGray)),
+              Text('Buying power ${money(a?['buying_power'], currency)}', style: CheType.caption.copyWith(color: cheMoneyGray)),
             ]),
           ] else ...[
             const SizedBox(height: 4),

@@ -123,11 +123,11 @@ class _CheTradingChartExpandedPageState extends State<CheTradingChartExpandedPag
                   '${stats.wins} wins, ${stats.losses} losses, ${stats.open} open.',
               excludeSemantics: true,
               child: Row(children: [
-                for (final (k, v) in [
-                  ('P&L', _money(stats.netPnl)),
-                  ('WIN RATE', stats.winRate == null ? '—' : '${stats.winRate!.toStringAsFixed(0)}%'),
-                  ('W / L', '${stats.wins} / ${stats.losses}'),
-                  ('OPEN', '${stats.open}'),
+                for (final (k, v, c) in [
+                  ('P&L', _money(stats.netPnl), cheMoneyColor(stats.netPnl)),
+                  ('WIN RATE', stats.winRate == null ? '—' : '${stats.winRate!.toStringAsFixed(0)}%', Colors.white),
+                  ('W / L', '${stats.wins} / ${stats.losses}', Colors.white),
+                  ('OPEN', '${stats.open}', Colors.white),
                 ])
                   Expanded(
                     child: Padding(
@@ -140,7 +140,7 @@ class _CheTradingChartExpandedPageState extends State<CheTradingChartExpandedPag
                           FittedBox(
                             fit: BoxFit.scaleDown,
                             alignment: Alignment.centerLeft,
-                            child: Text(v, style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w800, fontFeatures: [FontFeature.tabularFigures()])),
+                            child: Text(v, style: TextStyle(color: c, fontSize: 16, fontWeight: FontWeight.w800, fontFeatures: const [FontFeature.tabularFigures()])),
                           ),
                         ]),
                       ),
