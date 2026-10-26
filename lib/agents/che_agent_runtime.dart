@@ -12,6 +12,7 @@ import 'package:flutter/widgets.dart' show AppLifecycleState, WidgetsBinding, Wi
 import 'package:http/http.dart' as http;
 
 import '../che_ui/che_agents.dart';
+import 'che_office_conversation.dart';
 
 class CheAgentRuntimeException implements Exception {
   const CheAgentRuntimeException(this.message);
@@ -599,6 +600,15 @@ class CheAgentRuntimeClient {
     final j = await _send('POST', '/api/autonomy', {'enabled': false});
     if (j['autonomy'] == true) throw const CheAgentRuntimeException('CHE could not confirm the Office stood down.');
     return 'CHE here. Office standing down. ${j['reply'] ?? ''}'.trim();
+  }
+
+  /// The full conversation record for one agent or one task: GET /api/office/conversation. Read only.
+  Future<CheOfficeConversation> conversation({String? agentId, String? taskId}) async {
+    final query = agentId != null
+        ? 'agent_id=${Uri.encodeQueryComponent(agentId)}'
+        : 'task_id=${Uri.encodeQueryComponent(taskId ?? '')}';
+    final j = await _send('GET', '/api/office/conversation?$query');
+    return CheOfficeConversation.fromResponse(j);
   }
 
   Future<CheAgentDetail> agent(String id) async {

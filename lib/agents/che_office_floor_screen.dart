@@ -22,6 +22,8 @@ import '../che_ui/che_theme.dart';
 import '../che_ui/che_voice_actions.dart';
 import '../rooms/che_characters_room.dart';
 import 'che_agent_runtime.dart';
+import 'che_office_conversation.dart';
+import 'che_office_conversation_screen.dart';
 import 'che_office_glass.dart';
 import 'che_office_store.dart';
 
@@ -1225,6 +1227,38 @@ class _AgentDeskSheetState extends State<_AgentDeskSheet> {
 
   bool get _isChe => _agentId == 'che';
 
+  /// The six-state status of this agent's current work, from its real task records: the open task if any,
+  /// otherwise the newest task. Null when no task is recorded.
+  CheOfficeState? _headlineState(CheAgentDetail d) {
+    final open = d.history.where((t) => t.inProgress || t.status == 'needs_review' || t.status == 'blocked');
+    final pick = open.isNotEmpty ? open.first : (d.history.isNotEmpty ? d.history.first : null);
+    if (pick == null) return null;
+    return cheOfficeStateForTaskStatus(pick.status, verified: pick.verifiedByChe);
+  }
+
+  /// Opens the full-screen conversation for this agent, or for one of its tasks. Read only.
+  Future<void> _openConversation({String? taskId}) async {
+    if (_isChe) return;
+    final agentId = _agentId;
+    try {
+      final first = taskId != null
+          ? await widget.client.conversation(taskId: taskId)
+          : await widget.client.conversation(agentId: agentId);
+      if (!mounted) return;
+      await Navigator.of(context).push(MaterialPageRoute<void>(
+        builder: (routeContext) => CheOfficeConversationScreen(
+          conversation: first,
+          onRefresh: () => taskId != null
+              ? widget.client.conversation(taskId: taskId)
+              : widget.client.conversation(agentId: agentId),
+          onReadAloud: (text) => unawaited(cheReadAloud(routeContext, text, widget.onSpeak)),
+        ),
+      ));
+    } catch (e) {
+      if (mounted) setState(() => _error = 'Could not open the conversation: $e');
+    }
+  }
+
   Future<void> _switchAgent(int delta) async {
     if (widget.agentIds.length < 2 || _working) return;
     final next = (_agentIndex + delta).clamp(0, widget.agentIds.length - 1);
@@ -1359,11 +1393,12 @@ class _AgentDeskSheetState extends State<_AgentDeskSheet> {
                         Text(a.name, maxLines: 1, overflow: TextOverflow.ellipsis, style: CheType.title.copyWith(color: Colors.white)),
                         Text(a.role, maxLines: 1, overflow: TextOverflow.ellipsis, style: CheType.label.copyWith(color: Colors.white70)),
                         const SizedBox(height: CheSpace.xs),
-                        Text(a.status.label + (a.task != null ? ' • ${cheShortSummary(a.task!)}' : ''),
+                        Text(
+                            (_headlineState(d)?.label ?? a.status.label) + (a.task != null ? ' • ${cheShortSummary(a.task!)}' : ''),
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: CheType.caption.copyWith(color: a.color),
-                            semanticsLabel: a.status.label + (a.task != null ? ', ${a.task}' : '')),
+                            semanticsLabel: (_headlineState(d)?.label ?? a.status.label) + (a.task != null ? ', ${a.task}' : '')),
                         const SizedBox(height: CheSpace.xs),
                         Wrap(spacing: CheSpace.xs, crossAxisAlignment: WrapCrossAlignment.center, children: [
                           _Pill(p.modelTier == 'strong' ? 'Upgraded engine' : 'Fast engine'),
@@ -1426,6 +1461,15 @@ class _AgentDeskSheetState extends State<_AgentDeskSheet> {
               ),
             ),
             const SizedBox(height: CheSpace.md),
+            if (!_isChe)
+              Padding(
+                padding: const EdgeInsets.only(bottom: CheSpace.md),
+                child: OutlinedButton.icon(
+                  onPressed: _working ? null : () => unawaited(_openConversation()),
+                  icon: const Icon(Icons.forum_rounded, size: 18),
+                  label: const Text('Open full conversation'),
+                ),
+              ),
             if (a.personality.isNotEmpty) _Section('PERSONALITY', a.personality),
             if (a.specialty.isNotEmpty) _Section('JOB / SPECIALTY', a.specialty),
             if (p.departmentTitle.isNotEmpty) _Section('DEPARTMENT', '${p.departmentTitle}. Reports to CHE.'),
@@ -1538,6 +1582,7 @@ class _AgentDeskSheetState extends State<_AgentDeskSheet> {
             for (final t in d.history)
               _TaskCard(
                 task: t,
+                onOpenFull: _isChe ? null : () => unawaited(_openConversation(taskId: t.id)),
                 onReadAloud: () => cheReadAloud(
                   context,
                   '${t.task}. ${t.result.isNotEmpty ? t.result : ''} ${t.cheReview.isNotEmpty ? 'CHE review: ${t.cheReview}' : ''}',
@@ -1582,9 +1627,12 @@ class _Section extends StatelessWidget {
 }
 
 class _TaskCard extends StatelessWidget {
-  const _TaskCard({required this.task, required this.onReadAloud});
+  const _TaskCard({required this.task, required this.onReadAloud, this.onOpenFull});
   final CheAgentTask task;
   final VoidCallback onReadAloud;
+
+  /// Opens the full-screen conversation for this task. Null when the task cannot be opened (CHE's own desk).
+  final VoidCallback? onOpenFull;
   @override
   Widget build(BuildContext context) {
     final (tone, activity) = cheTaskStatus(task.status, verified: task.verifiedByChe);
@@ -1625,6 +1673,15 @@ class _TaskCard extends StatelessWidget {
             SelectableText(task.cheReview, style: CheType.bodyDim),
           ],
           if (task.error.isNotEmpty) Text(task.error, style: CheType.caption.copyWith(color: CheColors.danger)),
+          if (onOpenFull != null)
+            Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton.icon(
+                onPressed: onOpenFull,
+                icon: const Icon(Icons.forum_rounded, size: 18),
+                label: const Text('Open full conversation'),
+              ),
+            ),
         ],
       );
     if (cheHudActive) {
