@@ -16,6 +16,7 @@ import { classifyItem, extractCandidateMemories } from './privacy_policy.js';
 import { agentActionGuard, isLaAgenciaAgent, officeToolBlocker } from './office_company.js';
 import { isResearchStyleJob, writeResearchMemoryNote } from './research_memory.js';
 import { codexThreadId } from './office_router.js';
+import { officeConversation } from './office_conversation.js';
 import { meetingEvent, officeTaskEvent, researchEvent } from './room_events.js';
 import { assertAgentMayRun, permissionBlocker } from './agent_permissions.js';
 import { guardRetrievalClaims } from './truth_layer.js';
@@ -468,6 +469,9 @@ export function agentDetail(data, agent) {
     work_log: (Array.isArray(data.agent_work_log) ? data.agent_work_log : [])
       .filter((item) => item.agent_id === agent.id)
       .slice(0, 10),
+    // The full conversation record (every message, untruncated, with the six-state status). Built from stored records
+    // by office_conversation.js; the desk's existing agent request carries it, so no new route is added to worker.js.
+    conversation: officeConversation(data, { agentId: agent.id }),
     meetings: (data.meetings || [])
       .filter((item) => item.participants.some((p) => p.agent_id === agent.id))
       .slice(0, 10)

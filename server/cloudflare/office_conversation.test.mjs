@@ -196,13 +196,13 @@ async function office() {
   return { send, stored: () => JSON.parse(saved.get('che')) };
 }
 
-test('GET /api/office/conversation returns a queued task as Queued through the Worker', async () => {
+test('GET /api/agents/:id carries the conversation, and a queued task stays Queued through the Worker', async () => {
   const o = await office();
   await (await o.send('/api/office/today')).json(); // staffs the La Agencia roster
   const knox = o.stored().team.find((a) => a.name === 'Knox');
   const queued = await o.send(`/api/agents/${knox.id}/task`, 'POST', { task: 'Review the release checklist' });
   assert.equal(queued.status, 200);
-  const r = await o.send(`/api/office/conversation?agent_id=${knox.id}`);
+  const r = await o.send(`/api/agents/${knox.id}`);
   assert.equal(r.status, 200);
   const { conversation } = await r.json();
   assert.equal(conversation.scope, 'agent');
@@ -215,9 +215,7 @@ test('GET /api/office/conversation returns a queued task as Queued through the W
   assert.equal(conversation.messages[0].text, 'Review the release checklist');
 });
 
-test('GET /api/office/conversation rejects bad and unknown ids', async () => {
+test('an unknown agent id has no conversation: the agent route answers 404', async () => {
   const o = await office();
-  assert.equal((await o.send('/api/office/conversation')).status, 400);
-  assert.equal((await o.send('/api/office/conversation?agent_id=../etc')).status, 400);
-  assert.equal((await o.send('/api/office/conversation?agent_id=agent-nobody-0000')).status, 404);
+  assert.equal((await o.send('/api/agents/agent-nobody-0000')).status, 404);
 });

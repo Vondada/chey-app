@@ -602,13 +602,26 @@ class CheAgentRuntimeClient {
     return 'CHE here. Office standing down. ${j['reply'] ?? ''}'.trim();
   }
 
-  /// The full conversation record for one agent or one task: GET /api/office/conversation. Read only.
-  Future<CheOfficeConversation> conversation({String? agentId, String? taskId}) async {
-    final query = agentId != null
-        ? 'agent_id=${Uri.encodeQueryComponent(agentId)}'
-        : 'task_id=${Uri.encodeQueryComponent(taskId ?? '')}';
-    final j = await _send('GET', '/api/office/conversation?$query');
-    return CheOfficeConversation.fromResponse(j);
+  /// The full conversation for an agent, read from GET /api/agents/:id (its `conversation` record). With [taskId],
+  /// only that task's messages, from the same record. Read only.
+  Future<CheOfficeConversation> conversation({required String agentId, String? taskId}) async {
+    final j = await _send('GET', '/api/agents/${Uri.encodeComponent(agentId)}');
+    final raw = j['conversation'];
+    if (raw is! Map<String, dynamic>) {
+      throw const CheAgentRuntimeException('The conversation record is missing from the Office.');
+    }
+    final all = CheOfficeConversation.fromJson(raw);
+    if (taskId == null) return all;
+    final matching = [for (final t in all.tasks) if (t.id == taskId) t];
+    return CheOfficeConversation(
+      scope: 'task',
+      agent: all.agent,
+      task: matching.isEmpty ? null : matching.first,
+      tasks: matching,
+      messages: [for (final m in all.messages) if (m.taskId == taskId) m],
+      notes: all.notes,
+      generatedAt: all.generatedAt,
+    );
   }
 
   Future<CheAgentDetail> agent(String id) async {

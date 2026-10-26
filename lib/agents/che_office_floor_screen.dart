@@ -1241,16 +1241,12 @@ class _AgentDeskSheetState extends State<_AgentDeskSheet> {
     if (_isChe) return;
     final agentId = _agentId;
     try {
-      final first = taskId != null
-          ? await widget.client.conversation(taskId: taskId)
-          : await widget.client.conversation(agentId: agentId);
+      final first = await widget.client.conversation(agentId: agentId, taskId: taskId);
       if (!mounted) return;
       await Navigator.of(context).push(MaterialPageRoute<void>(
         builder: (routeContext) => CheOfficeConversationScreen(
           conversation: first,
-          onRefresh: () => taskId != null
-              ? widget.client.conversation(taskId: taskId)
-              : widget.client.conversation(agentId: agentId),
+          onRefresh: () => widget.client.conversation(agentId: agentId, taskId: taskId),
           onReadAloud: (text) => unawaited(cheReadAloud(routeContext, text, widget.onSpeak)),
         ),
       ));

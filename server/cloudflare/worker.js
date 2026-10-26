@@ -25,7 +25,6 @@ import {
 } from './agent_runtime.js';
 import { planPluginCall, pluginManifests, runPluginTool } from './plugin_runtime.js';
 import { contextItemsFrom, routingForAgent } from './agent_runtime.js';
-import { officeConversation } from './office_conversation.js';
 import {
   aiOverview, evaluateOne, handleAiVoiceIntent, privacyPermissionsMap, syncRoutingSnapshot, watchModels,
 } from './ai_layer.js';
@@ -9475,18 +9474,6 @@ export class CheState extends DurableObject {
         await this.staffOffice(data);
         const agent = data.team.find((a) => !a.retired && a.name.toLowerCase() === headPath[1].toLowerCase() && LA_AGENCIA_ROLES[a.name]);
         return agent ? json({ head: headRecord(data, this.keyEnv || this.env, agent) }) : json({ detail: 'That is not an Office department head.' }, 404);
-      }
-      // Full conversation record for one agent (?agent_id=) or one task (?task_id=): every message in order, read
-      // only from stored records. See office_conversation.js.
-      if (path === '/api/office/conversation' && request.method === 'GET') {
-        const query = new URL(request.url).searchParams;
-        const agentQuery = query.get('agent_id') || '';
-        const taskQuery = query.get('task_id') || '';
-        if ((agentQuery && !/^[A-Za-z0-9-]{8,64}$/.test(agentQuery)) || (taskQuery && !/^[A-Za-z0-9-]{8,64}$/.test(taskQuery))) {
-          return json({ detail: 'That id is not valid.' }, 400);
-        }
-        const found = officeConversation(data, { agentId: agentQuery, taskId: taskQuery });
-        return found.error ? json({ detail: found.error }, found.status) : json({ conversation: found });
       }
       if (path === '/api/office/jobs' && request.method === 'GET') {
         return json({ jobs: officeJobsView(data) });

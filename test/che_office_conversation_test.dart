@@ -1,9 +1,14 @@
+import 'dart:convert';
+
+import 'package:chey/agents/che_agent_runtime.dart';
 import 'package:chey/agents/che_office_conversation.dart';
 import 'package:chey/agents/che_office_conversation_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
 
-// Shaped exactly like GET /api/office/conversation (server/cloudflare/office_conversation.js), agent scope.
+// Shaped exactly like the `conversation` record in GET /api/agents/:id (server/cloudflare/office_conversation.js).
 Map<String, dynamic> _message({
   required int seq,
   required String kind,
@@ -224,5 +229,30 @@ void main() {
     final viewport = tester.getRect(find.byType(ListView));
     expect(rect.top, greaterThanOrEqualTo(viewport.top));
     expect(rect.bottom, lessThanOrEqualTo(viewport.bottom));
+  });
+
+  test('the client reads the conversation from the agent record, and a task view keeps only that task', () async {
+    final body = _queuedAtlas(messages: [
+      _message(seq: 1, kind: 'request', text: 'First task', at: '2026-10-26T10:00:00.000Z', details: {'record_id': 'task-a'}),
+      _message(seq: 2, kind: 'request', text: 'Second task', taskTitle: 'Second', at: '2026-10-26T10:01:00.000Z', details: {'record_id': 'task-b'}),
+    ]);
+    // The second message belongs to another task id, so the task view must drop it.
+    (body['conversation'] as Map<String, dynamic>)['messages'] = [
+      {...(body['conversation'] as Map)['messages'][0] as Map<String, dynamic>, 'task_id': 'task-a'},
+      {...(body['conversation'] as Map)['messages'][1] as Map<String, dynamic>, 'task_id': 'task-b'},
+    ];
+    final client = CheAgentRuntimeClient(
+      baseUrl: () => 'https://worker.example',
+      headers: () => const {},
+      client: MockClient((request) async {
+        expect(request.url.path, '/api/agents/agent-atlas-0001');
+        return http.Response(jsonEncode(body), 200, headers: {'content-type': 'application/json'});
+      }),
+    );
+    final whole = await client.conversation(agentId: 'agent-atlas-0001');
+    expect(whole.messages.length, 2);
+    final one = await client.conversation(agentId: 'agent-atlas-0001', taskId: 'task-a');
+    expect(one.scope, 'task');
+    expect(one.messages.map((m) => m.text), ['First task']);
   });
 }
