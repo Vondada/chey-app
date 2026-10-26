@@ -26,6 +26,25 @@ jobs:
           timeout 120s sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends python3-numpy
           /usr/bin/python3 -c 'import numpy; print("System NumPy", numpy.__version__)'
           blender --version | head -2
+          # Blender may use an isolated Python search path. Probe Blender itself, not only /usr/bin/python3.
+          if ! blender -b --python-expr 'import numpy; print("BLENDER_NUMPY_OK", numpy.__version__)'; then
+            echo 'Blender cannot import distro NumPy; retrying with the distro package directory.'
+            echo "PYTHONPATH=/usr/lib/python3/dist-packages${PYTHONPATH:+:$PYTHONPATH}" >> "$GITHUB_ENV"
+            PYTHONPATH="/usr/lib/python3/dist-packages${PYTHONPATH:+:$PYTHONPATH}" blender -b --python-expr 'import numpy; print("BLENDER_NUMPY_OK", numpy.__version__)'
+          fi
+      - name: Verify the existing character is a real 3D asset
+        run: |
+          set -euo pipefail
+          test -s "assets/characters/crew/${{ inputs.character }}.glb"
+          python3 - <<'PY'
+          import json, pathlib, struct
+          p=pathlib.Path('assets/characters/crew/${{ inputs.character }}.glb')
+          with p.open('rb') as f:
+              header=f.read(12)
+          magic,version,length=struct.unpack('<4sII',header)
+          assert magic==b'glTF' and version==2 and length==p.stat().st_size
+          print('CHE_CHARACTER_GLB_VERIFIED',p.name,length)
+          PY
       - name: Render actual GLB frames
         timeout-minutes: 10
         run: |
@@ -57,5 +76,6 @@ jobs:
             rendered/thumbnail.png
             rendered/scene_manifest.json
             rendered/probe.json
+            assets/characters/crew/${{ inputs.character }}.glb
           if-no-files-found: error
           retention-days: 30
