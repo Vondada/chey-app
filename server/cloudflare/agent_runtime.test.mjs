@@ -8,6 +8,7 @@ import {
   officeSkillsView,
   queueAgentTask,
   recordAgentWork,
+  agentLocation,
   steerAgentTask,
   teachOfficeSkill,
 } from './agent_runtime.js';
@@ -210,4 +211,12 @@ test('a completed job is recorded with whether its evidence was there', () => {
   assert.equal(bare.evidence_ok, false);
   assert.equal(checked.evidence_ok, true);
   assert.equal(failed.evidence_ok, null);
+});
+
+test('a member works in their designated room, whatever the task words say', () => {
+  const working = { runtime_status: 'building', runtime_task: 'make a painting for the logo', role: 'Designer' };
+  assert.equal(agentLocation(working).room, 'gallery');
+  assert.equal(agentLocation({ ...working, home_room: 'music' }).room, 'music');
+  assert.equal(agentLocation({ ...working, home_room: 'lounge' }).room, 'gallery', 'lounge and theater are not working rooms');
+  assert.equal(agentLocation({ ...working, home_room: 'studio', runtime_status: 'meeting' }).room, 'office', 'meetings stay in the Office');
 });

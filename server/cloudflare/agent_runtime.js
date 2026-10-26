@@ -333,12 +333,21 @@ function doneIsFresh(agent) {
 // the room that fits the assignment, or on a break in a social space.
 export const WORLD_ROOMS = ['office', 'studio', 'gallery', 'music', 'lounge', 'theater'];
 
+// A member's designated room (owner, 2026-10-26): the room their work happens in. Only the working rooms can be designated.
+export const HOME_ROOMS = ['office', 'studio', 'gallery', 'music'];
+export function homeRoomOf(agent) {
+  return HOME_ROOMS.includes(agent?.home_room) ? agent.home_room : null;
+}
+
 export function agentLocation(agent, now = Date.now(), theaterUntil = 0) {
   const status = agent.runtime_status || 'idle';
   const text = `${agent.runtime_task || ''} ${agent.role || ''} ${agent.specialty || ''}`.toLowerCase();
   const working = !['idle', 'done', 'offline'].includes(status);
   if (working) {
     if (status === 'meeting') return { room: 'office', activity: 'meeting', working: true };
+    // Work stays in the member's designated room; the words of a task never move them out of it.
+    const home = homeRoomOf(agent);
+    if (home) return { room: home, activity: status, working: true };
     if (/\b(?:dj|playlist|song|music|beat|mix|track|album)\b/.test(text)) return { room: 'music', activity: /\bdj|playlist|play\b/.test(text) ? 'djing' : 'composing', working: true };
     if (/\b(?:art|paint|draw|illustrat|image|logo|gallery|portrait)\b/.test(text)) return { room: 'gallery', activity: 'making_art', working: true };
     if (/\b(?:video|film|design|creative|studio|brand|visual)\b/.test(text)) return { room: 'studio', activity: 'creating', working: true };
