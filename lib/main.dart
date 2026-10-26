@@ -2369,7 +2369,7 @@ OWNER AGENCY
 
   // The in-app browser as a bottom tab (owner, 2026-10-26): pages open here, not in another app.
   // Built once, when the owner first opens it; its own tabs and history live in CheBrowserScreen.
-  Widget _buildBrowserTab() => const CheBrowserScreen(initialUrl: 'https://duckduckgo.com', title: 'Browser', appMode: false);
+  Widget _buildBrowserTab() => const CheBrowserScreen(initialUrl: 'https://www.google.com', title: 'Browser', appMode: false);
 
   Widget _buildMoreTab() {
     return CheMoreTab(
