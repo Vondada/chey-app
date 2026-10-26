@@ -67,22 +67,31 @@ jobs:
           # Tally real outcomes from the captured events (wrangler tail JSON).
           python3 - "$RUNNER_TEMP/logs/tail.jsonl" <<'PY'
           import json, sys, collections
-          counts, messages, bad = collections.Counter(), [], 0
-          for line in open(sys.argv[1], encoding="utf-8", errors="replace"):
-              line = line.strip()
-              if not line:
-                  continue
+          # wrangler tail writes pretty-printed JSON objects back to back, not one per line.
+          text = open(sys.argv[1], encoding="utf-8", errors="replace").read()
+          decoder = json.JSONDecoder()
+          counts, messages, pos, bad = collections.Counter(), [], 0, 0
+          while True:
+              while pos < len(text) and text[pos].isspace():
+                  pos += 1
+              if pos >= len(text):
+                  break
               try:
-                  event = json.loads(line)
+                  event, pos = decoder.raw_decode(text, pos)
               except ValueError:
                   bad += 1
+                  nxt = text.find("\n", pos)
+                  pos = len(text) if nxt < 0 else nxt + 1
+                  continue
+              if not isinstance(event, dict):
+                  counts["non-object"] += 1
                   continue
               counts[str(event.get("outcome"))] += 1
               for exc in event.get("exceptions") or []:
                   if len(messages) < 10:
-                      text = exc.get("message") if isinstance(exc, dict) else exc
-                      messages.append(str(text or exc)[:200])
-          print(f"events: {sum(counts.values())} (unparsed lines: {bad})")
+                      text_ = exc.get("message") if isinstance(exc, dict) else exc
+                      messages.append(str(text_ or exc)[:200])
+          print(f"events: {sum(counts.values())} (undecodable segments: {bad})")
           print("outcomes: " + ", ".join(f"{k}={v}" for k, v in sorted(counts.items())))
           for m in messages:
               print("exception: " + m)
