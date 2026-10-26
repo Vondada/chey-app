@@ -22,6 +22,9 @@ jobs:
           set -euo pipefail
           timeout 360s sudo apt-get update -qq
           timeout 180s sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends blender ffmpeg
+          # Ubuntu's Blender package uses the system Python; its glTF importer needs numpy.
+          timeout 120s sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends python3-numpy
+          /usr/bin/python3 -c 'import numpy; print("System NumPy", numpy.__version__)'
           blender --version | head -2
       - name: Render actual GLB frames
         timeout-minutes: 10
