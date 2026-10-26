@@ -1805,6 +1805,7 @@ OWNER AGENCY
       onConnectRithmic: () => unawaited(_openRithmic()),
       onOpenCreate: () => _openAssistantHub(tab: 5),
       onOpenWorld: () => _goShellTab(3),
+      onOpenRecordingStudio: () => unawaited(_openRecordingStudio()),
       onOpenSecurity: () => unawaited(_openSecurity()),
       onOfficeStatus: () => unawaited(_speakOfficeStatus()),
       onTapAgent: (agent) => _openOfficeFloor(agentName: agent.name),
