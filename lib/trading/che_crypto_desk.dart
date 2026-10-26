@@ -11,6 +11,7 @@ import 'package:http/http.dart' as http;
 import '../che_ui/che_chrome_status.dart';
 import '../che_ui/che_foreground.dart';
 import '../che_ui/che_hud.dart';
+import '../che_ui/che_money_color.dart';
 
 double? _num(Object? v) => v is num ? v.toDouble() : double.tryParse('${v ?? ''}');
 String _money(Object? v) {
@@ -149,7 +150,7 @@ class _CheCryptoDeskPanelState extends State<CheCryptoDeskPanel> {
                   SizedBox(width: 48, child: Text('${f['coin']}', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 16))),
                   CheStatusPill(label: '${f['status']}', tone: cheCryptoTone('${f['status']}'), compact: true),
                   const SizedBox(width: 8),
-                  Expanded(child: Text(f['last_close'] != null ? '${f['last_close']}  ·  ${_clock(f['last_bar'])}' : (f['reason']?.toString() ?? 'not read yet'), style: body, overflow: TextOverflow.ellipsis)),
+                  Expanded(child: Text(f['last_close'] != null ? '${f['last_close']}  ·  ${_clock(f['last_bar'])}' : (f['reason']?.toString() ?? 'not read yet'), style: f['last_close'] != null ? body.copyWith(color: cheMoneyGray) : body, overflow: TextOverflow.ellipsis)),
                 ]),
               ),
             ),
@@ -162,7 +163,7 @@ class _CheCryptoDeskPanelState extends State<CheCryptoDeskPanel> {
             child: Wrap(spacing: 16, runSpacing: 4, children: [
               Text('Closed $closed', style: body),
               Text('Open ${open.length}', style: body),
-              Text('Net ${_money(sim['net_pnl'])}', style: body),
+              Text('Net ${_money(sim['net_pnl'])}', style: body.copyWith(color: cheMoneyColor(_num(sim['net_pnl'])))),
               Text(sim['enough_data'] == true ? '${sim['expectancy_r']} R per trade' : 'Not enough data: $closed of 30', style: dim),
             ]),
           ),

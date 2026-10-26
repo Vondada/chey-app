@@ -1,6 +1,8 @@
 // A read-only projection of trading_live's source-separated learning records.
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
+import '../che_ui/che_futuristic.dart';
+import '../che_ui/che_money_color.dart';
 import '../che_ui/che_theme.dart';
 
 Map<String, dynamic> _map(Object? v) => v is Map ? Map<String, dynamic>.from(v) : {};
@@ -84,6 +86,13 @@ class _StrategyCardState extends State<_StrategyCard> {
   bool _open = false;
 
   static const _bold = TextStyle(color: Colors.white, fontSize: 17, fontWeight: FontWeight.w800, fontFeatures: [FontFeature.tabularFigures()]);
+
+  /// Money metrics take the owner's sign colours; drawdown is a loss, so red above zero. Other metrics stay white.
+  static Color _metricTone(String label, Map<String, dynamic> forward) => switch (label) {
+        'Net P&L' => cheMoneyColor(forward['net_pnl']),
+        'Max drawdown' => (forward['max_drawdown'] as num? ?? 0) > 0 ? CheEnergy.red : cheMoneyGray,
+        _ => Colors.white,
+      };
 
   void _explain(Map<String, dynamic> row) {
     final forward = _map(row['forward']);
@@ -194,7 +203,7 @@ class _StrategyCardState extends State<_StrategyCard> {
               TextSpan(text: '$count', style: _bold),
               const TextSpan(text: ' / 30 unique forward trades', style: TextStyle(color: Colors.white, fontSize: 15)),
             ]))),
-            Text(_money(forward['net_pnl']), style: _bold.copyWith(fontSize: 16)),
+            Text(_money(forward['net_pnl']), style: _bold.copyWith(fontSize: 16, color: cheMoneyColor(forward['net_pnl']))),
           ]),
           const SizedBox(height: 8),
           _timeframeStrip(),
@@ -207,7 +216,7 @@ class _StrategyCardState extends State<_StrategyCard> {
                   excludeSemantics: true,
                   child: SizedBox(width: 130, child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                     Text(entry.key, style: const TextStyle(color: Colors.white, fontSize: 13)),
-                    Text(entry.value, style: _bold.copyWith(fontSize: 17)),
+                    Text(entry.value, style: _bold.copyWith(fontSize: 17, color: _metricTone(entry.key, forward))),
                   ])),
                 ),
             ]),
@@ -231,8 +240,8 @@ class _StrategyCardState extends State<_StrategyCard> {
             ]),
             ExpansionTile(title: const Text('Recent unique forward trades', style: TextStyle(color: Colors.white)), tilePadding: EdgeInsets.zero, children: [
               for (final trade in _rows(row['recent_trades'])) ListTile(
-                leading: Icon((trade['net_pnl'] as num? ?? 0) > 0 ? Icons.trending_up : Icons.trending_down, color: (trade['net_pnl'] as num? ?? 0) > 0 ? _teal : Colors.redAccent),
-                title: Text('${trade['side']} · ${_money(trade['net_pnl'])} · ${_map(trade['exit'])['reason']}'),
+                leading: Icon((trade['net_pnl'] as num? ?? 0) > 0 ? Icons.trending_up : Icons.trending_down, color: cheMoneyColor(trade['net_pnl'])),
+                title: Text('${trade['side']} · ${_money(trade['net_pnl'])} · ${_map(trade['exit'])['reason']}', style: TextStyle(color: cheMoneyColor(trade['net_pnl']))),
                 subtitle: Text('Entry ${_map(trade['entry'])['time']} @ ${_map(trade['entry'])['fill']}\nExit ${_map(trade['exit'])['time']} @ ${_map(trade['exit'])['fill']}')),
             ]),
           ],
@@ -241,7 +250,7 @@ class _StrategyCardState extends State<_StrategyCard> {
     );
   }
 
-  Widget _source(String label, Map<String, dynamic> stats) => ListTile(title: Text(label), subtitle: Text(stats.isEmpty ? 'Not recorded for this version.' : '${stats['trades']} outcomes · ${stats['wins']} wins / ${stats['losses']} losses · expectancy ${stats['expectancy_r']} R · net ${_money(stats['net_pnl'])}'));
+  Widget _source(String label, Map<String, dynamic> stats) => ListTile(title: Text(label), subtitle: Text(stats.isEmpty ? 'Not recorded for this version.' : '${stats['trades']} outcomes · ${stats['wins']} wins / ${stats['losses']} losses · expectancy ${stats['expectancy_r']} R · net ${_money(stats['net_pnl'])}', style: TextStyle(color: cheMoneyColor(stats['net_pnl']))))
 }
 
 /// One row of the portfolio-variant ranking (owner, 2026-10-23): the name gets the full width on its own line and never
@@ -271,7 +280,7 @@ class CheStrategyRankRow extends StatelessWidget {
           Wrap(spacing: 10, runSpacing: 4, crossAxisAlignment: WrapCrossAlignment.center, children: [
             Text('${s['trades']} trades', style: const TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.w800, fontFeatures: [FontFeature.tabularFigures()])),
             Text('${s['win_rate'] ?? '—'}% win', style: const TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.w800, fontFeatures: [FontFeature.tabularFigures()])),
-            Text(money(s['net_pnl']), style: const TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.w800, fontFeatures: [FontFeature.tabularFigures()])),
+            Text(money(s['net_pnl']), style: TextStyle(color: cheMoneyColor(s['net_pnl']), fontSize: 15, fontWeight: FontWeight.w800, fontFeatures: [FontFeature.tabularFigures()])),
             if (!ranked)
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
@@ -330,9 +339,9 @@ class CheLearningWindows extends StatelessWidget {
           Text('${w['days']} days — $verdict'.toUpperCase(),
               style: TextStyle(color: verdict == 'improving' ? _teal : verdict == 'worse' ? Colors.redAccent : _gold, fontSize: 13, fontWeight: FontWeight.w800)),
           Text('Now: ${now['trades']} trades, ${_net(now['net'], r['unit'])}, win ${_value(now['win_rate'], '%')}, PF ${_value(now['profit_factor'])}, avg ${_value(now['avg_r'])} R, DD ${_value(now['max_drawdown'])}',
-              style: const TextStyle(color: Colors.white, fontSize: 14)),
+              style: TextStyle(color: cheMoneyColor(now['net']), fontSize: 14)),
           Text('Before: ${before['trades']} trades, ${_net(before['net'], r['unit'])}, win ${_value(before['win_rate'], '%')}, PF ${_value(before['profit_factor'])}',
-              style: const TextStyle(color: Colors.white70, fontSize: 14)),
+              style: TextStyle(color: cheMoneyColor(before['net']), fontSize: 14)),
         ]),
       ),
     );

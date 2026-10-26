@@ -15,6 +15,8 @@ import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 
 import '../che_account_bridge.dart';
+import '../che_ui/che_futuristic.dart';
+import '../che_ui/che_money_color.dart';
 import '../trading/che_paper_account.dart';
 import '../trading/che_paper_compare.dart';
 import '../trading/che_paper_engine.dart';
@@ -28,6 +30,8 @@ import 'che_trading_chart.dart';
 const _dim = Color(0xFFB8C2CC);
 const _panel = Color(0xFF0E1418);
 const _stroke = Color(0xFF2A3540);
+
+TextSpan _val(String text, [Color color = _dim]) => TextSpan(text: text, style: TextStyle(color: color));
 
 /// The account and position switcher.
 enum CheTradingView { mine, chePaper, allOpen, closed, pending, watchlist }
@@ -453,11 +457,20 @@ class CheSideBySideViewState extends State<CheSideBySideView> {
               if (selected) const Padding(padding: EdgeInsets.only(left: 6), child: Icon(Icons.compare_arrows_rounded, color: Colors.white, size: 18)),
             ]),
             const SizedBox(height: 4),
-            Text(
-              'Entry ${_price(t.entry)} · Stop ${_price(t.stop)} · Target ${_price(t.target)}'
-              '${t.exit == null ? '' : ' · Exit ${_price(t.exit)}'}\n'
-              '${t.isOpen ? 'Unrealized' : 'Realized'} ${cheMoney(pnl)} · Risk ${cheMoney(t.dollarRisk)} · Reward ${cheMoney(t.dollarReward)}\n'
-              'Time in trade ${cheDuration(t.timeInTrade(_now))}${t.timeframe.isEmpty ? '' : ' · ${t.timeframe}'}${t.adjusted ? ' · ADJUSTED' : ''} · ${t.source}',
+            Text.rich(
+              TextSpan(children: [
+                TextSpan(
+                    text: 'Entry ${_price(t.entry)} · Stop ${_price(t.stop)} · Target ${_price(t.target)}'
+                        '${t.exit == null ? '' : ' · Exit ${_price(t.exit)}'}\n'
+                        '${t.isOpen ? 'Unrealized' : 'Realized'} '),
+                TextSpan(text: cheMoney(pnl), style: TextStyle(color: cheMoneyColor(pnl))),
+                TextSpan(text: ' · Risk '),
+                TextSpan(text: cheMoney(t.dollarRisk), style: const TextStyle(color: cheMoneyGray)),
+                TextSpan(text: ' · Reward '),
+                TextSpan(text: cheMoney(t.dollarReward), style: const TextStyle(color: cheMoneyGray)),
+                TextSpan(
+                    text: '\nTime in trade ${cheDuration(t.timeInTrade(_now))}${t.timeframe.isEmpty ? '' : ' · ${t.timeframe}'}${t.adjusted ? ' · ADJUSTED' : ''} · ${t.source}'),
+              ]),
               style: const TextStyle(color: _dim, fontSize: 13, height: 1.35),
             ),
           ]),
@@ -670,19 +683,40 @@ class CheTradeComparisonPanel extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = comparison;
-    final rows = <(String, String)>[
-      ('Trades', '${CheAccountKind.mine.label}: ${c.mine.isLong ? 'LONG' : 'SHORT'} ${_price(c.mine.qty)} ${c.mine.symbol} · ${CheAccountKind.chePaper.label}: ${c.che.isLong ? 'LONG' : 'SHORT'} ${_price(c.che.qty)} ${c.che.symbol}'),
-      ('Entry difference', '${_signed(c.entryDiff)} points (mine ${_price(c.mine.entry)}, CHE ${_price(c.che.entry)})'),
-      ('Stop difference', '${_signed(c.stopDiff)} points'),
-      ('Target difference', '${_signed(c.targetDiff)} points'),
-      ('Quantity difference', _signed(c.qtyDiff, unit: ' contracts')),
-      ('Dollar-risk difference', '${_signedMoney(c.dollarRiskDiff)} (mine ${cheMoney(c.mine.dollarRisk)}, CHE ${cheMoney(c.che.dollarRisk)})'),
-      ('Current P&L difference', '${_signedMoney(c.pnlDiff)} (mine ${cheMoney(c.mine.pnl)}, CHE ${cheMoney(c.che.pnl)})'),
-      ('Return on risk difference', c.returnPctDiff == null ? 'unknown' : '${_signed(c.returnPctDiff)} percentage points'),
-      ('Time-in-trade difference', cheDuration(c.timeInTradeDiff)),
-      ('Same setup', c.sameSetup ? 'Yes: ${c.che.setup}' : 'No${c.mine.setup.isEmpty ? ' (your trade names no setup)' : ''}'),
-      ('Same direction', c.sameDirection ? 'Yes' : 'No'),
-      ('Adjusted', 'Mine: ${c.mine.adjusted ? 'yes' : 'no'} · CHE: ${c.che.adjusted ? 'yes' : 'no'}'),
+    // Each value is a span so a money figure can carry its own green, red or gray.
+    final rows = <(String, InlineSpan)>[
+      ('Trades', _val('${CheAccountKind.mine.label}: ${c.mine.isLong ? 'LONG' : 'SHORT'} ${_price(c.mine.qty)} ${c.mine.symbol} · ${CheAccountKind.chePaper.label}: ${c.che.isLong ? 'LONG' : 'SHORT'} ${_price(c.che.qty)} ${c.che.symbol}')),
+      ('Entry difference', _val('${_signed(c.entryDiff)} points (mine ${_price(c.mine.entry)}, CHE ${_price(c.che.entry)})')),
+      ('Stop difference', _val('${_signed(c.stopDiff)} points')),
+      ('Target difference', _val('${_signed(c.targetDiff)} points')),
+      ('Quantity difference', _val(_signed(c.qtyDiff, unit: ' contracts'))),
+      (
+        'Dollar-risk difference',
+        TextSpan(children: [
+          _val(_signedMoney(c.dollarRiskDiff), cheMoneyGray),
+          _val(' (mine '),
+          _val(cheMoney(c.mine.dollarRisk), cheMoneyGray),
+          _val(', CHE '),
+          _val(cheMoney(c.che.dollarRisk), cheMoneyGray),
+          _val(')'),
+        ]),
+      ),
+      (
+        'Current P&L difference',
+        TextSpan(children: [
+          _val(_signedMoney(c.pnlDiff), cheMoneyColor(c.pnlDiff)),
+          _val(' (mine '),
+          _val(cheMoney(c.mine.pnl), cheMoneyColor(c.mine.pnl)),
+          _val(', CHE '),
+          _val(cheMoney(c.che.pnl), cheMoneyColor(c.che.pnl)),
+          _val(')'),
+        ]),
+      ),
+      ('Return on risk difference', _val(c.returnPctDiff == null ? 'unknown' : '${_signed(c.returnPctDiff)} percentage points')),
+      ('Time-in-trade difference', _val(cheDuration(c.timeInTradeDiff))),
+      ('Same setup', _val(c.sameSetup ? 'Yes: ${c.che.setup}' : 'No${c.mine.setup.isEmpty ? ' (your trade names no setup)' : ''}')),
+      ('Same direction', _val(c.sameDirection ? 'Yes' : 'No')),
+      ('Adjusted', _val('Mine: ${c.mine.adjusted ? 'yes' : 'no'} · CHE: ${c.che.adjusted ? 'yes' : 'no'}')),
     ];
     return Container(
       key: const Key('sbs_compare'),
@@ -692,13 +726,13 @@ class CheTradeComparisonPanel extends StatelessWidget {
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         for (final r in rows)
           Semantics(
-            label: '${r.$1}: ${r.$2}',
+            label: '${r.$1}: ${r.$2.toPlainText()}',
             excludeSemantics: true,
             child: Padding(
               padding: const EdgeInsets.only(bottom: 6),
               child: Text.rich(TextSpan(children: [
                 TextSpan(text: '${r.$1}: ', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800)),
-                TextSpan(text: r.$2, style: const TextStyle(color: _dim)),
+                r.$2,
               ])),
             ),
           ),

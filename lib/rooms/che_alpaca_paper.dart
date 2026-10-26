@@ -21,6 +21,7 @@ import '../che_ui/che_responsive.dart';
 import '../che_ui/che_help.dart';
 import 'che_trading_ledgers.dart' show EquityCurvePainter;
 import '../che_ui/che_hud.dart';
+import '../che_ui/che_money_color.dart';
 import '../che_ui/che_theme.dart';
 import 'che_trading_hud.dart';
 
@@ -319,7 +320,7 @@ class _CheAlpacaPaperPanelState extends State<CheAlpacaPaperPanel> {
             decoration: BoxDecoration(border: Border.all(color: _stroke), borderRadius: BorderRadius.circular(10)),
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
               Text(label, style: TextStyle(color: _dim, fontSize: 12)),
-              Text(value, style: const TextStyle(color: Colors.white, fontSize: 17, fontWeight: FontWeight.w800)),
+              Text(value, style: const TextStyle(color: cheMoneyGray, fontSize: 17, fontWeight: FontWeight.w800)),
             ]),
           ),
         ),
@@ -329,7 +330,7 @@ class _CheAlpacaPaperPanelState extends State<CheAlpacaPaperPanel> {
   Widget _pnl(String label, Object? value, {String note = ''}) {
     final x = _num(value);
     final word = x == null ? 'not measured' : x > 0 ? 'up' : x < 0 ? 'down' : 'flat';
-    final color = x == null || x == 0 ? _dim : x > 0 ? _up : _down;
+    final color = cheMoneyColor(x);
     return Tooltip(
       message: note,
       child: Semantics(
@@ -384,12 +385,12 @@ class _CheAlpacaPaperPanelState extends State<CheAlpacaPaperPanel> {
 
   Widget _position(Map<String, dynamic> p) {
     final pl = _num(p['unrealized_pl']);
-    final color = pl == null || pl == 0 ? _dim : pl > 0 ? _up : _down;
+    final color = cheMoneyColor(pl);
     return ListTile(
       dense: true,
       contentPadding: EdgeInsets.zero,
       title: Text('${p['symbol']} · ${p['side']} ${_num(p['qty'])?.toStringAsFixed(0)} shares at ${_money(p['avg_entry_price'])}', style: const TextStyle(color: Colors.white)),
-      subtitle: Text('Now ${_money(p['current_price'])} · value ${_money(p['market_value'])}', style: TextStyle(color: _dim)),
+      subtitle: Text('Now ${_money(p['current_price'])} · value ${_money(p['market_value'])}', style: TextStyle(color: cheMoneyGray)),
       trailing: Text('${pl == null ? '' : pl >= 0 ? 'up ' : 'down '}${_money(pl?.abs())}', style: TextStyle(color: color, fontWeight: FontWeight.w800)),
     );
   }

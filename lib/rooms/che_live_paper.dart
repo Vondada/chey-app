@@ -15,6 +15,8 @@ import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import '../che_ui/che_theme.dart';
 import '../che_ui/che_hud.dart';
+import '../che_ui/che_futuristic.dart';
+import '../che_ui/che_money_color.dart';
 import 'che_trading_hud.dart';
 
 const _up = Color(0xFF3DDC97);
@@ -306,10 +308,10 @@ class _CheLivePaperPanelState extends State<CheLivePaperPanel> {
           _stat('Portfolio records', '$n'),
           _stat('Won / lost', '${totals['wins'] ?? 0} / ${totals['losses'] ?? 0}'),
           _stat('Win rate', totals['win_rate'] == null ? '—' : '${totals['win_rate']}%'),
-          _stat('Net after costs', _money(totals['net_pnl']), color: (_num(totals['net_pnl']) ?? 0) >= 0 ? _up : _down),
+          _stat('Net after costs', _money(totals['net_pnl']), color: cheMoneyColor(_num(totals['net_pnl']))),
           _stat('Profit factor', '${totals['profit_factor'] ?? '—'}'),
           _stat('Expectancy', totals['expectancy_r'] == null ? '—' : '${totals['expectancy_r']} R'),
-          _stat('Max drawdown', _money(totals['max_drawdown'])),
+          _stat('Max drawdown', _money(totals['max_drawdown']), color: (_num(totals['max_drawdown']) ?? 0) > 0 ? CheEnergy.red : cheMoneyGray),
           _stat('Open now', '${positions.length}'),
           _stat('Signals', '${counts['signals'] ?? 0}'),
         ],
@@ -330,7 +332,7 @@ class _CheLivePaperPanelState extends State<CheLivePaperPanel> {
             leading: Icon(p['side'] == 'short' ? Icons.south_east : Icons.north_east, color: p['side'] == 'short' ? _down : _up),
             title: Text('${'${p['side']}'.toUpperCase()} ${p['qty']} ${p['contract']} · ${p['name']}', style: const TextStyle(color: Colors.white)),
             subtitle: Text('Entry ${p['entry']} at ${_clock(p['entry_time'])} · stop ${p['stop']} · target ${p['target']}\n${p['why'] ?? ''}', style: TextStyle(color: _dim)),
-            trailing: Text(_money(p['unrealized']), style: TextStyle(color: (_num(p['unrealized']) ?? 0) >= 0 ? _up : _down, fontWeight: FontWeight.w800)),
+            trailing: Text(_money(p['unrealized']), style: TextStyle(color: cheMoneyColor(_num(p['unrealized'])), fontWeight: FontWeight.w800)),
           ),
         ),
       const SizedBox(height: 12),
@@ -380,7 +382,7 @@ class _CheLivePaperPanelState extends State<CheLivePaperPanel> {
           padding: const EdgeInsets.symmetric(vertical: 6),
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             Row(children: [
-              Icon(net > 0 ? Icons.check_circle : net < 0 ? Icons.cancel : Icons.remove_circle_outline, color: net > 0 ? _up : net < 0 ? _down : _dim, size: 18),
+              Icon(net > 0 ? Icons.check_circle : net < 0 ? Icons.cancel : Icons.remove_circle_outline, color: cheMoneyColor(net), size: 18),
               const SizedBox(width: 6),
               Expanded(child: Text(summary, style: const TextStyle(color: Colors.white))),
             ]),
