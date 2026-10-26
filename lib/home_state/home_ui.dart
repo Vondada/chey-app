@@ -135,13 +135,17 @@ extension _CheHomeUi on _CHEHomeState {
             onResult: (shown, detail) => _onChatImageResult(index, shown),
           ),
         ),
-      if ((item['media_type'] == 'video' || item['media_type'] == 'html' || item['media_type'] == 'page') &&
+      // A saved video on CHE's own server shows as its thumbnail tile (CheChatMediaExtras below), not a player in the chat.
+      if ((item['media_type'] == 'html' || item['media_type'] == 'page' ||
+              (item['media_type'] == 'video' && item['media_id'] == null)) &&
           (item['media_url'] ?? '').startsWith('https://'))
         CheInlinePreview(
           url: item['media_url']!,
           headers: item['media_url']!.startsWith(cheAgentBaseUrl) ? _authHeaders : const {},
           label: item['media_type'] == 'video' ? 'Video' : 'Page',
         ),
+      // Saved videos as tappable thumbnails, and a saved picture's "Open in Create room" (che_chat_media.dart).
+      if (!isLiveReply) CheChatMediaExtras(item: item, baseUrl: cheAgentBaseUrl, headers: _authHeaders),
       // Anything the crew rendered and linked in the reply shows right here.
       if (!isLiveReply)
         for (final url in _inlineImageUrls(text, item['media_url']))

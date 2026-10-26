@@ -10780,16 +10780,16 @@ export class CheState extends DurableObject {
             if (!ownerDevice) return ownerOnly();
             const items = await listMedia(this.ctx.storage);
             const id = openMedia.id || (openMedia.latest ? '' : String(body.last_media_id || '').trim().toLowerCase());
-            const row = openMedia.latest ? mediaLatestOpenRow(items) : mediaOpenRow(items, id);
+            const row = openMedia.latest ? mediaLatestOpenRow(items, rawMessage) : mediaOpenRow(items, id);
             const room = openMedia.room !== false;
             if (!row) return ndjsonReply(mediaOpenMissingReply(id, { room }), { source: 'che_media_store', ok: false, media_id: id || null, media_retrieval: 'not_found' });
             const check = await verifyMediaFile(this.keyEnv || this.env, this.ctx.storage, row);
             if (!check.ok) return ndjsonReply(`I could not open ID ${row.id}${room ? ' in your Creation Room' : ''}, sir: ${check.reason || 'its file was not checked'}.`, { source: 'che_media_store', ok: false, media_id: row.id, media_retrieval: 'failed' });
-            const opened = mediaOpenReply(row, { origin: new URL(request.url).origin, room });
+            const opened = mediaOpenReply(row, { origin: new URL(request.url).origin, room, items });
             // media_retrieval is the Worker's part (bytes read back); display is reported only by the phone's image load.
             return ndjsonReply(opened.text, {
-              source: 'che_media_store', ok: true, media_id: opened.media_id, media_type: opened.media_type,
-              media_url: opened.media_url, media_retrieval: 'verified', ...(room ? { open_creation: true } : {}),
+              source: 'che_media_store', ok: true, ...opened.chat,
+              media_retrieval: 'verified', ...(room ? { open_creation: true } : {}),
             });
           }
           // "Show me the last picture": the newest saved picture, its bytes read back first, returned as an image for the chat.
@@ -11401,9 +11401,9 @@ export class CheState extends DurableObject {
         // answered here: the model has no tool to inspect the library, so it must never be asked.
         if (mediaLibraryIntent(message)) {
           if (!ownerDevice) return ownerOnly();
-          const report = await mediaLibraryReport(this.keyEnv || this.env, this.ctx.storage, await listMedia(this.ctx.storage), { fetcher: fetch });
+          const report = await mediaLibraryReport(this.keyEnv || this.env, this.ctx.storage, await listMedia(this.ctx.storage), { fetcher: fetch, url: request.url, message });
           return ndjsonReply(mediaLibraryReply(report, { latest: wantsLatestVideo(message) }), {
-            source: 'che_media_library', ok: true, media_total: report.total, media_playable: report.playable,
+            source: 'che_media_library', ok: true, media_total: report.total, media_playable: report.playable, ...report.chat,
           });
         }
         const directRepositoryInspection = repositoryInspectionIntent(message);

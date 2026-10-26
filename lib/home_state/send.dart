@@ -1607,6 +1607,7 @@ extension _CheHomeSend on _CHEHomeState {
             messages[assistantIndex]['media_url'] = _streamMediaUrl!;
             messages[assistantIndex]['media_type'] = _streamMediaType ?? 'image';
           }
+          if (_streamMediaExtra.isNotEmpty) messages[assistantIndex].addAll(_streamMediaExtra);
           if (_streamUnderstoodAs != null) {
             messages[assistantIndex]['understood_as'] = _streamUnderstoodAs!;
           }
