@@ -171,3 +171,18 @@ test('agent work ledger never persists owner secrets or provider error bodies', 
   assert.ok(!JSON.stringify(data.agent_work_log).includes('abcdefghijklmnop'));
   assert.equal(entry.agent, 'Mira');
 });
+
+test('an office agent talks like a colleague: plain work language, a short memory, no costume', async () => {
+  const { agentSystemPrompt } = await import('./agent_runtime.js');
+  const agent = {
+    name: 'Knox', role: 'Security reviewer', personality: 'Skeptical by default.',
+    messages: [1, 2, 3, 4, 5, 6].map((i) => ({ from: 'Nova', text: `old line ${i}` })),
+  };
+  const prompt = agentSystemPrompt(agent, '');
+  assert.match(prompt, /colleague in a working chat/);
+  assert.match(prompt, /No greetings, sign-offs, compliments, roleplay/);
+  assert.match(prompt, /a light touch of tone, never a costume/);
+  assert.doesNotMatch(prompt, /stay in character/i);
+  assert.doesNotMatch(prompt, /old line 1\b/, 'only the last three office messages are kept');
+  assert.match(prompt, /old line 6/);
+});
