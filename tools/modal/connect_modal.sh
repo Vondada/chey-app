@@ -78,7 +78,9 @@ if ! (cd "$APP_DIR" && $MODAL deploy che_modal_app.py) > "$WORK/deploy.log" 2>&1
 fi
 echo "modal deploy finished."
 
-url=$(grep -o -E 'https://[A-Za-z0-9-]+--che-gpu[A-Za-z0-9-]*\.modal\.run' "$WORK/deploy.log" | head -n 1 || true)
+# Modal's endpoints are https://<workspace>--<app>-<function>.modal.run, or with a region label before .modal.run
+# (for example .us-east.modal.run). Both are accepted; anything else in the log is not an endpoint.
+url=$(grep -o -E 'https://[A-Za-z0-9-]+--che-gpu[A-Za-z0-9-]*(\.[a-z0-9-]+)?\.modal\.run' "$WORK/deploy.log" | head -n 1 || true)
 [ -n "$url" ] || fail "modal deploy finished, but no che-gpu endpoint URL was in its output. Check the deploy log for the app name."
 echo "Endpoint: $url"
 

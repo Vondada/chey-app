@@ -19,8 +19,12 @@ const PAST = String.raw`(?:have\s+|just\s+|already\s+|successfully\s+)*`;
 // "I've saved …" is "I have saved …" (owner live test, 2026-10-25: "I've saved that for you and I'll remember it" passed
 // every guard with nothing written).
 const SUBJECT = String.raw`(?:I|CHE|she|we)(?:'ve|’ve)?\s+`;
+const AUDIO = String.raw`(?:tracks?|songs?|beats?|music|audio(?:\s+(?:clips?|files?|tracks?))?|recordings?|vocals?|mix(?:es)?|masters?)\b(?!\s+(?:(?:production|creative)\s+)?(?:brief|outline|plan|prompt|description|script|lyrics|notes)\b)`;
 // A claim is a completed, real action stated as fact. Questions, denials and hedges are judged separately.
 export const CLAIMS = Object.freeze([
+  { kind: 'audio_made', re: new RegExp(String.raw`\b${SUBJECT}${PAST}(?:created|made|generated|rendered|produced|exported|mixed|mastered|finished)\b(?!\s+(?:(?:a|an|the|your|my|our|this|that)\s+)?(?:[\w-]+\s+){0,2}(?:brief|outline|plan|prompt|description|script|lyrics|notes)\b)[^.!?\n]{0,100}\b${AUDIO}|\b(?:the|your|my|our|this|that)\s+(?:[\w-]+\s+){0,3}${AUDIO}\s+(?:is|was|has\s+been)\s+(?:now\s+)?(?:complete|finished|done|ready|generated|rendered|exported|produced|mixed|mastered)\b|\bhere(?:'s|’s|\s+is)\s+(?:(?:your|the|a)\s+)?(?:(?:finished|generated|completed)\s+)?${AUDIO}`, 'i') },
+  { kind: 'audio_played', re: new RegExp(String.raw`\b(?:${SUBJECT}${PAST}(?:played|started\s+playing|am\s+playing)|I(?:'m|’m)\s+playing|I(?:'ll|’ll|\s+will)\s+(?:play|start\s+playing))\b[^.!?\n]{0,70}\b${AUDIO}|\b(?:the|your)\s+${AUDIO}\s+(?:is\s+)?(?:now\s+)?playing\b`, 'i') },
+  { kind: 'audio_placeholder', re: /(?:^|\s)[\[(]\s*(?:(?:a\s+)?short\s+)?(?:(?:audio|music)\s+(?:clip|plays?|playing|starts?|begins?)|(?:plays?|playing)\s+(?:an?\s+)?(?:audio|music|song|track|beat))\b/i },
   { kind: 'memory_saved', re: new RegExp(String.raw`\b${SUBJECT}${PAST}(?:saved|stored|written|recorded)\b[^.!?\n]{0,60}\b(?:memory|memories|note)\b|\b${SUBJECT}${PAST}(?:saved|stored|noted|memori[sz]ed)\s+(?:that|it|this|them)(?:\s+(?:for\s+you|away|safely|now))?\b|\bI(?:'ll|’ll|\s+will)\s+(?:always\s+|definitely\s+)?remember\s+(?:that|it|this|them)\b|\b(?:it|that)(?:'s|’s|\s+is|\s+has\s+been|\s+was)\s+(?:now\s+)?(?:saved|stored)\b[^.!?\n]{0,30}\b(?:memory|memories|for\s+you)\b`, 'i') },
   { kind: 'pr_merged', re: new RegExp(String.raw`\b(?:${SUBJECT}|Claude\s+|Codex\s+|ChatGPT\s+|it\s+)${PAST}merged\b[^.!?\n]{0,40}\b(?:PR|pull\s+request)\b|\b(?:PR|pull\s+request)\b[^.!?\n]{0,30}\bmerged\b`, 'i') },
   { kind: 'worker_deployed', re: new RegExp(String.raw`\b${SUBJECT}${PAST}deployed\b[^.!?\n]{0,40}\b(?:Worker|worker|production|backend|server)\b|\b(?:the\s+)?(?:Worker|worker|deployment)\s+(?:was\s+|is\s+)?(?:now\s+)?deployed\b`, 'i') },
@@ -37,7 +41,11 @@ const NEGATED = /\b(?:not|never|no|haven't|hasn't|didn't|don't|doesn't|cannot|ca
 const HEDGED = /\b(?:may|might|could|probably|likely|I\s+think|I\s+believe|I\s+suspect|appears?\s+to|seems?\s+to|possibly|perhaps|if)\b/i;
 
 // The owner-facing line for each claim type, used in place of a removed claim. It names what is missing, never a success.
+const AUDIO_PLAYBACK_CORRECTION = 'I have no confirmed audio playback result for this request. A bracketed description is not a playable audio file.';
 const CORRECTION = Object.freeze({
+  audio_made: 'I have no verified generated audio file for this request. I can write a production brief and lyrics, but that is text, not a finished recording.',
+  audio_played: AUDIO_PLAYBACK_CORRECTION,
+  audio_placeholder: AUDIO_PLAYBACK_CORRECTION,
   memory_saved: 'No confirmed memory write is on record for this request, so I have not saved anything.',
   pr_merged: 'GitHub has not confirmed a merge for that pull request, so I have not marked it merged.',
   worker_deployed: 'No deployment confirmation is on record, so I have not marked the Worker as deployed.',
@@ -60,17 +68,27 @@ function splitSentences(text) {
   return String(text || '').split(/(?<=[.!?])\s+|\n+/).map((s) => s.trim()).filter(Boolean);
 }
 
+function sentenceClaims(sentence) {
+  const question = /\?\s*$/.test(sentence);
+  return CLAIMS.filter((c) => c.re.test(sentence) && (c.kind.startsWith('audio_')
+    // "No background noise" does not negate "I generated the track". Actual denials don't match the completion verbs.
+    // A declarative completion followed by "would you like to hear it?" is still a completion claim.
+    ? !/^(?:if|suppose|imagine)\b/i.test(sentence) && !(question && /^(?:is|are|was|were|did|do|does|have|has|can|could|would|should|will|why|what|when|where|how|who)\b/i.test(sentence))
+    : !question && !NEGATED.test(sentence)));
+}
+
 export function claimKindsIn(text) {
   const kinds = new Set();
   for (const sentence of splitSentences(text)) {
-    if (/\?\s*$/.test(sentence) || NEGATED.test(sentence)) continue;
-    for (const claim of CLAIMS) if (claim.re.test(sentence)) kinds.add(claim.kind);
+    for (const claim of sentenceClaims(sentence)) kinds.add(claim.kind);
   }
   return [...kinds];
 }
 
 // Evidence is structured and produced by execution code. Each check says what counts as proof for one claim type.
 const PROOF = Object.freeze({
+  audio_made: (e) => (e.audio_files || []).filter((a) => a.generated === true && a.file_verified === true && a.playable === true && a.media_id && a.bytes > 0 && /^[0-9a-f]{64}$/i.test(a.sha256 || '')),
+  audio_played: (e) => (e.audio_playbacks || []).filter((p) => p.confirmed === true && ['playing', 'completed'].includes(p.state) && (e.audio_files || []).some((a) => a.media_id === p.media_id && a.file_verified === true && a.playable === true && a.bytes > 0 && /^[0-9a-f]{64}$/i.test(a.sha256 || ''))),
   memory_saved: (e) => (e.memory_writes || []).filter((w) => w.confirmed === true),
   pr_merged: (e) => (e.merged_prs || []).filter((p) => p.sha),
   worker_deployed: (e) => (e.deploys || []).filter((d) => d.sha),
@@ -100,7 +118,7 @@ function priceVerdict(evidence, now) {
 
 // Label one claim sentence. Hedged wording is never upgraded to VERIFIED.
 function labelClaim(kind, sentence, evidence, now) {
-  if (HEDGED.test(sentence)) return { label: 'INFERRED', refs: [] };
+  if (HEDGED.test(sentence) && !kind.startsWith('audio_')) return { label: 'INFERRED', refs: [] };
   if (kind === 'live_price') return priceVerdict(evidence, now);
   // A merge claim names its PR: a receipt for another PR proves nothing about this one.
   const named = sentence.match(/#\s?(\d+)/);
@@ -117,7 +135,7 @@ function labelClaim(kind, sentence, evidence, now) {
  * A null evidence makes every claim UNVERIFIED (fail closed).
  * Returns { text, outcome, claims, entries }: outcome is 'none' | 'pass' | 'corrected' | 'blocked'.
  */
-export function auditReply(reply, { evidence = null, requestId = '', now = Date.now(), fiction = false } = {}) {
+export function auditReply(reply, { evidence = null, requestId = '', now = Date.now(), fiction = false, ownerRecords = true } = {}) {
   const source = String(reply || '');
   // A story, poem or role-play the owner asked for narrates in its own voice ("I read the book by candlelight").
   // The older guards exempt it through storyRequested(message); the auditor keeps that same exemption.
@@ -131,14 +149,15 @@ export function auditReply(reply, { evidence = null, requestId = '', now = Date.
   for (const sentence of splitSentences(source)) {
     // A model's "I don't have access to mission history" is a claim about CHE's stores it never read: removed, and the
     // owner is told the words that read them (owner live test, 2026-10-25).
-    if (RECORDS_DENIAL.test(sentence)) {
+    // Owner only: a guest is told the truth about what CHE can read for them, so a guest's denial stays as written.
+    if (ownerRecords && RECORDS_DENIAL.test(sentence)) {
       sawClaim = true;
       claims.push({ kind: 'records_denied', label: 'CONTRADICTED' });
       if (!corrections.includes(RECORDS_DENIAL_LINE)) corrections.push(RECORDS_DENIAL_LINE);
       entries.push({ at: new Date(now).toISOString(), request_id: String(requestId || ''), claim_type: 'records_denied', evidence_refs: [], verdict: 'CONTRADICTED', contradiction: 'records_denied', correction: RECORDS_DENIAL_LINE, outcome: 'removed' });
       continue;
     }
-    const hits = /\?\s*$/.test(sentence) || NEGATED.test(sentence) ? [] : CLAIMS.filter((c) => c.re.test(sentence));
+    const hits = sentenceClaims(sentence);
     if (!hits.length) { kept.push(sentence); continue; }
     sawClaim = true;
     // Every claim type in the sentence is judged: one receipt cannot carry an unrelated claim in the same sentence.
@@ -164,14 +183,16 @@ export function auditReply(reply, { evidence = null, requestId = '', now = Date.
   }
   if (!sawClaim) return { text: source, outcome: 'none', claims, entries };
   const removed = entries.some((e) => e.outcome === 'removed');
-  const text = [...kept, ...corrections].join(' ').trim();
-  const outcome = !kept.length ? 'blocked' : removed ? 'corrected' : 'pass';
+  // Once the purported song/playback is unsupported, its descriptions and satisfaction questions rest on fiction too.
+  const falseAudio = entries.some((e) => e.claim_type.startsWith('audio_') && e.outcome === 'removed');
+  const text = [...(falseAudio ? [] : kept), ...corrections].join(' ').trim();
+  const outcome = !kept.length || falseAudio ? 'blocked' : removed ? 'corrected' : 'pass';
   return { text, outcome, claims, entries };
 }
 
 // Receipts from this request and the recent window: the only evidence the auditor reads. Real receipts come from
 // execution code, so an owner's or model's text can never create one.
-export async function auditEvidenceFrom(storage, { executions = [], prices = [], tasks = [], teamTasks = [], memoryWrites = [], now = Date.now() } = {}) {
+export async function auditEvidenceFrom(storage, { executions = [], prices = [], tasks = [], teamTasks = [], memoryWrites = [], requestId = '', now = Date.now() } = {}) {
   const receipts = await loadReceipts(storage, { sinceMs: 7 * 24 * 3600_000, now });
   const byKind = (kind) => receipts.filter((r) => r.kind === kind);
   // One video per task id: the render receipt says it started, the verified or failed receipt (action_receipts.js)
@@ -181,6 +202,9 @@ export async function auditEvidenceFrom(storage, { executions = [], prices = [],
   for (const r of byKind('video_failed')) videos.set(String(r.task_id), { ...(videos.get(String(r.task_id)) || { id: `video:${r.task_id}` }), status: 'failed', mp4_verified: false, playable: false });
   for (const r of byKind('video_verified')) videos.set(String(r.task_id || r.media_id), { id: `video:${r.task_id || r.media_id}`, status: 'complete', mp4_verified: r.mp4_verified === true, playable: r.playable === true });
   return {
+    // A receipt for last week's song cannot prove a new song or playback on this turn. Model/client prose is never a receipt.
+    audio_files: byKind('audio_verified').filter((r) => requestId && r.request_id === requestId).map((r) => ({ id: `audio:${r.media_id || ''}`, media_id: r.media_id, generated: r.generated === true, file_verified: r.file_verified === true, playable: r.playable === true, bytes: r.bytes, sha256: r.sha256 })),
+    audio_playbacks: byKind('audio_playback').filter((r) => requestId && r.request_id === requestId).map((r) => ({ id: `playback:${r.media_id || ''}`, media_id: r.media_id, confirmed: r.confirmed === true, state: r.state })),
     merged_prs: byKind('merged').map((r) => ({ id: `merged:${r.number}`, number: r.number, sha: r.sha || '' })),
     deploys: byKind('deployed').map((r) => ({ id: `deployed:${r.sha}`, sha: r.sha || '', version_tag: r.version_tag || '' })),
     deploy_failures: byKind('deploy_failed').length,

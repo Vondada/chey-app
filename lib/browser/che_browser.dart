@@ -685,7 +685,8 @@ if(!best)return '';var label=(best.getAttribute('aria-label')||best.innerText||'
       return 'This is the first page.';
     }
     if (RegExp(r'^(go )?forward$').hasMatch(w)) {
-      if (await _tab.controller.canGoForward()) await _tab.controller.goForward();
+      if (!await _tab.controller.canGoForward()) return 'There is no page ahead.';
+      await _tab.controller.goForward();
       return 'Going forward.';
     }
     if (RegExp(r'^(reload|refresh)( (the )?page)?$').hasMatch(w)) {

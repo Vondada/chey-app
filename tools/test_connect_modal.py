@@ -120,6 +120,17 @@ class ConnectModalE2E(unittest.TestCase):
         self.assertEqual(self.read("worker_secret_value"), f"bearer:{token}@{URL}")
         self.assert_no_secret_in(output, summary)
 
+    def test_regional_endpoint_url_is_found_and_connected(self):
+        # Modal's regional endpoint (owner, 2026-10-25: the che-gpu app deployed, and the old regex missed the region).
+        regional = "https://vondada--che-gpu.us-east.modal.run"
+        code, output, summary = self.run_script({"STUB_URL": regional})
+        self.assertEqual(code, 0, output)
+        self.assertIn("CONNECTED:", output)
+        self.assertIn(regional, summary)
+        token = self.read("modal_secret_arg").strip()
+        self.assertEqual(self.read("worker_secret_value"), f"bearer:{token}@{regional}")
+        self.assert_no_secret_in(output, summary)
+
     def test_deploy_failure_shows_the_real_error_and_never_connects(self):
         code, output, summary = self.run_script({"STUB_DEPLOY_MODE": "token"})
         self.assertNotEqual(code, 0)
