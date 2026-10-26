@@ -20,6 +20,7 @@ import { meetingEvent, officeTaskEvent, researchEvent } from './room_events.js';
 import { assertAgentMayRun, permissionBlocker } from './agent_permissions.js';
 import { guardRetrievalClaims } from './truth_layer.js';
 import { JOB_ROLE_SPECS, POOL_NAMES, agentSoul, isPartnerAgent, pickOfficeAgent, runBrowseTask } from './browse_chat.js';
+import { closeCheck } from './office_queue.js';
 
 export const AGENT_STATUSES = [
   'idle', 'researching', 'building', 'analyzing', 'meeting',
@@ -509,6 +510,8 @@ export function recordAgentWork(data, { task = {}, agent = {}, outcome = 'comple
     task: 'See owner-authorized task history',
     status: clip(outcome, 20) || 'complete',
     verified_by_che: Boolean(verified),
+    // A completed job is recorded with whether its evidence was there (owner, 2026-10-26); the status itself is unchanged.
+    evidence_ok: outcome === 'complete' ? closeCheck({ ...task, verified_by_che: Boolean(verified) }).ok : null,
     memory_note_id: clip(memoryNoteId, 120),
     error: error ? 'Failure recorded; details in owner-authorized task history' : '',
     at: now(),

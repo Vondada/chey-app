@@ -200,3 +200,14 @@ test('an office agent keeps its personality and works with its teammates; its me
   assert.doesNotMatch(prompt, /old line 1\b/, 'only the last three office messages are kept');
   assert.match(prompt, /old line 6/);
 });
+
+test('a completed job is recorded with whether its evidence was there', () => {
+  const data = {};
+  const agent = { id: 'atlas', name: 'Atlas' };
+  const bare = recordAgentWork(data, { task: { id: 't-bare', result: 'It works.' }, agent, outcome: 'complete' });
+  const checked = recordAgentWork(data, { task: { id: 't-checked', result: 'It works.', evidence: { tests: ['npm test: pass'] } }, agent, outcome: 'complete' });
+  const failed = recordAgentWork(data, { task: { id: 't-failed' }, agent, outcome: 'failed', error: 'timeout' });
+  assert.equal(bare.evidence_ok, false);
+  assert.equal(checked.evidence_ok, true);
+  assert.equal(failed.evidence_ok, null);
+});
