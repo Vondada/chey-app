@@ -22,13 +22,13 @@ void main() {
       await tester.pump(const Duration(seconds: 3));
       expect(tester.takeException(), isNull, reason: 'Opening Trading threw an error');
 
-      await _tapFirst(tester, find.bySemanticsLabel('Expand the chart'), 'Expand the chart');
+      await _waitForAndTap(tester, find.bySemanticsLabel('Expand the chart'), 'Expand the chart');
       await tester.pump(const Duration(seconds: 2));
 
-      await _tapFirst(tester, find.bySemanticsLabel('Show the Alpaca PAPER chart'), 'Alpaca PAPER chart');
+      await _waitForAndTap(tester, find.bySemanticsLabel('Show the Alpaca PAPER chart'), 'Alpaca PAPER chart');
       await tester.pump(const Duration(seconds: 3));
 
-      await _tapFirst(tester, find.text('Order ticket'), 'Order ticket');
+      await _waitForAndTap(tester, find.text('Order ticket'), 'Order ticket');
       await tester.pumpAndSettle(const Duration(milliseconds: 200), EnginePhase.sendSemanticsUpdate, const Duration(seconds: 5));
 
       await _tapFirst(tester, find.text('Buy'), 'Buy');
@@ -53,6 +53,15 @@ void main() {
     }
     await tester.runAsync(() => Future<void>.delayed(const Duration(seconds: 2)));
   });
+}
+
+/// The trading room loads its data after a tap, so a control can take a few seconds to appear. Pumps until it does,
+/// up to 30 seconds, then taps it. Fails with the control's name so the gate says which step broke.
+Future<void> _waitForAndTap(WidgetTester tester, Finder finder, String name) async {
+  for (var i = 0; i < 60 && finder.evaluate().isEmpty; i++) {
+    await tester.pump(const Duration(milliseconds: 500));
+  }
+  await _tapFirst(tester, finder, name);
 }
 
 /// Taps the first match, or fails with the name of the control so the gate says which step broke.

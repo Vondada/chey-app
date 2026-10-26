@@ -1,8 +1,6 @@
 // The screen gate (owner, 2026-10-26): every main tab opens with real content and no error text, and the Office's
 // swipe between sections stays smooth. Runs on an iOS simulator from .github/workflows/che-release-gate.yml and saves
 // a screenshot of each screen so the owner can look at them. It is a required check for every feature.
-import 'dart:io';
-
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -59,13 +57,11 @@ void main() {
   });
 }
 
-/// Saves a screenshot to the run's output folder. A missing screenshot never fails the gate by itself.
+/// Takes a screenshot; the driver saves it to the CI workspace. A capture failure never fails the gate by itself.
 Future<void> _shot(IntegrationTestWidgetsFlutterBinding binding, String name) async {
   try {
-    final bytes = await binding.takeScreenshot(name);
-    final dir = Directory('screens')..createSync(recursive: true);
-    File('${dir.path}/$name.png').writeAsBytesSync(bytes);
+    await binding.takeScreenshot(name);
   } catch (_) {
-    // Screenshots are evidence for the owner's review; a capture failure is noted by the missing file.
+    // Screenshots are evidence for the owner's review; a capture failure shows as a missing file.
   }
 }

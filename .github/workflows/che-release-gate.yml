@@ -89,7 +89,7 @@ jobs:
           xcrun simctl bootstatus "$udid" -b
           echo "udid=$udid" >> "$GITHUB_OUTPUT"
       - name: Screen and swipe gate on the simulator
-        run: flutter test integration_test/screens_gate_test.dart -d "${{ steps.sim.outputs.udid }}"
+        run: flutter drive --driver=test_driver/integration_test.dart --target=integration_test/screens_gate_test.dart -d "${{ steps.sim.outputs.udid }}"
       - name: Trading order flow (paper, never sends)
         if: always()
         run: flutter test integration_test/trading_order_flow_test.dart -d "${{ steps.sim.outputs.udid }}"
