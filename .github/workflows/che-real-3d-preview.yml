@@ -27,10 +27,10 @@ jobs:
           /usr/bin/python3 -c 'import numpy; print("System NumPy", numpy.__version__)'
           blender --version | head -2
           # Blender may use an isolated Python search path. Probe Blender itself, not only /usr/bin/python3.
-          if ! blender -b --python-expr 'import numpy; print("BLENDER_NUMPY_OK", numpy.__version__)'; then
+          if ! blender -b --python-exit-code 1 --python-use-system-env --python-expr 'import numpy; print("BLENDER_NUMPY_OK", numpy.__version__)'; then
             echo 'Blender cannot import distro NumPy; retrying with the distro package directory.'
             echo "PYTHONPATH=/usr/lib/python3/dist-packages${PYTHONPATH:+:$PYTHONPATH}" >> "$GITHUB_ENV"
-            PYTHONPATH="/usr/lib/python3/dist-packages${PYTHONPATH:+:$PYTHONPATH}" blender -b --python-expr 'import numpy; print("BLENDER_NUMPY_OK", numpy.__version__)'
+            PYTHONPATH="/usr/lib/python3/dist-packages${PYTHONPATH:+:$PYTHONPATH}" blender -b --python-exit-code 1 --python-use-system-env --python-expr 'import numpy; print("BLENDER_NUMPY_OK", numpy.__version__)'
           fi
       - name: Verify the existing character is a real 3D asset
         run: |
@@ -49,7 +49,7 @@ jobs:
         timeout-minutes: 10
         run: |
           set -euo pipefail
-          blender -b -t 2 --python tools/che_character_video_preview.py -- --model "assets/characters/crew/${{ inputs.character }}.glb" --out rendered --frames 36
+          blender -b -t 2 --python-use-system-env --python tools/che_character_video_preview.py -- --model "assets/characters/crew/${{ inputs.character }}.glb" --out rendered --frames 36
           test "$(find rendered -name 'frame_*.png' | wc -l)" -eq 36
       - name: Encode and independently probe MP4
         timeout-minutes: 2
