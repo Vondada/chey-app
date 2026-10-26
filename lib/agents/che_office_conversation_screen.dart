@@ -128,7 +128,7 @@ class _CheOfficeConversationScreenState extends State<CheOfficeConversationScree
                         ? null
                         : IconButton(
                             tooltip: 'Clear search',
-                            icon: const Icon(Icons.clear_rounded),
+                            icon: const Icon(Icons.close_rounded),
                             onPressed: () => setState(() => _search.clear()),
                           ),
                   ),
