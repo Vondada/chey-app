@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFileSync } from 'node:fs';
 import { creationRoute } from './creation_studio.js';
-import { DISPATCH_WINDOW_MS, ensureCapacity } from './creation_orchestrator.js';
+import { DISPATCH_WINDOW_MS, ensureCapacity, recoverCreations } from './creation_orchestrator.js';
 import { GpuQueue, LEASE_MS, gpuOwnerRoute, gpuWorkerRoute, publicJob } from './gpu_queue.js';
 import { resetOidcCache } from './gpu_oidc.js';
 import { oidcSigner } from './oidc_test_signer.mjs';
@@ -30,6 +30,22 @@ test('a pending creation arms a backend wake without a foreground client', async
   await s.call(`/api/creations/${p.id}/generate`, 'POST', {});
   assert.ok(alarm > 0, 'job must recover even if the owner closes CHE now');
   assert.equal(await s.storage.get('gpu:wake_at'), alarm);
+});
+
+test('reading seeded previews alone does not arm background recovery, and the last finished job clears its wake', async () => {
+  const s = await setup();
+  await ensureCapacity(s.ctx.env, s.ctx);
+  assert.equal(await s.storage.get('gpu:wake_at'), undefined);
+  const before = s.github.length;
+  assert.equal(await recoverCreations(s.ctx.env, s.ctx), null);
+  assert.equal(s.github.length, before);
+  const q = new GpuQueue(s.storage, s.ctx.now);
+  const job = (await q.enqueue({kind:'object_model',request_key:'owner-render',requires:{gpu:'none'}})).job;
+  await ensureCapacity(s.ctx.env, s.ctx);
+  assert.ok(await s.storage.get('gpu:wake_at'));
+  const jobs = await q.jobs(); jobs.find((j) => j.id === job.id).state = 'completed'; await q.save(jobs);
+  await recoverCreations(s.ctx.env, s.ctx);
+  assert.equal(await s.storage.get('gpu:wake_at'), undefined);
 });
 
 function glb(extra = 0) {
@@ -194,7 +210,7 @@ test('a lapsed lease pauses the job and CHE dispatches again; the resuming worke
   const sha = (await s.call(`/api/creations/${p.id}`)).body.project.job.model.sha256;
   for (const st of ['model', 'rig', 'animate']) await s.worker('progress', { worker_id: w1.worker_id, job_id: id, stage: st, checkpoint: { stage: st, sha256: sha, bytes: model.length } }, { run: '500' });
   s.advance(DISPATCH_WINDOW_MS + LEASE_MS);                            // the runner died; the old dispatch is stale
-  await ensureCapacity(s.ctx.env, s.ctx); // backend alarm pass: no phone or foreground polling
+  await recoverCreations(s.ctx.env, s.ctx); // backend alarm pass: no phone or foreground polling
   assert.equal(s.github.filter((g) => g.method === 'POST').length, 2, 'backend recovery already dispatched before reopen');
   const d = (await s.call(`/api/creations/${p.id}`)).body.project;
   assert.equal(d.job.state, 'paused'); assert.match(d.job.status_line, /Finished stages kept: model, rig, animate/);

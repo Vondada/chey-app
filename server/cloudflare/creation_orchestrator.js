@@ -155,13 +155,20 @@ export async function ensureCapacity(env = {}, { storage, now, fetcher = fetch, 
   if (recChanged) await storage.put(ENGINE_KEY, rec);
   // Recovery belongs to the backend, including when every phone/browser is closed.
   // Preserve the shared Durable Object alarm if another room needs an earlier wake.
-  if (jobs.some((j) => !j.owner_paused && ['queued', 'paused', 'rendering'].includes(j.state))) {
+  if (jobs.some((j) => !j.owner_paused && ['queued', 'paused', 'rendering'].includes(j.state)
+      && (j.state === 'rendering' || j.queued_by !== 'Claude (PR #517)'))) {
     const wake = t + 60_000;
     await storage.put('gpu:wake_at', wake);
     const alarm = await storage.getAlarm?.();
     if (!alarm || alarm > wake) await storage.setAlarm?.(wake);
   } else await storage.delete('gpu:wake_at');
   return { ok: true, dispatched, waiting_reason: reason, runnable: cap.cpu_runnable.length, have: have + dispatched, want, pool_started: sched?.started || null };
+}
+
+/** Alarm entry: only owner-submitted active work arms recovery; ordinary room alarms do not start creations. */
+export async function recoverCreations(env, ctx) {
+  if (await ctx.storage.get('gpu:wake_at')) return ensureCapacity(env, ctx);
+  return null;
 }
 
 /** Whether the GitHub path is usable right now (for the app's engine banner): settings, token, verified public. */

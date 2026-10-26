@@ -267,7 +267,7 @@ class _CheGpuBrowserState extends State<CheGpuBrowser> with WidgetsBindingObserv
       leading: IconButton(tooltip: 'Back in browser history', icon: const Icon(Icons.arrow_back), onPressed: () => unawaited(_action('back'))),
       actions: [TextButton(onPressed: () => unawaited(_action('close the browser')), child: const Text('Close'))]),
     body: Column(children: [
-      // The status takes at most 30% of the screen and scrolls; the Colab page keeps the rest (owner, 2026-10-25:
+      // The status takes at most 25% of the screen and scrolls; the Colab page keeps the rest (owner, 2026-10-25:
       // the panel left no room for the web page, so Open and Refresh only reloaded a strip). Hidden, it takes no room.
       if (_statusVisible) ConstrainedBox(
         constraints: BoxConstraints(maxHeight: MediaQuery.sizeOf(context).height * 0.25),
@@ -289,7 +289,7 @@ class _CheGpuBrowserState extends State<CheGpuBrowser> with WidgetsBindingObserv
       Expanded(child: widget.browser ?? FutureBuilder<String>(
         future: _account,
         builder: (context, saved) => saved.hasData
-            ? CheBrowserScreen(initialUrl: cheGpuNotebookUrl(saved.data!), title: 'Colab', sessionKey: cheGpuSessionKey, historyOnlyBack: true, appMode: false, googleSignInInPage: true)
+            ? CheBrowserScreen(initialUrl: cheGpuNotebookUrl(saved.data!), title: 'Colab', sessionKey: cheGpuSessionKey, historyOnlyBack: true, onClose: _close, appMode: false, googleSignInInPage: true)
             : const Center(child: CircularProgressIndicator()),
       )),
     ]),

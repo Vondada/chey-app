@@ -267,7 +267,7 @@ import { loadRegistry as loadCapabilityRegistry } from './capability_registry.js
 import { BrainLedger, answerLedger, decidePending as decideBrainPending, installBrainLedger, ledgerApi, recordGraphConnections, ledgerIntent as brainLedgerIntent, DEFAULT_ZONE as LEDGER_DEFAULT_ZONE } from './brain_ledger.js';
 import { FilmStore, filmIntent, filmProgress, farmProviders, loadRates, loadUsage, speakFarm, speakPlan, speakStatus as speakFilmStatus } from './film_studio.js';
 import { GpuQueue, gpuWorkerRoute, speakGpuConnect, speakGpuSummary } from './gpu_queue.js';
-import { ensureCapacity } from './creation_orchestrator.js';
+import { recoverCreations } from './creation_orchestrator.js';
 import { CreationStudio, studioOwnerRoute } from './creation_studio.js';
 import { populationAnswer, worldPopulationIntent, worldRoute } from './world_population.js';
 import { creationProbeRoute } from './creation_probe.js';
@@ -14636,7 +14636,7 @@ export class CheState extends DurableObject {
       if (kept.length) await this.ctx.storage.setAlarm(Math.min(...kept));
       return;
     }
-    await ensureCapacity(this.env, { storage: this.ctx.storage }).catch(() => null);
+    await recoverCreations(this.env, { storage: this.ctx.storage }).catch(() => null);
     await this.filmPass().catch((error) => console.error('Film Studio pass failed:', error?.message || error));
     await reapPaid(this.env, { storage: this.ctx.storage }).catch(() => null);
     // Flagstaff stays responsive even when Office autonomy is paused. Incoming

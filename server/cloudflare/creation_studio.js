@@ -603,6 +603,12 @@ export function critiqueOf(v, job) {
 }
 
 // ── Storage ──────────────────────────────────────────────────────────────────────────────────────────────────────
+// Version numbers can repeat after undo + a divergent edit. Bind retries to the actual renderer inputs too.
+async function renderRequestKey(p, v, settings, quality) {
+  const hash = await sha256Hex(new TextEncoder().encode(JSON.stringify({ kind: p.kind, settings, views: VIEWS, samples: quality.samples, res: quality.res })));
+  return `creation:${p.id}:v${v.n}:${hash}`;
+}
+
 async function load(storage) { return (await storage.get(PROJECTS_KEY)) || []; }
 // Never evicts: at MAX_PROJECTS a new creation is refused (create below), so no saved work is dropped without the owner
 // asking (AGENTS.md: deleting needs his yes; review of #520).
@@ -882,8 +888,9 @@ export class CreationStudio {
       const bad = OBJ.specErrors(p.kind, v.params);
       if (bad.length) return { ok: false, detail: `This version cannot be built: ${bad.join('; ')}.` };
       const q = OBJ.qualityOf(v.render);
-      out = await this.queue.enqueue({ request_key: `creation:${p.id}:v${v.n}`, kind: OBJ.KIND_JOB[p.kind], title: `${p.title} v${v.n}: 3D model and previews`, views: VIEWS, samples: q.samples, res: q.res,
-        settings: OBJ.specSettings(v.params), queued_by: 'Live Studio', priority: 'high', requires: { gpu: 'none' } });
+      const settings = OBJ.specSettings(v.params);
+      out = await this.queue.enqueue({ request_key: await renderRequestKey(p, v, settings, q), kind: OBJ.KIND_JOB[p.kind], title: `${p.title} v${v.n}: 3D model and previews`, views: VIEWS, samples: q.samples, res: q.res,
+        settings, queued_by: 'Live Studio', priority: 'high', requires: { gpu: 'none' } });
     } else {
       const r = renderOf(v); const q = qualityOf(r);
       // Body macros and the variation seed only when set (so earlier versions queue the same settings as before); the
@@ -899,7 +906,7 @@ export class CreationStudio {
         settings.REFERENCE = JSON.stringify({ url: `/api/gpu/worker/reference?sha256=${ref.sha256}`, sha256: ref.sha256, bytes: ref.bytes, consent: ref.consent });
       }
       // Owner-interactive: high priority; a GPU is preferred, and a free cloud CPU worker takes it when none is online.
-      out = await this.queue.enqueue({ request_key: `creation:${p.id}:v${v.n}`, kind: 'person_model', title: `${p.title} v${v.n}: 3D model and previews`, views: VIEWS, samples: q.samples, res: q.res,
+      out = await this.queue.enqueue({ request_key: await renderRequestKey(p, v, settings, q), kind: 'person_model', title: `${p.title} v${v.n}: 3D model and previews`, views: VIEWS, samples: q.samples, res: q.res,
         settings, queued_by: 'Live Studio', priority: 'high', requires: { gpu: 'preferred' } });
     }
     if (!out.ok) return { ok: false, detail: out.detail };

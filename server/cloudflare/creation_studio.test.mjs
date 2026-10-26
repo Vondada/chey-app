@@ -30,6 +30,21 @@ test('retrying Render after reopening reuses a completed version instead of subm
   assert.equal(b.duplicate, true);
 });
 
+test('undo followed by a divergent edit never reuses the abandoned version render', async () => {
+  const s = setup();
+  const p = (await s.call('/api/creations', 'POST', {base:'che'})).body.project;
+  const path = `/api/creations/${p.id}`;
+  await s.call(`${path}/edit`, 'POST', {text:'make the nose wider'});
+  const a = (await s.call(`${path}/generate`, 'POST', {})).body;
+  await s.call(`${path}/undo`, 'POST', {});
+  await s.call(`${path}/edit`, 'POST', {text:'make the nose narrower'});
+  const b = (await s.call(`${path}/generate`, 'POST', {})).body;
+  assert.notEqual(b.job.id, a.job.id);
+  assert.notEqual(b.job.request_key, a.job.request_key);
+  const retry = (await s.call(`${path}/generate`, 'POST', {})).body;
+  assert.equal(retry.job.id, b.job.id);
+});
+
 /** A minimal valid GLB v2: 12-byte header, one JSON chunk. */
 function glb(extra = 0) {
   const jsonText = JSON.stringify({ asset: { version: '2.0' }, pad: 'x'.repeat(extra) });

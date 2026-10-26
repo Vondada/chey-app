@@ -39,6 +39,9 @@ test('CHE Office uses an explicit account chooser and stores only a verified sel
   assert.equal(data.google_connections.office.status, 'connected');
   assert.ok(!JSON.stringify(data.google_connections).includes('office-refresh'));
   assert.equal((await googleStates(env, data)).office.account, 'office@example.com');
+  const connectors = await googleConnectorStates(env, data);
+  assert.equal(connectors.office, undefined, 'the existing Office crew connector is not overwritten');
+  assert.equal(connectors.office_google.state, 'ready');
 });
 
 test('Office switching replaces only Office identity; expired access refreshes without prompting', async () => {

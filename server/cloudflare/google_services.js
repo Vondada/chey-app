@@ -329,14 +329,16 @@ export async function googleConnectorStates(env, data) {
   const states = await googleStates(env, data);
   const out = {};
   for (const [id, st] of Object.entries(states)) {
+    // `office` is already the Office crew connector; Google identity must not overwrite its readiness.
+    const connector = id === 'office' ? 'office_google' : id;
     if (st.connected) {
-      out[id] = { state: 'ready', detail: st.account || `${st.label} connected` };
+      out[connector] = { state: 'ready', detail: st.account || `${st.label} connected` };
     } else if (st.status === 'needs_access') {
-      out[id] = { state: 'not_connected', detail: st.access_status_detail || `${st.label}: Needs Setup. Google has not confirmed CHE's access yet.` };
+      out[connector] = { state: 'not_connected', detail: st.access_status_detail || `${st.label}: Needs Setup. Google has not confirmed CHE's access yet.` };
     } else if (st.status === 'needs_reconnect') {
-      out[id] = { state: 'needs_reconnect', detail: `Reconnect ${st.label}.` };
+      out[connector] = { state: 'needs_reconnect', detail: `Reconnect ${st.label}.` };
     } else {
-      out[id] = { state: 'not_connected', detail: `${st.label} is not connected.` };
+      out[connector] = { state: 'not_connected', detail: `${st.label} is not connected.` };
     }
   }
   return out;
