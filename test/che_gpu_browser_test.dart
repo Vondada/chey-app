@@ -4,6 +4,7 @@ import 'package:chey/create/che_gpu_browser.dart';
 import 'package:chey/create/che_gpu_connect.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
@@ -126,6 +127,27 @@ void main() {
     expect(reply, isNot(contains('Google account')), reason: 'a screen command never answers with account text');
     await tester.pumpWidget(const SizedBox());
     CheBrowserActions.openUrl = null;
+  });
+
+  testWidgets('Open in Safari opens the saved Colab account in Safari and says what to do next (owner, 2026-10-26)', (tester) async {
+    final opened = <Uri>[];
+    CheGpuBrowser.safariOpener = (url) async { opened.add(url); return true; };
+    final client = MockClient((r) async => http.Response(jsonEncode({'workers': []}), 200));
+    await tester.pumpWidget(MaterialApp(home: CheGpuBrowser(
+      baseUrl: 'https://che.test', headers: const {'Authorization': 'Bearer test'},
+      client: client, browser: const SizedBox(), onRead: (_) {},
+    )));
+    await tester.pumpAndSettle();
+    expect(find.text('Safari'), findsOneWidget);
+    final reply = await CheGpuBrowser.voiceHandler!('open in Safari');
+    expect(opened, hasLength(1));
+    expect(opened.single.toString(), startsWith('https://colab.research.google.com/'));
+    expect(reply, startsWith('Opened the Colab notebook in Safari'));
+    expect(reply, contains('say continue here'));
+    CheGpuBrowser.safariOpener = (url) async { return false; };
+    expect(await CheGpuBrowser.voiceHandler!('open in Safari'), 'I could not open Safari. Nothing was opened.');
+    CheGpuBrowser.safariOpener = (url) => launchUrl(url, mode: LaunchMode.externalApplication).catchError((_) => false);
+    await tester.pumpWidget(const SizedBox());
   });
 
   testWidgets('back, forward and refresh go to the browser and report its real answer (owner, 2026-10-25)', (tester) async {

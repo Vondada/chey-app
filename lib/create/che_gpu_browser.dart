@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
+import 'package:url_launcher/url_launcher.dart';
 import '../browser/che_browser.dart';
 import '../che_gpu_jobs.dart' show cheGpuWorkerOnline;
 import 'che_gpu_connect.dart';
@@ -18,6 +19,8 @@ class CheGpuBrowser extends StatefulWidget {
   /// The Connect GPU flow; defaults to the app's one instance, which outlives this screen.
   final CheGpuConnect? connect;
   static Future<String?> Function(String)? voiceHandler;
+  /// Opens the Colab notebook in Safari, where Google accepts sign-in. Tests replace the opener.
+  static Future<bool> Function(Uri url) safariOpener = (url) => launchUrl(url, mode: LaunchMode.externalApplication).catchError((_) => false);
 
   /// Whether a GPU Browser screen is built (Connect GPU brings it to the front instead of pushing another).
   static int openCount = 0;
@@ -136,12 +139,21 @@ class _CheGpuBrowserState extends State<CheGpuBrowser> {
         return await CheBrowserActions.voice?.call(words) ?? 'The Colab page is not ready yet.';
     }
   }
+  Future<String> _openInSafari() async {
+    final url = Uri.parse(cheGpuNotebookUrl(await _account));
+    final opened = await CheGpuBrowser.safariOpener(url);
+    return opened
+        ? 'Opened the Colab notebook in Safari. Sign in there with chetheoffice@gmail.com, choose Runtime, then Run all. Then say continue here.'
+        : 'I could not open Safari. Nothing was opened.';
+  }
+
   Future<String?> _voice(String words) async {
     if (!(ModalRoute.of(context)?.isCurrent ?? true)) return null;
     final t = words.trim().toLowerCase().replaceAll(RegExp(r'[.!?]+$'), '');
     // Screen commands come first, so "open the browser" never reaches the GPU connection flow.
     final ui = cheGpuUiCommand(words);
     if (ui != null) return _screen(ui);
+    if (RegExp(r'^open (?:the )?(?:notebook|colab|it|this)? ?in safari$|^safari$').hasMatch(t)) return _openInSafari();
     if (cheGpuConnectCommand(words)) return _connect.start(words);
     if (_connect.waitingForOwner && cheGpuContinueCommand(words)) return _connect.ownerContinue();
     if (RegExp(r'^(?:stop|cancel)(?: connecting)?(?: (?:the|my) gpu)?$').hasMatch(t) && _connect.busy) return _connect.cancel();
@@ -186,9 +198,9 @@ class _CheGpuBrowserState extends State<CheGpuBrowser> {
       ),
       // The controls stay on screen whatever the status above is (they were inside the scroll area before).
       Padding(padding: const EdgeInsets.symmetric(horizontal: 8), child: Wrap(spacing: 8, children: [
-        for (final command in const ['open', 'refresh', 'reconnect', 'gpu status'])
+        for (final command in const ['open', 'open in safari', 'refresh', 'reconnect', 'gpu status'])
           TextButton(onPressed: () => unawaited(_action(command)),
-              child: Text(const {'open': 'Open', 'refresh': 'Refresh', 'reconnect': 'Reconnect', 'gpu status': 'GPU Status'}[command]!)),
+              child: Text(const {'open': 'Open', 'open in safari': 'Safari', 'refresh': 'Refresh', 'reconnect': 'Reconnect', 'gpu status': 'GPU Status'}[command]!)),
       ])),
       Expanded(child: widget.browser ?? FutureBuilder<String>(
         future: _account,
