@@ -12,7 +12,9 @@ import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 
 import '../che_ui/che_chrome_status.dart';
+import '../che_ui/che_futuristic.dart';
 import '../che_ui/che_hud.dart';
+import '../che_ui/che_money_color.dart';
 import '../che_ui/che_theme.dart';
 
 const _gold = CheColors.markets;
@@ -374,14 +376,15 @@ class CheTradingStatusRow extends StatelessWidget {
     final pnl = live['pnl_today'] ?? (live['pnl'] is Map ? _map(live['pnl'])['today'] : live['pnl']);
     final dd = live['max_drawdown'] ?? live['drawdown'] ?? _map(live['totals'])['max_drawdown'];
     String money(Object? v) => _num(v) == null ? '—' : '${_num(v)! >= 0 ? '+' : '−'}\$${_num(v)!.abs().toStringAsFixed(2)}';
-    final items = <(String, String)>[
-      ('P&L', money(pnl)),
-      ('Win Rate', fmtPct(live['win_rate'])),
-      ('Open', _str(live['open_positions'], '—')),
-      ('Drawdown', _num(dd) == null ? '—' : '\$${_num(dd)!.abs().toStringAsFixed(2)}'),
+    // Drawdown is a loss amount, so any drawdown above zero is red; a missing or zero one is gray.
+    final items = <(String, String, Color)>[
+      ('P&L', money(pnl), cheMoneyColor(_num(pnl))),
+      ('Win Rate', fmtPct(live['win_rate']), Colors.white),
+      ('Open', _str(live['open_positions'], '—'), Colors.white),
+      ('Drawdown', _num(dd) == null ? '—' : '\$${_num(dd)!.abs().toStringAsFixed(2)}', (_num(dd) ?? 0) != 0 ? CheEnergy.red : cheMoneyGray),
     ];
     return Row(key: const Key('trading_status_row'), children: [
-      for (final (k, v) in items)
+      for (final (k, v, c) in items)
         Expanded(
           child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 3),
@@ -403,7 +406,7 @@ class CheTradingStatusRow extends StatelessWidget {
                     child: k == 'P&L' && _num(pnl) != null && _num(pnl) != 0
                         ? CheStatusText(v, tone: _num(pnl)! > 0 ? CheStatusTone.success : CheStatusTone.failure,
                             style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w800, fontFeatures: [FontFeature.tabularFigures()]))
-                        : Text(v, maxLines: 1, style: const TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.w800, fontFeatures: [FontFeature.tabularFigures()])),
+                        : Text(v, maxLines: 1, style: TextStyle(color: c, fontSize: 15, fontWeight: FontWeight.w800, fontFeatures: const [FontFeature.tabularFigures()])),
                   ),
                 ]),
               ),

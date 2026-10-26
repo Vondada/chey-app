@@ -9,6 +9,7 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 
 import '../che_ui/che_hud.dart';
+import '../che_ui/che_money_color.dart';
 import 'che_trading_chart.dart';
 import 'che_trading_hud.dart';
 

@@ -11,6 +11,7 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart' show listEquals;
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
+import '../che_ui/che_money_color.dart';
 import '../che_ui/che_theme.dart';
 import 'che_trading_hud.dart';
 import '../trading/che_sim_controls.dart';
@@ -225,7 +226,7 @@ class _LedgerCard extends StatelessWidget {
                 _stat('Closed trades', '${trades ?? 0}'),
                 if (ledger['wins'] != null) _stat('Won / lost', '${ledger['wins']} / ${ledger['losses'] ?? 0}'),
                 if (ledger['win_rate'] != null) _stat('Win rate', '${ledger['win_rate']}%'),
-                if (ledger['net_pnl'] != null) _stat('Net after costs', _money(ledger['net_pnl']), color: (_num(ledger['net_pnl']) ?? 0) >= 0 ? _up : _down),
+                if (ledger['net_pnl'] != null) _stat('Net after costs', _money(ledger['net_pnl']), color: cheMoneyColor(_num(ledger['net_pnl']))),
                 if (ledger['expectancy_r'] != null) _stat('Expectancy', _r(ledger['expectancy_r'])),
                 if (ledger['open'] != null) _stat('Open now', '${ledger['open']}'),
                 if (ledger['profitable'] != null) _stat('Proven profitable', '${ledger['profitable']} of ${ledger['strategies'] ?? 0}'),
@@ -234,10 +235,16 @@ class _LedgerCard extends StatelessWidget {
             if (best != null) Padding(
               padding: const EdgeInsets.only(top: 8),
               child: ExcludeSemantics(
-                child: Text(
-                  '${best['label'] == 'profitable' || best['ranked'] == true ? 'Best' : 'Leading, not proven'}: ${best['name']} · ${best['trades']} trades'
-                  '${best['win_rate'] != null ? ' · ${best['win_rate']}%' : ''}'
-                  '${best['net_pnl'] != null ? ' · ${_money(best['net_pnl'])}' : best['out_of_sample_expectancy_r'] != null ? ' · ${_r(best['out_of_sample_expectancy_r'])} out of sample' : ''}',
+                child: Text.rich(
+                  TextSpan(children: [
+                    TextSpan(
+                        text: '${best['label'] == 'profitable' || best['ranked'] == true ? 'Best' : 'Leading, not proven'}: ${best['name']} · ${best['trades']} trades'
+                            '${best['win_rate'] != null ? ' · ${best['win_rate']}%' : ''}'),
+                    if (best['net_pnl'] != null)
+                      TextSpan(text: ' · ${_money(best['net_pnl'])}', style: TextStyle(color: cheMoneyColor(_num(best['net_pnl']))))
+                    else if (best['out_of_sample_expectancy_r'] != null)
+                      TextSpan(text: ' · ${_r(best['out_of_sample_expectancy_r'])} out of sample'),
+                  ]),
                   style: const TextStyle(color: Colors.white, fontSize: 14),
                 ),
               ),
@@ -294,8 +301,14 @@ class _LedgerCard extends StatelessWidget {
                     padding: const EdgeInsets.symmetric(vertical: 2),
                     child: Row(children: [
                       Expanded(child: Text('${s['name'] ?? s['strategy']}${s['filter'] != null && '${s['filter']}'.isNotEmpty ? ' · ${s['filter']}' : ''}', style: const TextStyle(color: Colors.white, fontSize: 13), maxLines: 1, overflow: TextOverflow.ellipsis)),
-                      Text(
-                        '${s['trades']} tr${s['win_rate'] != null ? ' · ${s['win_rate']}%' : ''}${s['net_pnl'] != null ? ' · ${_money(s['net_pnl'])}' : s['expectancy_r'] != null ? ' · ${_r(s['expectancy_r'])}' : ''}',
+                      Text.rich(
+                        TextSpan(children: [
+                          TextSpan(text: '${s['trades']} tr${s['win_rate'] != null ? ' · ${s['win_rate']}%' : ''}'),
+                          if (s['net_pnl'] != null)
+                            TextSpan(text: ' · ${_money(s['net_pnl'])}', style: TextStyle(color: cheMoneyColor(_num(s['net_pnl']))))
+                          else if (s['expectancy_r'] != null)
+                            TextSpan(text: ' · ${_r(s['expectancy_r'])}'),
+                        ]),
                         style: TextStyle(color: _dim, fontSize: 13, fontFeatures: [FontFeature.tabularFigures()]),
                       ),
                       if (s['label'] == 'profitable' || s['ranked'] == true) const Text(' ✓', style: TextStyle(color: _up, fontSize: 13)),
@@ -366,7 +379,8 @@ class EquityCurvePainter extends CustomPainter {
     final fill = Path.from(path)..lineTo(x(points.length - 1), zy)..lineTo(x(0), zy)..close();
     canvas.drawPath(fill, Paint()..color = color.withValues(alpha: 0.12)..style = PaintingStyle.fill);
     final label = TextPainter(
-      text: TextSpan(text: unit == r'$' ? _money(points.last) : _r(points.last), style: TextStyle(color: color, fontSize: 11, fontWeight: FontWeight.w800)),
+      // A dollar end value takes the money colour (gray at zero); an R value follows the curve.
+      text: TextSpan(text: unit == r'$' ? _money(points.last) : _r(points.last), style: TextStyle(color: unit == r'$' ? cheMoneyColor(points.last) : color, fontSize: 11, fontWeight: FontWeight.w800)),
       textDirection: TextDirection.ltr,
     )..layout();
     label.paint(canvas, Offset(size.width - label.width - pad, pad));
