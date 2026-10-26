@@ -135,6 +135,7 @@ import 'che_ui/che_log.dart' show CheTranscriptScreen;
 import 'home/che_home_chat.dart';
 import 'home/screen_command.dart';
 import 'home/che_inline_preview.dart';
+import 'home/che_chat_media.dart';
 import 'home/che_grok_chat_screen.dart';
 import 'home/che_mockup_home.dart';
 import 'home/che_home_tiles.dart';
@@ -1148,6 +1149,8 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
   Map<String, String>? _pendingAttachment;
   String? _streamMediaUrl;
   String? _streamMediaType;
+  // The saved media ID, thumbnail and library list of the reply (che_chat_media.dart), shown as tiles under it.
+  Map<String, String> _streamMediaExtra = {};
   // How CHE read a held or multi-step turn (issue #345), shown quietly under the reply.
   String? _streamUnderstoodAs;
   // The reply's Soul and engine provenance (Response Details → Personality), from its done event.

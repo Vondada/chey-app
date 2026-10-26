@@ -395,6 +395,9 @@ void alpacaHiddenTests() {
     final s = _Server();
     await _pumpRoom(tester, s, section: CheTradingSection.account);
     expect(find.textContaining('Alpaca'), findsNothing);
+    // The paper account is a closed box until tapped (owner, 2026-10-26: small expandable boxes).
+    await tester.tap(find.byKey(const Key('fold_che_paper_compact')));
+    await tester.pumpAndSettle();
     expect(find.byKey(const Key('che_paper_account_compact')), findsOneWidget);
     expect(find.byType(CheAlpacaPaperPanel), findsNothing);
 
