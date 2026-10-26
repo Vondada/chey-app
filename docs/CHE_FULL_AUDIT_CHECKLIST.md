@@ -34,3 +34,12 @@ from this file. Status words are literal: **verified** (with evidence), **partia
 
 ## Coding intelligence
 - [ ] Coding tests (6, mailbox 2026-10-26): 0 of 6 answered; all six replies are the failed-answer fallback. **broken**. Root cause in worker.js replyToFlagstaffMessageOnce (status 'failed'); reason is in live storage only.
+
+## Owner decisions (2026-10-26)
+- Brain Room: the owner's reference image is saved at docs/ui-refs/brain-room-owner-reference-2026-10-26.png. Make the 3D brain the dominant element, keep the sidebar, Real-Time Learning, cards. Status: **not started**; next batch.
+- Modal: validate existing credentials without reading values. Verified evidence: last successful deploy run 40238828084 (connect and GPU test steps passed). The sandbox proxy cannot list GitHub secret names (403), so current presence is **unverified**. No billable GPU run without separate approval. A $0 spend limit does not by itself permit GPU execution.
+- Google: use the existing CHE Office account. Check the existing session first. Status: **unknown** from the sandbox; the owner must confirm on the device.
+- Trading: paper only, Phases 2-4 research, backtesting and paper. MNQ first, then NQ, MES, ES. No live orders.
+- Orion and Vale: keep both. Create real GLB models in the existing character style. Status: **not started**; they have no model files.
+- iPhone: Shorebird for Dart-only changes where supported; IPA only when native code changes. Do not claim an install unless the device reports it.
+- Coordination: PR #640 (ChatGPT, fix/che-character-render-python-deps) changes .github/workflows/che-real-3d-preview.yml. Do not edit that file here.
