@@ -846,7 +846,7 @@ class _CheRecordingStudioState extends State<CheRecordingStudio> with SingleTick
         OutlinedButton.icon(
           key: const ValueKey('studio-listen-mix'),
           onPressed: () => _do(c.listen),
-          icon: const Icon(Icons.hearing_rounded),
+          icon: const Icon(Icons.graphic_eq_rounded),
           label: const Text('Listen to this mix'),
         ),
         OutlinedButton.icon(onPressed: () => _do(c.export), icon: const Icon(Icons.save_rounded), label: const Text('Export WAV')),
