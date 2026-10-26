@@ -64,8 +64,28 @@ jobs:
           for f in "$RUNNER_TEMP/logs/tail.jsonl" "$RUNNER_TEMP/logs/tail.err"; do
             [ -f "$f" ] && sed -E 's/(Bearer |token[=:" ]+)[A-Za-z0-9._-]{12,}/\1[redacted]/Ig; s/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/[email]/g' "$f" > "$f.redacted" && mv "$f.redacted" "$f"
           done
-          echo "events: $(wc -l < "$RUNNER_TEMP/logs/tail.jsonl" 2>/dev/null || echo 0)"
-          echo "errors: $(grep -c '"outcome":"exception"' "$RUNNER_TEMP/logs/tail.jsonl" 2>/dev/null || echo 0)"
+          # Tally real outcomes from the captured events (wrangler tail JSON).
+          python3 - "$RUNNER_TEMP/logs/tail.jsonl" <<'PY'
+          import json, sys, collections
+          counts, messages, bad = collections.Counter(), [], 0
+          for line in open(sys.argv[1], encoding="utf-8", errors="replace"):
+              line = line.strip()
+              if not line:
+                  continue
+              try:
+                  event = json.loads(line)
+              except ValueError:
+                  bad += 1
+                  continue
+              counts[str(event.get("outcome"))] += 1
+              for exc in event.get("exceptions") or []:
+                  if len(messages) < 10:
+                      messages.append(str(exc.get("message") or exc)[:200])
+          print(f"events: {sum(counts.values())} (unparsed lines: {bad})")
+          print("outcomes: " + ", ".join(f"{k}={v}" for k, v in sorted(counts.items())))
+          for m in messages:
+              print("exception: " + m)
+          PY
 
       - name: Keep the captured logs
         uses: actions/upload-artifact@v4
