@@ -7,8 +7,8 @@ void main() {
     const reply = 'Water boils at 100 °C at sea level.';
     final request = cheFactCheckRequest('  $reply  ');
     expect(request, contains('"""\n$reply\n"""'));
-    expect(request, contains('cannot be verified'));
-    expect(request, contains('Name the source'));
+    expect(request, contains('Verified, False, or Can\'t verify'));
+    expect(request, contains('give the source'));
     expect(request, contains('Do not guess'));
   });
 }

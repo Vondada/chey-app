@@ -315,25 +315,21 @@ class _CheMailboxScreenState extends State<CheMailboxScreen> {
                 text,
                 style: CheType.body.copyWith(color: fromChe ? CheColors.bg : CheColors.text),
               ),
-              // CHE's own replies can be checked by any AI (owner, 2026-10-26): this copies the reply inside a fact-check
-              // request, so it can be pasted into Claude, ChatGPT or any other app. Nothing is sent by CHE.
+              // CHE's own replies go to Claude's mailbox for a fact-check (owner, 2026-10-26): Claude answers Verified, False or
+              // Can't verify for each claim, with a source to check. No paid model is called.
               if (fromChe)
                 Semantics(
                   button: true,
-                  label: 'Copy this reply with a fact-check request',
+                  label: 'Send this reply to Claude to fact-check',
                   excludeSemantics: true,
                   child: InkWell(
-                    onTap: () {
-                      Clipboard.setData(ClipboardData(text: cheFactCheckRequest(text)));
-                      HapticFeedback.selectionClick();
-                      ScaffoldMessenger.maybeOf(context)?.showSnackBar(const SnackBar(content: Text('Copied. Paste it into Claude, ChatGPT or any AI to fact-check CHE.')));
-                    },
+                    onTap: () => _sendForFactCheck(text),
                     child: Padding(
                       padding: const EdgeInsets.only(top: 6),
                       child: Row(mainAxisSize: MainAxisSize.min, children: [
                         Icon(Icons.fact_check_outlined, size: 16, color: CheColors.bg),
                         const SizedBox(width: 4),
-                        Text('Copy to fact-check', style: CheType.label.copyWith(color: CheColors.bg)),
+                        Text('Send to Claude to fact-check', style: CheType.label.copyWith(color: CheColors.bg)),
                       ]),
                     ),
                   ),
@@ -356,6 +352,23 @@ class _CheMailboxScreenState extends State<CheMailboxScreen> {
     final ordered = out.entries.toList()
       ..sort((a, b) => cheMailCompare(b.value.last, a.value.last));
     return {for (final e in ordered) e.key: e.value};
+  }
+
+  /// Posts one CHE reply to Claude's thread with the fact-check request, through the mailbox route the Worker already has.
+  Future<void> _sendForFactCheck(String reply) async {
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    HapticFeedback.selectionClick();
+    try {
+      final res = await http.post(
+        Uri.parse('${widget.baseUrl}/api/mailbox'),
+        headers: {...widget.headers(), 'Content-Type': 'application/json'},
+        body: jsonEncode({'to': 'claude', 'text': cheFactCheckRequest(reply)}),
+      );
+      final sent = res.statusCode >= 200 && res.statusCode < 300;
+      messenger?.showSnackBar(SnackBar(content: Text(sent ? 'Sent to Claude for a fact-check. The verdicts come back in the mailbox.' : 'Not sent (${res.statusCode}). Try again.')));
+    } catch (_) {
+      messenger?.showSnackBar(const SnackBar(content: Text('Not sent: no connection to CHE. Try again.')));
+    }
   }
 
   String _nice(String peer) => peer.isEmpty ? 'Unknown' : '${peer[0].toUpperCase()}${peer.substring(1)}';
