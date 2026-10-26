@@ -301,15 +301,21 @@ void main() {
   testWidgets('RESEARCH dashboard: real totals, coverage with real years, jobs, and controls that report their real result', (tester) async {
     final api = _Api();
     await _pump(tester, api, section: CheTradingSection.strategies);
+    // RESEARCH is a closed box until tapped (owner, 2026-10-26: small expandable boxes).
+    await tester.tap(find.byKey(const Key('fold_research')));
+    await tester.pumpAndSettle();
     expect(find.byType(CheTradingChart), findsNothing, reason: 'the chart is not built off its section');
     expect(find.bySemanticsLabel(RegExp(r'^7 strategies tested\. 46 strategy and timeframe buckets qualified\. 2418 backtest trades\. 312 forward paper trades\.$')), findsOneWidget);
     expect(find.bySemanticsLabel(RegExp(r'^MNQ daily data: 7\.4 years, from 2019-05-06')), findsOneWidget);
     expect(find.bySemanticsLabel(RegExp(r'^NQ daily data: 20 years, from 2006-10-23')), findsOneWidget);
     expect(find.textContaining('NQ historical · EMA · 30m: running, 4 of 10'), findsOneWidget);
-    await tester.ensureVisible(find.byKey(const Key('paper_learning_switch')));
-    await tester.tap(find.byKey(const Key('paper_learning_switch')));
+    await tester.drag(find.byType(ListView).first, const Offset(0, -300));
     await tester.pump();
-    await tester.pump(const Duration(milliseconds: 50));
+    await tester.tap(find.byKey(const Key('paper_learning_switch')));
+    // The reply arrives asynchronously; wait for it instead of a fixed pause (up to 2 s).
+    for (var i = 0; i < 40 && find.text('Paper learning is on for MNQ. PAPER only.').evaluate().isEmpty; i++) {
+      await tester.pump(const Duration(milliseconds: 50));
+    }
     expect(find.text('Paper learning is on for MNQ. PAPER only.'), findsOneWidget);
     expect(api.learning, isTrue);
     await tester.ensureVisible(find.byKey(const Key('profile_DEEP')));
@@ -320,7 +326,8 @@ void main() {
     expect(find.bySemanticsLabel('DEEP resource profile, selected'), findsOneWidget);
     // A refusal is reported as a refusal, and nothing changes.
     api.fail = true;
-    await tester.ensureVisible(find.byKey(const Key('paper_learning_switch')));
+    await tester.drag(find.byType(ListView).first, const Offset(0, -300));
+    await tester.pump();
     await tester.tap(find.byKey(const Key('paper_learning_switch')));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 50));

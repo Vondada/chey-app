@@ -981,25 +981,50 @@ class _CheTradingResearchDashboardState extends State<CheTradingResearchDashboar
     final done = j['completed'] is List ? (j['completed'] as List).length : _num(j['done'])?.toInt();
     final total = j['completed'] is List ? done! + (j['remaining'] is List ? (j['remaining'] as List).length : 0) : _num(j['total'])?.toInt();
     final errors = j['errors'] is List ? (j['errors'] as List).length : 0;
-    final label = '${_str(j['name'] ?? j['label'] ?? j['id'])}: ${_str(j['status'])}${done == null ? '' : ', $done of $total combinations'}${errors > 0 ? ', $errors errors' : ''}';
+    final name = _str(j['name'] ?? j['label'] ?? j['id']);
+    final label = '$name: ${_str(j['status'])}${done == null ? '' : ', $done of $total combinations'}${errors > 0 ? ', $errors errors' : ''}';
+    // Each combination is one strategy on one timeframe; the bar is the share finished, not a score.
+    final units = [
+      for (final u in (j['completed'] is List ? j['completed'] as List : const [])) _str(u),
+      for (final u in (j['cached'] is List ? j['cached'] as List : const [])) '${_str(u)} (reused)',
+    ];
     return Padding(
       padding: const EdgeInsets.only(top: 6),
-      child: Row(children: [
-        Expanded(
-          child: Semantics(
-        container: true,
-            label: label,
-            excludeSemantics: true,
-            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text(label, style: const TextStyle(color: Colors.white, fontSize: 14)),
-              if (progress != null) LinearProgressIndicator(value: progress.clamp(0, 1), color: _gold, backgroundColor: CheColors.stroke),
-            ]),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+        Theme(
+          data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+          child: ExpansionTile(
+            key: Key('job_${_str(j['id'])}'),
+            tilePadding: EdgeInsets.zero,
+            childrenPadding: const EdgeInsets.only(left: 4, bottom: 6),
+            iconColor: Colors.white,
+            collapsedIconColor: Colors.white70,
+            title: Text(label, style: const TextStyle(color: Colors.white, fontSize: 16, height: 1.3)),
+            subtitle: progress == null ? null : Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: LinearProgressIndicator(value: progress.clamp(0, 1), color: _gold, backgroundColor: CheColors.stroke),
+            ),
+            children: [
+              if (units.isEmpty)
+                const Align(alignment: Alignment.centerLeft, child: Text('No combinations finished yet.', style: TextStyle(color: _dim, fontSize: 15)))
+              else
+                for (final u in units)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 4),
+                    child: Text(u.replaceAll('|', ' · '), style: const TextStyle(color: Colors.white, fontSize: 15, height: 1.3)),
+                  ),
+              if (errors > 0)
+                for (final e in (j['errors'] as List)) Text('Error: ${_str(e)}', style: const TextStyle(color: _gold, fontSize: 14)),
+            ],
           ),
         ),
         if (running)
-          TextButton(
-            onPressed: _busy ? null : () => unawaited(_act('cancel_job', {'id': j['id']}, 'Cancelled ${_str(j['name'] ?? j['label'] ?? j['id'])}.')),
-            child: Text('Cancel', semanticsLabel: 'Cancel ${_str(j['name'] ?? j['label'] ?? j['id'])}'),
+          Align(
+            alignment: Alignment.centerRight,
+            child: TextButton(
+              onPressed: _busy ? null : () => unawaited(_act('cancel_job', {'id': j['id']}, 'Cancelled $name.')),
+              child: Text('Cancel', semanticsLabel: 'Cancel $name'),
+            ),
           ),
       ]),
     );

@@ -185,3 +185,18 @@ test('an office agent is told never to invent files or records', async () => {
   assert.match(prompt, /Never list files, uploads, record IDs, dates or past results unless they appear in the supplied context/);
   assert.match(prompt, /Steady and numerical\./, 'the personality is kept');
 });
+
+test('an office agent keeps its personality and works with its teammates; its memory of chatter stays short', async () => {
+  const { agentSystemPrompt } = await import('./agent_runtime.js');
+  const agent = {
+    name: 'Knox', role: 'Security reviewer', personality: 'Skeptical by default.',
+    messages: [1, 2, 3, 4, 5, 6].map((i) => ({ from: 'Nova', text: `old line ${i}` })),
+  };
+  const prompt = agentSystemPrompt(agent, '');
+  assert.match(prompt, /Work with your teammates/);
+  assert.match(prompt, /Skip filler greetings and sign-offs/);
+  assert.match(prompt, /keep it: this is how you think and speak/);
+  assert.match(prompt, /Personality \(keep it/);
+  assert.doesNotMatch(prompt, /old line 1\b/, 'only the last three office messages are kept');
+  assert.match(prompt, /old line 6/);
+});
