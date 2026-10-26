@@ -77,6 +77,9 @@ jobs:
               except ValueError:
                   bad += 1
                   continue
+              if not isinstance(event, dict):
+                  counts["non-object line"] += 1
+                  continue
               counts[str(event.get("outcome"))] += 1
               for exc in event.get("exceptions") or []:
                   if len(messages) < 10:
