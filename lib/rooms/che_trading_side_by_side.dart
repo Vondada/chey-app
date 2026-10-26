@@ -464,9 +464,9 @@ class CheSideBySideViewState extends State<CheSideBySideView> {
                         '${t.exit == null ? '' : ' · Exit ${_price(t.exit)}'}\n'
                         '${t.isOpen ? 'Unrealized' : 'Realized'} '),
                 TextSpan(text: cheMoney(pnl), style: TextStyle(color: cheMoneyColor(pnl))),
-                TextSpan(text: ' · Risk '),
+                const TextSpan(text: ' · Risk '),
                 TextSpan(text: cheMoney(t.dollarRisk), style: const TextStyle(color: cheMoneyGray)),
-                TextSpan(text: ' · Reward '),
+                const TextSpan(text: ' · Reward '),
                 TextSpan(text: cheMoney(t.dollarReward), style: const TextStyle(color: cheMoneyGray)),
                 TextSpan(
                     text: '\nTime in trade ${cheDuration(t.timeInTrade(_now))}${t.timeframe.isEmpty ? '' : ' · ${t.timeframe}'}${t.adjusted ? ' · ADJUSTED' : ''} · ${t.source}'),
