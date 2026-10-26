@@ -294,10 +294,11 @@ class _CheTradingRoomState extends State<CheTradingRoom> {
               onExpand: _expandChart,
             ),
           )),
-          CheTradingResearchStrip(key: const Key('research_strip'), client: _research, market: _market, onRead: widget.onRead),
           // The older overview (index chart, quotes, 3D scene) is folded so nothing heavy builds until asked for.
           if (widget.chartExtras.isNotEmpty)
             _fold('market_overview', 'MARKET OVERVIEW', 'Index chart and quotes', Column(children: widget.chartExtras)),
+          // Owner (2026-10-26): the sections sit at the bottom, under the chart.
+          CheTradingResearchStrip(key: const Key('research_strip'), client: _research, market: _market, onRead: widget.onRead),
         ];
       case CheTradingSection.setups:
         return [_pad(CheSetupBoard(desk: _desk, onRead: widget.onRead))];
