@@ -6,13 +6,15 @@ from this file. Status words are literal: **verified** (with evidence), **partia
 
 ## Batch 1: inventory and baseline (branch `audit/full-app-batch1`)
 - [x] Worker test suite baseline (`node --test ./*.test.mjs` in server/cloudflare, main 88677a97): **verified**: 4165 tests, 4156 pass, 0 fail, 7 skipped, 2 todo (run 2026-10-26)
-- [ ] Flutter screens and routes inventory: **unknown**
+- [x] Flutter screens and routes inventory: **verified by static read** (100 rows, 2026-10-26). Honest 'not connected' states are common. Fake or placeholder items found: Office workflow bar fixed 0.55/0.22/0.82 (FIXED in batch 2); Business hub 'Ready' labels (FIXED in batch 2, now 'Opens chat'); Projects board fractions only colour the 'done' state, no bar drawn (not a visible fake, left as is); ML studio sends sample prompts (open); Capability Showroom defaults to 'Planned' (open); che_preview.dart and che_agent_chat.dart are not routed (open); about 20 screens have no test reference (open).
 - [x] Worker routes inventory: **verified by static read** (agent report, 2026-10-26): routes in worker.js and server/cloudflare route modules; not run live
 - [x] GPU stack state: **verified by static read**: Modal full code path; Colab only while owner keeps notebook open; Kaggle, Hugging Face, RunPod code paths behind credentials/budget, none live-verified; GitHub CPU, Blender, video and film workflows exist
 - [x] Brain Room and agent inventory: **verified by static read**: owner reference image not in repo; Orion and Vale have no asset; other 8 agents have GLBs and seats
 - [ ] Open PRs and their CI: **unknown**
 
 ## Batch 2: navigation and critical crashes
+- [x] Office workflow progress: fixed-fraction bar replaced with indeterminate bar and the real state name. Tests: che_office_board, che_office_tiles, che_office_polling, che_rooms, che_hud_world_golden all pass (22/22, 2026-10-26). Branch audit/full-app-batch1.
+- [x] Business hub status labels: 'Ready' replaced with 'Opens chat' (both rows start a chat). Covered by the same test run.
 ## Batch 3: Brain Room and agents
 ## Batch 4: GPU and rendering (acceptance: a real, playable MP4 of CHE's 3D character in Creation Room)
 - [ ] Calibration 60 s render on free runner: run 40263142326 succeeded; MP4 not downloadable from sandbox (**unverified** playability)
