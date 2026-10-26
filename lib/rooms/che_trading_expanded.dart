@@ -87,6 +87,15 @@ class _CheTradingChartExpandedPageState extends State<CheTradingChartExpandedPag
     final exits = [for (final m in _markers) if (m.kind == 'exit' || m.outcome == 'open') m]
       ..sort((a, b) => (b.time ?? DateTime(0)).compareTo(a.time ?? DateTime(0)));
     final recent = exits.take(12).toList();
+    // The same ' · ' joined subtitle as before; the net P&L part carries its own green, red or gray.
+    List<InlineSpan> subtitleSpans(ChartMarker m) {
+      final parts = <TextSpan>[
+        if (m.strategy.isNotEmpty) TextSpan(text: m.strategy),
+        if (m.raw['r'] is num) TextSpan(text: '${(m.raw['r'] as num).toStringAsFixed(2)} R'),
+        if (m.raw['net_pnl'] is num) TextSpan(text: _money((m.raw['net_pnl'] as num).toDouble()), style: TextStyle(color: cheMoneyColor((m.raw['net_pnl'] as num).toDouble()))),
+      ];
+      return [for (var i = 0; i < parts.length; i++) ...[if (i > 0) const TextSpan(text: ' · '), parts[i]]];
+    }
     return Scaffold(
       backgroundColor: cheTradingPage(const Color(0xFF05080A)),
       appBar: AppBar(
@@ -166,13 +175,7 @@ class _CheTradingChartExpandedPageState extends State<CheTradingChartExpandedPag
                   collapsedIconColor: Colors.white70,
                   title: Text(cheMarkerTitle(m), maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.w700)),
                   subtitle: Text.rich(
-                    TextSpan(children: [
-                      // The net P&L is coloured on its own; the strategy and R multiple keep the label colour.
-                      for (var i = 0; i < subtitleParts.length; i++) ...[
-                        if (i > 0) const TextSpan(text: ' · '),
-                        subtitleParts[i],
-                      ],
-                    ]),
+                    TextSpan(children: subtitleSpans(m)),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: CheHud.label.copyWith(fontSize: 11),
