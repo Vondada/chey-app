@@ -5,11 +5,11 @@ from this file. Status words are literal: **verified** (with evidence), **partia
 **unknown** (not yet checked). Nothing is marked verified without a test, log, screenshot or commit that proves it.
 
 ## Batch 1: inventory and baseline (branch `audit/full-app-batch1`)
-- [ ] Worker test suite baseline (`node --test ./*.test.mjs` in server/cloudflare): **unknown** until the run finishes
+- [x] Worker test suite baseline (`node --test ./*.test.mjs` in server/cloudflare, main 88677a97): **verified**: 4165 tests, 4156 pass, 0 fail, 7 skipped, 2 todo (run 2026-10-26)
 - [ ] Flutter screens and routes inventory: **unknown**
-- [ ] Worker routes inventory: **unknown**
-- [ ] GPU stack state (Modal, Kaggle, Colab, Hugging Face, RunPod, Blender): **unknown**
-- [ ] Brain Room and agent inventory: **unknown**
+- [x] Worker routes inventory: **verified by static read** (agent report, 2026-10-26): routes in worker.js and server/cloudflare route modules; not run live
+- [x] GPU stack state: **verified by static read**: Modal full code path; Colab only while owner keeps notebook open; Kaggle, Hugging Face, RunPod code paths behind credentials/budget, none live-verified; GitHub CPU, Blender, video and film workflows exist
+- [x] Brain Room and agent inventory: **verified by static read**: owner reference image not in repo; Orion and Vale have no asset; other 8 agents have GLBs and seats
 - [ ] Open PRs and their CI: **unknown**
 
 ## Batch 2: navigation and critical crashes
