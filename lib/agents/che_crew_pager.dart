@@ -108,16 +108,21 @@ class _ProfileCard extends StatelessWidget {
         child: Padding(
           padding: const EdgeInsets.all(14),
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Row(children: [
-              Container(
-                width: 12,
-                height: 12,
-                decoration: BoxDecoration(color: agent.color, shape: BoxShape.circle),
-              ),
-              const SizedBox(width: 8),
-              Expanded(child: Text(agent.name, style: CheType.title.copyWith(fontSize: 20), maxLines: 1, overflow: TextOverflow.ellipsis)),
-              Text(agent.status.label, style: CheType.caption),
-            ]),
+            // Tapping the name or the header opens the desk, as the old list did.
+            InkWell(
+              onTap: onOpen,
+              borderRadius: BorderRadius.circular(8),
+              child: Row(children: [
+                Container(
+                  width: 12,
+                  height: 12,
+                  decoration: BoxDecoration(color: agent.color, shape: BoxShape.circle),
+                ),
+                const SizedBox(width: 8),
+                Expanded(child: Text(agent.name, style: CheType.title.copyWith(fontSize: 20), maxLines: 1, overflow: TextOverflow.ellipsis)),
+                Text(agent.status.label, style: CheType.caption),
+              ]),
+            ),
             const SizedBox(height: 2),
             Text(agent.role, style: CheType.bodyDim, maxLines: 1, overflow: TextOverflow.ellipsis),
             const SizedBox(height: 8),
