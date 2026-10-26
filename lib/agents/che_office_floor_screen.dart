@@ -1240,21 +1240,26 @@ class _AgentDeskSheetState extends State<_AgentDeskSheet> {
     await _load();
   }
 
-  double _workflowProgress(CheAgentDetail detail) {
+  /// The measured share of a workflow that is finished: 1 when its task completed, otherwise null. No stage has a
+  /// measured percentage yet, so a running, queued or reviewing task shows an indeterminate bar and its real state
+  /// name, never a made-up percent (owner audit, 2026-10-26: the old fixed 0.55 and 0.22 were not measurements).
+  double? _workflowProgress(CheAgentDetail detail) {
     final status = detail.profile.assignmentStatus.toLowerCase();
     if (status.contains('complete') || status.contains('done')) return 1;
-    if (status.contains('review')) return 0.82;
-    if (status.contains('running') || detail.profile.working) return 0.55;
-    if (status.contains('queued') || status.contains('waiting')) return 0.22;
-    if (status.contains('fail') || status.contains('block')) return 0.08;
-    if (detail.history.isNotEmpty) {
-      final latest = detail.history.first.status.toLowerCase();
-      if (latest == 'complete') return 1;
-      if (latest == 'reviewing') return 0.82;
-      if (latest == 'running') return 0.55;
-      if (latest == 'queued') return 0.22;
+    if (status.contains('fail') || status.contains('block') || status.contains('review') || status.contains('running') ||
+        status.contains('queued') || status.contains('waiting') || detail.profile.working) {
+      return null;
     }
-    return 0;
+    if (detail.history.isNotEmpty && detail.history.first.status.toLowerCase() == 'complete') return 1;
+    return null;
+  }
+
+  /// The real state name for the progress line, from the same source as [_workflowProgress].
+  String _workflowStateLabel(CheAgentDetail detail) {
+    final status = detail.profile.assignmentStatus.trim();
+    if (status.isNotEmpty) return status;
+    if (detail.profile.working) return 'working';
+    return detail.history.isNotEmpty ? detail.history.first.status : 'no task';
   }
 
   String _verifiedOutputLine(CheAgentDetail detail) {
@@ -1394,7 +1399,7 @@ class _AgentDeskSheetState extends State<_AgentDeskSheet> {
                       : 'No active job right now. Status: ${a.status.label}.'),
             ),
             Semantics(
-              label: 'Verified productivity for ${a.name}. ${_verifiedOutputLine(d)}. Current workflow progress ${(progress * 100).round()} percent.',
+              label: 'Verified productivity for ${a.name}. ${_verifiedOutputLine(d)}. Current workflow state: ${_workflowStateLabel(d)}${progress == null ? '' : '. ${(progress * 100).round()} percent done'}.',
               child: CheOfficePanel(
                 padding: const EdgeInsets.all(CheSpace.md),
                 legacy: BoxDecoration(
@@ -1413,7 +1418,7 @@ class _AgentDeskSheetState extends State<_AgentDeskSheet> {
                     borderRadius: BorderRadius.circular(99),
                   ),
                   const SizedBox(height: 6),
-                  Text('${(progress * 100).round()}% current workflow stage', style: CheType.label),
+                  Text(progress == null ? 'Current state: ${_workflowStateLabel(d)}. No measured percent yet.' : '${(progress * 100).round()}% done', style: CheType.label),
                   Text(_verifiedOutputLine(d), style: CheType.caption),
                   Text('Progress is based on real queued / working / review / completed states, not a guessed performance score.',
                       style: CheType.caption.copyWith(color: CheColors.textFaint)),
