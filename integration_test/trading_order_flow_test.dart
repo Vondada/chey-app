@@ -2,7 +2,6 @@
 // would make: Trading, expand the chart, Alpaca PAPER, Order ticket, Buy, Preview order, then cancel. It never presses
 // "Yes, place paper order", so it sends nothing to any broker. The Alpaca chart is hidden in the owner's room, so this test
 // turns it on for the run only and turns it back off afterwards.
-import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
 
