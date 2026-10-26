@@ -306,10 +306,13 @@ void main() {
     expect(find.bySemanticsLabel(RegExp(r'^MNQ daily data: 7\.4 years, from 2019-05-06')), findsOneWidget);
     expect(find.bySemanticsLabel(RegExp(r'^NQ daily data: 20 years, from 2006-10-23')), findsOneWidget);
     expect(find.textContaining('NQ historical · EMA · 30m: running, 4 of 10'), findsOneWidget);
-    await tester.scrollUntilVisible(find.byKey(const Key('paper_learning_switch')), 200, scrollable: find.ancestor(of: find.byKey(const Key('paper_learning_switch')), matching: find.byType(Scrollable)).first);
-    await tester.tap(find.byKey(const Key('paper_learning_switch')));
+    await tester.drag(find.byType(ListView).first, const Offset(0, -300));
     await tester.pump();
-    await tester.pump(const Duration(milliseconds: 50));
+    await tester.tap(find.byKey(const Key('paper_learning_switch')));
+    // The reply arrives asynchronously; wait for it instead of a fixed pause (up to 2 s).
+    for (var i = 0; i < 40 && find.text('Paper learning is on for MNQ. PAPER only.').evaluate().isEmpty; i++) {
+      await tester.pump(const Duration(milliseconds: 50));
+    }
     expect(find.text('Paper learning is on for MNQ. PAPER only.'), findsOneWidget);
     expect(api.learning, isTrue);
     await tester.ensureVisible(find.byKey(const Key('profile_DEEP')));
@@ -320,7 +323,8 @@ void main() {
     expect(find.bySemanticsLabel('DEEP resource profile, selected'), findsOneWidget);
     // A refusal is reported as a refusal, and nothing changes.
     api.fail = true;
-    await tester.scrollUntilVisible(find.byKey(const Key('paper_learning_switch')), 200, scrollable: find.ancestor(of: find.byKey(const Key('paper_learning_switch')), matching: find.byType(Scrollable)).first);
+    await tester.drag(find.byType(ListView).first, const Offset(0, -300));
+    await tester.pump();
     await tester.tap(find.byKey(const Key('paper_learning_switch')));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 50));
