@@ -77,6 +77,15 @@ Then, on GitHub:
 
 ## 2. Current position
 
+**Claude, 2026-10-26 (session continuation: owner asked to finish all open work, do not stop when interrupted).**
+- Standing owner rule: if a job is interrupted or does not finish, continue it on return unless the owner says stop.
+- Coding tests (6, posted in mailbox 2026-10-26 00:17Z): ALL SIX replies from CHE are the failed-answer fallback line ("I couldn't finish a checked answer..."). Score 0/6. The fallback is set in server/cloudflare/worker.js (replyToFlagstaffMessageOnce, status 'failed'). The failure reason is only in live Worker storage, which the sandbox cannot read. Root cause still open (item 1 of the coding-intelligence list).
+- Calibration render (60 s, free GitHub runner): rerun `calib-60s-rerun-20261026` dispatched on main after #636. Result to be recorded here when it finishes.
+- Merged this session: #634, #635, #633, #533 (squash), #532 (after merging main, GPU Browser conflict resolved with main's saved-account behaviour). Shorebird for 0cc2803c: success (run 40254061441). IPA build for that commit: skipped.
+- Pushed, not merged, no PR opened (PRs need the owner's request): `fix/gpu-google-signout` (sign out of Google in CHE's browser), `feat/gpu-open-in-safari` (Safari button, label "Safari"), `feat/trading-chart-phase1` (MACD, ATR, Heikin-Ashi as pure functions; 6/6 tests; NOT wired into the chart).
+- Not started, need owner decision: trading Phases 2-4 (orders; live orders need explicit approval); Modal video route and the $5 spend stop; Office Room upgrade; trading recording not attached.
+- Owner's Google sign-in in CHE's embedded browser is refused; the Safari route is built but not verified on the owner's iPhone.
+
 **Claude, 2026-10-25 (owner: FIX CHE'S CODING EVIDENCE AND GPU ROUTING) — read-only audit, no code or job changed.**
 - Main is `9bdd6468` (#632). Live Worker: last `[worker-deploy]` run is `4360d9d0` (#534, success). #632–#635 are NOT deployed; no Worker deploy run exists for `9bdd6468`.
 - Modal: `CHE Modal deploy` runs 40238828084 (`9bdd6468`) and 40238634534 / 40237486454 succeeded, so the Modal app connects. Modal is a compute-pool provider for GPU-only character jobs only (`server/cloudflare/compute_pool.js` ~L86-90, ~L520, ~L707-727; `modal_gpu.js` `modalDispatch` posts `/blender_preview`). Dispatch is held by the owner's credit gates (`modalCreditGate`). No Modal character job is proven on the live Worker from this sandbox.
