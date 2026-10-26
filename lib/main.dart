@@ -1655,11 +1655,14 @@ OWNER AGENCY
           tabs: const ['Crew', 'Projects'],
           detail: '${_officeRuntime.agents.length} agents, ${_officeRuntime.working} working'
               '${_officeRuntime.error == null ? '' : '. Office note: ${_officeRuntime.error}'}',
-          controls: const ['Crew office pane', 'Projects office pane', 'the bottom tabs: Home, Chat, Office, Apps, More'],
+          controls: const ['Crew office pane', 'Projects office pane', 'the bottom tabs: Home, Chat, Office, Apps, More, Browser'],
         ),
       3 => CheScreenReport(page: 'CHE World', tab: 'CHE World', tabs: tabs, controls: const ['the CHE World rooms', 'the bottom tabs']),
       4 => CheScreenReport(page: 'More', tab: 'More', tabs: tabs,
           controls: const ['Talk to CHE', 'Security', 'Film Studio', 'Cloud Computer', 'Workflows', 'Trading Room', 'Conversations', 'Flagstaff', 'Voice IDs', 'Keys', 'UI Controls', 'Connections', 'Change CHE’s voice', 'Voice replies', 'Projects and Businesses', 'Language and translate', 'the bottom tabs']),
+      5 => CheScreenReport(page: 'Browser', tab: 'Browser', tabs: tabs,
+          detail: 'The in-app browser, with its own tabs and address bar.',
+          controls: const ['the address bar', 'the browser tabs', 'Back, forward and refresh', 'the bottom tabs']),
       _ => CheScreenReport(page: 'Home', tab: 'Home', tabs: tabs,
           detail: '${_officeRuntime.agents.length} agents, ${_officeRuntime.working} working',
           controls: const ['Talk to CHE', 'Type to CHE', 'Voice on or off', 'The Office', 'Brain', 'Trading', 'Create',
@@ -1675,11 +1678,12 @@ OWNER AGENCY
         1 => _buildChatTab(agents),
         2 => _buildOfficeTab(),
         4 => _buildMoreTab(),
+        5 => _buildBrowserTab(),
         _ => const SizedBox.shrink(),
       };
 
   void _goShellTab(int i) {
-    if (i < 0 || i > 4) return;
+    if (i < 0 || i >= ChePhoneTab.values.length) return;
     // CHE World opens as its own full screen, the same screen the More list opens (owner, 2026-10-22).
     if (i == 3) {
       _openVirtualOffice();
@@ -2363,6 +2367,10 @@ OWNER AGENCY
     );
   }
 
+  // The in-app browser as a bottom tab (owner, 2026-10-26): pages open here, not in another app.
+  // Built once, when the owner first opens it; its own tabs and history live in CheBrowserScreen.
+  Widget _buildBrowserTab() => const CheBrowserScreen(initialUrl: 'https://duckduckgo.com', title: 'Browser', appMode: false);
+
   Widget _buildMoreTab() {
     return CheMoreTab(
       che: _officeRuntime.che,
@@ -2657,7 +2665,7 @@ OWNER AGENCY
               // running, so the Office crew, CHE's orb and glowing cards animated off screen and slowed every tap.
               // Each tab also repaints on its own layer.
               children: [
-                for (var i = 0; i < 5; i++)
+                for (var i = 0; i < ChePhoneTab.values.length; i++)
                   _builtTabs.contains(i)
                       ? TickerMode(enabled: i == _shellTab, child: RepaintBoundary(child: _buildTab(i, agents)))
                       : const SizedBox.shrink(),

@@ -7,7 +7,7 @@ import 'package:flutter/services.dart';
 import 'che_hud.dart';
 import 'che_theme.dart';
 
-enum ChePhoneTab { home, chat, office, apps, more }
+enum ChePhoneTab { home, chat, office, apps, more, browser }
 
 extension ChePhoneTabX on ChePhoneTab {
   String get label => switch (this) {
@@ -16,6 +16,7 @@ extension ChePhoneTabX on ChePhoneTab {
     ChePhoneTab.office => 'Office',
     ChePhoneTab.apps => 'CHE World',
     ChePhoneTab.more => 'More',
+    ChePhoneTab.browser => 'Browser',
   };
 
   IconData get icon => switch (this) {
@@ -24,6 +25,7 @@ extension ChePhoneTabX on ChePhoneTab {
     ChePhoneTab.office => Icons.apartment_rounded,
     ChePhoneTab.apps => Icons.dashboard_rounded,
     ChePhoneTab.more => Icons.more_horiz_rounded,
+    ChePhoneTab.browser => Icons.travel_explore_rounded,
   };
 
   String get semanticsLabel => switch (this) {
@@ -32,6 +34,7 @@ extension ChePhoneTabX on ChePhoneTab {
     ChePhoneTab.office => 'Office tab',
     ChePhoneTab.apps => 'CHE World tab',
     ChePhoneTab.more => 'More tab',
+    ChePhoneTab.browser => 'Browser tab',
   };
 }
 
