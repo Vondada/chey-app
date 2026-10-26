@@ -9,6 +9,8 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../che_ui/che_futuristic.dart';
+import '../che_ui/che_money_color.dart';
 import '../che_ui/che_theme.dart';
 import 'che_market_feed.dart';
 import 'che_paper_account.dart';
@@ -252,22 +254,24 @@ class _ChePaperAccountPanelState extends State<ChePaperAccountPanel> {
       );
 
   Widget _figures(ChePaperSnapshot s) {
-    final tiles = <(String, String, String)>[
-      ('Current balance', cheMoney(s.balance), 'paper_balance'),
-      ('Starting balance', cheMoney(s.startingBalance), 'paper_starting'),
-      ('Available', cheMoney(s.available), 'paper_available'),
-      ('Equity', cheMoney(s.equity), 'paper_equity'),
-      ('Unrealized P&L', _signed(s.unrealizedPnl), 'paper_unrealized'),
-      ('Realized P&L (this period)', _signed(s.realizedPnl), 'paper_realized'),
-      ('Total open risk', '${cheMoney(s.openRisk)} · ${s.totalRiskPct.toStringAsFixed(1)}%', 'paper_risk'),
-      ('Drawdown', '${cheMoney(s.drawdown)} · ${s.drawdownPct.toStringAsFixed(1)}% (max ${cheMoney(s.maxDrawdown)})', 'paper_drawdown'),
-      if (s.netDeposits != 0) ('Net deposits this period', _signed(s.netDeposits), 'paper_deposits'),
+    // Money colors (owner, 2026-10-26): profit green, loss red, break-even gray. Balance and equity are compared with the
+    // starting balance; a drawdown is a loss, so it is red whenever it is above zero.
+    final tiles = <(String, String, String, Color)>[
+      ('Current balance', cheMoney(s.balance), 'paper_balance', cheMoneyColor(s.balance - s.startingBalance)),
+      ('Starting balance', cheMoney(s.startingBalance), 'paper_starting', cheMoneyGray),
+      ('Available', cheMoney(s.available), 'paper_available', cheMoneyGray),
+      ('Equity', cheMoney(s.equity), 'paper_equity', cheMoneyColor(s.equity - s.startingBalance)),
+      ('Unrealized P&L', _signed(s.unrealizedPnl), 'paper_unrealized', cheMoneyColor(s.unrealizedPnl)),
+      ('Realized P&L (this period)', _signed(s.realizedPnl), 'paper_realized', cheMoneyColor(s.realizedPnl)),
+      ('Total open risk', '${cheMoney(s.openRisk)} · ${s.totalRiskPct.toStringAsFixed(1)}%', 'paper_risk', cheMoneyGray),
+      ('Drawdown', '${cheMoney(s.drawdown)} · ${s.drawdownPct.toStringAsFixed(1)}% (max ${cheMoney(s.maxDrawdown)})', 'paper_drawdown', s.drawdown > 0 ? CheEnergy.red : cheMoneyGray),
+      if (s.netDeposits != 0) ('Net deposits this period', _signed(s.netDeposits), 'paper_deposits', cheMoneyGray),
     ];
     return LayoutBuilder(builder: (context, c) {
       final cols = c.maxWidth > 640 ? 4 : 2;
       final w = (c.maxWidth - (cols - 1) * 8) / cols;
       return Wrap(spacing: 8, runSpacing: 8, children: [
-        for (final (label, value, key) in tiles)
+        for (final (label, value, key, color) in tiles)
           Semantics(
             label: '$kChePaperLabel $label: $value',
             excludeSemantics: true,
@@ -279,7 +283,7 @@ class _ChePaperAccountPanelState extends State<ChePaperAccountPanel> {
               child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                 Text(label, style: TextStyle(color: _dim, fontSize: 12.5)),
                 const SizedBox(height: 2),
-                Text(value, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 16, fontFeatures: [FontFeature.tabularFigures()])),
+                Text(value, style: TextStyle(color: color, fontWeight: FontWeight.w800, fontSize: 16, fontFeatures: const [FontFeature.tabularFigures()])),
               ]),
             ),
           ),
@@ -401,8 +405,8 @@ class _ChePaperAccountPanelState extends State<ChePaperAccountPanel> {
               ),
             if (pnl != null) ...[
               const SizedBox(height: 4),
-              Text('${p.status.isOpen ? 'Unrealized' : 'Net'} ${_signed(pnl)} ${pnl >= 0 ? '(gain)' : '(loss)'}',
-                  style: TextStyle(color: pnl >= 0 ? _up : _down, fontWeight: FontWeight.w800)),
+              Text('${p.status.isOpen ? 'Unrealized' : 'Net'} ${_signed(pnl)} ${pnl > 0 ? '(gain)' : pnl < 0 ? '(loss)' : '(break even)'}',
+                  style: TextStyle(color: cheMoneyColor(pnl), fontWeight: FontWeight.w800)),
             ],
           ]),
         ),
