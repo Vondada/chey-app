@@ -8817,7 +8817,8 @@ export class CheState extends DurableObject {
         return json(peer ? await readThread(this.env, peer) : await listThreads(this.env));
       }
       if (path === '/api/mailbox' && request.method === 'POST') {
-        const { status, ...rest } = await sendMail(this.env, { from: 'che', to: body.to, text: body.text, replyTo: body.reply_to });
+        // Typed in the app by the owner, so it is recorded as theirs, not as CHE's automated message.
+        const { status, ...rest } = await sendMail(this.env, { from: 'che', to: body.to, text: body.text, replyTo: body.reply_to, source: 'owner' });
         return json(rest, status);
       }
 

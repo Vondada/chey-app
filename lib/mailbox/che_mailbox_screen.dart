@@ -265,7 +265,10 @@ class _CheMailboxScreenState extends State<CheMailboxScreen> {
   /// bubbles in order; the name and time sit above the first bubble only.
   Widget _message(Map m) {
     final fromChe = '${m['from']}' == 'che';
-    final who = fromChe ? 'CHE' : _nice('${m['from']}');
+    // Who typed it (owner, 2026-10-26): the owner's own messages, CHE's automated ones, and other AIs read differently.
+    final typedByOwner = '${m['source']}' == 'owner';
+    final automated = fromChe && !typedByOwner;
+    final who = typedByOwner ? 'You, typed' : automated ? 'CHE, automated' : fromChe ? 'CHE' : _nice('${m['from']}');
     final parts = cheSplitMessage('${m['text']}');
     return Padding(
       padding: const EdgeInsets.only(top: 8),
@@ -276,13 +279,13 @@ class _CheMailboxScreenState extends State<CheMailboxScreen> {
             padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
             child: Text('$who · ${cheMailWhen(m)}', style: CheType.caption),
           ),
-          for (var i = 0; i < parts.length; i++) _bubble(m, fromChe, parts[i], i, parts.length),
+          for (var i = 0; i < parts.length; i++) _bubble(m, fromChe, parts[i], i, parts.length, typedByOwner: typedByOwner),
         ],
       ),
     );
   }
 
-  Widget _bubble(Map m, bool fromChe, String text, int index, int count) {
+  Widget _bubble(Map m, bool fromChe, String text, int index, int count, {bool typedByOwner = false}) {
     final who = fromChe ? 'CHE' : _nice('${m['from']}');
     final part = count > 1 ? ', part ${index + 1} of $count' : '';
     // Tail corner on the last bubble of a run, like Messages.
@@ -298,7 +301,8 @@ class _CheMailboxScreenState extends State<CheMailboxScreen> {
           padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 8),
           constraints: BoxConstraints(maxWidth: MediaQuery.sizeOf(context).width * 0.72),
           decoration: BoxDecoration(
-            color: fromChe ? CheColors.accent : (cheHudActive ? CheHud.ice.withValues(alpha: 0.10) : CheColors.surfaceHi),
+            // CHE's automated messages are the accent colour; the owner's typed messages are the quiet surface colour, on the right.
+            color: typedByOwner ? CheColors.surfaceHi : fromChe ? CheColors.accent : (cheHudActive ? CheHud.ice.withValues(alpha: 0.10) : CheColors.surfaceHi),
             border: !fromChe && cheHudActive ? Border.all(color: CheHud.ice.withValues(alpha: 0.32)) : null,
             borderRadius: BorderRadius.only(
               topLeft: round,
@@ -313,7 +317,7 @@ class _CheMailboxScreenState extends State<CheMailboxScreen> {
             children: [
               SelectableText(
                 text,
-                style: CheType.body.copyWith(color: fromChe ? CheColors.bg : CheColors.text),
+                style: CheType.body.copyWith(color: fromChe && !typedByOwner ? CheColors.bg : CheColors.text),
               ),
               // CHE's own replies go to Claude's mailbox for a fact-check (owner, 2026-10-26): Claude answers Verified, False or
               // Can't verify for each claim, with a source to check. No paid model is called.
