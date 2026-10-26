@@ -78,6 +78,8 @@ void main() {
       'go forward': CheGpuUiCommand.forward,
       'refresh': CheGpuUiCommand.refresh,
       'reload the page': CheGpuUiCommand.refresh,
+      'sign out of Google': CheGpuUiCommand.signOutGoogle,
+      'log out of Google in the browser': CheGpuUiCommand.signOutGoogle,
     };
     for (final entry in expected.entries) {
       expect(cheGpuUiCommand(entry.key), entry.value, reason: entry.key);
@@ -126,6 +128,24 @@ void main() {
     expect(reply, isNot(contains('Google account')), reason: 'a screen command never answers with account text');
     await tester.pumpWidget(const SizedBox());
     CheBrowserActions.openUrl = null;
+  });
+
+  testWidgets("sign out of Google opens Google's sign-out page in CHE's browser and reports only that (owner, 2026-10-25)", (tester) async {
+    var opened = '';
+    CheBrowserActions.openUrl = (url) async { opened = url; };
+    final client = MockClient((r) async => http.Response(jsonEncode({'workers': []}), 200));
+    await tester.pumpWidget(MaterialApp(home: CheGpuBrowser(
+      baseUrl: 'https://che.test', headers: const {'Authorization': 'Bearer test'},
+      client: client, browser: const SizedBox(), onRead: (_) {},
+    )));
+    await tester.pumpAndSettle();
+    final reply = await CheGpuBrowser.voiceHandler!('sign out of Google');
+    expect(opened, 'https://accounts.google.com/Logout');
+    expect(reply, startsWith("Opened Google's sign-out page"));
+    expect(reply, contains('check the account picture in Colab'));
+    expect(cheGpuUiCommand('connect the GPU'), isNull);
+    CheBrowserActions.openUrl = null;
+    await tester.pumpWidget(const SizedBox());
   });
 
   testWidgets('back, forward and refresh go to the browser and report its real answer (owner, 2026-10-25)', (tester) async {
