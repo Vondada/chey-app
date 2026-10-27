@@ -9,7 +9,7 @@ import 'support/che_office_fixture.dart';
 void main() {
   testWidgets('seeded crew: the pager is there, the first member shows, and a swipe moves to the next member', (tester) async {
     await tester.pumpWidget(MaterialApp(home: Scaffold(body: CheOfficeFloorScreen(client: fixtureOfficeClient()))));
-    await tester.pump(const Duration(seconds: 2));
+    await _pumpUntilFound(tester, find.byType(PageView));
     final pager = find.byType(PageView);
     expect(pager, findsOneWidget);
     expect(find.text('Nova'), findsWidgets);
@@ -24,8 +24,15 @@ void main() {
 
   testWidgets('empty roster: the honest empty state shows and there is no pager', (tester) async {
     await tester.pumpWidget(MaterialApp(home: Scaffold(body: CheOfficeFloorScreen(client: fixtureOfficeClient(agents: const [])))));
-    await tester.pump(const Duration(seconds: 2));
+    await _pumpUntilFound(tester, find.text('No agents yet. Ask CHE to staff the Office.'));
     expect(find.byType(PageView), findsNothing);
     expect(find.text('No agents yet. Ask CHE to staff the Office.'), findsOneWidget);
   });
+}
+
+/// The Office loads its roster after the first frame, so wait for the screen to show what the test checks (up to 3 seconds).
+Future<void> _pumpUntilFound(WidgetTester tester, Finder finder) async {
+  for (var i = 0; i < 30 && finder.evaluate().isEmpty; i++) {
+    await tester.pump(const Duration(milliseconds: 100));
+  }
 }

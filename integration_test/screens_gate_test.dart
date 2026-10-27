@@ -41,7 +41,9 @@ void main() {
     // server, so the app's own Office would show its empty state and there would be nothing to swipe.
     if (defaultTargetPlatform == TargetPlatform.iOS) await binding.convertFlutterSurfaceToImage();
     await tester.pumpWidget(MaterialApp(home: Scaffold(body: CheOfficeFloorScreen(client: fixtureOfficeClient()))));
-    await tester.pump(const Duration(seconds: 2));
+    for (var i = 0; i < 60 && find.byType(PageView).evaluate().isEmpty; i++) {
+      await tester.pump(const Duration(milliseconds: 100));
+    }
     final pager = find.byType(PageView);
     expect(pager, findsOneWidget, reason: 'The Office has no section pager to swipe');
     expect(find.text('Nova'), findsWidgets, reason: 'The first crew member is not on screen');
