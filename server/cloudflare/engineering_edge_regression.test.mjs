@@ -2,6 +2,26 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { shaftPowerTorque } from './engineering_math.js';
 
+test('box axes must be integer coordinates', async () => {
+  const {boxClearance,receiptVerdict}=await import('./engineering_math.js');
+  for(const axis of [0.5,'0',NaN,Infinity,-1,3]){
+    const result=boxClearance({a:{c:[0,0,0],s:[1,1,1]},b:{c:[2,0,0],s:[1,1,1]},axis});
+    assert.equal(result.ok,false);
+    assert.equal(receiptVerdict([result]).verified,false);
+  }
+});
+
+test('long and fractional helices use a bounded angular check with valid samples', async () => {
+  const {helixLength,receiptVerdict}=await import('./engineering_math.js');
+  for(const turns of [0.25,1,10,10000]){
+    const result=helixLength({radius:1,pitch:0.2,turns});
+    assert.equal(result.checks.pass,true,`${turns} turns`);
+    assert.equal(receiptVerdict([result]).verified,true);
+    assert.ok(Math.abs(result.value-turns*Math.hypot(2*Math.PI,0.2))<1e-8);
+  }
+  for(const samples of [0,-1,1.5,NaN,Infinity,100001]) assert.equal(helixLength({radius:1,pitch:0.2,turns:1,samples}).ok,false);
+});
+
 test('shaft power solves a null torque and verifies stationary shafts without division by zero', () => {
   const torque = shaftPowerTorque({ torque: null, omega: 100, power: 5000 });
   assert.equal(torque.ok, true);
