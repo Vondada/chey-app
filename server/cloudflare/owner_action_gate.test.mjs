@@ -340,3 +340,29 @@ test('review #356: every order type is held; "in order to" and a call "in order 
     assert.deepEqual(classifyOwnerActions(s), [], s);
   }
 });
+
+test('sending a payout or payment moves money and is held; a payment link or reminder is a message', () => {
+  for (const s of ['send the payout', 'send my payouts to the bank', 'send 3 payments now', 'please send the wire']) {
+    assert.deepEqual(classifyOwnerActions(s), ['money'], s);
+  }
+  for (const s of ['send the payment link to Maria', 'send a payment reminder email', 'send the payout report', 'send me the payment details']) {
+    assert.deepEqual(classifyOwnerActions(s), [], s);
+  }
+});
+
+test('registering with a payment service is a sign-up; opening or configuring one is not (review of #696)', () => {
+  for (const s of ['create a Stripe account', 'open a PayPal account', 'set up a new Gumroad store', 'join Fiverr', 'register for Ko-fi', 'register me on Payhip']) {
+    assert.deepEqual(classifyOwnerActions(s), ['signup'], s);
+  }
+  for (const s of ['open PayPal', 'open my PayPal account', 'set up Stripe webhooks', 'check my Shopify store sales']) {
+    assert.deepEqual(classifyOwnerActions(s), [], s);
+  }
+  assert.equal(gateOwnerAction('open a PayPal account', grantForKinds(['signup'])).allowed, true);
+});
+
+test('a message to everyone keeps the standing permission to send messages (AGENTS.md; review of #696)', () => {
+  for (const s of ['send this to everyone', 'email the update to my mailing list', 'text the whole team', 'post the video for my followers']) {
+    assert.deepEqual(classifyOwnerActions(s), [], s);
+    assert.equal(gateOwnerAction(s).allowed, true, s);
+  }
+});
