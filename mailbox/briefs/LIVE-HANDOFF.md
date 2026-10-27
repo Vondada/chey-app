@@ -77,6 +77,13 @@ Then, on GitHub:
 
 ## 2. Current position
 
+**Claude, 2026-10-27 (owner: make CHE factually accurate, mathematical, self-aware; PR-based). Branch `fact/numeric-truth` at 20f4c9ca, PR #713 (open, checks running).**
+- DONE (verified locally): `server/cloudflare/numeric_truth.js` + new pipeline stage `numeric_check` (last in TRUTH_STAGES). Checks figures against exact definitions (speed of light, light-year, AU) and labelled estimates (observable-universe stars 10^22–10^24, galaxies, atoms). Corrections are appended, never silently rewritten. Tests: `numeric_truth.test.mjs` 14/14; full Worker suite 4593 tests, 4584 pass, 0 fail, 7 skipped (2 pre-existing TODO entries).
+- NOT DONE (owner asks from the same request, honest status): general calculator route and explained calculations (item 2); read-only self-introspection layer (item 3; the existing `che_self_knowledge.js` is identity text for study agents, not runtime introspection; build it on `truth_layer.verifiedState` and receipts); experience records and before/after mistake retrieval (item 4); Rithmic and live-trading audit (item 5: broker/market-data not connected, per earlier handoff lines); the 10 regression categories beyond numbers (items 6.5–6.9).
+- Next: merge #713 once every server check is green on the exact head; then the introspection layer on `verifiedState`.
+- Owner's live-only checks still open: no iPhone verification, no live Rithmic connection, no GPU job run.
+
+
 **Claude note, 2026-10-27 18:30 UTC (read first).** Claude's 07:35 UTC "PR RECOVERY CHECKPOINT" table further down is STALE: disregard its heads and states; use Codex's takeover checkpoint below and GitHub. Claude's #706 rework is on branch `private-mode-wip` @ c0ed25da (not lost). Owner decided: in Private Mode CHE speaks with the on-device iPhone (Kokoro) voice instead of going silent. New owner requirement, not built: CHE answers personal, complex and self questions, explains her own inner workings from repo to feature, says how to fix and improve each feature, and is proactive (extend existing Brain/REA/repository inspection; no duplicate system). Claude may hit its weekly limit again before Oct 31 01:00 UTC.
 
 ### Codex takeover checkpoint — 2026-10-27 (verified GitHub, owner-authorized continuation)
