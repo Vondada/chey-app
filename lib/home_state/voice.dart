@@ -368,6 +368,17 @@ extension _CheHomeVoice on _CHEHomeState {
         if (!premiumOnly) return null;
         final made = await voice.synthesize(text);
         final edge = made.result;
+        // Private Mode on CHE's server (owner, 2026-10-27: "iPhone voice"): ElevenLabs and Fish never got the
+        // text, so this clip is spoken by the on-device Kokoro voice instead of staying silent.
+        if (edge.privateMode) {
+          await CheNativeVoice.prepareNeural();
+          final bytes = await CheNativeVoice.synthesizeNeural(text);
+          if (bytes == null || bytes.isEmpty) {
+            silentReasons[text] = 'Private Mode is on and my on-device voice is not loaded yet';
+            return null;
+          }
+          return CheVoiceClip(bytes, 'kokoro-on-device', text: text, index: made.index);
+        }
         final edgeClip = edge.clip;
         final engine = edgeClip?.engine ?? 'none';
         if (edge.maryStatus.isNotEmpty) _maryStatus = edge.maryStatus;

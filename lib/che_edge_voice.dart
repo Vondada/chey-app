@@ -28,6 +28,7 @@ class CheEdgeResult {
     this.fallback = false,
     this.attempts = 1,
     this.timedOut = false,
+    this.privateMode = false,
   });
 
   final CheVoiceClip? clip;
@@ -47,6 +48,10 @@ class CheEdgeResult {
   /// True when the phone stopped waiting. The server may still be making (and
   /// paying for) that clip, so it is not asked again.
   final bool timedOut;
+
+  /// True when CHE's Private Mode kept the text from ElevenLabs and Fish: the
+  /// phone speaks it with its own on-device voice instead (owner, 2026-10-27).
+  final bool privateMode;
 }
 
 /// The engine label for a clip. A reply without a label is Edge Ava, the voice
@@ -273,7 +278,7 @@ class CheEdgeVoice {
         return CheEdgeResult(failure: 'CHE\'s server answered HTTP ${response.statusCode}', maryStatus: maryStatus, fishStatus: fishStatus);
       }
       if (response.statusCode != 200 || response.bodyBytes.isEmpty) {
-        return CheEdgeResult(maryStatus: maryStatus, fishStatus: fishStatus);
+        return CheEdgeResult(maryStatus: maryStatus, fishStatus: fishStatus, privateMode: response.headers['x-che-voice-private'] == '1');
       }
       if (!type.contains('audio') && !type.contains('octet-stream')) {
         return CheEdgeResult(failure: 'CHE\'s server sent no audio', maryStatus: maryStatus, fishStatus: fishStatus);

@@ -7184,6 +7184,8 @@ export class CheState extends DurableObject {
         // One voice per response (owner, 2026-10-18): a reply's turn keeps the
         // voice settings its first clip used, and a locked clip uses only the
         // provider that spoke the first one.
+        // Private Mode (owner, 2026-10-27): with ElevenLabs and Fish not allowed, the phone speaks with its own voice.
+        if (privacyVerdict('https://api.elevenlabs.io/')?.allow === false && privacyVerdict('https://api.fish.audio/')?.allow === false) return new Response(null, { status: 204, headers: { 'X-CHE-Voice': 'none', 'X-CHE-Voice-Private': '1' } });
         this.voiceTurns ||= new Map();
         const turn = ownerDevice ? voiceTurnFor(this.voiceTurns, body.turn, data.voice_choice) : null;
         const lock = VOICE_LOCKS.includes(body.lock) ? body.lock : '';
