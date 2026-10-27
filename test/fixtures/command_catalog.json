@@ -453,6 +453,45 @@
    "optional_missing": []
   },
   {
+   "id": "che-reliability",
+   "category": "intelligence",
+   "title": "CHE Reliability Registry",
+   "summary": "How many times you have tested CHE, and how she did.",
+   "does": "Reads the Reliability Registry: every recorded test of CHE (sessions, questions, retests, proposed tests never run), each with the exact question, her actual reply, the grade and its evidence, and says which test you are on. Counts are said to be lower bounds when the history is incomplete. \"Let's test CHE's reliability\" opens a new session that records each question and reply.",
+   "mode": "EXPLORE",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": null,
+   "examples": [
+    "What take are we on?",
+    "How many times have I tested you?",
+    "Open the test registry",
+    "Let's test CHE's reliability"
+   ],
+   "needs": [
+    "memory"
+   ],
+   "optional": [],
+   "handler": "reliability_registry.registryIntent → reliabilityChat → speakTake / speakSummary",
+   "route": "che_reliability_registry",
+   "produces": "report",
+   "evidence": "Every count comes from the registry records (seeded history with source links, plus live sessions); zero model calls.",
+   "cost": "Free engines only, unless you turned paid AI on.",
+   "keywords": [
+    "test registry",
+    "reliability registry",
+    "what take",
+    "how many tests",
+    "tested",
+    "test history"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
    "id": "che-performance",
    "category": "intelligence",
    "title": "CHE performance",

@@ -73,6 +73,7 @@ import { externalGrounding } from './external_grounding.js';
 import { answerEvidenceReceipt, cachedResearch, evidenceReferenceFollowup, factKey, forgetKnowledge, invalidateKnowledge, knownAnswer, LAST_ANSWER_EVIDENCE_KEY, ownerFactQuestion, markPureResearch, rememberOwnerFact, researchHit, researchKey } from './knowledge_cache.js';
 import { claimMatcher, disprovenContext, downgradeDisproven, externalCorrection, guardCitations, loadDisproven, newsQuestion, newsResearch, reopenArticles, recheckExternalClaim, recordDisproven, verifiedSourcesContext } from './source_verification.js';
 import { recordReliability, reliabilityIntent, reliabilitySummary, speakReliability } from './reliability_ledger.js';
+import { reliabilityApi, reliabilityTurn } from './reliability_registry.js';
 import { answerOwnerMemoryQuestion, auditMemoryProvenance, evidenceQuestion, evidenceReferent, evidenceRequestSplit, explainEvidenceFor, findAnswerEvidence, brainRecordForProvenance, guardOwnerAttributions, guardRememberBlock, guardSpeakerAttributions, latestAnswerEvidence, loadRetractions, RECALL_OUTCOMES, readOutcome, memoryPromptContext, ownerFactCorrection, ownerMemoryQuestion, ownerWords, recordAnswerEvidence, recordRetractions, storedSpeaker, storyRequested } from './memory_provenance.js';
 import { condenseHistory, ownerNotificationPolicy } from './workflow_governor.js';
 import { analyze as tradeAnalyze, backtestAll, candleSpan, loadCandles, paperTick, readBook, speakAnalysis, speakBacktest, speakBook, speakLearning, nextTradingTickAt, tradingIntent, watchSymbol, STRATEGIES } from './trading_lab.js';
@@ -151,6 +152,7 @@ import { intentFrame, understoodAs } from './intent_frame.js';
 import { replyHijacksOwnerRequest, usageIntent, usageReport, speakUsage } from './usage_tracker.js';
 import { newestStarredIntent, speakNewestStarred, autoImproveScan, analyticalRepositoryQuestion, chatOnlyResponseIntent, currentTurnActionPolicy, codeScoutIntent, fetchRepoFile, inspectReferenceRepo, inspirationUpgradeContext, listOwnerStarredRepos, readRepoSource, referenceSourceBlock, codingFollowupKind, codingHistoryIntent, codingTimingNote, hypotheticalChange, repositoryImplementationIntent, repositoryInspectionIntent, scoutCode, selectStudyRepos, speakScout, speakStarredRepos, starredRepoIntent, starredStudyList, studySelectionIntent } from './code_scout.js';
 import { agentReportTurn, codingHistoryReceipt, completedWorkProof, namedJobAnswer, otherAgentWorkAsk, otherAgentWorkReply, proofAsked } from './coding_history.js';
+import { codingAuditApi, codingAuditProbe, codingAuditTurn, noStoredJobReceipt } from './coding_audit.js';
 import { inventionFollowUpAllowed, inventionIntent, inventionReply, planInvention, refusalReply } from './invention_studio.js';
 import { continuingInvention, inventionVisualIntent, inventionVisualRoute, makeConcept, visualTurn } from './invention_visuals.js';
 import { matchShowroom, showroomIntent, showroomReply, showroomView } from './capability_showroom.js';
@@ -7605,6 +7607,7 @@ export class CheState extends DurableObject {
       // ─── Brain: the one logical Brain the phone replicates ──────────────
       // Reads and writes are the owner's only. /changes and /push are the two
       // halves of the phone's incremental sync; /status gives real counts.
+      if (path.startsWith('/api/brain/reliability')) return reliabilityApi(this.ctx.storage, path, request.method, body, ownerDevice);
       if (path === '/api/brain/ledger' && request.method === 'GET') {
         if (!ownerDevice) return json({ detail: 'Only the CHE owner can read his brain.' }, 403);
         const ledgerZone = new BrainLedger(this.ctx.storage).meta('owner_zone', LEDGER_DEFAULT_ZONE) || LEDGER_DEFAULT_ZONE;
@@ -7825,6 +7828,7 @@ export class CheState extends DurableObject {
         }
         return json({ detail: 'Method not allowed.' }, 405);
       }
+      if (path.startsWith('/api/coding/audit')) return codingAuditApi(request, path, this.env, ownerDevice);
       // Performance watch: measured timings per route against the budget (owner device only).
       if (request.method === 'GET' && path === '/api/performance') {
         if (!ownerDevice) return json({ detail: 'Not found.' }, 404);
@@ -10522,6 +10526,8 @@ export class CheState extends DurableObject {
         if (privBlock) return privBlock;
         // A family/guest device never reaches the owner's chat routes below.
         if (!ownerDevice) return this.guestChat(body, rawMessage, activeTenant);
+        const relTurn = await reliabilityTurn(this, rawMessage, body);
+        if (relTurn) return relTurn;
         // The owner's exact words are authoritative for a read-only, verified
         // deployment lookup. Never let speech interpretation, REA, the local
         // code inspector, or a generic model discard the GitHub Actions request.
@@ -12139,6 +12145,8 @@ export class CheState extends DurableObject {
         }
         // "Show my last five missions", "Have we worked together before?": the stored missions, projects, jobs and Office
         // tasks, each store counted (activity_status.js), before the memory search.
+        const audit = body.attachment ? null : await codingAuditTurn(rawMessage, this.env, { owner: ownerDevice });
+        if (audit) return ndjsonReply(audit.text, audit.meta);
         const workHistoryAsk = !body.attachment && !memoryQuestion ? workHistoryIntent(rawMessage) : null;
         if (workHistoryAsk && !ownerDevice) {
           return ndjsonReply('Only the CHE owner can read mission, project and job history, sir.', { source: 'che_work_history', ok: false, model_calls: 0, outcome: RECALL_OUTCOMES.PERMISSION_DENIED });
@@ -12471,16 +12479,10 @@ export class CheState extends DurableObject {
           const finished = active.length ? null : objectives.find((o) => o.status === 'complete' && o.artifact?.sha256);
           return ndjsonReply(active.length ? `${active.map(speakObjective).join(' ')} Sir.` : `No mission is in progress, sir.${finished ? ` The last one finished: ${speakObjective(finished)}` : ''}`, { source: 'che_mission_status', model_calls: 0 });
         }
-        // "coding status" and every other question about a coding record: the stored job and
-        // runtime records answer, with their evidence. Asking never runs an investigation, never
-        // inspects repository files and never starts a job. The route sits where the old exact
-        // "coding status" route sat, so every route above keeps its turns as before; repository
-        // inspection and REA follow-ups above skip these questions themselves. Of the routes below,
-        // a handoff, a message for another AI ("tell Claude the coding run failed") and a
-        // consultation ("ask ChatGPT why the coding job failed") keep theirs.
-        // A turn with an attachment is about that attachment, which this route cannot read.
-        // A question about who did coding work, when it names Claude or another AI: CHE's records never hold that work, so
-        // the model is never asked (it invented speakers and authors). Handoffs, mailbox and consultations keep their routes.
+        // Coding-record questions: stored job and runtime records answer with evidence; asking never
+        // investigates, reads repo files or starts a job. Handoffs, AI messages, consultations and
+        // attachments keep their routes. Work by Claude or another AI is not in CHE's records, so the
+        // model is never asked (it invented authors).
         const otherAgent = body.attachment || handoffIntent(message) || mailboxIntent(message) || consultIntent(message) ? '' : otherAgentWorkAsk(message);
         if (otherAgent) {
           if (!ownerDevice) return ndjsonReply('Only the CHE owner can read coding job status, sir.', { source: 'che_coding_history', ok: false, outcome: RECALL_OUTCOMES.PERMISSION_DENIED });
@@ -12538,7 +12540,7 @@ export class CheState extends DurableObject {
           const stale = subject.job?.status === 'running' && Date.parse(subject.job.updated_at || 0) <= Date.now() - jobStaleMs(subject.job);
           // "How long will that take?": the record's own timestamps come first; no estimate is invented.
           const timing = codingFollowupKind(followupWords || message) === 'duration' ? codingTimingNote({ ...subject, acceptedAt: runtimeAt }) : '';
-          const receipt = codingHistoryReceipt({ ...subject, stale, request, repo: this.env.CHE_GITHUB_REPO });
+          const receipt = subject.kind === 'none' ? await noStoredJobReceipt(this.env) : codingHistoryReceipt({ ...subject, stale, request, repo: this.env.CHE_GITHUB_REPO });
           return ndjsonReply(timing ? `${timing} ${receipt}` : receipt, {
             source: 'che_coding_history',
             session_id: subject.kind === 'runtime' || subject.unreadRun ? sessionId : null,
@@ -16277,6 +16279,7 @@ async function routeRequest(request, env, ctx) {
     const token = /^Bearer (\S+)$/.exec(request.headers.get('Authorization') || '')?.[1] || '';
     return json(await commandCenterProbe(env, token));
   }
+  if (path === '/api/coding-audit/probe' && request.method === 'POST') return voiceProbeAuthorized(request, env) ? json(await codingAuditProbe(env, request, MEMORY_PROBE_OBJECT)) : json({ detail: 'Not found.' }, 404);
   // The deploy's Knowledge Atlas check, on the same isolated test CHE (#346).
   if (path === '/api/atlas/probe' && request.method === 'POST') {
     if (!voiceProbeAuthorized(request, env)) return json({ detail: 'Not found.' }, 404);
