@@ -16,6 +16,7 @@ import { startOnboarding, storeSecret, verifyOnboarding } from './service_onboar
 import { cloudIntent } from './cloud_computer.js';
 import {
   MODAL_APP_VERSION, MODAL_RESERVE_MS, MODAL_USD_HR, callCostUsd, computeUsageLedger, creditStopUsd, modalIntent, modalStateOf, parseModalCredential,
+  modalProbeRoute,
 } from './modal_gpu.js';
 
 const offline = async (input) => { throw new TypeError(`fetch failed (offline test: ${new URL(String(input?.url || input)).host})`); };
@@ -455,4 +456,26 @@ test('the regional endpoint the deploy wrote verifies, and a failed check return
   assert.equal(r5.category, 'network');
 
   for (const x of [r, r2, r3, r4, r5]) assert.ok(!JSON.stringify(x).includes(TOKEN), 'the token is never in a reply');
+});
+
+test('the deploy probe runs the authenticated Modal health check only with the probe token and returns no secret or reason text', async () => {
+  const TOKEN = 'e'.repeat(64); const PROBE = 'f'.repeat(64);
+  const env = { MODAL_TOKEN: `bearer:${TOKEN}@https://vondada--che-gpu.us-east.modal.run` };
+  const storage = { get: async () => undefined };
+  const req = (auth) => new Request('https://che.example/api/probe/modal', { method: 'POST', headers: auth ? { Authorization: `Bearer ${auth}` } : {} });
+  const fm = fakeModal({ bearer: TOKEN });
+  for (const bad of [null, 'g'.repeat(64), TOKEN]) {
+    const r = await modalProbeRoute(req(bad), { CHE_VOICE_PROBE_TOKEN: PROBE }, env, storage, fm.fetcher);
+    assert.equal(r.status, 404, String(bad));
+  }
+  assert.equal(fm.log.length, 0, 'nothing reaches Modal without the probe token');
+  const ok = await (await modalProbeRoute(req(PROBE), { CHE_VOICE_PROBE_TOKEN: PROBE }, env, storage, fm.fetcher)).json();
+  assert.deepEqual({ ok: ok.ok, category: ok.category, credential: ok.credential, host: ok.host, version: ok.version, gpu: ok.gpu },
+    { ok: true, category: 'ok', credential: 'readable', host: 'vondada--che-gpu.us-east.modal.run', version: MODAL_APP_VERSION, gpu: 'T4' });
+  assert.match(ok.request_id, /^chk_[a-f0-9]{12}$/);
+  const bad = await (await modalProbeRoute(req(PROBE), { CHE_VOICE_PROBE_TOKEN: PROBE }, env, storage, fakeModal({ bearer: 'h'.repeat(64) }).fetcher)).json();
+  assert.equal(bad.category, 'unauthorized');
+  const none = await (await modalProbeRoute(req(PROBE), { CHE_VOICE_PROBE_TOKEN: PROBE }, {}, storage, fm.fetcher)).json();
+  assert.equal(none.category, 'missing_credential');
+  for (const x of [ok, bad, none]) { assert.ok(!JSON.stringify(x).includes(TOKEN)); assert.equal(x.detail, undefined); }
 });

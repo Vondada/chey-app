@@ -668,6 +668,29 @@ jobs:
           }
           JS
 
+      - name: Check CHE's Modal GPU connection through the live Worker (authenticated /health, no GPU)
+        run: |
+          node --input-type=module <<'JS'
+          // The same authenticated GET /health as Flagstaff's Check Connection, run by the live Worker with its own
+          // MODAL_TOKEN. One short CPU call on Modal; no GPU starts. The reply holds a category, a check ID, the host,
+          // the app version and the GPU name, never a token. Informational: Modal is optional, so this never fails
+          // the deploy; a failure is a warning with its category and check ID.
+          import { appendFileSync } from 'node:fs';
+          const summary = (line) => appendFileSync(process.env.GITHUB_STEP_SUMMARY, `${line}\n`);
+          let r = null; let err = '';
+          for (let attempt = 0; attempt < 3 && !r; attempt++) {
+            try {
+              const response = await fetch(`${process.env.CHE_LIVE_BASE}/api/probe/modal`, { method: 'POST', headers: { Authorization: `Bearer ${process.env.CHE_VOICE_PROBE_TOKEN}` }, signal: AbortSignal.timeout(60000) });
+              if (response.ok) r = await response.json(); else err = `HTTP ${response.status}`;
+            } catch (error) { err = error?.name === 'TimeoutError' ? 'no answer within 60 s' : 'network error'; }
+            if (!r) await new Promise((resolve) => setTimeout(resolve, 4000));
+          }
+          if (!r) { console.log(`::warning title=Modal check did not run::The live Worker did not answer (${err}).`); process.exit(0); }
+          const line = `category ${r.category}, check ID ${r.request_id}, credential ${r.credential || '-'}, host ${r.host || '-'}${r.ok ? `, app ${r.version}, GPU ${r.gpu}` : ''}${r.upstream_id ? `, Modal call ${r.upstream_id}` : ''}`;
+          console.log(r.ok ? `::notice title=Modal connected::${line}` : `::warning title=Modal not connected::${line}`);
+          summary(`**Modal (live Worker, authenticated /health):** ${r.ok ? 'connected' : 'NOT connected'}: ${line}.`);
+          JS
+
       - name: Check CHE's Knowledge Atlas through the live Worker
         run: |
           node --input-type=module <<'JS'

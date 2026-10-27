@@ -142,7 +142,7 @@ import { CHE_SELF_BRIEF, starredFocus, studyLesson } from './che_self_knowledge.
 import { connectServiceIntent, onboardingChatReply, onboardingIntent, onboardingRoute } from './service_onboarding.js';
 import { privateChatGate, privateTurn } from './private_voice.js';
 import { KEY_PROVIDERS, MEMORY_DB, hasStoredMemoryDatabase, memorySetupIntent, memorySetupSteps, removeMemoryDatabase, saveMemoryDatabase, removeKey, storedKeys, withStoredKeys, cachedAnswer, checkAllKeys, fileLetter, fileTech, forgetAnswer, isLockedDown, listLetters, looksLikeAttack, markLetter, nextLetter, rememberAnswer, resilienceIntent, runScout, saveKey, setLockdown, setupSteps, speakKeyHealth, speakMailboxSummary, speakTech, techItems } from './resilience.js';
-import { modalKeyRowFor } from './modal_gpu.js';
+import { modalKeyRowFor, modalProbeRoute } from './modal_gpu.js';
 import { applyCorrections, correctedPrevious, correctionsContext, detectCorrection, learnCorrection, loadCorrections } from './speech_learning.js';
 import { applyModelReading, asksAboutScreen, clipKeepingLimits, interpretOwnerTurn, interpretWithModel } from './speech_intent.js';
 import { intentFrame, understoodAs } from './intent_frame.js';
@@ -6941,6 +6941,7 @@ export class CheState extends DurableObject {
         if (!voiceProbeAuthorized(request, probeEnv)) return json({ detail: 'Not found.' }, 404);
         return json(await this.commandReadiness());
       }
+      if (request.method === 'POST' && path === '/api/probe/modal') return modalProbeRoute(request, { CHE_VOICE_PROBE_TOKEN: this.voiceSecrets?.CHE_VOICE_PROBE_TOKEN || this.env.CHE_VOICE_PROBE_TOKEN }, this.keyEnv || this.env, this.ctx.storage);
       if (request.method === 'POST' && path === '/api/pair') {
         const secret = this.env.CHE_PAIR_CODE;
         if (!secret || !/^\d{6,12}$/.test(secret)) return json({ detail: 'Set CHE_PAIR_CODE as a server secret.' }, 503);
