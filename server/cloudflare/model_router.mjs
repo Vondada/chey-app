@@ -313,6 +313,7 @@ export function planCandidates({ models = [], verdicts = {}, kind = 'coding', le
   const breakers = ledger?.breakers || {};
   const excluded = [];
   const ranked = [];
+  const capacityRetries = [];
   const seen = new Set();
   for (const model of models) {
     const id = String(model?.id || '');
@@ -325,6 +326,11 @@ export function planCandidates({ models = [], verdicts = {}, kind = 'coding', le
     const providerBreaker = breakers[provider];
     const modelBreaker = breakers[id];
     if (!breakerAllows(providerBreaker, now) || !breakerAllows(modelBreaker, now)) {
+      const blocking = [providerBreaker, modelBreaker].filter((b) => !breakerAllows(b, now));
+      if (blocking.every((b) => ['credit_exhausted', 'rate_limited', 'provider_unavailable'].includes(b.last_error_class)
+        && Number.isFinite(Date.parse(b.until)) && Date.parse(b.until) > now)) {
+        capacityRetries.push(Math.max(...blocking.map((b) => Date.parse(b.until))));
+      }
       excluded.push({ model: id, provider, reason: `circuit_open:${(modelBreaker && !breakerAllows(modelBreaker, now) ? modelBreaker : providerBreaker).last_error_class || 'failures'}` });
       continue;
     }
@@ -332,7 +338,8 @@ export function planCandidates({ models = [], verdicts = {}, kind = 'coding', le
     ranked.push({ model: id, provider, coverage: verdictEligibility.coverage, verification: verdict.verification, score: capabilityScore(model, kind), trial });
   }
   ranked.sort((a, b) => (a.trial - b.trial) || (b.score - a.score) || a.model.localeCompare(b.model));
-  return { kind, candidates: ranked.slice(0, limit), excluded: excluded.slice(0, 40) };
+  return { kind, candidates: ranked.slice(0, limit), excluded: excluded.slice(0, 40),
+    capacity_resume_at: !ranked.length && capacityRetries.length ? new Date(Math.min(...capacityRetries)).toISOString() : null };
 }
 
 // ─── Ledger ───

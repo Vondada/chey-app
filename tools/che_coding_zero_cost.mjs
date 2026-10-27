@@ -142,6 +142,7 @@ export async function plan({ env = process.env, outDir, ledgerPath = '', request
     attested,
     verdicts,
     candidates: planned.candidates,
+    capacity_resume_at: planned.capacity_resume_at,
     excluded: planned.excluded.slice(0, 20),
     notes,
     at: new Date(now).toISOString(),
@@ -154,7 +155,8 @@ export async function plan({ env = process.env, outDir, ledgerPath = '', request
   const blockedWhy = Object.values(verdicts).filter((v) => v.coverage === 'blocked' && v.reason !== 'no_key').map((v) => `${v.id}: ${v.reason}`);
   const summary = planned.candidates.length
     ? `${planned.candidates.length} zero-cost model(s) for ${kind}: ${planned.candidates.map((c) => c.model).join(', ')}.`
-    : `No model is verified at zero cost right now (${blockedWhy.join('; ') || 'no provider key with verified free access'}). Nothing was spent.`;
+    : planned.capacity_resume_at ? `Verified zero-cost models are temporarily paused until ${planned.capacity_resume_at}. No model ran and nothing was spent.`
+      : `No model is verified at zero cost right now (${blockedWhy.join('; ') || 'no provider key with verified free access'}). Nothing was spent.`;
   writeFileSync(join(outDir, 'summary.txt'), summary.slice(0, 600));
   const list = planned.candidates.map((c) => c.model).join(' ');
   output('free_candidates', list);

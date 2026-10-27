@@ -15532,7 +15532,7 @@ export class CheState extends DurableObject {
       // the failure cannot be waited out, does CHE's own coding team take over.
       const blocked = String(await this.ctx.storage.get('che_runtime_resume_blocked') || '') === id;
       const plan = !blocked && status.resumable === true
-        ? resumeDecision({ resumable: true, resumeCount: Number(status.resume_count || 0) })
+        ? resumeDecision({ resumable: true, resumeCount: Number(status.resume_count || 0), notBefore: status.capacity_resume_at })
         : { resume: false };
       if (plan.resume) {
         const resumeState = {

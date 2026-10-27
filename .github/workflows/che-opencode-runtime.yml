@@ -380,8 +380,15 @@ jobs:
           # Free requests leave the OpenRouter key's usage unchanged; it is read before and after.
           [ -f "$zc" ] && node "$zc" usage --phase before --dir "$route" >/dev/null
           if [ -z "${FREE_CANDIDATES// /}" ]; then
-            failure_kind=no_eligible_model
-            echo "::error::No zero-cost model can run: $(redact < "$route/summary.txt" 2>/dev/null)"
+            # A verified free model in cooldown is capacity recovery, not missing authorization.
+            capacity_at=$(node -e 'try{process.stdout.write(JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")).capacity_resume_at || "")}catch{}' "$route/routing.json")
+            if [ -n "$capacity_at" ]; then
+              failure_kind=quota; failure_resumable=true
+              echo "::warning::Free model capacity is paused until $capacity_at; the same session keeps its checkpoint."
+            else
+              failure_kind=no_eligible_model
+              echo "::error::No zero-cost model can run: $(redact < "$route/summary.txt" 2>/dev/null)"
+            fi
           fi
           # OpenCode keeps retrying errors that cannot succeed (no quota, no access to the model,
           # a request too large for the key's token limit) until the time budget runs out. An
@@ -657,6 +664,7 @@ jobs:
               candidates: (route.candidates || []).slice(0, 8), excluded: (route.excluded || []).slice(0, 12),
               verdicts: route.verdicts || {}, ignored_settings: route.ignored_settings || [], notes: route.notes || [],
             } : null,
+            capacity_resume_at: route?.capacity_resume_at || null,
             billing: billing || null,
             billing_alert: process.env.BILLING_ALERT === 'true',
           };

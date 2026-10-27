@@ -207,11 +207,12 @@ export function attemptReceipt({ model = '', exitCode = 0, text = '', seconds = 
 
 // Decide whether a resumable failure gets another run, and when. `resumeCount`
 // is how many resumes already ran for this session.
-export function resumeDecision({ resumable = false, resumeCount = 0, now = Date.now() } = {}) {
+export function resumeDecision({ resumable = false, resumeCount = 0, now = Date.now(), notBefore = '' } = {}) {
   const count = Math.max(0, Math.floor(Number(resumeCount) || 0));
   if (!resumable) return { resume: false, reason: 'not_capacity' };
   if (count >= RESUME_LIMIT) return { resume: false, reason: 'limit_reached' };
-  const at = now + RESUME_BACKOFF_MS[count];
+  const cooldown = Date.parse(notBefore);
+  const at = Math.max(now + RESUME_BACKOFF_MS[count], Number.isFinite(cooldown) ? cooldown : 0);
   return { resume: true, reason: 'capacity', attempt: count + 1, at: new Date(at).toISOString() };
 }
 
@@ -288,4 +289,3 @@ export function newMissionAction({ pending = null, runAlive = 'unknown' } = {}) 
   if (pending.dispatched_at && (runAlive === 'alive' || runAlive === 'unknown')) return 'refuse';
   return 'abandon';
 }
-
