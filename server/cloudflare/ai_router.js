@@ -15,6 +15,7 @@
 // Every provider returns `{ response }` like Workers AI, so the rest of CHE
 // doesn't care which engine answered.
 
+import { noteEgress, privacyVerdict } from './privacy_mode.js';
 import { inferNeeds, isUnhealthy, orderByCapability, pickCatalogModel, recordHealth } from './capability_router.js';
 import { WORKFLOWS, drainOrder, engineCapacityState, planWorkflow, shouldSwitchEngine } from './workflow_governor.js';
 import { recordReliability } from './reliability_ledger.js';
@@ -836,6 +837,9 @@ export async function routeText(env, model, input, fetcher = fetch, usageStorage
       if (!providerEnabled(env, provider)) continue;
       if (provider.keyless && !keyless) continue;
       if (avoid.has(provider.id.split(':')[0].toLowerCase())) continue;
+      // Private Mode (privacy_mode.js): an outside provider the owner has not allowed is skipped, not tried and failed.
+      const privacy = privacyVerdict(providerUrl(env, provider));
+      if (privacy && !privacy.allow) { errors.push(`${provider.id}: ${privacy.reason}`); await noteEgress(privacy).catch(() => {}); continue; }
       if ((providerCooldownUntil.get(provider.id) || 0) > now) {
         const earlier = providerLastError.get(provider.id);
         errors.push(

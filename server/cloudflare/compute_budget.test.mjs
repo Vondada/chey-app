@@ -397,6 +397,8 @@ const { default: worker, CheState } = mod;
 
 async function owner() {
   const saved = new Map(); const inputs = []; const pending = []; const wire = [];
+  // GPU providers are outside services: connected mode (Private Mode is proven in privacy_mode.test.mjs).
+  saved.set('che:privacy_mode', { level: 'connected', grants: [] });
   const storage = {
     get: async (key) => Array.isArray(key) ? new Map(key.filter((k) => saved.has(k)).map((k) => [k, structuredClone(saved.get(k))])) : saved.has(key) ? structuredClone(saved.get(key)) : undefined,
     put: async (key, value) => { if (key && typeof key === 'object') { for (const [k, v] of Object.entries(key)) saved.set(k, structuredClone(v)); return; } saved.set(key, structuredClone(value)); },

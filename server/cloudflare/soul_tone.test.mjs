@@ -25,6 +25,8 @@ const STRONG = '@cf/meta/llama-3.1-8b-instruct-fp8';
 const OWNER_REPORT = "I'm using Soul v1 (4898af92). The Soul version used to shape this response is indeed the one I mentioned, and it did influence the response. The engine that answered your question is CHE itself, with no other agents involved in this conversation.";
 
 function storageFor(saved) {
+  // These tests cover outside providers, so they run in connected mode; Private Mode is proven in privacy_mode.test.mjs.
+  if (!saved.has('che:privacy_mode')) saved.set('che:privacy_mode', { level: 'connected', grants: [] });
   return {
     get: async (key) => (saved.has(key) ? structuredClone(saved.get(key)) : undefined),
     put: async (key, value) => saved.set(key, structuredClone(value)),

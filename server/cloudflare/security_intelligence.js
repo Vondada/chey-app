@@ -6,6 +6,7 @@
 // One storage key holds its state: findings (never the secret itself), authorization sessions, nonces, telemetry
 // counters, quarantine, trusted snapshots metadata and the audit log.
 import { setLockdown, isLockedDown } from './resilience.js';
+import { noteEgress, privacyVerdict } from './privacy_mode.js';
 // The generic engines live in the portable Security Core (security_core/); this module is CHE's adapter over them
 // and keeps its exports so existing callers are unchanged.
 import { redact, redactDeep, scanSecrets } from './security_core/secrets.js';
@@ -302,6 +303,13 @@ export function installEgressGuard() {
         EGRESS.blocked++;
         return Promise.reject(new TypeError(EGRESS.internalOnly ? `Internal-only mode is on, so ${host || 'that service'} was not called.` : EGRESS.privateHolds > 0 ? `Private voice is on, so ${host || 'that service'} was not called.` : `This project stays inside CHE, so ${host || 'that service'} was not called.`));
       }
+    }
+    // Private Mode: an outside AI or voice company is called only when the owner allowed it; every such request,
+    // sent or blocked, goes into Knox's ledger (metadata and a fingerprint, never the content).
+    const verdict = privacyVerdict(String(input?.url || input));
+    if (verdict) {
+      const noted = noteEgress(verdict, input, init).catch(() => {});
+      if (!verdict.allow) { EGRESS.blocked++; return noted.then(() => Promise.reject(new TypeError(verdict.reason))); }
     }
     return original(input, init);
   };

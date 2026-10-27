@@ -93,6 +93,8 @@ function fakeProvider() {
 }
 
 function storageFor(saved) {
+  // These tests cover outside providers, so they run in connected mode; Private Mode is proven in privacy_mode.test.mjs.
+  if (!saved.has('che:privacy_mode')) saved.set('che:privacy_mode', { level: 'connected', grants: [] });
   return {
     get: async (key) => (saved.has(key) ? structuredClone(saved.get(key)) : undefined),
     put: async (key, value) => saved.set(key, structuredClone(value)),

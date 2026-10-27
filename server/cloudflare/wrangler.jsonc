@@ -2,6 +2,8 @@
   "name": "chey-app",
   "main": "worker.js",
   "compatibility_date": "2026-09-01",
+  // node:async_hooks AsyncLocalStorage only: Private Mode's per-request policy (privacy_mode.js).
+  "compatibility_flags": ["nodejs_als"],
   "ai": { "binding": "AI" },
   // Lets /health and CHE's deploy verification report which version is live
   // (the deploy workflow tags each version with its git commit).

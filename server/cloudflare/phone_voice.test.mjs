@@ -19,6 +19,8 @@ const env = (extra = {}) => ({
 });
 
 function memoryStorage(saved = new Map()) {
+  // These tests cover outside providers, so they run in connected mode; Private Mode is proven in privacy_mode.test.mjs.
+  if (!saved.has('che:privacy_mode')) saved.set('che:privacy_mode', { level: 'connected', grants: [] });
   return {
     saved,
     get: async (key) => (saved.has(key) ? structuredClone(saved.get(key)) : undefined),
@@ -191,8 +193,8 @@ let mod;
 try { mod = await import(generated.href + '?t=' + Date.now()); } finally { try { unlinkSync(generated); } catch (_) {} }
 const { default: worker, CheState } = mod;
 
-async function pairedPhone(extraEnv = {}) {
-  const saved = new Map();
+async function pairedPhone(extraEnv = {}, stored = {}) {
+  const saved = new Map(Object.entries(stored));
   const workerEnv = { CHE_PAIR_CODE: '123456', ...env(), ...extraEnv };
   const state = new CheState({ storage: memoryStorage(saved) }, workerEnv);
   workerEnv.CHE_STATE = { getByName: () => state };
@@ -330,4 +332,14 @@ test('a key that reached its own credit limit is reported as a key limit, not an
   const e = env();
   assert.equal(await premiumVoiceSpeech(e, 'Quota part.', { lock: 'elevenlabs', storage: memoryStorage(), ...noWait }), null);
   assert.equal(preferredElevenLabsKeyStatus(e).status, 'key limit reached');
+});
+
+test('route: in Private Mode the phone is told to speak with its own voice, and ElevenLabs and Fish never get the text (owner, 2026-10-27)', async () => {
+  const phone = await pairedPhone({}, { 'che:privacy_mode': { level: 'private', grants: [] } });
+  const calls = fakeProviders();
+  const reply = await phone.edge({ text: 'A private sentence.', turn: 'turn-44444444', index: 0 });
+  assert.equal(reply.status, 204);
+  assert.equal(reply.headers.get('X-CHE-Voice-Private'), '1', 'the phone falls back to its on-device voice');
+  assert.equal(calls.eleven.length, 0);
+  assert.equal(calls.fish.length, 0);
 });
