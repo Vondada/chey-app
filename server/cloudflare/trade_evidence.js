@@ -63,6 +63,12 @@ async function rithmicBucketBars(storage, contract, trade, tf, ms, now) {
     for (let t = bucket; t < bucket + ms; t += MINUTE) if (!minutes.has(t)) return false;
     return true;
   }));
+  // Every bucket from entry through exit must be whole (review of #674): a recording that stopped mid-trade would
+  // otherwise end the replay early and show a closed trade as open. Such a trade goes on to the delayed feed.
+  const bucketOf = (iso) => Math.floor(Date.parse(iso) / ms) * ms;
+  const span = [bucketOf(trade.entry_time), bucketOf(trade.exit_time || trade.entry_time)];
+  if (!span.every(Number.isFinite)) return [];
+  for (let bucket = span[0]; bucket <= span[1]; bucket += ms) if (!whole.has(bucket)) return [];
   const kept = read.candles.filter((c) => whole.has(Math.floor(Date.parse(c.t) / ms) * ms));
   if (!kept.length) return [];
   let built;

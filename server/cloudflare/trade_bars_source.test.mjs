@@ -49,9 +49,10 @@ const TRADE = {
   entry_time: '2026-10-20T14:02:00.000Z', exit_time: '2026-10-20T14:20:00.000Z', feed: 'LIVE',
 };
 
-async function seeded({ skipMinute = null } = {}) {
+async function seeded({ skipMinute = null, lastMinute = null } = {}) {
   const storage = memStorage();
-  await storeRithmicCandles(storage, recorded(skipMinute), { now: NOW });
+  const minutes = recorded(skipMinute).filter((c) => lastMinute == null || Date.parse(c.t) <= Date.parse(lastMinute));
+  await storeRithmicCandles(storage, minutes, { now: NOW });
   await storage.put(LIVE_FEED, delayedFeed());
   return storage;
 }
@@ -106,4 +107,28 @@ test('a 1-minute trade still reads the recorded minutes as before', async () => 
   const r = await tradeBars(storage, { ...TRADE, timeframe: '1m' }, { now: NOW });
   assert.equal(r.source?.kind, 'rithmic_recorded');
   assert.match(r.source.label, /^Rithmic MNQZ6 1-minute, recorded by your iPhone$/);
+});
+
+// Review of #674: a recording that stopped after entry and before exit must not end the replay early.
+test('recorded minutes that stop before the exit are not used: the delayed feed covers the whole trade', async () => {
+  const storage = await seeded({ lastMinute: '2026-10-20T14:04:00.000Z' });
+  const r = await tradeBars(storage, TRADE, { now: NOW });
+  assert.notEqual(r.source?.kind, 'rithmic_recorded');
+  assert.equal(r.source?.kind, 'forward_feed');
+  const exitBucket = Math.floor(Date.parse(TRADE.exit_time) / 300_000) * 300_000;
+  assert.ok(r.bars.some((b) => Date.parse(b.t) === exitBucket), 'the replay reaches the exit candle');
+});
+
+test('a missing minute between entry and exit also sends the trade to the delayed feed', async () => {
+  const storage = await seeded({ skipMinute: Math.round((Date.parse('2026-10-20T14:11:00.000Z') - START) / 60_000) });
+  const r = await tradeBars(storage, TRADE, { now: NOW });
+  assert.equal(r.source?.kind, 'forward_feed');
+});
+
+test('recorded minutes that cover entry through exit still win, and the replay reaches the exit', async () => {
+  const storage = await seeded({ lastMinute: '2026-10-20T14:24:00.000Z' });
+  const r = await tradeBars(storage, TRADE, { now: NOW });
+  assert.equal(r.source?.kind, 'rithmic_recorded');
+  const exitBucket = Math.floor(Date.parse(TRADE.exit_time) / 300_000) * 300_000;
+  assert.ok(r.bars.some((b) => Date.parse(b.t) === exitBucket));
 });
