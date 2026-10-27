@@ -1,3 +1,4 @@
+import { probeObjectName } from './probe_identity.js';
 // Owner mission 2026-10-14: CHE must never present an unsupported personal
 // memory as the owner's confirmation. Every scenario here goes through the
 // real /api/chat route of the Worker and checks the reply the owner sees.
@@ -362,6 +363,7 @@ test('deploy check: the live memory probe runs the real chat route in an isolate
       return { response: 'It was a steady week, sir. Want me to plan the next one?' };
     } },
   };
+  const probeName = await probeObjectName(env.CHE_VOICE_PROBE_TOKEN);
   env.CHE_STATE = { getByName: (name) => {
     if (!objects.has(name)) {
       stores.set(name, new Map());
@@ -408,10 +410,10 @@ test('deploy check: the live memory probe runs the real chat route in an isolate
     assert.match(recheck.reply, /^You're right to question it, sir\. I checked again just now: the link works, but technologyreview\.com's page does not mention MedMind/);
     assert.equal(JSON.stringify([...stores.get('owner').entries()]), ownerBefore, "the owner's CHE is never touched");
     assert.deepEqual(vectorWrites.filter((url) => /che_memory\?on_conflict/.test(url)), [], 'no test conversation reaches shared vector memory');
-    const probe = stores.get('memory-truth-probe').get('che');
+    const probe = stores.get(probeName).get('che');
     assert.equal(Object.keys(probe.devices || {}).length, 0, 'the test device is revoked afterwards');
     // The reset clears only the test CHE: the owner's object refuses it even with this deploy's token.
-    stores.get('memory-truth-probe').set('leftover', 1);
+    stores.get(probeName).set('leftover', 1);
     const reset = (name) => objects.get(name).fetch(new Request('https://che.internal/api/memory-probe/reset', {
       method: 'POST', headers: { 'X-CHE-Memory-Probe': 'a'.repeat(64) },
     }));
@@ -421,8 +423,8 @@ test('deploy check: the live memory probe runs the real chat route in an isolate
     assert.equal((await unnamed.fetch(new Request('https://che.internal/api/memory-probe/reset', {
       method: 'POST', headers: { 'X-CHE-Memory-Probe': 'a'.repeat(64) },
     }))).status, 404, 'an object with no known name refuses');
-    assert.equal((await reset('memory-truth-probe')).status, 200);
-    assert.equal(stores.get('memory-truth-probe').size, 0, 'the test CHE is cleared');
+    assert.equal((await reset(probeName)).status, 200);
+    assert.equal(stores.get(probeName).size, 0, 'the test CHE is cleared');
   } finally {
     globalThis.fetch = original;
   }

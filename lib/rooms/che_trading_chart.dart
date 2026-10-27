@@ -421,7 +421,7 @@ class CheTradingChartState extends State<CheTradingChart> {
   late String _account = visibleChartAccount(widget.initialAccount);
   late String _symbol = widget.initialSymbol.toUpperCase();
   late String _tf = (widget.initialTimeframe ?? '').isNotEmpty ? widget.initialTimeframe! : '5m';
-  List<String> _timeframes = const ['1m', '5m', '15m', '1h', '1d'];
+  List<String> _timeframes = const ['1m', '5m', '15m', '1h', '4h', '1d'];
   List<ChartBar> _bars = const [];
   List<ChartBar> _history = const [];
   String _historyTf = '';

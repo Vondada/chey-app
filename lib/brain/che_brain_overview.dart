@@ -45,6 +45,7 @@ class CheBrainOverview extends StatefulWidget {
     this.onReadAloud,
     this.onOpenEvidence,
     this.onOpenLedger,
+    this.onOpenReliability,
     this.onOpenSource,
     this.initialSection = CheBrainNav.overview,
     this.clock,
@@ -66,6 +67,9 @@ class CheBrainOverview extends StatefulWidget {
 
   /// Opens the full Brain Ledger page (More → Brain Ledger), when the app provides it.
   final VoidCallback? onOpenLedger;
+
+  /// Opens the Reliability Registry (More → Reliability Registry), when the app provides it.
+  final VoidCallback? onOpenReliability;
 
   /// Opens a record's source screen (conversation, trade replay, project, agent desk) where the app has a route.
   final CheOpenBrainSource? onOpenSource;
@@ -454,6 +458,18 @@ class _CheBrainOverviewState extends State<CheBrainOverview> {
                 onTap: widget.onOpenLedger,
               ),
             ],
+            if (widget.onOpenReliability != null)
+              Semantics(
+                button: true,
+                label: 'Reliability Registry. Every test of CHE, by session and question.',
+                excludeSemantics: true,
+                child: ListTile(
+                  dense: true,
+                  leading: const Icon(Icons.fact_check_rounded, size: 20, color: Colors.white70),
+                  title: const Text('Reliability Registry', style: TextStyle(color: Colors.white70, fontSize: 14)),
+                  onTap: widget.onOpenReliability,
+                ),
+              ),
           ],
         ),
       ),

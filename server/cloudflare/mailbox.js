@@ -202,7 +202,9 @@ async function archiveMail(env, peer, overflow, fetcher) {
   return { error: `Mailbox archive write failed (${put.status}).` };
 }
 
-export async function sendMail(env, { from = 'che', to, text, replyTo = '', id = '' }, fetcher = fetch) {
+// `source` says who typed the message (owner, 2026-10-26): 'owner' for what the owner typed in the app, 'automated' for
+// CHE's own messages, and empty for other AIs. The thread shows the difference, so nobody mistakes one for the other.
+export async function sendMail(env, { from = 'che', to, text, replyTo = '', id = '', source = '' }, fetcher = fetch) {
   const sender = normalizePeer(from) || 'che';
   const recipient = normalizePeer(to);
   const body = String(text || '').trim().slice(0, 4000);
@@ -213,7 +215,8 @@ export async function sendMail(env, { from = 'che', to, text, replyTo = '', id =
   }
   if (!(await ensureBranch(env, fetcher))) return { status: 502, detail: 'Could not open the mailbox branch on GitHub.' };
   const peer = sender === 'che' ? recipient : sender;
-  const message = { id: String(id || '') || crypto.randomUUID(), at: new Date().toISOString(), from: sender, to: recipient, text: body, reply_to: String(replyTo || '') };
+  const origin = String(source || '') || (sender === 'che' ? 'automated' : '');
+  const message = { id: String(id || '') || crypto.randomUUID(), at: new Date().toISOString(), from: sender, to: recipient, text: body, reply_to: String(replyTo || ''), ...(origin ? { source: origin } : {}) };
   for (let attempt = 0; attempt < 3; attempt++) {
     const thread = await readThread(env, peer, fetcher);
     if (thread.error) return { status: 502, detail: thread.error };

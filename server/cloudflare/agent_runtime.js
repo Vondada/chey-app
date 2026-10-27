@@ -16,11 +16,13 @@ import { classifyItem, extractCandidateMemories } from './privacy_policy.js';
 import { agentActionGuard, isLaAgenciaAgent, officeToolBlocker } from './office_company.js';
 import { isResearchStyleJob, writeResearchMemoryNote } from './research_memory.js';
 import { codexThreadId } from './office_router.js';
+import { officeConversation } from './office_conversation.js';
 import { meetingEvent, officeTaskEvent, researchEvent } from './room_events.js';
 import { assertAgentMayRun, permissionBlocker } from './agent_permissions.js';
 import { guardRetrievalClaims } from './truth_layer.js';
 import { cheNote } from './soul.js';
 import { JOB_ROLE_SPECS, POOL_NAMES, agentSoul, isPartnerAgent, pickOfficeAgent, runBrowseTask } from './browse_chat.js';
+import { closeCheck } from './office_queue.js';
 
 export const AGENT_STATUSES = [
   'idle', 'researching', 'building', 'analyzing', 'meeting',
@@ -337,12 +339,21 @@ function doneIsFresh(agent) {
 // the room that fits the assignment, or on a break in a social space.
 export const WORLD_ROOMS = ['office', 'studio', 'gallery', 'music', 'lounge', 'theater'];
 
+// A member's designated room (owner, 2026-10-26): the room their work happens in. Only the working rooms can be designated.
+export const HOME_ROOMS = ['office', 'studio', 'gallery', 'music'];
+export function homeRoomOf(agent) {
+  return HOME_ROOMS.includes(agent?.home_room) ? agent.home_room : null;
+}
+
 export function agentLocation(agent, now = Date.now(), theaterUntil = 0) {
   const status = agent.runtime_status || 'idle';
   const text = `${agent.runtime_task || ''} ${agent.role || ''} ${agent.specialty || ''}`.toLowerCase();
   const working = !['idle', 'done', 'offline'].includes(status);
   if (working) {
     if (status === 'meeting') return { room: 'office', activity: 'meeting', working: true };
+    // Work stays in the member's designated room; the words of a task never move them out of it.
+    const home = homeRoomOf(agent);
+    if (home) return { room: home, activity: status, working: true };
     if (/\b(?:dj|playlist|song|music|beat|mix|track|album)\b/.test(text)) return { room: 'music', activity: /\bdj|playlist|play\b/.test(text) ? 'djing' : 'composing', working: true };
     if (/\b(?:art|paint|draw|illustrat|image|logo|gallery|portrait)\b/.test(text)) return { room: 'gallery', activity: 'making_art', working: true };
     if (/\b(?:video|film|design|creative|studio|brand|visual)\b/.test(text)) return { room: 'studio', activity: 'creating', working: true };
@@ -479,6 +490,9 @@ export function agentDetail(data, agent) {
     work_log: (Array.isArray(data.agent_work_log) ? data.agent_work_log : [])
       .filter((item) => item.agent_id === agent.id)
       .slice(0, 10),
+    // The full conversation record (every message, untruncated, with the six-state status). Built from stored records
+    // by office_conversation.js; the desk's existing agent request carries it, so no new route is added to worker.js.
+    conversation: officeConversation(data, { agentId: agent.id }),
     meetings: (data.meetings || [])
       .filter((item) => item.participants.some((p) => p.agent_id === agent.id))
       .slice(0, 10)
@@ -514,6 +528,8 @@ export function recordAgentWork(data, { task = {}, agent = {}, outcome = 'comple
     task: 'See owner-authorized task history',
     status: clip(outcome, 20) || 'complete',
     verified_by_che: Boolean(verified),
+    // A completed job is recorded with whether its evidence was there (owner, 2026-10-26); the status itself is unchanged.
+    evidence_ok: outcome === 'complete' ? closeCheck({ ...task, verified_by_che: Boolean(verified) }).ok : null,
     memory_note_id: clip(memoryNoteId, 120),
     error: error ? 'Failure recorded; details in owner-authorized task history' : '',
     at: now(),
@@ -581,7 +597,7 @@ export function queueAgentTask(data, agent, task, source = 'owner', options = {}
     partner_name: agent.name,
     role: agent.role,
     task: clip(task, 3000),
-    // CHE's own line to the agent, sent with the task and shown with it in the conversation view (soul.js cheNote).
+    // CHE's own task line; the specialist keeps its own role and voice.
     che_note: options.che_note === false ? '' : cheNote('agent_task', { subject: task, name: agent.name }),
     source,
     status: 'queued',
