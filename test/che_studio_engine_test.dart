@@ -236,6 +236,18 @@ void main() {
       expect(cheParseBeatRequest('make me a beat'), isNull);
       expect(cheParseBeatRequest('play the beat'), isNull);
       expect(cheParseBeatRequest('make an r&b beat at 96 bpm')!.genre, 'r&b');
+      // The owner's request (2026-10-26): a style, not a genre. The producer answers with the closest genre it has.
+      final style = cheParseBeatRequest('make me a beat but NBA YoungBoy type of beat mix with The Weeknd')!;
+      expect(style.genre, 'trap');
+      expect(cheParseBeatRequest('make me a beat in the style of Drake')!.genre, 'trap');
+      // Only a command makes a beat: questions and playlist or video asks go on to chat (Codex review, PR #688).
+      expect(cheBeatAskIsCommand('make me a beat in the style of Drake'), isTrue);
+      expect(cheBeatAskIsCommand('can you make me a trap beat'), isTrue);
+      expect(cheBeatAskIsCommand('play the beat'), isTrue);
+      expect(cheBeatAskIsCommand('How do I make a trap beat?'), isFalse);
+      expect(cheBeatAskIsCommand('Che, how do you make a beat'), isFalse);
+      expect(cheBeatAskIsCommand('make me a beat playlist'), isFalse);
+      expect(cheBeatAskIsCommand('make me a beat video'), isFalse);
     });
   });
 
