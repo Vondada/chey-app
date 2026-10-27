@@ -1,90 +1,102 @@
-// "Why are no new trades appearing?" answered from stored records only, in five short facts (owner, 2026-10-21):
-// the best strategy, its trade count, its P&L, the confidence, and the exact reason new trades are blocked.
-// The reason comes from the scheduler's last run, the feed it saw, the skipped setups and the journal's own
-// timestamps. Nothing is guessed. Paper only: no order and no model call.
+// Status questions about CHE's trading and memory: is trading live, is the market data real-time, is Rithmic
+// connected, what was the latest paper trade, what has CHE learned, and is long-term memory storing.
 //
-// A market entry taken by more than one variant of a strategy is ONE trade: it is counted once, as the analysis
-// in trading_ledgers.js counts it. Delayed-paper trades are reported apart from verified live-forward trades.
-import { LIVE_FEED, LIVE_RUNS, LIVE_STATE, RESOLUTION, readLivePortfolios } from './trading_live.js';
-import { INTRADAY_CANDIDATES, MIN_TRADES, readTrades, summarize } from './trading_evidence.js';
+// Every answer is built from stored runtime records: the forward-paper feed and journal (trading_live.js), the
+// Rithmic candles the owner's phone sent (rithmic_dataset.js) and the conversation-memory store (brain_memory.js).
+// A missing record is said to be missing. Nothing here guesses a connection, a trade or a memory, and nothing calls a model.
+import { conversationMemoryCount, listConversationMemories } from './brain_memory.js';
+import { rithmicStatus } from './rithmic_dataset.js';
+import { liveAnswer, tradeLine } from './trading_live_chat.js';
 
-export const TRADING_STATUS_SOURCE = 'che_trading_status';
+// A status question is short. A long turn about other things keeps its own route.
+const MAX_STATUS_TURN = 400;
 
-const WAKE = /^\s*(?:(?:hey\s+)?(?:che|chay|chey|shay)[,:]?\s+)?/i;
-// A negation ("no", "zero", "aren't", "isn't", "not", "don't see") followed by at most four other words and a trade
-// word, after "why". The words between may be a market ("new MNQ paper trades"), a subject ("CHE is not taking any
-// trades") or a verb ("showing up"). Trade words are the nouns for the journal, not "trading" used as an adjective.
-const NEGATION = "(?:no|zero|none|not|aren'?t|isn'?t|haven'?t|hasn'?t|didn'?t|don'?t|doesn'?t|won'?t|never|nothing|without)";
-const TRADE_WORD = '(?:trades?|entries|entry|positions?|orders?|setups?|signals?|fills?)';
-const WHY_NO = new RegExp(`\\bwhy\\b[\\s\\S]{0,60}?\\b${NEGATION}\\b(?:\\s+[a-z0-9&/']+){0,6}?\\s+${TRADE_WORD}\\b`, 'i');
+const RITHMIC = /\brithmic\b/i;
+const RITHMIC_STATE = /\b(?:connect\w*|live|working|receiv\w*|status|feed|data|running|online|logged|up|on)\b/i;
+const MEMORY = /\bmemor(?:y|ies)\b/i;
+const MEMORY_STATE = /\b(?:working|works|status|health|saved|stored|records?|how\s+many|count|check|is\s+(?:your|the)|are\s+(?:your|the)|available|on)\b/i;
+const LATEST = /\b(?:latest|last|newest|most\s+recent)\s+(?:paper\s+)?trade\b|\b(?:show|read|tell)\s+me\s+(?:your|the)\s+(?:latest|last|newest|most\s+recent)\b[\s\S]{0,15}\btrade\b/i;
+const FEED = /\b(?:real[-\s]?time|live)\s+(?:market\s+)?(?:data|feed|prices?|quotes?|bars?)\b|\b(?:receiv\w*|getting|get|have)\s+(?:any\s+|real[-\s]?time\s+)?(?:market\s+)?(?:data|prices?|bars?)\b|\b(?:is|are)\s+(?:your|the)\s+(?:trading|feed|market\s+data|data)\s+(?:live|on|connected|running|working|status)\b|\b(?:is|are)\s+(?:you|your\s+trading)\s+live\b/i;
+const LEARNED = /\b(?:what\s+(?:have|did)\s+you\s+(?:learn|learned)|trading\s+(?:skills?|lessons?|learning))\b/i;
 
 /**
- * The owner's "why are there no new trades" question in any natural wording, with or without a market name, "paper",
- * or a wake word ("CHE", "Chay", "Chey", "Shay", "Hey CHE"), or null. Questions about other things do not match.
+ * The status question in [message], or null. The first match wins, in this order: Rithmic, memory, the latest paper
+ * trade, the live feed, and what was learned. Each names a kind the reply builder answers from records.
  */
-export function newTradesIntent(message) {
-  const text = String(message || '').replace(/[’]/g, "'").replace(WAKE, '').replace(/\s+/g, ' ').trim();
-  if (!text || text.length > 300) return null;
-  return WHY_NO.test(text) ? { kind: 'why_no_trades' } : null;
+export function tradingStatusIntent(message) {
+  const text = String(message || '').trim().replace(/[’']/g, "'");
+  if (!text || text.length > MAX_STATUS_TURN) return null;
+  if (RITHMIC.test(text) && RITHMIC_STATE.test(text)) return { kind: 'rithmic' };
+  if (MEMORY.test(text) && MEMORY_STATE.test(text)) return { kind: 'memory' };
+  if (LATEST.test(text)) return { kind: 'latest' };
+  if (FEED.test(text)) return { kind: 'live' };
+  if (LEARNED.test(text)) return { kind: 'learning' };
+  return null;
 }
 
-const clock = (iso) => {
-  const at = new Date(String(iso || ''));
-  return Number.isFinite(at.getTime()) ? `${at.toISOString().slice(0, 16).replace('T', ' ')} UTC` : 'an unknown time';
+const when = (iso) => {
+  const ms = Date.parse(iso);
+  if (!iso || Number.isNaN(ms)) return 'an unknown time';
+  return new Intl.DateTimeFormat('en-US', { timeZone: 'America/Chicago', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }).format(new Date(ms)) + ' Central';
 };
-const money = (value) => `${Number(value) < 0 ? '-' : ''}$${Math.abs(Number(value) || 0).toFixed(2)}`;
-const entryKey = (t) => `${t.strategy}|${t.side}|${t.entry?.time}`;
 
-// The reason new trades are blocked, from the last recorded run and the portfolios' own skip lists.
-function blockReason(state, runs, feed, portfolios, now) {
-  if (!state?.enabled) return 'Paper trading is off: the scheduler is not opening anything. Turn paper trading on to resume.';
-  const last = Array.isArray(runs) && runs.length ? runs[runs.length - 1] : null;
-  if (!last) return 'The scheduler has not recorded a run yet, so there is no feed reading to judge.';
-  const when = clock(last.at);
-  if (last.error) return `The last scheduler run at ${when} failed: ${last.error}`;
-  if (last.entries_allowed === false) {
-    const feedNote = feed?.status ? ` The feed then was ${feed.status}${feed.checked_at ? ` (checked ${clock(feed.checked_at)})` : ''}.` : '';
-    return `The last scheduler run at ${when} opened no entries. ${last.entry_blocker || 'The entry gate was closed.'}${feedNote}`;
-  }
-  const skips = portfolios.flatMap((pf) => (Array.isArray(pf.skips) ? pf.skips : []));
-  const lastSkip = skips.sort((a, b) => String(b.time).localeCompare(String(a.time)))[0];
-  const skipNote = lastSkip ? ` Latest skipped setup: ${clock(lastSkip.time)}, ${lastSkip.reason}.` : '';
-  return `The last scheduler run at ${when} allowed entries (${last.entry_quality || 'feed'} bars), so no new trade is blocked. No valid setup has passed the strategy rules since then.${skipNote}`;
+/** The feed sentence, from the stored feed record: provider, symbol, status, last bar and when it was checked. */
+export function feedSentence(dash) {
+  const f = dash?.feed;
+  if (!f) return `No market data has been read yet, sir. ${dash?.feed_blocker || ''}`.trim();
+  const parts = [`Market data: ${f.status} from ${f.provider} ${f.provider_symbol}${f.contract ? ` (${f.contract})` : ''}.`];
+  parts.push(f.status === 'LIVE' ? 'That is real-time data.' : 'That is delayed data: research only, not execution evidence.');
+  if (f.last_bar_time) parts.push(`Last bar ${when(f.last_bar_time)}${Number.isFinite(f.latency_s) ? `, about ${Math.round(f.latency_s)} seconds behind` : ''}.`);
+  if (f.checked_at) parts.push(`Feed checked ${when(f.checked_at)}.`);
+  if (f.error) parts.push(`Last feed error: ${f.error}.`);
+  return parts.join(' ');
 }
 
-/** The five facts, read from the stored journal and scheduler records. */
-export async function tradingStatus(storage, { now = Date.now() } = {}) {
-  const [state, runs, feed, portfolios] = await Promise.all([
-    storage.get(LIVE_STATE), storage.get(LIVE_RUNS), storage.get(LIVE_FEED), readLivePortfolios(storage),
-  ]);
-  let records;
-  try {
-    records = await readTrades(storage, (t) => t.environment === 'paper' && t.data?.resolution === RESOLUTION);
-  } catch (_) {
-    return { ok: false, text: 'I could not read the forward paper journal just now, sir, so I give no trade count, P&L or reason.' };
-  }
-  // One market entry per strategy, however many variants took it.
-  const unique = [...new Map(records.map((t) => [entryKey(t), t])).values()];
-  const byStrategy = new Map();
-  for (const t of unique) byStrategy.set(t.strategy, [...(byStrategy.get(t.strategy) || []), t]);
-  const ranked = [...byStrategy.entries()]
-    .map(([id, list]) => ({ id, name: INTRADAY_CANDIDATES[id]?.name || id, stats: summarize(list) }))
-    .sort((a, b) => b.stats.expectancy_r - a.stats.expectancy_r);
-  const best = ranked.find((r) => r.stats.trades >= MIN_TRADES) || ranked[0] || null;
-  const total = summarize(unique);
-  const verified = unique.filter((t) => t.data?.entry_feed?.status === 'LIVE'
-    && t.data.entry_feed.authenticated === true && t.data.entry_feed.subscription_verified === true).length;
-  const delayed = unique.filter((t) => t.data?.entry_feed?.status === 'DELAYED').length;
-  const variantRecords = records.length - unique.length;
+const paperState = (dash) => (dash?.state?.enabled
+  ? `Paper trading is on, sir${dash.state.started_at ? `, since ${when(dash.state.started_at)}` : ''}`
+  : `Paper trading is off, sir${dash?.state?.stopped_at ? `, since ${when(dash.state.stopped_at)}` : ''}`);
 
-  const lines = ['Why no new trades, sir. From the stored paper records only (paper, no money):'];
-  lines.push(`1. Best strategy: ${best ? `${best.name}${best.stats.trades >= MIN_TRADES ? '' : ' (so far)'}` : 'none yet; no paper trade is recorded.'}`);
-  lines.push(`2. Trades: ${total.trades} distinct market entries${variantRecords ? ` (${variantRecords} variant record${variantRecords === 1 ? '' : 's'} of the same entries counted once)` : ''}. Last entry: ${unique.length ? clock(unique.reduce((latest, t) => (String(t.entry?.time) > latest ? String(t.entry?.time) : latest), '')) : 'none'}.`);
-  lines.push(`3. P&L: ${money(total.net_pnl)} net across those entries.`);
-  const confidence = !best ? 'none: no trades'
-    : best.stats.trades >= MIN_TRADES ? `enough trades (${best.stats.trades} of the ${MIN_TRADES} needed)`
-      : `low: ${best.stats.trades} trades, under the ${MIN_TRADES}-trade minimum, so not a conclusion`;
-  lines.push(`4. Confidence: ${confidence}. Delayed-paper entries: ${delayed}. Verified live-forward entries: ${verified}. The two are never added together.`);
-  lines.push(`5. Blocked because: ${blockReason(state, runs, feed, portfolios, now)}`);
-  return { ok: true, text: lines.join('\n'), trades: total.trades };
+const realMoney = (dash) => (dash?.broker?.live_orders === 'disabled'
+  ? 'Real-money orders are disabled.'
+  : 'Real-money orders need your approval of each exact order.');
+
+/**
+ * Reads the stored records each status answer needs. [dash] is the trading dashboard (liveTradingDashboard in the
+ * Worker). Memory is read as a count and the newest record's time, never its text.
+ */
+export async function gatherTradingStatus(storage, dash) {
+  const [count, newest, rithmic] = await Promise.all([
+    conversationMemoryCount(storage),
+    listConversationMemories(storage, { limit: 1 }).then((rows) => rows[0] || null),
+    rithmicStatus(storage),
+  ]);
+  return { dash, rithmic, memory: { count, latest_at: newest?.at || null } };
+}
+
+/** The spoken answer for one status kind, from the gathered records. Pure: no storage, no clock, no model. */
+export function tradingStatusReply(kind, facts) {
+  const { dash, rithmic, memory } = facts;
+  switch (kind) {
+    case 'live':
+      return `${paperState(dash)}. ${feedSentence(dash)} ${realMoney(dash)} Paper trades are simulated and send no broker order.`;
+    case 'rithmic': {
+      if (!rithmic.symbols.length) {
+        return 'No Rithmic candles have reached this server yet, sir. Rithmic logs in on your iPhone and its login never reaches the Worker, so I cannot see whether the phone is connected right now. The phone sends each closed one-minute candle when it records one.';
+      }
+      const list = rithmic.symbols.map((s) => `${s.symbol}: ${s.hours} hour${s.hours === 1 ? '' : 's'} recorded, newest candle ${when(s.latest_t)}, received ${when(s.received_at)}`).join('; ');
+      return `The server holds Rithmic one-minute candles from your phone, sir: ${list}. That is a record of what the phone sent, not a live connection check. The Rithmic login stays on your iPhone.`;
+    }
+    case 'memory':
+      if (!memory.count) return 'No conversation memories are stored yet, sir, so long-term memory has nothing to recall.';
+      return `Long-term memory is storing: ${memory.count} conversation memor${memory.count === 1 ? 'y' : 'ies'}, the newest saved ${when(memory.latest_at)}. That is the stored record. I did not run a recall test just now.`;
+    case 'latest': {
+      const t = dash?.trades?.[0];
+      if (!t) return `No paper trade has closed yet, sir. ${dash?.positions?.length || 0} open. ${feedSentence(dash)}`;
+      return `Latest closed paper trade: ${tradeLine(t)}. Paper only, no real money.`;
+    }
+    case 'learning':
+      return liveAnswer({ kind: 'learning' }, dash);
+    default:
+      return feedSentence(dash);
+  }
 }

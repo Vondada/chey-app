@@ -832,7 +832,8 @@ export function tradingIntent(message, { followup = '', referent = '' } = {}) {
   const sized = (intent) => (interval && interval !== '1d' ? { ...intent, interval } : intent);
   if (/\b(?:what (?:have|did) you (?:learn|learned)|trading (?:skills?|lessons?|learning)|learn(?:ed|ing)? (?:about )?trading|new (?:trading )?(?:skills?|strateg(?:y|ies)))\b/i.test(text) && /\b(?:trad|market|futures|stocks?|crypto)/i.test(text)) return { kind: 'learning' };
   if (/\bbacktest/i.test(text) && !/\b(?:code|app|feature|function)\b/i.test(text)) return sized({ kind: 'backtest', symbol: pick() || 'BTCUSDT' });
-  if (/\b(?:paper trade|watch)\b[\s\S]{0,30}/i.test(text) && /\b(?:paper|trade|market)\b/i.test(text)) return { kind: 'watch', symbol: pick() };
+  // A watch needs a market to watch. "Show your latest paper trade" names none, so it is never a ticker lookup.
+  if (/\b(?:paper trade|watch)\b[\s\S]{0,30}/i.test(text) && /\b(?:paper|trade|market)\b/i.test(text) && pick()) return { kind: 'watch', symbol: pick() };
   if (/\b(?:swing (?:highs?|lows?)|entry points?|entries|candlestick|scan|analy[sz]e)\b/i.test(text) && /\b(?:chart|market|stock|crypto|bitcoin|btc|eth|ethereum|solana|s&p|nasdaq|dow|swing|entry|entries|candlestick|ticker|price action)\b/i.test(text)) {
     return sized({ kind: 'analyze', symbol: pick() || 'BTCUSDT' });
   }

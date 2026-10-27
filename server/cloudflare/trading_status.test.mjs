@@ -1,80 +1,154 @@
-// "Why are there no new trades appearing?" from stored records only: five facts, one count per market entry across
-// variants, delayed and verified-live kept apart, and the blocked reason taken from the last scheduler run.
+// Regression tests for the owner's trading and memory status questions (owner, 2026-10-27). CHE answered "Is your
+// trading live?" with a ticker error. Each question must reach a status route, and each reply must come from stored
+// records: the feed, the journal, the Rithmic candle store and the memory store. Nothing may be invented.
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { newTradesIntent, tradingStatus } from './trading_status.js';
-import { LIVE_FEED, LIVE_RUNS, LIVE_STATE } from './trading_live.js';
-import { RECORD_PREFIX } from './trading_evidence.js';
+import { rithmicStatus } from './rithmic_dataset.js';
+import { gatherTradingStatus, tradingStatusIntent, tradingStatusReply } from './trading_status.js';
+import { tradingIntent } from './trading_lab.js';
 
-const storeWith = (entries = {}) => {
-  const map = new Map(Object.entries(entries));
+// Minimal Durable-Object-style storage: get (one key or a list), put, and list by prefix, newest first when asked.
+function fakeStorage(entries = []) {
+  const m = new Map(entries);
   return {
-    get: async (k) => map.get(k),
-    put: async (k, v) => map.set(k, v),
-    list: async ({ prefix = '' } = {}) => new Map([...map].filter(([k]) => k.startsWith(prefix))),
+    async get(k) {
+      if (Array.isArray(k)) return new Map(k.filter((x) => m.has(x)).map((x) => [x, m.get(x)]));
+      return m.get(k);
+    },
+    async put(k, v) { m.set(k, v); },
+    async list({ prefix = '', reverse = false, limit = Infinity } = {}) {
+      const keys = [...m.keys()].filter((k) => k.startsWith(prefix)).sort();
+      if (reverse) keys.reverse();
+      return new Map(keys.slice(0, limit).map((k) => [k, m.get(k)]));
+    },
   };
+}
+
+const liveDash = {
+  feed: { status: 'LIVE', authenticated: true, subscription_verified: true, provider: 'tradovate', provider_symbol: 'MNQZ6', contract: 'MNQZ6', latency_s: 4, last_bar_time: '2026-10-27T20:00:00.000Z', checked_at: '2026-10-27T20:00:05.000Z' },
+  feed_blocker: '',
+  session: { state: 'open' },
+  state: { enabled: true, started_at: '2026-10-18T14:00:00.000Z' },
+  broker: { live_orders: 'disabled' },
+  positions: [],
+  trades: [],
+  learning: { daily_report: 'Strategy A leads on closed paper trades. Nothing is ranked as reliable yet.', strategies: [] },
 };
-// One closed paper trade, shaped like the journal's records (fields the summary reads).
-const trade = (id, { variant = 'any', time = '2026-10-21T14:05:00Z', pnl = 40, feed = 'LIVE', strategy = 'ema-pullback-5m' } = {}) => [
-  `${RECORD_PREFIX}${id}`, {
-    id, strategy, filter: variant, side: 'long', environment: 'paper', net_pnl: pnl, r_net: pnl / 20,
-    costs: { spread: 0, slippage: 0, commissions: 0, fees: 0 },
-    entry: { time, price: 21000 }, exit: { time: '2026-10-21T14:30:00Z', reason: 'target' },
-    params: { target_r: 2 }, data: { resolution: '5m', entry_feed: { status: feed, authenticated: feed === 'LIVE', subscription_verified: feed === 'LIVE' } },
-  }];
+const delayedDash = { ...liveDash, feed: { ...liveDash.feed, status: 'DELAYED', latency_s: 900 } };
+const noFeedDash = { ...liveDash, feed: null, feed_blocker: 'No Tradovate market feed is connected.' };
+const noMemory = { count: 0, latest_at: null };
+const memoryOn = { count: 3, latest_at: '2026-10-27T19:30:00.000Z' };
+const noRithmic = { symbols: [] };
+const rithmicOn = { symbols: [{ symbol: 'MNQZ6', hours: 2, latest_t: '2026-10-27T20:01:00.000Z', received_at: '2026-10-27T20:01:30.000Z' }] };
 
-test('the owner\'s exact question routes to the trading status, and a strategy analysis does not', () => {
-  assert.deepEqual(newTradesIntent('Why are there no new trades appearing?'), { kind: 'why_no_trades' });
-  assert.deepEqual(newTradesIntent('CHE, why aren\'t you taking any new trades?'), { kind: 'why_no_trades' });
-  assert.equal(newTradesIntent('Analyze EMA Pullback New York morning versus overnight'), null);
+test('the six owner questions reach a status route, not the ticker lookup', () => {
+  assert.equal(tradingStatusIntent('Is your trading live?')?.kind, 'live');
+  assert.equal(tradingStatusIntent('Are you receiving real-time market data?')?.kind, 'live');
+  assert.equal(tradingStatusIntent('Show your latest paper trade.')?.kind, 'latest');
+  assert.equal(tradingStatusIntent('Is Rithmic connected?')?.kind, 'rithmic');
+  assert.equal(tradingStatusIntent('What have you learned from your trading?')?.kind, 'learning');
+  assert.equal(tradingStatusIntent('Is your long-term memory working?')?.kind, 'memory');
 });
 
-test('with paper trading off, the answer says so and gives the reason, with no invented trade', async () => {
-  const out = await tradingStatus(storeWith({ [LIVE_STATE]: { enabled: false } }));
-  assert.equal(out.ok, true);
-  assert.match(out.text, /^Why no new trades, sir\./);
-  assert.match(out.text, /5\. Blocked because: Paper trading is off/);
-  assert.match(out.text, /2\. Trades: 0 distinct market entries/);
+test('the classifier that caused the bug no longer turns "show your latest paper trade" into a watch on no symbol', () => {
+  assert.notEqual(tradingIntent('Show your latest paper trade.')?.kind, 'watch');
 });
 
-test('a variant that took the same market entry is counted once, in the trade count and in P&L', async () => {
-  const store = storeWith({
-    [LIVE_STATE]: { enabled: true },
-    ...Object.fromEntries([trade('a', { variant: 'any' }), trade('b', { variant: 'trend' })]),
-  });
-  const out = await tradingStatus(store);
-  assert.match(out.text, /2\. Trades: 1 distinct market entries \(1 variant record of the same entries counted once\)/);
-  assert.match(out.text, /3\. P&L: \$40\.00 net across those entries\./);
-  assert.equal(out.trades, 1);
+test('a real ticker still reaches the ticker route, and an ordinary sentence reaches no status route', () => {
+  assert.equal(tradingStatusIntent('Watch AAPL on paper trading'), null);
+  assert.equal(tradingStatusIntent('What is the weather in Dallas today?'), null);
+  assert.equal(tradingStatusIntent('My memory of the trip is fuzzy, can you help me write it down?'), null, 'memory is a status only with a status word');
 });
 
-test('delayed-paper and verified live-forward entries are reported apart, never added together', async () => {
-  const store = storeWith({
-    [LIVE_STATE]: { enabled: true },
-    ...Object.fromEntries([trade('live', { time: '2026-10-21T14:05:00Z', feed: 'LIVE' }), trade('late', { time: '2026-10-21T15:05:00Z', feed: 'DELAYED' })]),
-  });
-  const out = await tradingStatus(store);
-  assert.match(out.text, /Delayed-paper entries: 1\. Verified live-forward entries: 1\./);
-  assert.match(out.text, /2\. Trades: 2 distinct market entries/);
+test('an overlong turn is never a status question', () => {
+  assert.equal(tradingStatusIntent(`Is your trading live? ${'x'.repeat(500)}`), null);
 });
 
-test('the blocked reason is the last scheduler run\'s own gate and feed, with its time', async () => {
-  const store = storeWith({
-    [LIVE_STATE]: { enabled: true },
-    [LIVE_RUNS]: [{ at: '2026-10-21T16:00:00Z', ok: false, entries_allowed: false, entry_quality: null,
-      entry_blocker: 'New forward-paper entries need delayed or real-time CME bars. Stale, replayed or unavailable data cannot open positions.' }],
-    [LIVE_FEED]: { status: 'UNAVAILABLE', checked_at: '2026-10-21T15:59:00Z' },
-  });
-  const out = await tradingStatus(store);
-  assert.match(out.text, /5\. Blocked because: The last scheduler run at 2026-10-21 16:00 UTC opened no entries\. New forward-paper entries need delayed or real-time CME bars/);
-  assert.match(out.text, /The feed then was UNAVAILABLE \(checked 2026-10-21 15:59 UTC\)\./);
+test('"Is your trading live?" answers with paper state, the feed record and the real-money state', () => {
+  const reply = tradingStatusReply('live', { dash: liveDash, rithmic: noRithmic, memory: noMemory });
+  assert.match(reply, /Paper trading is on, sir/);
+  assert.match(reply, /Market data: LIVE from tradovate MNQZ6 \(MNQZ6\)\./);
+  assert.match(reply, /That is real-time data\./);
+  assert.match(reply, /Real-money orders are disabled\./);
+  assert.doesNotMatch(reply, /did not recognize|ticker/i);
 });
 
-test('a last run that failed says it failed, with its error', async () => {
-  const store = storeWith({
-    [LIVE_STATE]: { enabled: true },
-    [LIVE_RUNS]: [{ at: '2026-10-21T16:00:00Z', ok: false, error: 'data refused: bar gap' }],
-  });
-  const out = await tradingStatus(store);
-  assert.match(out.text, /The last scheduler run at 2026-10-21 16:00 UTC failed: data refused: bar gap/);
+test('"Are you receiving real-time market data?" says delayed data is not real-time', () => {
+  const reply = tradingStatusReply('live', { dash: delayedDash, rithmic: noRithmic, memory: noMemory });
+  assert.match(reply, /Market data: DELAYED/);
+  assert.match(reply, /delayed data: research only, not execution evidence/);
+  assert.doesNotMatch(reply, /That is real-time data/);
+});
+
+test('with no stored feed record, the reply says so and never claims real-time data', () => {
+  const reply = tradingStatusReply('live', { dash: noFeedDash, rithmic: noRithmic, memory: noMemory });
+  assert.match(reply, /No market data has been read yet, sir\. No Tradovate market feed is connected\./);
+  assert.doesNotMatch(reply, /LIVE|real-time data/);
+});
+
+test('"Show your latest paper trade." with no closed trade says none closed, and never invents one', () => {
+  const reply = tradingStatusReply('latest', { dash: liveDash, rithmic: noRithmic, memory: noMemory });
+  assert.match(reply, /No paper trade has closed yet, sir\. 0 open\./);
+  assert.doesNotMatch(reply, /Latest closed paper trade/);
+});
+
+test('"Show your latest paper trade." reads the newest stored trade, with its prices and times', () => {
+  const trade = {
+    side: 'long', qty: 1, contract: 'MNQZ6', strategy: 'EMA pullback', net_pnl: 12.5,
+    entry: { fill: 21000.25, time: '2026-10-27T15:00:00.000Z' },
+    exit: { fill: 21012.75, reason: 'target', time: '2026-10-27T15:20:00.000Z' },
+  };
+  const reply = tradingStatusReply('latest', { dash: { ...liveDash, trades: [trade] }, rithmic: noRithmic, memory: noMemory });
+  assert.match(reply, /Latest closed paper trade: long 1 MNQZ6, EMA pullback, entered 21000\.25/);
+  assert.match(reply, /exited 21012\.75 on target/);
+  assert.match(reply, /net \$12\.50/);
+});
+
+test('"Is Rithmic connected?" says the login is on the iPhone and the server cannot see the connection, with no stored candles', () => {
+  const reply = tradingStatusReply('rithmic', { dash: liveDash, rithmic: noRithmic, memory: noMemory });
+  assert.match(reply, /No Rithmic candles have reached this server yet/);
+  assert.match(reply, /cannot see whether the phone is connected right now/);
+  assert.doesNotMatch(reply, /connected\./);
+});
+
+test('"Is Rithmic connected?" reports stored candles by contract, hours and times, and calls them a record, not a live check', () => {
+  const reply = tradingStatusReply('rithmic', { dash: liveDash, rithmic: rithmicOn, memory: noMemory });
+  assert.match(reply, /MNQZ6: 2 hours recorded/);
+  assert.match(reply, /not a live connection check/);
+});
+
+test('"What have you learned from your trading?" reads the stored learning report, never a guess', () => {
+  const reply = tradingStatusReply('learning', { dash: liveDash, rithmic: noRithmic, memory: noMemory });
+  assert.match(reply, /Strategy A leads on closed paper trades/);
+  assert.match(reply, /Nothing is ranked as reliable yet/);
+});
+
+test('"Is your long-term memory working?" reports the stored count and newest time, and says no recall test ran', () => {
+  const reply = tradingStatusReply('memory', { dash: liveDash, rithmic: noRithmic, memory: memoryOn });
+  assert.match(reply, /Long-term memory is storing: 3 conversation memories/);
+  assert.match(reply, /I did not run a recall test just now/);
+});
+
+test('with no stored memories, memory says nothing is stored and never claims recall works', () => {
+  const reply = tradingStatusReply('memory', { dash: liveDash, rithmic: noRithmic, memory: noMemory });
+  assert.match(reply, /No conversation memories are stored yet/);
+  assert.doesNotMatch(reply, /is storing/);
+});
+
+test('gatherTradingStatus reads the memory count, the newest memory time and the Rithmic store from storage', async () => {
+  const storage = fakeStorage([
+    ['brainmem_count', 3],
+    [`brainmem:${String(Date.parse('2026-10-27T19:30:00.000Z')).padStart(15, '0')}`, { id: 'a', at: '2026-10-27T19:30:00.000Z', title: 'x', body: 'y', tokens: [] }],
+    ['rithmic_1m_index:MNQZ6', ['2026-10-27T19', '2026-10-27T20']],
+    ['rithmic_1m:MNQZ6:2026-10-27T20', { symbol: 'MNQZ6', candles: { 0: { t: '2026-10-27T20:00:00.000Z', received_at: '2026-10-27T20:00:30.000Z' }, 1: { t: '2026-10-27T20:01:00.000Z', received_at: '2026-10-27T20:01:30.000Z' } } }],
+  ]);
+  const facts = await gatherTradingStatus(storage, liveDash);
+  assert.deepEqual(facts.memory, { count: 3, latest_at: '2026-10-27T19:30:00.000Z' });
+  assert.deepEqual(facts.rithmic, { symbols: [{ symbol: 'MNQZ6', hours: 2, latest_t: '2026-10-27T20:01:00.000Z', received_at: '2026-10-27T20:01:30.000Z' }] });
+});
+
+test('rithmicStatus is empty when no candles were ever stored, and ignores a malformed contract name', async () => {
+  assert.deepEqual(await rithmicStatus(fakeStorage()), { symbols: [] });
+  const storage = fakeStorage([['rithmic_1m_index:not-a-contract', ['2026-10-27T20']]]);
+  assert.deepEqual(await rithmicStatus(storage), { symbols: [] });
 });
