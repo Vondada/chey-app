@@ -39,21 +39,27 @@ export function dimCheck(declared, expected) {
  */
 export function helixLength({ radius, pitch, turns, samples = 4000 } = {}) {
   if (!finite(radius, pitch, turns) || radius <= 0 || pitch < 0 || turns <= 0) return fail('helix length', 'radius, turns > 0 and pitch ≥ 0 metres/turns needed');
+  if (!Number.isInteger(samples) || samples < 2 || samples > 100000) return fail('helix length', 'samples must be an integer from 2 to 100000');
   const rise = pitch * turns;
   const closed = turns * 2 * Math.PI * Math.sqrt(radius * radius + (pitch / (2 * Math.PI)) ** 2);
+  if (!finite(rise, closed)) return fail('helix length', 'result exceeds finite numeric range');
+  // Constant pitch/radius repeat each revolution. Check at most one turn, then scale its
+  // chord length: angular resolution stays constant without work growing with total turns.
+  const checkedTurns = Math.min(turns, 1);
   let numeric = 0; let prev = [radius, 0, 0];
   for (let i = 1; i <= samples; i++) {
-    const t = (2 * Math.PI * turns * i) / samples;
+    const t = (2 * Math.PI * checkedTurns * i) / samples;
     const cur = [radius * Math.cos(t), radius * Math.sin(t), (pitch * t) / (2 * Math.PI)];
     numeric += Math.hypot(cur[0] - prev[0], cur[1] - prev[1], cur[2] - prev[2]); prev = cur;
   }
+  numeric *= turns / checkedTurns;
   return {
     ok: true, name: 'helix length', value: closed, units: 'm',
     formula: 'L = turns · 2π · sqrt(R² + (p/2π)²)',
     inputs: { radius, pitch, turns }, rise: { value: rise, units: 'm' },
     assumptions: ['ideal helix: constant radius and pitch', 'the path is the centreline only; width and headroom are separate'],
     steps: [`R=${radius} m, p=${pitch} m per turn, ${turns} turns`, `closed form L=${closed.toFixed(6)} m`, `rise = p·turns = ${rise} m`],
-    checks: { method: 'chord sum over ' + samples + ' points', value: numeric, relDiff: relDiff(closed, numeric), pass: relDiff(closed, numeric) < 1e-5 },
+    checks: { method: `chord sum over ${samples} points for ${checkedTurns} turn(s), scaled to ${turns} turns`, value: numeric, relDiff: relDiff(closed, numeric), pass: relDiff(closed, numeric) < 1e-5 },
     dimension: dimCheck('length', 'length'),
   };
 }
@@ -155,7 +161,7 @@ export function gearTrain({ driverTeeth, drivenTeeth, inputRpm = 0, inputTorque 
 export function boxClearance({ a, b, axis = 0 } = {}) {
   const boxOk = (q) => q && Array.isArray(q.c) && Array.isArray(q.s) && q.c.length === 3 && q.s.length === 3 && finite(...q.c, ...q.s) && q.s.every((v) => v > 0);
   if (!boxOk(a) || !boxOk(b)) return fail('clearance', 'two boxes {c:[x,y,z], s:[w,h,d]} with positive metres needed');
-  if (!(axis >= 0 && axis < 3)) return fail('clearance', 'axis must be 0, 1 or 2');
+  if (!Number.isInteger(axis) || axis < 0 || axis >= 3) return fail('clearance', 'axis must be 0, 1 or 2');
   const gap = Math.abs(a.c[axis] - b.c[axis]) - (a.s[axis] + b.s[axis]) / 2;
   const overlapsAll = [0, 1, 2].every((k) => Math.abs(a.c[k] - b.c[k]) < (a.s[k] + b.s[k]) / 2);
   return {
