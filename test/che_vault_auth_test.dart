@@ -8,6 +8,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:chey/security/che_vault_auth.dart';
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
   nativeKeychainTests();
   const channel = MethodChannel('che/account_bridge');
   final calls = <Map<dynamic, dynamic>>[];
