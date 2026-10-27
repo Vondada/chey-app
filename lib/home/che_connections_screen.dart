@@ -12,11 +12,15 @@ import '../che_ui/che_hud.dart';
 import '../che_ui/che_screen_awareness.dart';
 import '../che_ui/che_theme.dart';
 import '../create/che_gpu_connect.dart';
+import 'che_broker_return.dart';
 
 /// Spoken control for the Connections page while it is the open route.
 class CheConnectionsVoice {
   CheConnectionsVoice._();
   static Future<String?> Function(String words)? handler;
+
+  /// Set while the page is open: reports the return from Tradovate's sign-in (che://broker/tradovate).
+  static Future<void> Function(String linkResult)? brokerReturn;
 }
 
 // Google services: one sign-in each, with only that service's permissions.
@@ -47,6 +51,7 @@ class CheConnectionsScreen extends StatefulWidget {
     this.autoConnect = '',
     this.onCloudComputer,
     this.onColabGpu,
+    this.brokerReturn = '',
   });
 
   final String baseUrl;
@@ -64,6 +69,10 @@ class CheConnectionsScreen extends StatefulWidget {
   /// Opens the GPU Browser to connect Colab. The row is shown only until the GPU is connected.
   final VoidCallback? onColabGpu;
 
+  /// Set when the page opens from the Tradovate return link: 'connected', 'failed' or 'unknown'
+  /// (what the page said). CHE re-checks and reports the verified result.
+  final String brokerReturn;
+
   @override
   State<CheConnectionsScreen> createState() => _CheConnectionsScreenState();
 }
@@ -77,6 +86,7 @@ class _CheConnectionsScreenState extends State<CheConnectionsScreen> {
   void dispose() {
     CheScreenAwareness.unregister(_screen);
     if (CheConnectionsVoice.handler == _voice) CheConnectionsVoice.handler = null;
+    if (CheConnectionsVoice.brokerReturn == _brokerReturn) CheConnectionsVoice.brokerReturn = null;
     if (widget.client == null) _client.close();
     super.dispose();
   }
@@ -87,11 +97,15 @@ class _CheConnectionsScreenState extends State<CheConnectionsScreen> {
   String? _pendingDisconnect;
   String _error = '';
   String _message = '';
+  // The Tradovate card from /api/trading/connections: its separate facts. Null until CHE reports it.
+  Map<String, dynamic>? _tradovate;
+  String _tradovateError = '';
 
   @override
   void initState() {
     super.initState();
     CheConnectionsVoice.handler = _voice;
+    CheConnectionsVoice.brokerReturn = _brokerReturn;
     // "What is on my screen?": the rows and their verified states.
     _screen = CheScreenAwareness.register(context, () => CheScreenReport(
           page: 'Connections',
@@ -101,11 +115,16 @@ class _CheConnectionsScreenState extends State<CheConnectionsScreen> {
                   ? 'Connection check failed: $_error'
                   : 'YouTube channel: ${_status('youtube')}. Gmail: ${_status('gmail')}. Google Drive: ${_status('drive')}. '
                       'Google Calendar: ${_status('calendar')}. NinjaTrader: ${_status('broker')}. Google Ads: ${_status('google_ads')}. '
-                      'Bank accounts: ${_status(null)}',
+                      'Bank accounts: ${_status(null)}'
+                      '${_ninjaLines.isEmpty ? '' : '. NinjaTrader details: ${_ninjaLines.join(' ')}'}',
           controls: const ['Back', 'Refresh verified connections', 'Connect with Google', 'Connect Gmail', 'Connect Drive', 'Connect Calendar', 'Connect NinjaTrader', 'Connect Google Ads', 'Change CHE’s voice'],
         ));
-    unawaited(_refresh());
-    if (widget.autoConnect == 'youtube') {
+    final firstLoad = _refresh();
+    unawaited(firstLoad);
+    if (widget.brokerReturn.isNotEmpty) {
+      final result = widget.brokerReturn;
+      unawaited(firstLoad.then((_) => _reportBrokerReturn(result)));
+    } else if (widget.autoConnect == 'youtube') {
       WidgetsBinding.instance.addPostFrameCallback((_) => unawaited(_connectYoutube()));
     } else if (widget.autoConnect == 'broker') {
       WidgetsBinding.instance.addPostFrameCallback((_) => unawaited(_connectBroker()));
@@ -131,6 +150,7 @@ class _CheConnectionsScreenState extends State<CheConnectionsScreen> {
       }
       if (!mounted) return;
       setState(() { _connectors = Map<String, dynamic>.from(raw['connectors'] as Map); });
+      if (_connectors.containsKey('broker')) await _loadTradovate();
       if (announce) {
         HapticFeedback.selectionClick();
         final youtube = _status('youtube');
@@ -145,6 +165,7 @@ class _CheConnectionsScreenState extends State<CheConnectionsScreen> {
       // Never reuse stale "Connected" labels after a network/auth error.
       setState(() {
         _connectors = {};
+        _tradovate = null;
         _error = e is TimeoutException ? 'CHE did not answer in time.' : e.toString().replaceFirst('Bad state: ', '');
       });
       if (announce) {
@@ -154,6 +175,63 @@ class _CheConnectionsScreenState extends State<CheConnectionsScreen> {
     } finally {
       if (mounted) setState(() => _loading = false);
     }
+  }
+
+  // The NinjaTrader card's separate facts (website login, brokerage, accounts, market data, live
+  // orders) come from the trading connections view. A failure leaves them unshown, never guessed.
+  Future<void> _loadTradovate() async {
+    try {
+      final r = await _client.get(
+        Uri.parse('${widget.baseUrl}/api/trading/connections'),
+        headers: widget.headers(),
+      ).timeout(const Duration(seconds: 18));
+      final raw = jsonDecode(utf8.decode(r.bodyBytes));
+      Map<String, dynamic>? card;
+      if (r.statusCode == 200 && raw is Map && raw['cards'] is List) {
+        for (final c in raw['cards'] as List) {
+          if (c is Map && c['id'] == 'tradovate') card = Map<String, dynamic>.from(c);
+        }
+      }
+      if (!mounted) return;
+      setState(() {
+        _tradovate = card;
+        _tradovateError = card != null ? ''
+            : raw is Map && raw['detail'] != null ? raw['detail'].toString()
+            : 'CHE did not report the NinjaTrader sign-in (HTTP ${r.statusCode}).';
+      });
+    } on Object catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _tradovate = null;
+        _tradovateError = e is TimeoutException ? 'CHE did not answer in time.' : 'Could not reach CHE for the NinjaTrader sign-in.';
+      });
+    }
+  }
+
+  List<String> get _ninjaLines => cheNinjaTraderLines(_tradovate?['separate']);
+
+  // The owner came back from Tradovate's page (che://broker/tradovate) while this page is open.
+  Future<void> _brokerReturn(String linkResult) async {
+    final route = ModalRoute.of(context);
+    if (route != null && !route.isCurrent) Navigator.of(context).popUntil((r) => r == route);
+    await _refresh();
+    await _reportBrokerReturn(linkResult);
+  }
+
+  // Shown and spoken from the Worker's refreshed state, never from the link alone.
+  Future<void> _reportBrokerReturn(String linkResult) async {
+    if (!mounted) return;
+    final line = cheNinjaTraderReturnLine(
+      linkResult: linkResult,
+      card: _error.isEmpty ? _tradovate : null,
+      error: _error.isNotEmpty ? _error : _tradovateError,
+    );
+    if (_tradovate?['state'] == 'signed_in' && _error.isEmpty) {
+      HapticFeedback.mediumImpact();
+    } else {
+      HapticFeedback.heavyImpact();
+    }
+    _say(line);
   }
 
   Map<String, dynamic> _actual(String id) {
@@ -385,7 +463,7 @@ class _CheConnectionsScreenState extends State<CheConnectionsScreen> {
   }
 
   Widget _card(String title, IconData icon, String? connector, String explanation,
-      {VoidCallback? onAction, String action = 'Connect', VoidCallback? onDisconnect}) {
+      {VoidCallback? onAction, String action = 'Connect', VoidCallback? onDisconnect, List<String> lines = const []}) {
     final status = _status(connector);
     final color = switch (status) {
       'Connected' => CheColors.success,
@@ -404,6 +482,18 @@ class _CheConnectionsScreenState extends State<CheConnectionsScreen> {
       ]),
       const SizedBox(height: 7),
       Text(_detail(connector, explanation), style: TextStyle(color: CheColors.textDim, height: 1.3)),
+      // Separate facts, one per line, each its own VoiceOver element.
+      for (var i = 0; i < lines.length; i++)
+        Padding(
+          padding: const EdgeInsets.only(top: 5),
+          child: Semantics(
+            key: ValueKey('$title-line-$i'),
+            container: true,
+            label: lines[i],
+            excludeSemantics: true,
+            child: Text(lines[i], style: TextStyle(color: CheColors.text, fontSize: 14, height: 1.3)),
+          ),
+        ),
       if (onAction != null) ...[
         const SizedBox(height: 10),
         OutlinedButton(
@@ -544,7 +634,7 @@ class _CheConnectionsScreenState extends State<CheConnectionsScreen> {
           _heading('Trading'),
           _card('NinjaTrader / Tradovate', Icons.candlestick_chart_rounded, 'broker',
               'Use the existing Tradovate sign-in route. Orders require your separate approval.',
-              onAction: _connectBroker, action: 'Connect NinjaTrader'),
+              onAction: _connectBroker, action: 'Connect NinjaTrader', lines: _ninjaLines),
           _card('FundYourEdge funded account', Icons.account_balance_wallet_outlined, 'fundyouredge',
               'Rithmic account. CHE cannot read or trade it until a licensed Rithmic connection exists.'),
           _heading('Banks & finances'),
