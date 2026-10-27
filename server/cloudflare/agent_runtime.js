@@ -1132,7 +1132,8 @@ async function runOneTask(ctx) {
   const oldestFirst = [...data.team_tasks].reverse();
   const pendingReview = oldestFirst.find((item) => item.status === 'review_pending' && due(item));
   if (pendingReview) return reviewDelegatedResult(ctx, pendingReview.id);
-  const task = oldestFirst.find((item) => item.status === 'queued' && due(item));
+  // A coding-job mirror (atlas_coding_tasks.js) only reflects data.jobs; the Office never runs it.
+  const task = oldestFirst.find((item) => item.status === 'queued' && due(item) && item.source !== 'coding_job');
   if (!task) return false;
   const agent = data.team.find((item) => item.id === task.partner_id);
   if (!agent) {
@@ -1681,7 +1682,7 @@ export async function processAgentWork(ctx, budget = 6) {
     if (!did) return false;
   }
   const data = await ctx.load();
-  return data.team_tasks.some((item) => ['queued', 'review_pending'].includes(item.status)) ||
+  return data.team_tasks.some((item) => ['queued', 'review_pending'].includes(item.status) && item.source !== 'coding_job') ||
     (data.meetings || []).some((item) => ['drafting', 'cross_check', 'synthesizing'].includes(item.status));
 }
 
@@ -1695,7 +1696,7 @@ export function recoverStaleWork(data, maxAgeMs = 5 * 60_000) {
   let changed = false;
   const cutoff = Date.now() - maxAgeMs;
   for (const task of data.team_tasks) {
-    if (!['running', 'reviewing'].includes(task.status) || !(Date.parse(task.updated_at) < cutoff)) continue;
+    if (!['running', 'reviewing'].includes(task.status) || !(Date.parse(task.updated_at) < cutoff) || task.source === 'coding_job') continue;
     task.stale_recoveries = Number(task.stale_recoveries || 0) + 1;
     task.updated_at = now();
     changed = true;
