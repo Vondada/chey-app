@@ -95,6 +95,10 @@ info['NSLocalNetworkUsageDescription'] = 'CHE uses the local network only to con
 info['NSAppleMusicUsageDescription'] = 'CHE accesses your media library only for owner-authorized music actions.'
 info['NSLocationWhenInUseUsageDescription'] = 'CHE uses your location only while you are using location-aware features.'
 info['CFBundleURLTypes'] = [{'CFBundleURLName': 'CHE', 'CFBundleURLSchemes': ['che']}]
+# che:// links (such as che://broker/tradovate after Tradovate's sign-in) are read by the app_links
+# plugin. Flutter's own deep linking would push the link's path as a Navigator route instead, so it
+# is turned off, as app_links' iOS setup requires.
+info['FlutterDeepLinkingEnabled'] = False
 # CHE can hand a verified IPA URL directly to SideStore. This only declares
 # the URL scheme for canOpenURL; it does not grant SideStore any CHE data.
 schemes = set(info.get('LSApplicationQueriesSchemes', []))
