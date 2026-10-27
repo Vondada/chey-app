@@ -4067,11 +4067,12 @@ export class CheState extends DurableObject {
     const cryptoRun = await cryptoTick(this.ctx.storage, { force: true }).catch((error) => ({ ok: false, error: String(error?.message || error).slice(0, 160) }));
     const cryptoNow = await cryptoView(this.ctx.storage).catch(() => null);
     const brief = (t) => ({ strategy: t.strategy, filter: t.filter, side: t.side, signal: t.signal?.time, entry: t.entry?.time, entry_fill: t.entry?.fill,
-      exit: t.exit?.time, exit_fill: t.exit?.fill, reason: t.exit?.reason, net: t.net_pnl, feed: t.data?.feed?.status });
+      exit: t.exit?.time, exit_fill: t.exit?.fill, reason: t.exit?.reason, net: t.net_pnl, feed: t.data?.feed?.status,
+      entry_feed: t.data?.entry_feed ? { status: t.data.entry_feed.status, authenticated: t.data.entry_feed.authenticated === true, subscription_verified: t.data.entry_feed.subscription_verified === true } : null });
     return {
       ok: Boolean(run.ok || run.skipped),
       account: d.account, state: d.state, session: d.session, contract: d.contract?.code,
-      feed: d.feed ? { status: d.feed.status, provider: d.feed.provider, symbol: d.feed.provider_symbol, last_bar: d.feed.last_bar_time, latency_s: d.feed.latency_s, error: d.feed.error || null } : null,
+      feed: d.feed ? { status: d.feed.status, authenticated: d.feed.authenticated === true, subscription_verified: d.feed.subscription_verified === true, provider: d.feed.provider, symbol: d.feed.provider_symbol, last_bar: d.feed.last_bar_time, latency_s: d.feed.latency_s, error: d.feed.error || null } : null,
       run: { at: run.at, ok: run.ok, error: run.error || null, bars: run.bars, signals: run.signals || 0, closed: run.closed || 0, skipped: run.skipped || null },
       counts: d.counts, portfolios: d.portfolios,
       totals: { trades: d.totals.trades, wins: d.totals.wins, losses: d.totals.losses, flat: d.totals.flat, net_pnl: d.totals.net_pnl, win_rate: d.totals.win_rate },
