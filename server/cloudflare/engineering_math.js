@@ -134,9 +134,11 @@ export function spinUp({ inertia, torque, targetRpm } = {}) {
 /** Gear train: output speed and torque from teeth counts (ideal, no losses). ratio = driven/driver teeth. */
 export function gearTrain({ driverTeeth, drivenTeeth, inputRpm = 0, inputTorque = null } = {}) {
   if (!finite(driverTeeth, drivenTeeth) || driverTeeth <= 0 || drivenTeeth <= 0) return fail('gear train', 'positive teeth counts needed');
+  if (!Number.isFinite(inputRpm) || (inputTorque !== null && !Number.isFinite(inputTorque))) return fail('gear train', 'finite speed and optional torque needed');
   const ratio = drivenTeeth / driverTeeth;
   const outRpm = inputRpm / ratio; // a larger driven gear slows the output and multiplies torque
   const outTorque = inputTorque === null ? null : inputTorque * ratio;
+  if (!finite(ratio, outRpm) || (outTorque !== null && !Number.isFinite(outTorque))) return fail('gear train', 'result exceeds finite numeric range');
   return {
     ok: true, name: 'gear train', value: { ratio, outputRpm: outRpm, outputTorque: outTorque }, units: { ratio: 'dimensionless', outputRpm: 'rpm', outputTorque: 'N·m' },
     formula: 'ratio = Nd/Nw; n_out = n_in / ratio; T_out = T_in · ratio (ideal)', inputs: { driverTeeth, drivenTeeth, inputRpm, inputTorque },
@@ -200,6 +202,6 @@ export function cantileverTip({ force, length, youngs, width, depth } = {}) {
 
 /** Every check passes (and every dimension is right) → the receipt can say so; otherwise it says which one failed. */
 export function receiptVerdict(results) {
-  const bad = results.filter((r) => !r.ok || r.checks?.pass === false || (r.dimension && r.dimension.ok === false));
-  return { verified: bad.length === 0, failed: bad.map((r) => r.name || 'unnamed'), count: results.length, note: 'first-order textbook checks only; not a structural or safety certification' };
+  const bad = results.filter((r) => r?.ok !== true || r.checks?.pass !== true || r.pass === false || r.collision === true || (r.dimension && r.dimension.ok !== true));
+  return { verified: results.length > 0 && bad.length === 0, failed: bad.map((r) => r?.name || 'unnamed'), count: results.length, note: 'first-order textbook checks only; not a structural or safety certification' };
 }

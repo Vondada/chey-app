@@ -21,3 +21,20 @@ test('zero-denominator inversions and overflow are explicit failures, with nulli
   assert.equal(shaftPowerTorque({ torque: 50, omega: null, power: 5000 }).value.omega, 100);
   assert.equal(shaftPowerTorque({ torque: 50, omega: 100, power: null }).value.power, 5000);
 });
+
+test('a failed design constraint cannot be certified by correct arithmetic', async () => {
+  const { headroom, boxClearance, receiptVerdict } = await import('./engineering_math.js');
+  const tooLow = headroom({ floorToFloor: 2.2, slabThickness: 0.3, minimum: 2.1 });
+  assert.equal(receiptVerdict([tooLow]).verified, false);
+  const collision = boxClearance({ a: { c: [0,0,0], s: [2,2,2] }, b: { c: [0,0,0], s: [2,2,2] } });
+  assert.equal(receiptVerdict([collision]).verified, false);
+  assert.equal(receiptVerdict([]).verified, false);
+});
+
+test('gear calculations reject nonfinite speed/torque and overflowing ratios', async () => {
+  const { gearTrain } = await import('./engineering_math.js');
+  for (const extra of [{ inputRpm: NaN }, { inputRpm: Infinity }, { inputRpm: 'fast' }, { inputTorque: NaN }, { inputTorque: Infinity }]) {
+    assert.equal(gearTrain({ driverTeeth: 20, drivenTeeth: 60, ...extra }).ok, false);
+  }
+  assert.equal(gearTrain({ driverTeeth: Number.MIN_VALUE, drivenTeeth: Number.MAX_VALUE }).ok, false);
+});
