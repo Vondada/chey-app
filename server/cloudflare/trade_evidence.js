@@ -8,7 +8,7 @@
 import { LIVE_FEED } from './trading_live.js';
 import { liveOrdersStatus } from './trading_environments.js';
 import { deepTradeAudit, speakDeepAudit } from './trading_audit.js';
-import { loadDataset, tfOf } from './trading_research.js';
+import { aggregateBars, canAggregate, loadDataset, tfOf } from './trading_research.js';
 import { readRithmicCandles } from './rithmic_dataset.js';
 import { RETIRED_FEEDS, minuteFeedFor } from './strategy_sim.js';
 import {
@@ -41,6 +41,33 @@ export function windowAround(bars, trade, tfMs) {
   const from = first - BEFORE * tfMs;
   const to = (Number.isFinite(last) ? last : first) + AFTER * tfMs;
   return bars.filter((b) => { const t = Date.parse(b.t); return t >= from && t <= to; }).map(clean);
+}
+
+// Timeframes built from the recorded 1-minute Rithmic candles, aligned to the clock so every bucket is whole.
+const INTRADAY_FROM_MINUTES = new Set(['5m', '15m', '1h']);
+const MINUTE = 60_000;
+
+/**
+ * The trade's candles built from recorded Rithmic minutes. A bucket is used only when every one of its minutes was
+ * recorded, so no candle is built from part of a period. Returns [] when the minutes do not cover the trade.
+ */
+async function rithmicBucketBars(storage, contract, trade, tf, ms, now) {
+  if (!canAggregate('1m', tf)) return [];
+  const from = new Date(Date.parse(trade.signal_time || trade.entry_time) - BEFORE * ms).toISOString();
+  const to = new Date(Date.parse(trade.exit_time || trade.entry_time) + AFTER * ms).toISOString();
+  const read = await readRithmicCandles(storage, { symbol: contract, from, to, now });
+  if (!read.ok || !read.candles.length) return [];
+  const minutes = new Set(read.candles.map((c) => Date.parse(c.t)));
+  const buckets = new Set(read.candles.map((c) => Math.floor(Date.parse(c.t) / ms) * ms));
+  const whole = new Set([...buckets].filter((bucket) => {
+    for (let t = bucket; t < bucket + ms; t += MINUTE) if (!minutes.has(t)) return false;
+    return true;
+  }));
+  const kept = read.candles.filter((c) => whole.has(Math.floor(Date.parse(c.t) / ms) * ms));
+  if (!kept.length) return [];
+  let built;
+  try { built = aggregateBars(kept, '1m', tf, { now }); } catch { return []; }
+  return windowAround(built, trade, ms);
 }
 
 async function rithmicContracts(storage, root) {
@@ -121,6 +148,14 @@ export async function tradeBars(storage, trade, { fetcher = fetch, now = Date.no
   if (ds?.bars?.length) {
     const bars = windowAround(ds.bars, trade, ms);
     if (bars.length) return { bars, source: { kind: 'research_dataset', label: `${ds.manifest.provider || 'stored'} ${market} ${tf} (historical, delayed public source)`, data_type: 'historical' } };
+  }
+  // Intraday trades use the owner's Rithmic minutes before the delayed feed: a 5-minute trade is replayed from the real
+  // Rithmic trades it was made from whenever every minute of its candles was recorded (see rithmicBucketBars).
+  if (INTRADAY_FROM_MINUTES.has(tf)) {
+    for (const contract of await rithmicContracts(storage, market)) {
+      const bars = await rithmicBucketBars(storage, contract, trade, tf, ms, now);
+      if (bars.length) return { bars, source: { kind: 'rithmic_recorded', label: `Rithmic ${contract} 1-minute, recorded by your iPhone, built into ${tf} candles`, data_type: 'live-recorded', missing_minutes: 0 } };
+    }
   }
   if (tf === '5m') {
     const feed = (await storage.get(LIVE_FEED)) || {};
