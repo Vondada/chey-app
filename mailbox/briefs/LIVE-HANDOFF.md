@@ -77,6 +77,14 @@ Then, on GitHub:
 
 ## 2. Current position
 
+**Claude, 2026-10-27 (owner: Kaggle authentication and GPU farm status). Verified state.**
+- MERGED earlier today: #713 (`de90dae9`), #714 (`06e67f3a`), #715 (`d9d6d0b8`), #716 (`5a7796c0`).
+- OPEN #717 `fix/kaggle-auth` @ cbe3f5e5: a saved modern Kaggle token is accepted alone; the account name is read from Kaggle's IntrospectToken call (source: official kagglesdk 0.1.38); transient failures retry with a bound; status says what is missing and never asks for the token again; token scrubbed from errors. Tests: kaggle_auth 8/8, film_studio 26/26, compute_budget 14/14, full Worker suite 4620 pass, 0 fail, 7 skipped (2 pre-existing TODO).
+- ROOT CAUSE (verified in code): film_studio.js marked Kaggle usable only with a username prefix; a valid token therefore showed "needs your username" and session start refused. Not a bad token.
+- NOT DONE: the Flutter Keys screen (Save and test, restart persistence) is unchanged. The screen recording the owner mentioned was not in the uploads; the failure was confirmed from the farm status text instead.
+- NOT VERIFIED LIVE: api.kaggle.com unreachable from build containers; no owner key here. The owner's first check after deploy is "render farm status".
+- Owner-side next step (once #717 is deployed): if the status says "account name not read", type the Kaggle username once in Keys (not the token). Then a 20-second film, and send the job ID and MP4.
+
 **Claude, 2026-10-27 (owner: one-session GPU creation capabilities). Verified state.**
 - MERGED #713 (numeric arithmetic checks) as `de90dae9`; all server checks green on `20f4c9ca` after one re-run of `live (staging)`. The first failure was a non-deterministic model reply in the social probe (Test 7 expects 911/emergency for chest pain plus numb arm; the model did not say it). Open safety item: needs a deterministic emergency route, not built.
 - OPEN #714 `feat/character-registry` @ d077c71a: persistent character IDs for the ten named characters, versioned GLB references, pinned versions. 6/6 local tests. Eight have bundled GLBs; Orion and Vale have NO model (reported missing). Not wired to the Worker, Office, Gallery or Music Studio yet.
