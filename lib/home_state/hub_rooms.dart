@@ -59,6 +59,7 @@ extension _CheHomeHubRooms on _CHEHomeState {
       onOpenEvidence: _openBrainEvidence,
       onOpenSource: _openBrainSource,
       onOpenLedger: () => unawaited(_openBrainLedger()),
+      onOpenReliability: () => unawaited(_openBrainReliability()),
       brain: CheMemoryBrainRoom(
         active: active,
         dots: dots,

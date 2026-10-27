@@ -38,6 +38,7 @@ import 'security/che_session_store.dart';
 import 'brain/che_brain_ledger_screen.dart';
 import 'brain/che_brain_overview.dart';
 import 'brain/che_brain_regions.dart' show CheBrainNav, CheBrainSourceKind, CheBrainSourceLink;
+import 'brain/che_brain_reliability_screen.dart';
 import 'brain/che_brain_truth_screen.dart';
 import 'rooms/che_cloud_computer_room.dart';
 import 'brain/che_brain_list.dart' show CheBrainRecordLinks;
@@ -716,6 +717,19 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
     await Navigator.of(context).push(MaterialPageRoute<void>(
       builder: (_) => CheBrainTruthScreen(
         client: CheBrainTruthClient(baseUrl: cheAgentBaseUrl, headers: () => _authHeaders),
+        onSpeak: (text) => unawaited(speakText(text, record: false, readOnDemand: true)),
+        onListen: () => unawaited(toggleListening()),
+      ),
+    ));
+  }
+
+  /// More → Reliability Registry: every recorded test of CHE, by session and question, with grades and evidence
+  /// (also asked in chat: "what take are we on?", "open the test registry").
+  Future<void> _openBrainReliability() async {
+    HapticFeedback.selectionClick();
+    await Navigator.of(context).push(MaterialPageRoute<void>(
+      builder: (_) => CheBrainReliabilityScreen(
+        client: CheReliabilityClient(baseUrl: cheAgentBaseUrl, headers: () => _authHeaders),
         onSpeak: (text) => unawaited(speakText(text, record: false, readOnDemand: true)),
         onListen: () => unawaited(toggleListening()),
       ),
@@ -2427,6 +2441,13 @@ OWNER AGENCY
           title: 'Truth & Verification',
           subtitle: 'What CHE verified, labelled inference or removed, from real audit records',
           onTap: () => unawaited(_openBrainTruth()),
+          hue: kit.CheColors.accent,
+        ),
+        CheMoreItem(
+          icon: Icons.fact_check_rounded,
+          title: 'Reliability Registry',
+          subtitle: 'Every test of CHE: sessions, questions, her replies and grades',
+          onTap: () => unawaited(_openBrainReliability()),
           hue: kit.CheColors.accent,
         ),
         CheMoreItem(
