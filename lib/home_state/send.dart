@@ -1030,6 +1030,18 @@ extension _CheHomeSend on _CHEHomeState {
       }
     }
 
+    // An Office conversation, while it is open, answers its own routes: describe, status, read message N,
+    // details, search, filter, refresh and its numbered options.
+    final officeConversationVoice = CheOfficeConversationScreen.voiceHandler;
+    if (officeConversationVoice != null && _pendingAttachment == null) {
+      final reply = await officeConversationVoice(message);
+      if (reply != null) {
+        if (mounted) _set(() => controller.clear());
+        if (reply.isNotEmpty) await speakText(reply, record: false, show: true);
+        return;
+      }
+    }
+
     // The natural-voice picker, while it is open, takes the same spoken control.
     final pickerVoice = CheCloudVoicePickerVoice.handler;
     if (pickerVoice != null && _pendingAttachment == null) {
@@ -1392,6 +1404,14 @@ extension _CheHomeSend on _CHEHomeState {
     final brainCommand = _pendingAttachment == null ? CheBrainCommand.parse(message) : null;
     if (brainCommand != null && await _runBrainCommand(message, brainCommand)) return;
 
+    // "Open Atlas's conversation", "show the full conversation with Knox": one Office agent's full conversation.
+    final conversationAgent = _pendingAttachment == null ? cheOfficeConversationAgentName(message) : null;
+    if (conversationAgent != null) {
+      if (mounted) _set(() => controller.clear());
+      await _openOfficeConversationByVoice(conversationAgent);
+      return;
+    }
+
     // "show the agent conversations", "open group chats", "what did the
     // agents say": every AI/agent conversation as group chats.
     if (_pendingAttachment == null &&
@@ -1711,6 +1731,25 @@ extension _CheHomeSend on _CHEHomeState {
     }
   }
 
+  /// Sends a CHE chat reply to Claude's mailbox for a fact-check, and says what happened on screen.
+  Future<void> _sendFactCheckFromChat(String reply, String messageId) async {
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    HapticFeedback.selectionClick();
+    final result = await cheSendFactCheck(baseUrl: cheAgentBaseUrl, headers: _authHeaders, reply: reply, messageId: messageId);
+    messenger?.showSnackBar(SnackBar(content: Text(result)));
+    // An action the owner asked for, so its real result is also spoken and shown as large text.
+    await speakText(result, record: false, show: true);
+  }
+
+  /// The chat message's own ID, or a new unique one stored on it, so each checked reply has its own verdict key.
+  String _factCheckMessageId(Map<String, String> item) {
+    final existing = item['id'] ?? '';
+    if (existing.isNotEmpty) return existing;
+    final id = 'chat-${DateTime.now().microsecondsSinceEpoch}';
+    _set(() => item['id'] = id);
+    return id;
+  }
+
   Future<void> _showMessageActions(int index) async {
     if (index < 0 || index >= messages.length) return;
     final item = messages[index];
@@ -1741,6 +1780,16 @@ extension _CheHomeSend on _CHEHomeState {
                 unawaited(_translateText(text));
               },
             ),
+            // CHE's replies go to Claude's mailbox for a fact-check, and the verdict comes back under the reply (owner, 2026-10-26).
+            if (!isUser && text.trim().isNotEmpty)
+              ListTile(
+                leading: const Icon(Icons.fact_check_outlined),
+                title: const Text('Send to Claude to fact-check'),
+                onTap: () {
+                  Navigator.pop(sheetContext);
+                  unawaited(_sendFactCheckFromChat(text, _factCheckMessageId(item)));
+                },
+              ),
             ListTile(
               leading: const Icon(Icons.copy_all_rounded),
               title: const Text('Copy whole conversation'),
@@ -1832,6 +1881,49 @@ extension _CheHomeSend on _CHEHomeState {
     }
     await speakText(reply, record: false);
     return true;
+  }
+
+  /// Opens one Office agent's full conversation by its spoken or typed name, and says what happened.
+  Future<void> _openOfficeConversationByVoice(String name) async {
+    if (!_officeRuntime.loaded || _officeRuntime.agents.isEmpty) {
+      try {
+        await _officeRuntime.refresh();
+      } catch (_) {}
+    }
+    final want = name.toLowerCase().trim();
+    final agents = [for (final p in _officeRuntime.agents) p.agent];
+    final match = agents.where((a) => a.name.toLowerCase() == want).firstOrNull ??
+        agents.where((a) => a.name.toLowerCase().startsWith(want) || want.startsWith(a.name.toLowerCase())).firstOrNull;
+    if (match == null) {
+      final names = [for (final a in agents) a.name];
+      await speakText(
+        names.isEmpty
+            ? 'I could not open a conversation for $name, sir. The Office roster did not load.'
+            : 'There is no Office agent named $name, sir. The agents are: ${[for (var i = 0; i < names.length; i++) '${i + 1}. ${names[i]}'].join(', ')}.',
+        record: false,
+        show: true,
+      );
+      return;
+    }
+    try {
+      final first = await _agentRuntime.conversation(agentId: match.id);
+      if (!mounted) return;
+      HapticFeedback.selectionClick();
+      unawaited(Navigator.of(context).push(MaterialPageRoute<void>(
+        builder: (_) => CheOfficeConversationScreen(
+          conversation: first,
+          onRefresh: () => _agentRuntime.conversation(agentId: match.id),
+          onReadAloud: (text) => unawaited(speakText(text, record: false, readOnDemand: true)),
+        ),
+      )));
+      await speakText(
+        'Opened ${match.name}\'s conversation, sir. ${first.messages.length} messages. Status: ${first.agent?.status?.label ?? 'no task recorded'}. Say options to hear what you can do.',
+        record: false,
+        show: true,
+      );
+    } catch (e) {
+      await speakText('I could not open ${match.name}\'s conversation, sir: $e', record: false, show: true);
+    }
   }
 
   void _openConversations() {
