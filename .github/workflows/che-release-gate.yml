@@ -1,12 +1,17 @@
 name: CHE release gate
 
-# The gate every CHE feature must pass before it merges and before any phone build (owner, 2026-10-26).
+# Offline checks every CHE pull request must pass before it merges (owner, 2026-10-26):
 #   worker    the Worker's full test suite (syntax and unit tests)
 #   flutter   flutter analyze and the full Flutter test suite
 #   coding    CHE's own coding reliability: her coding tests, run as a named job so a failure is visible
-#   screens   the simulator: every main tab has content and no error text, the Office sections swipe smoothly,
-#             and each screen is saved as a screenshot for the owner to review
-# Nothing here publishes or deploys. Required on every pull request to main.
+# The LIVE gate is che-worker-staging.yml, job "live (staging)": the PR deployed to the staging Worker
+# and probed live (owner, 2026-10-27: "always do live tests ... before merging").
+#
+#   screens   the iOS simulator: every main tab has content and no error text, the Office sections swipe
+#             smoothly, and each screen is saved as a screenshot for the owner to review. NOT a merge gate
+#             (owner, 2026-10-27: live tests are the requirement, not the iOS simulator). It runs only by
+#             hand (Actions -> CHE release gate -> Run workflow); a red screens job never blocks a merge.
+# Nothing here publishes or deploys.
 on:
   pull_request:
     branches: [main]
@@ -104,6 +109,10 @@ jobs:
         run: node --test server/cloudflare/code_index.test.mjs server/cloudflare/self_development.test.mjs
 
   screens:
+    # Informational only: never on a pull request, only when run by hand (macOS minutes are not spent
+    # automatically).
+    if: github.event_name == 'workflow_dispatch'
+    continue-on-error: true
     runs-on: macos-15
     timeout-minutes: 90
     steps:

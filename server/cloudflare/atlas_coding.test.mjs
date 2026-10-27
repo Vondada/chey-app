@@ -262,8 +262,10 @@ test('the inspection, reasoning, CI and recovery cards agree with CHE\'s own cod
   }
   // The deploy's live check, as the card's note describes it.
   const deploy = read('.github/workflows/che-worker-deploy.yml');
-  assert.ok(deploy.includes('- name: Verify live deployed commit'));
-  assert.ok(deploy.includes('const expected = process.env.EXPECTED_TAG.slice(0, 12);') && deploy.includes('health.version_tag === expected'));
+  // The step runs the shared probe script (the staging gate runs the same file).
+  const probes = read('.github/scripts/che_live_probes.mjs');
+  assert.ok(deploy.includes('- name: Verify live deployed commit') && deploy.includes('run: node .github/scripts/che_live_probes.mjs health'));
+  assert.ok(probes.includes("const expected = String(process.env.EXPECTED_TAG || '').slice(0, 12);") && probes.includes('health.version_tag === expected'));
   assert.ok(ci.che_note.includes('"Verify live deployed commit"') && ci.che_note.includes('first 12 characters'));
   // run_checks.sh and summarize_tap.mjs say what the card says they say.
   assert.ok(read('.claude/skills/che-debug/scripts/run_checks.sh').includes('NOT RUN here (no flutter/dart on PATH)'));

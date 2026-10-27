@@ -1,32 +1,64 @@
-name: Staging CHE Worker
+name: CHE live test (staging)
 
-# Deploys server/cloudflare to a separate staging Worker (chey-app-staging) so
-# checks can run on a candidate before production. It has its own Durable
-# Object storage and receives no production secrets. Production is untouched:
-# che-worker-deploy.yml still deploys chey-app.
+# THE PRE-MERGE GATE (owner, 2026-10-27: "always do live tests ... before merging").
+# Every pull request to main deploys its merge commit to the separate staging Worker
+# (chey-app-staging: its own Durable Object storage, no owner data) and runs the same live probe
+# suite the production deploy runs (.github/scripts/che_live_probes.mjs), pointed at staging.
+# A PR is ready to merge only when the job "live (staging)" is green.
+#
+# Zero spend: staging receives a fresh random probe token and pairing code for this run, plus ONLY
+# the free-tier model keys in STAGING_FREE_KEYS below. Paid keys (OpenAI, Anthropic, xAI,
+# ElevenLabs, Fish, Stripe, ...) and production-only secrets (CHE_GITHUB_TOKEN, OAuth, broker,
+# Hugging Face) never reach staging; any other secret found on staging is deleted before deploy,
+# and the "engines" probe fails the run if staging can reach any engine outside the allowlist.
+# Probes that need the owner's data or a production-only secret are reported as SKIPPED, with the
+# reason, in the run summary. Production is untouched: che-worker-deploy.yml deploys chey-app.
+#
+# There is one staging Worker, so runs take turns: a run waits for every older run of this
+# workflow to finish before it deploys. A newer push to the same PR cancels the older run.
 on:
+  pull_request:
+    branches: [main]
   workflow_dispatch:
   push:
     branches:
       - staging-worker
-    paths:
-      - "server/cloudflare/**"
-      - ".github/workflows/che-worker-staging.yml"
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
-  group: che-worker-staging
-  cancel-in-progress: false
+  group: che-live-staging-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   staging:
+    name: live (staging)
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 75
     env:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: c49b395e8f1138b5fae36ab88222542c
+      CHE_LIVE_BASE: https://chey-app-staging.henryjavoni.workers.dev
+      CHE_LIVE_TARGET: staging
+      # Free-tier text engines only (ai_router.js FREE_PROVIDER_IDS, minus the ones whose cost is
+      # in doubt). Left out on purpose: GEMINI_API_KEY (the repo itself names paid Gemini tiers,
+      # and a billing-linked Google project charges), OPENROUTER_API_KEY (the account carries
+      # credit for the paid coding route, so any non-":free" model id would spend it) and HF_TOKEN
+      # (a write token used for training, ZeroGPU and film jobs; Inference Providers bill past the
+      # free credit). Workers AI (the AI binding, free daily allowance) is always bound.
+      STAGING_FREE_KEYS: GROQ_API_KEY CEREBRAS_API_KEY MISTRAL_API_KEY GITHUB_MODELS_TOKEN SAMBANOVA_API_KEY
+      # The router engine ids those keys unlock; the engines probe fails on anything else.
+      CHE_STAGING_FREE_ENGINES: groq cerebras mistral github sambanova
+      GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+      CEREBRAS_API_KEY: ${{ secrets.CEREBRAS_API_KEY }}
+      MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
+      GITHUB_MODELS_TOKEN: ${{ secrets.GITHUB_MODELS_TOKEN }}
+      SAMBANOVA_API_KEY: ${{ secrets.SAMBANOVA_API_KEY }}
+      # Premium voices are paid: off on staging, and no voice key is given.
+      CHE_ELEVENLABS_PREFERRED: '0'
+      CHE_FISH_PREFERRED: '0'
     steps:
       - uses: actions/checkout@v4
 
@@ -34,32 +66,111 @@ jobs:
         with:
           node-version: 22
 
+      - name: Wait for older staging runs (one staging Worker)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          wf="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" --jq .workflow_id)"
+          deadline=$((SECONDS + 40 * 60))
+          while :; do
+            older="$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/${wf}/runs?per_page=100" \
+              --jq "[.workflow_runs[] | select(.id < ${GITHUB_RUN_ID} and (.status == \"queued\" or .status == \"in_progress\" or .status == \"waiting\" or .status == \"pending\" or .status == \"requested\")) | .id] | join(\" \")")"
+            if [[ -z "$older" ]]; then echo "No older staging run is active; this run has the staging Worker."; break; fi
+            if (( SECONDS > deadline )); then echo "::error::Older staging runs still active after 40 minutes: $older"; exit 1; fi
+            echo "Waiting for older staging runs: $older"
+            sleep 30
+          done
+
       - name: Worker tests
         run: |
           for f in server/cloudflare/*.js; do node --check "$f"; done
           node --test server/cloudflare/*.test.mjs
 
+      - name: Check Cloudflare token
+        run: |
+          if [[ -z "${CLOUDFLARE_API_TOKEN}" ]]; then
+            echo "::error::Add the CLOUDFLARE_API_TOKEN repository secret to run the live staging test."
+            exit 1
+          fi
+
+      - name: Make this run's probe token and pairing code
+        run: |
+          # Fresh random values for this run only, set as staging Worker secrets below. The next run
+          # replaces them. They are never production values.
+          token="$(openssl rand -hex 32)"
+          pair="$(node -e 'console.log(require("crypto").randomInt(1e11, 1e12))')"
+          echo "::add-mask::$token"
+          echo "::add-mask::$pair"
+          echo "CHE_VOICE_PROBE_TOKEN=$token" >> "$GITHUB_ENV"
+          echo "CHE_PAIR_CODE=$pair" >> "$GITHUB_ENV"
+
+      - name: Write the staging Worker config (no cron)
+        working-directory: server/cloudflare
+        run: |
+          # Same bindings as production, its own name and storage, and no nightly cron: staging only
+          # runs when a test calls it.
+          node -e '
+            const fs = require("fs");
+            const text = fs.readFileSync("wrangler.jsonc", "utf8").split("\n").filter((line) => !/^\s*\/\//.test(line)).join("\n");
+            const config = JSON.parse(text);
+            config.name = "chey-app-staging";
+            config.triggers = { crons: [] };
+            fs.writeFileSync("wrangler.staging.json", JSON.stringify(config, null, 2));
+            console.log(`Staging config: ${config.name}, bindings ${Object.keys(config).join(", ")}, crons none`);
+          '
+
+      - name: Remove any secret staging must not hold
+        working-directory: server/cloudflare
+        run: |
+          allowed="CHE_VOICE_PROBE_TOKEN CHE_PAIR_CODE CHE_ELEVENLABS_PREFERRED CHE_FISH_PREFERRED ${STAGING_FREE_KEYS}"
+          names() {
+            npx --yes wrangler@4 secret list --config wrangler.staging.json --format json > /tmp/staging-secrets.out
+            node -e '
+              const raw = require("fs").readFileSync("/tmp/staging-secrets.out", "utf8");
+              const list = JSON.parse(raw.slice(raw.indexOf("["), raw.lastIndexOf("]") + 1));
+              console.log(list.map((s) => s.name).join("\n"));
+            '
+          }
+          extra=()
+          while read -r name; do
+            [[ -z "$name" ]] && continue
+            [[ " $allowed " == *" $name "* ]] || extra+=("$name")
+          done < <(names)
+          for name in "${extra[@]}"; do
+            echo "Deleting staging secret $name (not on the staging allowlist)"
+            npx --yes wrangler@4 secret delete "$name" --config wrangler.staging.json < /dev/null || true
+          done
+          left=()
+          while read -r name; do
+            [[ -z "$name" ]] && continue
+            [[ " $allowed " == *" $name "* ]] || left+=("$name")
+          done < <(names)
+          if (( ${#left[@]} )); then echo "::error::Staging still holds secrets outside the allowlist: ${left[*]}"; exit 1; fi
+          echo "Staging holds only allowlisted secret names."
+
+      - name: Give staging this run's token and the free keys only
+        working-directory: server/cloudflare
+        run: |
+          node -e '
+            const out = {};
+            for (const k of ["CHE_VOICE_PROBE_TOKEN", "CHE_PAIR_CODE", ...String(process.env.STAGING_FREE_KEYS).split(/\s+/).filter(Boolean)]) {
+              if (process.env[k]) out[k] = process.env[k];
+            }
+            out.CHE_ELEVENLABS_PREFERRED = "0";
+            out.CHE_FISH_PREFERRED = "0";
+            require("fs").writeFileSync("/tmp/che-staging-secrets.json", JSON.stringify(out));
+            console.log("Staging receives:", Object.keys(out).join(", "));
+          '
+          npx --yes wrangler@4 secret bulk /tmp/che-staging-secrets.json --config wrangler.staging.json
+          rm -f /tmp/che-staging-secrets.json
+
       - name: Deploy to the staging Worker
         working-directory: server/cloudflare
-        run: npx --yes wrangler@4 deploy --name chey-app-staging --tag "${GITHUB_SHA::12}" --message "staging ${GITHUB_SHA::12}" --var "CHE_POOL_COMMIT:${GITHUB_SHA}"
+        # After the secret sync, so the final staging version keeps this commit's tag.
+        run: npx --yes wrangler@4 deploy --config wrangler.staging.json --tag "${GITHUB_SHA::12}" --message "staging ${GITHUB_SHA::12}" --var "CHE_POOL_COMMIT:${GITHUB_SHA}"
 
-      - name: Verify the staging commit is live
+      - name: Live probes on staging (same suite as production)
         env:
           EXPECTED_TAG: ${{ github.sha }}
-        run: |
-          node --input-type=module <<'JS'
-          const expected = process.env.EXPECTED_TAG.slice(0, 12);
-          const base = 'https://chey-app-staging.henryjavoni.workers.dev';
-          for (let attempt = 0; attempt < 10; attempt++) {
-            try {
-              const response = await fetch(`${base}/health`, { signal: AbortSignal.timeout(10000) });
-              const health = await response.json();
-              if (response.ok && health.ok && health.version_tag === expected) {
-                console.log(`Verified staging CHE commit ${expected}, version ${health.version_id}`);
-                process.exit(0);
-              }
-            } catch { /* propagation or a transient error */ }
-            await new Promise(resolve => setTimeout(resolve, 3000));
-          }
-          throw new Error(`Staging CHE did not confirm commit ${expected}`);
-          JS
+          CHE_HEALTH_ATTEMPTS: '10'
+        run: node .github/scripts/che_live_probes.mjs --suite
