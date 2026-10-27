@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import { readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import test from 'node:test';
 import { replyFromNdjson } from './brain_memory.js';
-import { correctionSaveIntent, findMistakes, historyIntent, parseWhen } from './conversation_history.js';
+import { collectTurns, correctionSaveIntent, findMistakes, historyIntent, parseWhen } from './conversation_history.js';
 import { guardOwnerAttributions, ownerFactCorrection } from './memory_provenance.js';
 
 const RealDate = Date;
@@ -224,4 +224,21 @@ test('date and intent parsing, and the guard, as units', () => {
   const guarded = guardOwnerAttributions('On September 12th we talked about your trip to Lisbon. Lisbon is lovely.', { ownerTurns: ['tell me about lisbon'] });
   assert.equal(guarded.removed.length, 1);
   assert.equal(ownerFactCorrection('Actually, my boat’s name is Grey Heron', [{ text: "My boat's name is Blue Heron", verification_status: 'owner_attested', source: 'owner_chat', active: true }]), "my boat's name is Grey Heron");
+});
+
+test('Codex review: each logged exchange is its own correction target, and newer logs never hide an older day', async () => {
+  const saved = new Map();
+  const storage = { get: async (k) => saved.get(k) };
+  const index = [];
+  // 45 newer conversations, then the old one from September 12 with two exchanges.
+  for (let i = 0; i < 45; i += 1) { saved.set(`log:new${i}`, { turns: [{ at: '2026-10-20T10:00:00Z', user: `new ${i}`, che: 'ok' }] }); index.push({ id: `new${i}`, updated_at: '2026-10-20T10:00:00Z' }); }
+  saved.set('log:old', { turns: [{ at: '2026-09-12T10:00:00Z', user: 'Who wrote Frankenstein?', che: 'Bram Stoker.' }, { at: '2026-09-12T10:05:00Z', user: 'Who painted the chapel ceiling?', che: 'Michelangelo.' }] });
+  index.push({ id: 'old', updated_at: '2026-09-12T10:05:00Z' });
+  saved.set('log_index', index);
+  const { turns } = await collectTurns(null, storage, { from: Date.parse('2026-09-12T00:00:00Z'), to: Date.parse('2026-09-13T00:00:00Z') });
+  assert.equal(turns.length, 2, 'the September 12 conversation is found behind 45 newer logs');
+  assert.notEqual(turns[0].id, turns[1].id);
+  const correction = { kind: 'correction', at: '2026-09-12T11:00:00Z', said: 'Mary Shelley wrote Frankenstein.', corrects: turns[0].id };
+  const mistakes = findMistakes([...turns, correction]);
+  assert.deepEqual(mistakes.map((m) => m.turn.said), ['Who wrote Frankenstein?'], 'only the corrected answer is a mistake');
 });

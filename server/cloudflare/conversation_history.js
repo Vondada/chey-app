@@ -117,6 +117,7 @@ function parseBody(body) {
  * Every owner turn in [from, to) (or the newest ones when no window is given), oldest first: Brain conversation
  * records, plus logged turns the Brain never got, each marked chat or voice. { turns, read: [...], unreadable: [...] }
  */
+const LOG_SCAN = 500;
 export async function collectTurns(store, storage, { from = 0, to = Date.now() + DAY_MS, limit = 400 } = {}) {
   const turns = [];
   const read = [];
@@ -136,15 +137,18 @@ export async function collectTurns(store, storage, { from = 0, to = Date.now() +
   } catch (_) { unreadable.push('Brain conversation records'); }
   try {
     const index = (await storage.get('log_index')) || [];
-    const logs = index.filter((e) => Date.parse(e?.updated_at || '') >= from).slice(0, 40);
+    // Every log updated since the window opened (the index keeps at most 500); newer logs must not crowd out older days.
+    const eligible = index.filter((e) => Date.parse(e?.updated_at || '') >= from);
+    const logs = eligible.slice(0, LOG_SCAN);
+    if (eligible.length > logs.length) unreadable.push(`${eligible.length - logs.length} older conversation logs past the ${LOG_SCAN} searched`);
     for (const entry of logs) {
       const log = await loadPackedJson(storage, `log:${entry.id}`);
-      for (const t of log?.turns || []) {
+      for (const [i, t] of (log?.turns || []).entries()) {
         const ms = Date.parse(t.at || '');
         if (!(ms >= from && ms < to) || !String(t.user || '').trim()) continue;
         const same = turns.find((x) => x.said === String(t.user).trim() && Math.abs(Date.parse(x.at) - ms) < 10 * 60_000);
         if (same) { if (t.source === 'voice') same.source = 'voice'; continue; }
-        turns.push({ id: `log:${entry.id}`, kind: 'conversation', at: t.at, said: String(t.user).trim(), answered: String(t.che || '').trim(), store: 'conversation log', source: t.source === 'voice' ? 'voice' : 'chat', evidence: null });
+        turns.push({ id: `log:${entry.id}/turn-${i}`, conversation: entry.id, kind: 'conversation', at: t.at, said: String(t.user).trim(), answered: String(t.che || '').trim(), store: 'conversation log', source: t.source === 'voice' ? 'voice' : 'chat', evidence: null });
       }
     }
     read.push('conversation logs (chat and voice)');
