@@ -383,7 +383,7 @@ class CheSideBySideViewState extends State<CheSideBySideView> {
         if (_sync)
           Wrap(spacing: 6, runSpacing: 6, crossAxisAlignment: WrapCrossAlignment.center, children: [
             for (final s in const ['MNQ', 'NQ']) _chip(s, _syncSymbol == s, () => _setSyncSymbol(s), semantics: 'Both charts $s', key: Key('sbs_sync_symbol_$s')),
-            for (final t in const ['1m', '5m', '15m', '1h', '1d']) _chip(t, _tf == t, () => _setTf(t), semantics: 'Both charts timeframe $t', key: Key('sbs_tf_$t')),
+            for (final t in const ['1m', '5m', '15m', '1h', '4h', '1d']) _chip(t, _tf == t, () => _setTf(t), semantics: 'Both charts timeframe $t', key: Key('sbs_tf_$t')),
             _iconButton(Icons.zoom_in_rounded, 'Zoom both charts in', () => _zoom(1.5)),
             _iconButton(Icons.zoom_out_rounded, 'Zoom both charts out', () => _zoom(1 / 1.5)),
           ]),

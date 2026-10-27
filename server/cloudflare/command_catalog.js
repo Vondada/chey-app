@@ -239,6 +239,15 @@ export const COMMANDS = Object.freeze([
     produces: 'status', evidence: 'The job record read back after the change: its id and status.',
     cost: 'Free: no AI engine is used.', keywords: ['cancel', 'cancel job', 'coding job', 'fake commit', 'call off', 'abort'],
   }),
+  C('che-model-status', 'intelligence', 'EXPLORE', 'Read verified coding-provider availability and cost evidence.', {
+    title: 'AI Model Status',
+    does: 'Reads the existing coding runner model ledger and reports provider availability, pauses and verified billing evidence. Changes nothing.',
+    needs: [], route: 'che_model_status', handler: 'model_status.modelStatusIntent → modelStatusTurn',
+    input: null, examples: ['AI model status', 'Which AI models are free?'],
+    prompt: 'Read the AI model status', produces: 'status',
+    evidence: 'Runner ledger on che-mailbox; missing or unavailable records are reported explicitly.',
+    cost: 'Read-only ledger lookup; no model execution.', keywords: ['model status', 'coding providers', 'free AI', 'billing'],
+  }),
   C('che-status', 'intelligence', 'EXPLORE', 'Report verified progress and outcomes.', {
     does: 'Reports what is actually running, finished or failed, from CHE\'s own records.',
     needs: ['jobs'], route: 'che_mission_status', handler: 'objective_graph.speakObjective',

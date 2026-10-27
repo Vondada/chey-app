@@ -61,7 +61,10 @@ export async function aiModelStatus(env, storage, { fetcher = fetch, now = Date.
 const MODEL_STATUS_RE = /\b(?:ai|coding)\s+(?:models?|providers?)\b(?:\s+\w+){0,3}?\s+(?:status|free|cost|costs|available|verified|paused|working|ledger)\b|\b(?:ai\s+)?model\s+status\b|\b(?:status|read|show|list)\b(?:\s+\w+){0,3}?\s+(?:ai|coding)\s+(?:models?|providers?)\b|\b(?:which|what)\s+(?:ai|coding)\s+(?:models?|providers?)\b/i;
 
 export function modelStatusIntent(message) {
-  return MODEL_STATUS_RE.test(String(message || ''));
+  const text = String(message || '');
+  // Mentioning this card in a coding request is not a read-only status query.
+  if (/\b(?:fix|repair|implement|add|remove|delete|change|update|redesign|refactor|build|wire|improve|configure)\b/i.test(text)) return false;
+  return MODEL_STATUS_RE.test(text);
 }
 
 /** The chat turn: owner only, 0 model calls; an unreadable ledger is said, never filled in. */

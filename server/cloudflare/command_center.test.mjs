@@ -29,7 +29,7 @@ const { default: worker, CheState } = mod;
 const MISSION_IDS = {
   // 'learn' is the Knowledge Atlas (issue #346), one entry over knowledge_atlas.js.
   // 'che-cancel-job' cancels a queued coding job by voice or typing (owner, 2026-10-19).
-  intelligence: ['che', 'che-explore', 'che-plan', 'che-build', 'che-research', 'che-verify', 'che-memory', 'che-brain-record', 'che-memory-inspect', 'che-brain-review', 'che-reliability', 'che-performance', 'che-flagstaff-import', 'che-outside-mail', 'che-recover', 'che-improve', 'che-cancel-job', 'che-status', 'learn', 'manifest', 'security-access', 'security-chief', 'security-findings'],
+  intelligence: ['che', 'che-explore', 'che-plan', 'che-build', 'che-research', 'che-verify', 'che-memory', 'che-brain-record', 'che-memory-inspect', 'che-brain-review', 'che-reliability', 'che-performance', 'che-flagstaff-import', 'che-outside-mail', 'che-recover', 'che-improve', 'che-cancel-job', 'che-model-status', 'che-status', 'learn', 'manifest', 'security-access', 'security-chief', 'security-findings'],
   youtube: ['yt-ideas', 'yt-research', 'yt-script', 'yt-video', 'yt-voice', 'yt-thumbnail', 'yt-seo', 'yt-publish', 'yt-batch', 'yt-analytics', 'yt-grow'],
   // trade-connections reads the owner-only connections of #348 (issue #350).
   // trade-setups opens the Signal Mode Setup Progress Board (owner, 2026-10-23).
@@ -1335,4 +1335,21 @@ test('/manifest and its spoken forms reach the Manifestation Engine with no mode
   assert.equal((await che.say('/manifest resume 2')).done.status, 'PLAN');
   assert.equal((await che.say('Manifestation weekly review')).route, 'che_manifest');
   assert.equal((await che.say('Pause the music')).route === 'che_manifest', false);
+});
+
+test('AI model status is discoverable and slash/voice requests reach the same read-only route', async () => {
+  const entry = commandById('che-model-status');
+  assert.equal(entry.route, 'che_model_status');
+  assert.equal(entry.mode, 'EXPLORE');
+  assert.ok(searchCommands('model status').some((c) => c.id === entry.id));
+  const che = await owner();
+  for (const message of ['/che-model-status', 'CHE, read the AI model status', 'Which AI models are free?']) {
+    const out = await che.say(message);
+    assert.equal(out.route, 'che_model_status', message);
+    assert.equal(out.modelCalls, 0, message);
+    assert.match(out.reply, /not verified|No provider|unavailable|blocked/i);
+  }
+  for (const message of ['Fix the AI model status card so it excludes paused providers', 'Implement AI model status refresh in the Keys tab']) {
+    assert.notEqual((await che.say(message)).route, 'che_model_status', message);
+  }
 });

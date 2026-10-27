@@ -525,7 +525,8 @@ export async function readAlpacaFills(storage) {
 }
 
 // The chart's timeframes: Alpaca's name for each and how many days back to read.
-const BAR_FRAMES = { '1m': ['1Min', 1], '5m': ['5Min', 5], '15m': ['15Min', 10], '1h': ['1Hour', 30], '1d': ['1Day', 365] };
+// '4h' is read as hourly bars and rolled up by the chart (Alpaca has no 4-hour frame).
+const BAR_FRAMES = { '1m': ['1Min', 1], '5m': ['5Min', 5], '15m': ['15Min', 10], '1h': ['1Hour', 30], '4h': ['1Hour', 90], '1d': ['1Day', 365] };
 
 export async function alpacaPaperDashboard(env, { symbol = '', fetcher = fetch, now = Date.now(), timeframe = '5m', storage = null } = {}) {
   const keys = alpacaKeys(env);
