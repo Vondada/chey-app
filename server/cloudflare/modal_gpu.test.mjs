@@ -413,3 +413,46 @@ test('workflow-issued bearer credential: connect verifies the existing Worker se
   const r2 = await startOnboarding({ ...onbCtx(s2, wrong.fetcher), env: { MODAL_TOKEN: cred }, keyEnv: () => ({ MODAL_TOKEN: cred }) }, 'modal');
   assert.notEqual(r2.state, 'verified');
 });
+
+// Owner report (2026-10-27): the deploy workflow wrote MODAL_TOKEN=bearer:<token>@https://vondada--che-gpu.us-east.modal.run
+// (Modal's regional URL; run 40238828084 verified it), but Check Connection said "Modal is not connected. The check gave
+// no detail." The Worker refused the regional host, and the reply had no top-level detail for the app to read.
+test('the regional endpoint the deploy wrote verifies, and a failed check returns a category, a request ID and a detail, never the token', async () => {
+  const TOKEN = 'c'.repeat(64);
+  const cred = `bearer:${TOKEN}@https://vondada--che-gpu.us-east.modal.run`;
+  assert.deepEqual(parseModalCredential(cred), { bearer: TOKEN, base: 'https://vondada--che-gpu.us-east.modal.run', host: 'vondada--che-gpu.us-east.modal.run' });
+  for (const bad of [`bearer:${TOKEN}@https://vondada--che-gpu.evil.example`, `bearer:${TOKEN}@https://vondada--che-gpu.us-east.modal.run.evil.example`,
+    `bearer:${TOKEN}@https://vondada--che-gpu.a.b.modal.run`, `bearer:${TOKEN}@https://vondada--other.us-east.modal.run`]) {
+    assert.equal(parseModalCredential(bad), null, bad);
+  }
+  const ok = fakeModal({ bearer: TOKEN });
+  const s = setup();
+  const r = await verifyOnboarding({ ...onbCtx(s, ok.fetcher), env: { MODAL_TOKEN: cred }, keyEnv: () => ({ MODAL_TOKEN: cred }) }, 'modal', '');
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.equal(r.category, 'ok');
+  assert.match(r.detail, /accepted the access token/);
+  assert.match(r.request_id, /^chk_[a-f0-9]{12}$/);
+  assert.ok(ok.log.some((l) => l.host === 'vondada--che-gpu.us-east.modal.run' && l.path === '/health'), 'the probe went to the regional host');
+
+  const wrong = fakeModal({ bearer: 'd'.repeat(64) });
+  const r2 = await verifyOnboarding({ ...onbCtx(setup(), wrong.fetcher), env: { MODAL_TOKEN: cred }, keyEnv: () => ({ MODAL_TOKEN: cred }) }, 'modal', '');
+  assert.equal(r2.ok, false);
+  assert.equal(r2.category, 'unauthorized');
+  assert.match(r2.detail, /HTTP 401/);
+  assert.match(r2.request_id, /^chk_[a-f0-9]{12}$/);
+
+  const r3 = await verifyOnboarding({ ...onbCtx(setup(), ok.fetcher), env: { MODAL_TOKEN: `bearer:${TOKEN}@https://evil.example` }, keyEnv: () => ({ MODAL_TOKEN: `bearer:${TOKEN}@https://evil.example` }) }, 'modal', '');
+  assert.equal(r3.category, 'credential_unreadable');
+  assert.ok(r3.detail.length > 20);
+  assert.ok(!ok.log.some((l) => l.host === 'evil.example'), 'an unrecognised host is never called');
+
+  const r4 = await verifyOnboarding({ ...onbCtx(setup(), ok.fetcher), env: {}, keyEnv: () => ({}) }, 'modal', '');
+  assert.equal(r4.category, 'missing_credential');
+  assert.ok(r4.detail.length > 20);
+
+  const down = async () => { throw new TypeError('fetch failed'); };
+  const r5 = await verifyOnboarding({ ...onbCtx(setup(), down), env: { MODAL_TOKEN: cred }, keyEnv: () => ({ MODAL_TOKEN: cred }) }, 'modal', '');
+  assert.equal(r5.category, 'network');
+
+  for (const x of [r, r2, r3, r4, r5]) assert.ok(!JSON.stringify(x).includes(TOKEN), 'the token is never in a reply');
+});
