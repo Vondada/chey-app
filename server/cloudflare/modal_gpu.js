@@ -28,7 +28,6 @@
 //   in a view, a log, a letter or a reply.
 import { MODAL_PASTE_REFUSAL, storedKeys } from './resilience.js';
 import { PAID_GPU_PRICES } from './compute_budget.js';
-import { voiceProbeAuthorized } from './phone_voice.js';
 
 export const MODAL_APP_VERSION = 'che-modal-1';          // tools/modal/che_modal_app.py APP_VERSION
 export const MODAL_ENV = 'MODAL_TOKEN';                  // the key-store slot "CHE, connect Modal" saves into
@@ -126,7 +125,7 @@ export async function modalHealth(cred, fetcher = fetch) {
   const r = await modalCall(cred, 'GET', '/health', null, fetcher, 30000);
   const up = r.upstream_id ? { upstream_id: r.upstream_id } : {};
   const h = modalHealthAnswer(cred, r);
-  return { ...h, ...up };
+  return { ...h, http_status: r.status || null, ...up };
 }
 
 function modalHealthAnswer(cred, r) {
@@ -143,20 +142,19 @@ function modalHealthAnswer(cred, r) {
 }
 
 /**
- * The deploy's Modal check (owner, 2026-10-27): POST /api/probe/modal with that deploy's random probe token runs the
- * same authenticated GET /health as Check Connection, with the Worker's real MODAL_TOKEN, and answers the category,
- * a check ID, the app version and GPU. Read-only: no onboarding state changes, no GPU starts, no secret or detail
- * text in the reply. Without the probe token the route does not exist (404).
+ * The deploy's Modal check (owner, 2026-10-27): the Worker's POST /api/probe/modal, which exists only for that deploy's
+ * random probe token, asks the owner's object to run the same authenticated GET /health as Check Connection with the
+ * real MODAL_TOKEN. The answer holds the category, a check ID, the time, the HTTP status, whether the credential is
+ * readable, the host, and on success the app version and GPU. Read-only: no onboarding state changes, no GPU starts,
+ * no secret or reason text in the reply.
  */
-export async function modalProbeRoute(request, probeEnv, env, storage, fetcher = fetch) {
-  const reply = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
-  if (!voiceProbeAuthorized(request, probeEnv)) return reply({ detail: 'Not found.' }, 404);
-  const request_id = `chk_${crypto.randomUUID().replace(/-/g, '').slice(0, 12)}`;
+export async function modalProbe(env, storage, fetcher = fetch, now = Date.now()) {
+  const base = { request_id: `chk_${crypto.randomUUID().replace(/-/g, '').slice(0, 12)}`, at: new Date(now).toISOString() };
   const c = await modalCredential(env, storage);
-  if (!c.exists) return reply({ ok: false, category: 'missing_credential', request_id, credential: 'absent' });
+  if (!c.exists) return { ok: false, category: 'missing_credential', ...base, http_status: null, credential: 'absent' };
   const h = await modalHealth(c.cred, fetcher);
-  return reply({ ok: h.ok, category: h.auth === 'invalid' ? 'unauthorized' : h.auth, request_id, credential: c.cred ? 'readable' : 'unreadable',
-    host: c.cred?.host || null, ...(h.ok ? { version: h.version, gpu: h.gpu } : {}), ...(h.upstream_id ? { upstream_id: h.upstream_id } : {}) });
+  return { ok: h.ok, category: h.auth === 'invalid' ? 'unauthorized' : h.auth, ...base, http_status: h.http_status ?? null, credential: c.cred ? 'readable' : 'unreadable',
+    host: c.cred?.host || null, ...(h.ok ? { version: h.version, gpu: h.gpu } : {}), ...(h.upstream_id ? { upstream_id: h.upstream_id } : {}) };
 }
 
 // ─── The owner's included-credit policy (USER-ENTERED, with time and exact words) ────────────────────────────────

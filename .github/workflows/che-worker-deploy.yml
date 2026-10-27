@@ -686,7 +686,7 @@ jobs:
             if (!r) await new Promise((resolve) => setTimeout(resolve, 4000));
           }
           if (!r) { console.log(`::warning title=Modal check did not run::The live Worker did not answer (${err}).`); process.exit(0); }
-          const line = `category ${r.category}, check ID ${r.request_id}, credential ${r.credential || '-'}, host ${r.host || '-'}${r.ok ? `, app ${r.version}, GPU ${r.gpu}` : ''}${r.upstream_id ? `, Modal call ${r.upstream_id}` : ''}`;
+          const line = `at ${r.at}, check ID ${r.request_id}, HTTP ${r.http_status ?? '-'}, category ${r.category}, credential ${r.credential || '-'}, host ${r.host || '-'}${r.ok ? `, app ${r.version}, GPU ${r.gpu}` : ''}${r.upstream_id ? `, Modal call ${r.upstream_id}` : ''}`;
           console.log(r.ok ? `::notice title=Modal connected::${line}` : `::warning title=Modal not connected::${line}`);
           summary(`**Modal (live Worker, authenticated /health):** ${r.ok ? 'connected' : 'NOT connected'}: ${line}.`);
           JS
