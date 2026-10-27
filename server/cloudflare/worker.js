@@ -41,7 +41,7 @@ import { discoverKeylessModels, engineStatus, paidAllowed, routedEnv, routeText 
 import { capabilityPromptLine, inferTurnCapabilities, runtimeCapabilityRegistry } from './cognitive_capabilities.js';
 import { identityQuestionIntent, speakIdentity } from './che_maturity.js';
 import { deleteMedia, generateImage, generateVideo, listMedia, readBlob, saveOwnerFile, upscaleImage, verifyMediaFile } from './media.js';
-import { guardEngineClaims, guardSoulClaims, lastReplyRecord, loadSoul, replyProvenanceAnswer, replyProvenanceQuestion, restoreSoul, saveSoul, soulPromptBlock, soulProvenance, soulView, stripPhoneSoul } from './soul.js';
+import { withCheNote, guardEngineClaims, guardSoulClaims, lastReplyRecord, loadSoul, replyProvenanceAnswer, replyProvenanceQuestion, restoreSoul, saveSoul, soulPromptBlock, soulProvenance, soulView, stripPhoneSoul } from './soul.js';
 import { mediaHoldAnswer, mediaHoldIntent, mediaKeepFor, mediaLatestReply, mediaLibraryIntent, mediaLibraryReply, mediaLibraryReport, mediaLatestOpenRow, mediaOpenIntent, mediaOpenMissingReply, mediaOpenReply, mediaOpenRow, mediaRows, mediaSaveIntent, mediaSaveReply, mediaShowLatestIntent, mediaShowReply, verifyMediaRows, wantsLatestVideo } from './media_library.js';
 import { capabilityGap, capabilityReply } from './capability_gap.js';
 import { INTERNAL_SOURCE, LAST_RENDER_KEY, internalSceneIntent, internalSceneTurn } from './internal_studio.js';
@@ -152,6 +152,7 @@ import { intentFrame, understoodAs } from './intent_frame.js';
 import { replyHijacksOwnerRequest, usageIntent, usageReport, speakUsage } from './usage_tracker.js';
 import { newestStarredIntent, speakNewestStarred, autoImproveScan, analyticalRepositoryQuestion, chatOnlyResponseIntent, currentTurnActionPolicy, codeScoutIntent, fetchRepoFile, inspectReferenceRepo, inspirationUpgradeContext, listOwnerStarredRepos, readRepoSource, referenceSourceBlock, codingFollowupKind, codingHistoryIntent, codingTimingNote, hypotheticalChange, repositoryImplementationIntent, repositoryInspectionIntent, scoutCode, selectStudyRepos, speakScout, speakStarredRepos, starredRepoIntent, starredStudyList, studySelectionIntent } from './code_scout.js';
 import { agentReportTurn, codingHistoryReceipt, completedWorkProof, namedJobAnswer, otherAgentWorkAsk, otherAgentWorkReply, proofAsked } from './coding_history.js';
+import { languageLine, readRegister, readSocial, socialProbe, socialTurn } from './social_corrections.js';
 import { codingAuditApi, codingAuditProbe, codingAuditTurn, noStoredJobReceipt } from './coding_audit.js';
 import { inventionFollowUpAllowed, inventionIntent, inventionReply, planInvention, refusalReply } from './invention_studio.js';
 import { continuingInvention, inventionVisualIntent, inventionVisualRoute, makeConcept, visualTurn } from './invention_visuals.js';
@@ -3161,7 +3162,7 @@ export async function dispatchChange(env, body, memory = null, options = {}) {
     }
     // Engineering diagnostics go to the engineering mailbox, never to owner chat.
     if (prepared.failure_class !== FAILURE_CLASS.TEMPORARY_EXTERNAL) {
-      await sendMail(env, { from: 'che', to: 'claude', text: `My coding crew stopped on: "${request.slice(0, 300)}". Class ${prepared.failure_class || 'A'}. Engineering record: ${String(prepared.detail || 'unknown').slice(0, 800)}` }).catch(() => null);
+      await sendMail(env, { from: 'che', to: 'claude', text: withCheNote('claude_failure', `My coding crew stopped on: "${request.slice(0, 300)}". Class ${prepared.failure_class || 'A'}. Engineering record: ${String(prepared.detail || 'unknown').slice(0, 800)}`) }).catch(() => null);
     }
     // Nothing was queued here (a recovery run, or saving failed): never say
     // the job was saved.
@@ -3534,7 +3535,7 @@ export class CheState extends DurableObject {
       };
       // The Worker's Soul is the one personality; the phone's copy (body.soul) is not a second source (soul.js).
       soulProfile = await loadSoul(this.ctx.storage);
-      const searched = await runSearchRoute(message, { complete, soul: soulPromptBlock(soulProfile) });
+      const searched = await runSearchRoute(message, { complete, soul: soulPromptBlock(soulProfile) + languageLine(await readSocial(this.ctx.storage)) });
       // Every page the run read is kept as a research page: kept until the owner asks for it to be forgotten.
       const kept = storeLoopReads(new CheBrainStore(this.ctx.storage), { question: message, observations: searched.observations, now: new Date().toISOString() }).kept.length;
       parts.push(kept ? `${searched.text}\nI kept ${kept} page${kept === 1 ? '' : 's'} I read as research pages.` : searched.text);
@@ -7338,7 +7339,7 @@ export class CheState extends DurableObject {
               'Your own tools, which you run yourself when the owner asks: the free GitHub video renderer (a 5 to 90 second faceless MP4 with a thumbnail and voice, kept as a 30-day artifact and never uploaded), read-only repository inspection, the installed skill search, and background coding jobs for owner-authorized BUILD requests. Publishing to YouTube and any spending need the owner\'s direct yes. Never say a free tool of yours needs the owner\'s OK to run.',
               'Sound bright, warm, confident, current and natural — like a sharp friend, not a help desk.',
               'Default to one or two short sentences. Lead with exactly what the owner needs. No preamble, recap, or extra explanation unless it is necessary or he asks for more.',
-              'Understand slang, profanity, dark humor, mature and controversial topics without acting shocked, preachy or prudish. Be candid and direct while still respecting real safety, privacy, consent, security and legal limits.',
+              'Understand slang, profanity, dark humor, mature and controversial topics without acting shocked, preachy or prudish. Be candid and direct while still respecting real safety, privacy, consent, security and legal limits.' + languageLine(await readSocial(this.ctx.storage)),
               'CHE is the Office Boss — the owner’s primary liaison. Department heads (Nova operations, Atlas engineering, Mira research and education, Knox security, Sage intelligence and strategy, Lyra creative, Orion markets, Iris experience and accessibility, Vale quality assurance) report to CHE; CHE reports to the owner. CHE assigns, steers, accepts/rejects handoffs, and owns outcomes.',
               WORK_AGENT_MODE_POLICY,
               'Never create fake busywork. Delegate only when a specialist materially improves accuracy, execution, research, creativity, speed or verification, and only for work tied to the owner’s request, real goals, projects, responsibilities, learning, finances, business, creative work, technology or organization.',
@@ -7755,6 +7756,7 @@ export class CheState extends DurableObject {
         return json({ detail: 'Method not allowed.' }, 405);
       }
       if (path.startsWith('/api/coding/audit')) return codingAuditApi(request, path, this.env, ownerDevice);
+      if (path === '/api/social') return ownerDevice ? json({ register: await readRegister(this.ctx.storage), flirt: (await readSocial(this.ctx.storage)).flirt }) : json({ detail: 'Owner only.' }, 403);
       // Performance watch: measured timings per route against the budget (owner device only).
       if (request.method === 'GET' && path === '/api/performance') {
         if (!ownerDevice) return json({ detail: 'Not found.' }, 404);
@@ -10445,6 +10447,8 @@ export class CheState extends DurableObject {
             category: 'message_too_long', retryable: false,
           }, 413);
         }
+        // "Chill, I'm by my mama": the owner's words set or lift clean language (social_corrections.js).
+        const social = ownerDevice ? await socialTurn(this.ctx.storage, rawMessage, body.history) : null;
         // A broker key said or typed in chat is never kept or sent on to a model (review of #348):
         // the memory filters refuse it by its shape, and CHE says what to do instead.
         if (BROKER_KEY_RE.test(rawMessage)) {
@@ -11053,17 +11057,9 @@ export class CheState extends DurableObject {
         } catch (_) { savedResourceList = null; }
         const learnedHearing = correctionsContext(corrections);
 
-        // REA requests (reverse engineering) take their own read-only route before
-        // any repository or coding routing. They dispatch analysis; they never start
-        // a coding job, commit or deploy.
-        // Building from an investigation is the one REA step that changes code:
-        // it reuses the self-development job (draft PR, never a merge).
-        // The turn's own prohibitions ("answer in chat only", "no pull request")
-        // hold for REA builds too, before anything can be queued.
-        // A question about a coding record ("inspect that coding job") is not an REA follow-up;
-        // the coding history route below answers it. Named REA targets never match it.
-        // A follow-up's own words ("is it done yet?") belong to the coding job or the REA investigation CHE
-        // named last, read from the recent turns (subject-loss audit, 2026-10-24).
+        // REA (reverse engineering) is read-only before any coding route; only "build from an investigation"
+        // changes code (a draft PR) and the turn's own prohibitions hold. Coding-record questions and
+        // follow-ups ("is it done yet?") go to whatever CHE named last.
         const reaPolicy = currentTurnActionPolicy(message);
         const rea = codingHistoryIntent(followupWords || message, ownerHistory) ? null : await handleReaRequest(this.ctx.storage, this.keyEnv || this.env, message, {
           ...this.reaOptions({ history: ownerHistory, owner: ownerDevice }),
@@ -11144,11 +11140,8 @@ export class CheState extends DurableObject {
           return ndjsonReply(run.spoken, { source: SIM_SOURCE, ok: !run.refused, model_calls: 0, sim_id: run.refused ? '' : run.id, plan_id: plan.refused ? '' : plan.id, project_type: plan.type, safety: run.safety.level });
         }
 
-        // Concept-to-Plan (owner, 2026-10-20): "design a wearable robotics prototype and estimate the
-        // cost", "turn this idea into an app", "break down this car into its major systems". One
-        // deterministic planner for every project type (project_plan.js): no model call, every figure a
-        // labeled estimate, one public background page when it can be read, saved to the Brain as a
-        // proposal. Weapons and harm are refused or left out by its safety layer.
+        // Concept-to-Plan (project_plan.js): one deterministic planner, no model call, every figure a labeled
+        // estimate, saved to the Brain as a proposal; its safety layer refuses weapons and harm.
         // "What can you create?", "Show me an example of an animated video", "Which features need setup?": answered from the
         // Capability Showroom's real states. An example or render question takes this route only when a capability matches;
         // any other question keeps its ordinary route.
@@ -11401,7 +11394,7 @@ export class CheState extends DurableObject {
           addOwnerMemory(data, `Owner's ${top.length} newest starred GitHub repos (${at.slice(0, 10)}): ${top.map((r) => r.full_name).join(', ')}`, { category: 'Knowledge', source: 'github_stars' });
           await this.saveChatData(data);
           const mailText = `The owner asked me to send you his ${top.length} newest starred GitHub repositories, read from GitHub just now (newest first):\n${top.map((r, i) => `${i + 1}. ${r.full_name} ${r.url} - ${r.description || 'no description'} (license: ${r.license_name})`).join('\n')}\nHe wants them integrated into CHE.`;
-          const mailed = await sendMail(this.env, { from: 'che', to: 'claude', text: mailText }).catch((e) => ({ error: String(e?.message || e) }));
+          const mailed = await sendMail(this.env, { from: 'che', to: 'claude', text: withCheNote('claude_info', mailText) }).catch((e) => ({ error: String(e?.message || e) }));
           const reply = speakNewestStarred(top).replace(' and sent them to Claude in the mailbox', mailed?.status !== 200 ? ', but I could not post them to the mailbox' : ' and sent them to Claude in the mailbox');
           return ndjsonReply(reply, { source: 'che_starred_newest', ok: true });
         }
@@ -12654,7 +12647,7 @@ export class CheState extends DurableObject {
           for (const r of results) {
             if (r.mailbox) {
               const shared = table?.conclusion ? ` What the other AIs concluded so far: ${table.conclusion}` : '';
-              await sendMail(this.env, { from: 'che', to: r.peer, text: `CHE's owner asks (relayed by CHE; "you" meant CHE): ${relayText(consult.question)}${shared}` }).catch(() => null);
+              await sendMail(this.env, { from: 'che', to: r.peer, text: withCheNote('claude_relay', `CHE's owner asks (relayed by CHE; "you" meant CHE): ${relayText(consult.question)}${shared}`, { peer: r.peer }) }).catch(() => null);
             }
           }
           const tableText = speakRoundTable(table);
@@ -12669,16 +12662,8 @@ export class CheState extends DurableObject {
           return ndjsonReply(lookChange.reply, { source: 'che_workshop', appearance: lookChange.saved?.appearance });
         }
 
-        // Trading Lab by voice: "how are the trades doing", "backtest bitcoin",
-        // "swing highs and entries on ETH", "paper trade Apple".
-        // Trading desk by voice: paper / sim / live switch, NinjaTrader
-        // sign-in, entry alerts, and "take the trade" for live orders.
-        // Trade records by name (owner, 2026-10-20): "the simulator's last trade", "the paper journal vs
-        // the simulation", a record id, a storage key or the sample rule. Each record set is read on its
-        // own and named by its source; nothing here calls a model, so no record, key, date or profit
-        // can be invented. Orders, desk reads and the simulation's controls keep their routes.
-        // A question that names a room, the Brain or "another room" (owner, 2026-10-20) is answered from the
-        // Brain's records and that room's live reader, by source and status, with no model call.
+        // Trading Lab, desk and trade records by voice, read from their own records with no model call.
+        // A question naming a room or the Brain is answered from its records and live reader, no model call.
         const cross = body.attachment ? null : crossRoomIntent(message);
         // Relationship questions were answered above, or left to the model ("what's related to this?" with no screen).
         if (cross && !['related', 'relate'].includes(cross.kind)) {
@@ -13245,7 +13230,7 @@ export class CheState extends DurableObject {
         const mail = mailboxIntent(message);
         if (mail?.kind === 'send') {
           const relayed = relayText(mail.text);
-          const sent = await postWebMail(this.ctx.storage, { from: 'che', to: mail.to, text: `CHE's owner asks (relayed by CHE; "you/your" in the original meant CHE): ${relayed}` }, this.env);
+          const sent = await postWebMail(this.ctx.storage, { from: 'che', to: mail.to, text: withCheNote('claude_relay', `CHE's owner asks (relayed by CHE; "you/your" in the original meant CHE): ${relayed}`, { peer: mail.to }) }, this.env);
           if (sent.status === 200 && sent.delivered && sent.message?.id) {
             await recordReceipt(this.ctx.storage, { kind: 'mail_sent', key: `mail_sent:${sent.message.id}`, peer: normalizePeerKey(mail.to), message_id: sent.message.id, github: sent.github || '' });
           }
@@ -13983,7 +13968,7 @@ export class CheState extends DurableObject {
               'Use a local-first and owner-controlled architecture: built-in CHE behavior first, CHE-hosted services second, optional provider infrastructure only when required for compute or data.',
               'PERSONALITY: the SOUL above is who you are in every reply: bright, warm, confident, direct, useful and lightly playful, in natural conversational sentences, never a report. Default to one or two short sentences. When there are three or more items, use a short list. Lead with exactly what the owner needs; no preamble, recap, disclaimers, warnings or extra suggestions unless genuinely necessary. If he asks for more detail, go deep and hold nothing useful back.',
               'OPEN CONVERSATION: understand slang, profanity, dark humor, mature, controversial, offensive or unusual topics without acting shocked, preachy, prudish or moralizing. Be candid and direct while still respecting real safety, privacy, consent, security and legal boundaries.',
-              'LANGUAGE STYLE: understand profanity, slang and mature language without acting shocked or sanitizing ordinary speech. ' + (replyLanguageSystemLine(body?.reply_language || data?.reply_language || 'en') ? replyLanguageSystemLine(body?.reply_language || data?.reply_language || 'en') + ' ' : '') + ' You may swear naturally back at the adult owner when it fits his tone, but do not force profanity, imitate slurs, threaten, harass, or let edgy language reduce accuracy.',
+              'LANGUAGE STYLE: understand profanity, slang and mature language without acting shocked or sanitizing ordinary speech. ' + (replyLanguageSystemLine(body?.reply_language || data?.reply_language || 'en') ? replyLanguageSystemLine(body?.reply_language || data?.reply_language || 'en') + ' ' : '') + languageLine(social),
               'MATURE TOPICS: when the adult owner discusses explicit or sensitive adult topics, be direct and context-aware rather than prudish, while still respecting consent, safety, privacy, law and the system safeguards that govern the assistant.',
               'Learn from stable, useful, non-sensitive owner preferences. Never invent memories and never infer sensitive traits.',
               clientClock
@@ -15170,7 +15155,7 @@ export class CheState extends DurableObject {
     // concurrent posts would overwrite each other (one peer silently lost).
     const results = [];
     for (const peer of peers) results.push(await (async () => {
-      const sent = await postWebMail(this.ctx.storage, { from: 'che', to: peer, text: packet }, this.env).catch((error) => ({ status: 502, detail: String(error?.message || error) }));
+      const sent = await postWebMail(this.ctx.storage, { from: 'che', to: peer, text: withCheNote('claude_task', packet, { peer, subject: request }) }, this.env).catch((error) => ({ status: 502, detail: String(error?.message || error) }));
       if (sent.status === 200 && sent.delivered && sent.message?.id) {
         await recordReceipt(this.ctx.storage, { kind: 'mail_sent', key: `mail_sent:${sent.message.id}`, peer, message_id: sent.message.id, session: sessionId, github: sent.github || '' });
       }
@@ -16199,6 +16184,7 @@ async function routeRequest(request, env, ctx) {
     const token = /^Bearer (\S+)$/.exec(request.headers.get('Authorization') || '')?.[1] || '';
     return json(await commandCenterProbe(env, token, { commands: COMMANDS, categories: CATEGORIES, voiceSecrets: voiceSecretsFrom(env) }));
   }
+  if (path === '/api/social/probe' && request.method === 'POST') return voiceProbeAuthorized(request, env) ? json(await socialProbe(env, request, await probeObjectName(String(env.CHE_VOICE_PROBE_TOKEN || '')))) : json({ detail: 'Not found.' }, 404);
   if (path === '/api/history/probe' && request.method === 'POST') return voiceProbeAuthorized(request, env) ? json(await historyProbe(env, request, await probeObjectName(String(env.CHE_VOICE_PROBE_TOKEN || '')))) : json({ detail: 'Not found.' }, 404);
   if (path === '/api/coding-audit/probe' && request.method === 'POST') return voiceProbeAuthorized(request, env) ? json(await codingAuditProbe(env, request, await probeObjectName(String(env.CHE_VOICE_PROBE_TOKEN || '')))) : json({ detail: 'Not found.' }, 404);
   // The deploy's Knowledge Atlas check, on the same isolated test CHE (#346).
