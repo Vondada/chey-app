@@ -46,8 +46,21 @@ CheAudioInfo? parseAudioHeader(Uint8List bytes) {
   if (_ascii(bytes, 0, 3) == 'ID3' || (bytes[0] == 0xFF && (bytes[1] & 0xE0) == 0xE0)) {
     return const CheAudioInfo(format: 'MP3');
   }
-  if (_ascii(bytes, 4, 4) == 'ftyp') return const CheAudioInfo(format: 'M4A');
+  if (_ascii(bytes, 4, 4) == 'ftyp' && _hasAudioBrand(bytes)) return const CheAudioInfo(format: 'M4A');
   return null;
+}
+
+/// Audio-only MP4 brands. A plain MP4 video ('isom', 'mp42', 'qt  ') also starts with an ftyp box and is not a song.
+const Set<String> _audioBrands = {'M4A ', 'M4B ', 'M4P ', 'F4A ', 'F4B '};
+
+bool _hasAudioBrand(Uint8List b) {
+  final size = ByteData.sublistView(b, 0, 4).getUint32(0);
+  final end = size < 16 || size > b.length ? b.length : size;
+  if (_audioBrands.contains(_ascii(b, 8, 4))) return true;
+  for (var at = 16; at + 4 <= end; at += 4) {
+    if (_audioBrands.contains(_ascii(b, at, 4))) return true;
+  }
+  return false;
 }
 
 String _ascii(Uint8List b, int at, int len) =>
@@ -56,18 +69,31 @@ String _ascii(Uint8List b, int at, int len) =>
 int _u32le(Uint8List b, int at) => ByteData.sublistView(b, at, at + 4).getUint32(0, Endian.little);
 int _u16le(Uint8List b, int at) => ByteData.sublistView(b, at, at + 2).getUint16(0, Endian.little);
 
+// WAVE format tags: PCM and IEEE float are uncompressed (one block = one frame); 0xFFFE is WAVE_FORMAT_EXTENSIBLE.
+const int _wavPcm = 0x0001, _wavFloat = 0x0003, _wavExtensible = 0xFFFE;
+
 CheAudioInfo? _wav(Uint8List b) {
-  int? sampleRate, channels, bitDepth, dataBytes, blockAlign;
+  int? sampleRate, channels, bitDepth, dataBytes, blockAlign, formatTag, factFrames;
   var at = 12;
   while (at + 8 <= b.length) {
     final id = _ascii(b, at, 4);
     final size = _u32le(b, at + 4);
     final body = at + 8;
     if (id == 'fmt ' && body + 16 <= b.length) {
+      formatTag = _u16le(b, body);
       channels = _u16le(b, body + 2);
       sampleRate = _u32le(b, body + 4);
       blockAlign = _u16le(b, body + 12);
       bitDepth = _u16le(b, body + 14);
+      // Extensible: cbSize >= 22, then wValidBitsPerSample (the real precision, e.g. 24 in a 32-bit container),
+      // the channel mask, and the sub-format GUID whose first two bytes are the actual format tag.
+      if (formatTag == _wavExtensible && size >= 40 && body + 26 <= b.length && _u16le(b, body + 16) >= 22) {
+        final valid = _u16le(b, body + 18);
+        if (valid > 0) bitDepth = valid;
+        formatTag = _u16le(b, body + 24);
+      }
+    } else if (id == 'fact' && body + 4 <= b.length) {
+      factFrames = _u32le(b, body);
     } else if (id == 'data') {
       dataBytes = size;
       break;
@@ -75,7 +101,11 @@ CheAudioInfo? _wav(Uint8List b) {
     at = body + size + (size.isOdd ? 1 : 0);
   }
   if (channels == null || sampleRate == null) return null;
-  final frames = (dataBytes != null && blockAlign != null && blockAlign > 0) ? dataBytes ~/ blockAlign : null;
+  final uncompressed = formatTag == _wavPcm || formatTag == _wavFloat;
+  // For a compressed WAV (ADPCM and others) a block holds many frames, so only the fact chunk states the length.
+  final frames = uncompressed
+      ? ((dataBytes != null && blockAlign != null && blockAlign > 0) ? dataBytes ~/ blockAlign : null)
+      : factFrames;
   return CheAudioInfo(
     format: 'WAV',
     sampleRate: sampleRate,
