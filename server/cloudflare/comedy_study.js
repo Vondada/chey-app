@@ -427,7 +427,16 @@ export async function studyProbe(env, request, objectName, { passes = 6 } = {}) 
 /** A study request, status, stop, resume or lessons question in chat, answered from records; null otherwise. */
 export async function studyChatTurn(storage, message) {
   const ask = studyIntent(message);
-  return ask ? studyTurn(storage, ask) : null;
+  if (ask) return studyTurn(storage, ask);
+  // "/che-study …" (the catalog prefix) always answers here, even with words this study cannot act on:
+  // it says so and runs nothing, instead of letting the chat model answer a command it owns.
+  if (/^comedy study:/i.test(String(message ?? '').trim())) {
+    return {
+      text: 'I can study a show or a comedy topic, sir, for example: "Study Martin. Learn comedy timing." Say "study status", "pause studying" or "resume studying" to manage it. Nothing was started.',
+      meta: { source: 'che_study', ok: false, model_calls: 0, study_action: 'unclear' },
+    };
+  }
+  return null;
 }
 
 /** The chat prompt's humor line, after scoring the owner's reaction to CHE's previous reply. */

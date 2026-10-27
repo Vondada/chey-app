@@ -44,6 +44,77 @@ List<double?> ema(List<double> closes, int period) {
   return out;
 }
 
+/// MACD (12, 26, 9) on closes: the line is EMA 12 minus EMA 26, the signal is an EMA of the line, and the
+/// histogram is line minus signal. Null until each part has enough history.
+({List<double?> macd, List<double?> signal, List<double?> hist}) macd(List<double> closes, {int fast = 12, int slow = 26, int signal = 9}) {
+  final fastEma = ema(closes, fast), slowEma = ema(closes, slow);
+  final line = List<double?>.filled(closes.length, null);
+  for (var i = 0; i < closes.length; i++) {
+    final f = fastEma[i], s = slowEma[i];
+    if (f != null && s != null) line[i] = f - s;
+  }
+  final firstLine = line.indexWhere((v) => v != null);
+  final sig = List<double?>.filled(closes.length, null);
+  if (firstLine >= 0) {
+    final tail = [for (var i = firstLine; i < closes.length; i++) line[i] ?? 0.0];
+    final tailSignal = ema(tail, signal);
+    for (var i = 0; i < tail.length; i++) {
+      sig[firstLine + i] = tailSignal[i];
+    }
+  }
+  final hist = List<double?>.filled(closes.length, null);
+  for (var i = 0; i < closes.length; i++) {
+    final m = line[i], g = sig[i];
+    if (m != null && g != null) hist[i] = m - g;
+  }
+  return (macd: line, signal: sig, hist: hist);
+}
+
+/// Average true range (Wilder). The first bar's true range is high minus low; later bars also reach back to the
+/// previous close. Null until [period] bars exist.
+List<double?> atr(List<CheIndicatorBar> bars, [int period = 14]) {
+  final out = List<double?>.filled(bars.length, null);
+  if (period <= 0 || bars.length < period) return out;
+  final tr = List<double>.filled(bars.length, 0);
+  for (var i = 0; i < bars.length; i++) {
+    final b = bars[i];
+    if (i == 0) {
+      tr[i] = b.h - b.l;
+    } else {
+      final pc = bars[i - 1].c;
+      tr[i] = math.max(b.h - b.l, math.max((b.h - pc).abs(), (b.l - pc).abs()));
+    }
+  }
+  var sum = 0.0;
+  for (var i = 0; i < period; i++) {
+    sum += tr[i];
+  }
+  var a = sum / period;
+  out[period - 1] = a;
+  for (var i = period; i < bars.length; i++) {
+    a = (a * (period - 1) + tr[i]) / period;
+    out[i] = a;
+  }
+  return out;
+}
+
+/// Heikin-Ashi bars: a smoothed view of the same bars, for reading trend. The same time and volume; the prices are
+/// the averaged ones. Drawing aid only, never a price the market traded at.
+List<CheIndicatorBar> heikinAshi(List<CheIndicatorBar> bars) {
+  final out = <CheIndicatorBar>[];
+  double? prevO, prevC;
+  for (final b in bars) {
+    final c = (b.o + b.h + b.l + b.c) / 4;
+    final o = prevO == null || prevC == null ? (b.o + b.c) / 2 : (prevO + prevC) / 2;
+    final h = math.max(b.h, math.max(o, c));
+    final l = math.min(b.l, math.min(o, c));
+    out.add(CheIndicatorBar(b.t, o, h, l, c, b.v));
+    prevO = o;
+    prevC = c;
+  }
+  return out;
+}
+
 /// Wilder's RSI.
 List<double?> rsi(List<double> closes, [int period = 14]) {
   final out = List<double?>.filled(closes.length, null);
