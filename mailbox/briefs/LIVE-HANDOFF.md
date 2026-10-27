@@ -77,6 +77,13 @@ Then, on GitHub:
 
 ## 2. Current position
 
+**Claude, 2026-10-27 (owner: one-session GPU creation capabilities). Verified state.**
+- MERGED #713 (numeric arithmetic checks) as `de90dae9`; all server checks green on `20f4c9ca` after one re-run of `live (staging)`. The first failure was a non-deterministic model reply in the social probe (Test 7 expects 911/emergency for chest pain plus numb arm; the model did not say it). Open safety item: needs a deterministic emergency route, not built.
+- OPEN #714 `feat/character-registry` @ d077c71a: persistent character IDs for the ten named characters, versioned GLB references, pinned versions. 6/6 local tests. Eight have bundled GLBs; Orion and Vale have NO model (reported missing). Not wired to the Worker, Office, Gallery or Music Studio yet.
+- PROVIDERS, verified: NOTHING from this container. Kaggle, Hugging Face and the Worker are unreachable (policy 403). Keys live in CHE's Worker (`ctx.keys.KAGGLE_API_TOKEN`); the owner says Kaggle and Hugging Face are connected. Authentication, GPU allocation and rendering are UNVERIFIED for every provider until a real film-make or farm run produces a receipt.
+- Existing real route: `film-make` (film_pipeline.js → startKaggleSession, LTX-Video clips on a Kaggle T4; Hugging Face fallback; GitHub Actions assembly). Blender character still on Kaggle: not built (the kernel is LTX-only).
+- NEXT (in order): (1) owner runs film-make in the app and sends the film job ID and film-status reply; record receipts here; (2) Worker route that loads the registry and returns assetRefs for a scene; (3) Blender still kernel for Kaggle; (4) Office/Gallery adapters that read the same GLB paths.
+
 **Claude, 2026-10-27 (owner mission: real GPU rendering + photoreal character + video). Audit only; no GPU job run, no PR opened for this mission.**
 - Owner approved: Kaggle T4 only, at $0 (free weekly quota). Owner declined the free CPU-first Actions render. Colab, Hugging Face and Modal not approved for jobs yet (Modal only after a $0 spend limit is set and confirmed).
 - Evidence on main (5f448fba): `server/cloudflare/gpu_providers.js`, `gpu_queue.js`, `modal_gpu.js`, `film_farm.js` (Kaggle + HF farm, tier A moving clips with LTX-Video only), `server/renderfarm/kaggle_worker.py` (LTX clips, NOT Blender), `scripts/che_gpu_face_preview.py` + `che_gpu_worker.py` (Blender Cycles OptiX/CUDA, Colab-only, owner must press Run all), `.github/workflows/che-film-render.yml` (CPU ffmpeg segments on Actions).
