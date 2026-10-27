@@ -14,3 +14,17 @@ export function grade(testCase, reply) {
   const empty = String(reply).trim() === '';
   return { id: testCase.id, pass: !empty && missing.length === 0 && forbidden.length === 0, missing, forbidden, empty };
 }
+
+// /api/chat streams newline-delimited JSON ({type:'delta',delta} records, then {type:'done'}); a plain JSON body with
+// `reply` or `text` is also accepted. Returns the joined reply text, or null when the body cannot be decoded at all.
+export function replyText(raw) {
+  const text = String(raw ?? '').trim();
+  if (!text) return '';
+  const records = [];
+  for (const line of text.split('\n')) {
+    if (!line.trim()) continue;
+    try { records.push(JSON.parse(line)); } catch { return null; }
+  }
+  if (records.length === 1 && records[0] && records[0].type == null) return String(records[0].reply ?? records[0].text ?? '');
+  return records.filter((r) => r && r.type === 'delta').map((r) => String(r.delta ?? '')).join('');
+}

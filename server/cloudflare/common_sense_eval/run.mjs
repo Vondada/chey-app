@@ -3,7 +3,7 @@
 //   CHE_EVAL_DAILY_CAP_USD=2 CHE_EVAL_WORKER_URL=https://... CHE_EVAL_TOKEN=... node run.mjs
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { grade } from './grade.mjs';
+import { grade, replyText } from './grade.mjs';
 
 const cap = Number(process.env.CHE_EVAL_DAILY_CAP_USD || 0);
 if (!(cap > 0)) {
@@ -24,8 +24,17 @@ for (const c of cases) {
     headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
     body: JSON.stringify({ message: c.question, eval: true }),
   });
-  const body = await res.json().catch(() => ({}));
-  const result = grade(c, String(body.reply ?? body.text ?? ''));
+  if (!res.ok) {
+    console.log(`ERROR ${c.id} HTTP ${res.status}`);
+    continue;
+  }
+  const raw = await res.text();
+  const reply = replyText(raw);
+  if (reply == null) {
+    console.log(`ERROR ${c.id} could not decode the reply`);
+    continue;
+  }
+  const result = grade(c, reply);
   if (result.pass) passed += 1;
   console.log(`${result.pass ? 'PASS' : 'FAIL'} ${c.id}${result.pass ? '' : ` missing=[${result.missing}] forbidden=[${result.forbidden}] empty=${result.empty}`}`);
 }

@@ -1717,6 +1717,17 @@ extension _CheHomeSend on _CHEHomeState {
     HapticFeedback.selectionClick();
     final result = await cheSendFactCheck(baseUrl: cheAgentBaseUrl, headers: _authHeaders, reply: reply, messageId: messageId);
     messenger?.showSnackBar(SnackBar(content: Text(result)));
+    // An action the owner asked for, so its real result is also spoken and shown as large text.
+    await speakText(result, record: false, show: true);
+  }
+
+  /// The chat message's own ID, or a new unique one stored on it, so each checked reply has its own verdict key.
+  String _factCheckMessageId(Map<String, String> item) {
+    final existing = item['id'] ?? '';
+    if (existing.isNotEmpty) return existing;
+    final id = 'chat-${DateTime.now().microsecondsSinceEpoch}';
+    _set(() => item['id'] = id);
+    return id;
   }
 
   Future<void> _showMessageActions(int index) async {
@@ -1756,7 +1767,7 @@ extension _CheHomeSend on _CHEHomeState {
                 title: const Text('Send to Claude to fact-check'),
                 onTap: () {
                   Navigator.pop(sheetContext);
-                  unawaited(_sendFactCheckFromChat(text, '${item['id'] ?? ''}'));
+                  unawaited(_sendFactCheckFromChat(text, _factCheckMessageId(item)));
                 },
               ),
             ListTile(

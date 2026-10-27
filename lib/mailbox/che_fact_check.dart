@@ -27,12 +27,22 @@ String cheCheckedMessageId(Map m) {
   return '${m['id'] ?? ''}';
 }
 
-/// Claude's verdict for a message in the thread, if it has one: a message from another AI whose reply_to names it.
+/// Claude's verdict for a message in the thread, if it has one. Only a reply from Claude that answers an actual fact-check
+/// request in this thread counts, so ordinary correspondence (or another AI's reply) is never shown as a fact-check.
 Map? cheVerdictFor(List<Map> thread, Map m) {
   final checked = cheCheckedMessageId(m);
   if (checked.isEmpty) return null;
+  final Set<String> keys;
+  if (cheIsFactCheckRequest(m)) {
+    keys = {if (checked != 'none') checked, if ('${m['id'] ?? ''}'.isNotEmpty) '${m['id']}'};
+  } else {
+    final requests = thread.where((q) => cheIsFactCheckRequest(q) && cheCheckedMessageId(q) == checked);
+    if (requests.isEmpty) return null;
+    keys = {checked, for (final q in requests) if ('${q['id'] ?? ''}'.isNotEmpty) '${q['id']}'};
+  }
   for (final r in thread) {
-    if ('${r['reply_to']}' == checked && '${r['from']}' != 'che' && !identical(r, m)) return r;
+    if (identical(r, m) || cheIsFactCheckRequest(r)) continue;
+    if ('${r['from']}' == 'claude' && keys.contains('${r['reply_to']}')) return r;
   }
   return null;
 }

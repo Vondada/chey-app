@@ -384,6 +384,8 @@ class _CheMailboxScreenState extends State<CheMailboxScreen> {
     HapticFeedback.selectionClick();
     final result = await cheSendFactCheck(baseUrl: widget.baseUrl, headers: widget.headers(), reply: reply, messageId: messageId);
     messenger?.showSnackBar(SnackBar(content: Text(result)));
+    // An action the owner asked for, so its real result is also spoken (AGENTS.md: report every action aloud).
+    _say(result);
   }
 
   String _nice(String peer) => peer.isEmpty ? 'Unknown' : '${peer[0].toUpperCase()}${peer.substring(1)}';

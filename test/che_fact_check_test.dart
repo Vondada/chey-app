@@ -27,6 +27,18 @@ void main() {
     expect(cheFactCheckStatus(thread, request), 'Claude answered');
   });
 
+  test('an ordinary reply, or a reply from another AI, is never shown as a fact-check verdict', () {
+    final reply = {'id': 'che-8', 'from': 'che', 'to': 'claude', 'text': 'Good morning, Claude.'};
+    final ordinary = {'id': 'claude-2', 'from': 'claude', 'to': 'che', 'reply_to': 'che-8', 'text': 'Good morning.'};
+    expect(cheVerdictFor([reply, ordinary], reply), isNull);
+    expect(cheFactCheckStatus([reply, ordinary], reply), isNull);
+
+    final request = {'id': 'owner-2', 'from': 'che', 'to': 'claude', 'text': cheFactCheckRequest(reply['text'] as String, messageId: 'che-8')};
+    final other = {'id': 'gemini-1', 'from': 'gemini', 'to': 'che', 'reply_to': 'che-8', 'text': 'Verified.'};
+    expect(cheVerdictFor([reply, request, other], reply), isNull);
+    expect(cheFactCheckStatus([reply, request, other], request), 'Waiting for Claude');
+  });
+
   test('a message that is not about any CHE reply has no verdict', () {
     final other = {'id': 'x', 'from': 'che', 'text': 'Good morning.'};
     expect(cheVerdictFor([other], other), isNull);
