@@ -336,6 +336,52 @@ jobs:
           summary(`**Modal (live Worker, authenticated /health):** ${r.ok ? 'connected' : 'NOT connected'}: ${line}.`);
           JS
 
+      - name: Ask CHE why her coding agent failed through the live Worker
+        run: |
+          node --input-type=module <<'JS'
+          // Reliability Test 2, live: the isolated test CHE (never the owner's) is asked the question she
+          // failed, and a run id with no record, through the real /api/chat. The answer must come from the
+          // runner's records on che-mailbox (route che_coding_audit, 0 model calls), never claim a missing
+          // telemetry, plugin or connection, and say plainly that ocr-00000000 has no record.
+          // Probe logic: server/cloudflare/coding_audit.js codingAuditProbe.
+          import { appendFileSync } from 'node:fs';
+          const summary = (line) => appendFileSync(process.env.GITHUB_STEP_SUMMARY, `${line}\n`);
+          const MISSING = /telemetry|plug-?ins?\b|audit[- ]?logs?\b|\bconnectors?\b|\bauthori[sz]ed\s+(?:\w+\s+){0,3}(?:connection|integration)\b/i;
+          let report = null;
+          let lastError = '';
+          for (let attempt = 0; attempt < 5 && !report; attempt++) {
+            try {
+              const response = await fetch(`${process.env.CHE_LIVE_BASE}/api/coding-audit/probe`, {
+                method: 'POST',
+                headers: { Authorization: `Bearer ${process.env.CHE_VOICE_PROBE_TOKEN}` },
+                signal: AbortSignal.timeout(90000),
+              });
+              if (response.ok) report = await response.json();
+              else lastError = `HTTP ${response.status}`;
+            } catch (error) {
+              lastError = error?.name === 'TimeoutError' ? 'no answer within 90 s' : 'network error';
+            }
+            if (!report) await new Promise((resolve) => setTimeout(resolve, 4000));
+          }
+          if (!report) {
+            console.log(`::error title=Coding audit check did not run::The live Worker did not answer (${lastError}).`);
+            process.exit(1);
+          }
+          let bad = report.ok !== true || !(report.steps || []).length;
+          for (const step of report.steps || []) {
+            // Checked here too, so the step fails even if the Worker's own check were wrong.
+            const pass = step.pass && step.route === 'che_coding_audit' && step.model_calls === 0 && !MISSING.test(step.reply || '');
+            if (!pass) bad = true;
+            console.log(`${pass ? 'PASS' : 'FAIL'} ${step.name} [route=${step.route || '-'} | model_calls=${step.model_calls ?? '?'} | outcome=${step.outcome || '-'} | ${step.ms} ms]`);
+            console.log(`  reply: ${String(step.reply || '').replace(/\s+/g, ' ')}`);
+          }
+          summary(`**Coding audit (live Worker, isolated test CHE):** ${report.passed ?? 0}/${report.total ?? 0} checks passed.`);
+          if (bad) {
+            console.log(`::error title=Coding audit check failed::${(report.steps || []).filter((s) => !s.pass).map((s) => s.name).join('; ') || report.error || 'see log'}`);
+            process.exit(1);
+          }
+          JS
+
       - name: Check CHE's Knowledge Atlas through the live Worker
         run: node .github/scripts/che_live_probes.mjs atlas
 

@@ -152,6 +152,7 @@ import { intentFrame, understoodAs } from './intent_frame.js';
 import { replyHijacksOwnerRequest, usageIntent, usageReport, speakUsage } from './usage_tracker.js';
 import { newestStarredIntent, speakNewestStarred, autoImproveScan, analyticalRepositoryQuestion, chatOnlyResponseIntent, currentTurnActionPolicy, codeScoutIntent, fetchRepoFile, inspectReferenceRepo, inspirationUpgradeContext, listOwnerStarredRepos, readRepoSource, referenceSourceBlock, codingFollowupKind, codingHistoryIntent, codingTimingNote, hypotheticalChange, repositoryImplementationIntent, repositoryInspectionIntent, scoutCode, selectStudyRepos, speakScout, speakStarredRepos, starredRepoIntent, starredStudyList, studySelectionIntent } from './code_scout.js';
 import { agentReportTurn, codingHistoryReceipt, completedWorkProof, namedJobAnswer, otherAgentWorkAsk, otherAgentWorkReply, proofAsked } from './coding_history.js';
+import { codingAuditApi, codingAuditProbe, codingAuditTurn, noStoredJobReceipt } from './coding_audit.js';
 import { inventionFollowUpAllowed, inventionIntent, inventionReply, planInvention, refusalReply } from './invention_studio.js';
 import { continuingInvention, inventionVisualIntent, inventionVisualRoute, makeConcept, visualTurn } from './invention_visuals.js';
 import { matchShowroom, showroomIntent, showroomReply, showroomView } from './capability_showroom.js';
@@ -7827,6 +7828,7 @@ export class CheState extends DurableObject {
         }
         return json({ detail: 'Method not allowed.' }, 405);
       }
+      if (path.startsWith('/api/coding/audit')) return codingAuditApi(request, path, this.env, ownerDevice);
       // Performance watch: measured timings per route against the budget (owner device only).
       if (request.method === 'GET' && path === '/api/performance') {
         if (!ownerDevice) return json({ detail: 'Not found.' }, 404);
@@ -12143,6 +12145,8 @@ export class CheState extends DurableObject {
         }
         // "Show my last five missions", "Have we worked together before?": the stored missions, projects, jobs and Office
         // tasks, each store counted (activity_status.js), before the memory search.
+        const audit = body.attachment ? null : await codingAuditTurn(rawMessage, this.env, { owner: ownerDevice });
+        if (audit) return ndjsonReply(audit.text, audit.meta);
         const workHistoryAsk = !body.attachment && !memoryQuestion ? workHistoryIntent(rawMessage) : null;
         if (workHistoryAsk && !ownerDevice) {
           return ndjsonReply('Only the CHE owner can read mission, project and job history, sir.', { source: 'che_work_history', ok: false, model_calls: 0, outcome: RECALL_OUTCOMES.PERMISSION_DENIED });
@@ -12542,7 +12546,7 @@ export class CheState extends DurableObject {
           const stale = subject.job?.status === 'running' && Date.parse(subject.job.updated_at || 0) <= Date.now() - jobStaleMs(subject.job);
           // "How long will that take?": the record's own timestamps come first; no estimate is invented.
           const timing = codingFollowupKind(followupWords || message) === 'duration' ? codingTimingNote({ ...subject, acceptedAt: runtimeAt }) : '';
-          const receipt = codingHistoryReceipt({ ...subject, stale, request, repo: this.env.CHE_GITHUB_REPO });
+          const receipt = subject.kind === 'none' ? await noStoredJobReceipt(this.env) : codingHistoryReceipt({ ...subject, stale, request, repo: this.env.CHE_GITHUB_REPO });
           return ndjsonReply(timing ? `${timing} ${receipt}` : receipt, {
             source: 'che_coding_history',
             session_id: subject.kind === 'runtime' || subject.unreadRun ? sessionId : null,
@@ -16281,6 +16285,7 @@ async function routeRequest(request, env, ctx) {
     const token = /^Bearer (\S+)$/.exec(request.headers.get('Authorization') || '')?.[1] || '';
     return json(await commandCenterProbe(env, token));
   }
+  if (path === '/api/coding-audit/probe' && request.method === 'POST') return voiceProbeAuthorized(request, env) ? json(await codingAuditProbe(env, request, MEMORY_PROBE_OBJECT)) : json({ detail: 'Not found.' }, 404);
   // The deploy's Knowledge Atlas check, on the same isolated test CHE (#346).
   if (path === '/api/atlas/probe' && request.method === 'POST') {
     if (!voiceProbeAuthorized(request, env)) return json({ detail: 'Not found.' }, 404);
