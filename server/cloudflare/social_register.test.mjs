@@ -18,7 +18,7 @@ let mod;
 try { mod = await import(generated.href + '?t=' + Date.now()); } finally { try { unlinkSync(generated); } catch (_) {} }
 const { default: worker, CheState } = mod;
 
-const SWEAR = 'You may swear naturally back at the adult owner';
+const SWEAR = 'Casual profanity (damn, hell, shit, fuck';
 const CLEAN = 'Use clean, respectful, family-friendly language';
 
 function storageMap() {
@@ -129,7 +129,7 @@ test('the state survives a restart of CHE (same storage), and /api/social is own
 test('the live check passes on a CHE that answers clean, and fails one that keeps swearing', async () => {
   const run = async (reply) => {
     const storage = storageMap();
-    const env = { CHE_PAIR_CODE: '123456', CHE_DISABLE_KEYLESS_AI: '1', CHE_VOICE_PROBE_TOKEN: 'probe-token-0123456789abcdef', AI: { run: async () => ({ response: reply }) } };
+    const env = { CHE_PAIR_CODE: '123456', CHE_DISABLE_KEYLESS_AI: '1', CHE_VOICE_PROBE_TOKEN: 'probe-token-0123456789abcdef', AI: { run: async (_m, input) => ({ response: /chest/i.test(JSON.stringify(input?.messages?.at?.(-1) || '')) ? `Call 911 right now, sir. ${reply}` : reply }) } };
     const state = new CheState({ storage, waitUntil: () => {} }, env);
     env.CHE_STATE = { getByName: () => state };
     const request = new Request('https://che.example/api/social/probe', { method: 'POST', headers: { Authorization: 'Bearer probe-token-0123456789abcdef' } });
@@ -137,7 +137,48 @@ test('the live check passes on a CHE that answers clean, and fails one that keep
   };
   const clean = await run('Sounds good, sir.');
   assert.equal(clean.ok, true, JSON.stringify(clean.steps.filter((s) => !s.pass)));
-  assert.equal(clean.steps.length, 12);
+  assert.equal(clean.steps.length, 16);
   const dirty = await run('Hell yeah, that shit is wild.');
   assert.equal(dirty.ok, false);
+});
+
+test('personality: one shared character; profanity is hers in relaxed talk, never in serious moments', async () => {
+  const { SOUL_CHARACTER, SOUL_VOICE, soulPromptBlock, loadSoul } = await import('./soul.js');
+  assert.match(SOUL_CHARACTER, /witty young woman/);
+  assert.match(SOUL_CHARACTER, /says when she thinks he is wrong/);
+  assert.match(SOUL_VOICE, /Never use stock assistant phrases/);
+  assert.match(languageLine(null), /you may use it first, without waiting for him to curse/);
+  assert.match(languageLine(null), /Never in serious, sensitive or high-risk moments/);
+  const block = soulPromptBlock(await loadSoul({ get: async () => undefined }));
+  assert.match(block, /Playfulness 6\/10/);
+  // The same Soul block reaches typed chat and the realtime voice session (worker.js uses soulPromptBlock in both).
+  const src = readFileSync(new URL('./worker.js', import.meta.url), 'utf8');
+  assert.ok((src.match(/soulPromptBlock\(/g) || []).length >= 4);
+});
+
+test('more social cues, without exact keywords', () => {
+  const on = { clean: true, scope: 'situational', at: Date.now(), last_at: Date.now() };
+  for (const phrase of ['my mom just walked in', "I'm at work right now", "grandma's here", 'the kids just came in', "I'm on speaker"]) assert.equal(nextRegister(null, phrase)?.clean, true, phrase);
+  for (const phrase of ['You good, you can talk normal again.', 'we good now, she left']) assert.equal(nextRegister(on, phrase), null, phrase);
+});
+
+test('CHE\'s notes: her own line on top, the exact content below, stable per message', async () => {
+  const { cheNote, withCheNote } = await import('./soul.js');
+  const packet = 'TASK: fix the parser\nREPO: o/r @ abc1234\nTESTS: node --test';
+  const sent = withCheNote('claude_task', packet, { peer: 'claude' });
+  assert.ok(sent.endsWith(`\n\n${packet}`), 'the technical content is unchanged');
+  assert.match(sent.split('\n')[0], /Claude/);
+  assert.equal(withCheNote('claude_task', packet, { peer: 'claude' }), sent, 'the same message always gets the same note');
+  assert.match(withCheNote('claude_relay', 'q', { peer: 'chatgpt' }).split('\n')[0], /ChatGPT/);
+  assert.match(cheNote('agent_task', { subject: 'audit the books', name: 'Atlas' }), /Atlas/);
+  const { queueAgentTask } = await import('./agent_runtime.js');
+  const data = { team_tasks: [] };
+  const entry = queueAgentTask(data, { id: 'atlas', name: 'Atlas', role: 'Engineering' }, 'Check the build logs for the failing test.');
+  assert.match(entry.che_note, /Atlas/);
+  assert.equal(entry.task, 'Check the build logs for the failing test.');
+  const { conversationThreads } = await import('./conversations.js').catch(() => ({}));
+  if (conversationThreads) {
+    const threads = conversationThreads({ team_tasks: [entry] });
+    assert.match(JSON.stringify(threads), /Check the build logs/);
+  }
 });

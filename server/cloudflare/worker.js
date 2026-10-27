@@ -41,7 +41,7 @@ import { discoverKeylessModels, engineStatus, paidAllowed, routedEnv, routeText 
 import { capabilityPromptLine, inferTurnCapabilities, runtimeCapabilityRegistry } from './cognitive_capabilities.js';
 import { identityQuestionIntent, speakIdentity } from './che_maturity.js';
 import { deleteMedia, generateImage, generateVideo, listMedia, readBlob, saveOwnerFile, upscaleImage, verifyMediaFile } from './media.js';
-import { guardEngineClaims, guardSoulClaims, lastReplyRecord, loadSoul, replyProvenanceAnswer, replyProvenanceQuestion, restoreSoul, saveSoul, soulPromptBlock, soulProvenance, soulView, stripPhoneSoul } from './soul.js';
+import { withCheNote, guardEngineClaims, guardSoulClaims, lastReplyRecord, loadSoul, replyProvenanceAnswer, replyProvenanceQuestion, restoreSoul, saveSoul, soulPromptBlock, soulProvenance, soulView, stripPhoneSoul } from './soul.js';
 import { mediaHoldAnswer, mediaHoldIntent, mediaKeepFor, mediaLatestReply, mediaLibraryIntent, mediaLibraryReply, mediaLibraryReport, mediaLatestOpenRow, mediaOpenIntent, mediaOpenMissingReply, mediaOpenReply, mediaOpenRow, mediaRows, mediaSaveIntent, mediaSaveReply, mediaShowLatestIntent, mediaShowReply, verifyMediaRows, wantsLatestVideo } from './media_library.js';
 import { capabilityGap, capabilityReply } from './capability_gap.js';
 import { INTERNAL_SOURCE, LAST_RENDER_KEY, internalSceneIntent, internalSceneTurn } from './internal_studio.js';
@@ -3234,7 +3234,7 @@ export async function dispatchChange(env, body, memory = null, options = {}) {
     }
     // Engineering diagnostics go to the engineering mailbox, never to owner chat.
     if (prepared.failure_class !== FAILURE_CLASS.TEMPORARY_EXTERNAL) {
-      await sendMail(env, { from: 'che', to: 'claude', text: `My coding crew stopped on: "${request.slice(0, 300)}". Class ${prepared.failure_class || 'A'}. Engineering record: ${String(prepared.detail || 'unknown').slice(0, 800)}` }).catch(() => null);
+      await sendMail(env, { from: 'che', to: 'claude', text: withCheNote('claude_failure', `My coding crew stopped on: "${request.slice(0, 300)}". Class ${prepared.failure_class || 'A'}. Engineering record: ${String(prepared.detail || 'unknown').slice(0, 800)}`) }).catch(() => null);
     }
     // Nothing was queued here (a recovery run, or saving failed): never say
     // the job was saved.
@@ -11465,7 +11465,7 @@ export class CheState extends DurableObject {
           addOwnerMemory(data, `Owner's ${top.length} newest starred GitHub repos (${at.slice(0, 10)}): ${top.map((r) => r.full_name).join(', ')}`, { category: 'Knowledge', source: 'github_stars' });
           await this.saveChatData(data);
           const mailText = `The owner asked me to send you his ${top.length} newest starred GitHub repositories, read from GitHub just now (newest first):\n${top.map((r, i) => `${i + 1}. ${r.full_name} ${r.url} - ${r.description || 'no description'} (license: ${r.license_name})`).join('\n')}\nHe wants them integrated into CHE.`;
-          const mailed = await sendMail(this.env, { from: 'che', to: 'claude', text: mailText }).catch((e) => ({ error: String(e?.message || e) }));
+          const mailed = await sendMail(this.env, { from: 'che', to: 'claude', text: withCheNote('claude_info', mailText) }).catch((e) => ({ error: String(e?.message || e) }));
           const reply = speakNewestStarred(top).replace(' and sent them to Claude in the mailbox', mailed?.status !== 200 ? ', but I could not post them to the mailbox' : ' and sent them to Claude in the mailbox');
           return ndjsonReply(reply, { source: 'che_starred_newest', ok: true });
         }
@@ -12725,7 +12725,7 @@ export class CheState extends DurableObject {
           for (const r of results) {
             if (r.mailbox) {
               const shared = table?.conclusion ? ` What the other AIs concluded so far: ${table.conclusion}` : '';
-              await sendMail(this.env, { from: 'che', to: r.peer, text: `CHE's owner asks (relayed by CHE; "you" meant CHE): ${relayText(consult.question)}${shared}` }).catch(() => null);
+              await sendMail(this.env, { from: 'che', to: r.peer, text: withCheNote('claude_relay', `CHE's owner asks (relayed by CHE; "you" meant CHE): ${relayText(consult.question)}${shared}`, { peer: r.peer }) }).catch(() => null);
             }
           }
           const tableText = speakRoundTable(table);
@@ -13308,7 +13308,7 @@ export class CheState extends DurableObject {
         const mail = mailboxIntent(message);
         if (mail?.kind === 'send') {
           const relayed = relayText(mail.text);
-          const sent = await postWebMail(this.ctx.storage, { from: 'che', to: mail.to, text: `CHE's owner asks (relayed by CHE; "you/your" in the original meant CHE): ${relayed}` }, this.env);
+          const sent = await postWebMail(this.ctx.storage, { from: 'che', to: mail.to, text: withCheNote('claude_relay', `CHE's owner asks (relayed by CHE; "you/your" in the original meant CHE): ${relayed}`, { peer: mail.to }) }, this.env);
           if (sent.status === 200 && sent.delivered && sent.message?.id) {
             await recordReceipt(this.ctx.storage, { kind: 'mail_sent', key: `mail_sent:${sent.message.id}`, peer: normalizePeerKey(mail.to), message_id: sent.message.id, github: sent.github || '' });
           }
@@ -15237,7 +15237,7 @@ export class CheState extends DurableObject {
     // concurrent posts would overwrite each other (one peer silently lost).
     const results = [];
     for (const peer of peers) results.push(await (async () => {
-      const sent = await postWebMail(this.ctx.storage, { from: 'che', to: peer, text: packet }, this.env).catch((error) => ({ status: 502, detail: String(error?.message || error) }));
+      const sent = await postWebMail(this.ctx.storage, { from: 'che', to: peer, text: withCheNote('claude_task', packet, { peer, subject: request }) }, this.env).catch((error) => ({ status: 502, detail: String(error?.message || error) }));
       if (sent.status === 200 && sent.delivered && sent.message?.id) {
         await recordReceipt(this.ctx.storage, { kind: 'mail_sent', key: `mail_sent:${sent.message.id}`, peer, message_id: sent.message.id, session: sessionId, github: sent.github || '' });
       }

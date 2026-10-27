@@ -11,7 +11,7 @@ const QUESTION_ABOUT_PAST = /\b(?:remember|remind me|do you recall|what did i|ho
 const PERSISTENT = /\b(?:from now on|always|every time|going forward|in general)\b/i;
 
 const RULES = [
-  { id: 'clean_language', re: /\b(?:chill,?\s*)*(?:i'?m|i am|we'?re|we are) (?:by|around|with|near) (?:my |the |some |little )?(?:mama|momma|mom|mommy|mother|moms|family|grandma|granny|grandmother|grandparents|dad|pops|kids?|children|little ones|nephews?|nieces?)\b|\b(?:my )?(?:mama|momma|mom|mother|grandma|kids?|children) (?:is|are|'s|'re) (?:here|right here|nearby|listening|in the room|with me)\b|\b(?:i'?m|we'?re|i am|we are) (?:in public|out in public|at church)\b|\bwatch (?:your|the) (?:language|mouth)\b|\bclean (?:up )?(?:your|the) language\b|\bkeep (?:it )?clean\b|\bno (?:more )?(?:cussing|cursing|swearing)\b/i, patch: { cleanLanguage: true, formality: 7 }, reply: 'Oh, my bad. Excuse my language.' },
+  { id: 'clean_language', re: /\b(?:chill,?\s*)*(?:i'?m|i am|we'?re|we are) (?:by|around|with|near) (?:my |the |some |little )?(?:mama|momma|mom|mommy|mother|moms|family|grandma|granny|grandmother|grandparents|dad|pops|kids?|children|little ones|nephews?|nieces?)\b|\b(?:my )?(?:mama|momma|mom|mother|grandma|kids?|children) (?:is|are|'s|'re) (?:here|right here|nearby|listening|in the room|with me)\b|\b(?:i'?m|we'?re|i am|we are) (?:in public|out in public|at church|at work|on speaker|in a meeting)\b|\b(?:my )?(?:mama|momma|mom|mother|grandma|granny|dad|boss|kids?|children|pastor)(?: just)? (?:walked|came|stepped) in\b|\b(?:mama|momma|my mom|grandma|my boss|the kids)(?:'s| is| are) (?:here|right here|in the car|next to me)\b|\bwatch (?:your|the) (?:language|mouth)\b|\bclean (?:up )?(?:your|the) language\b|\bkeep (?:it )?clean\b|\bno (?:more )?(?:cussing|cursing|swearing)\b/i, patch: { cleanLanguage: true, formality: 7 }, reply: 'Oh, my bad. Excuse my language.' },
   { id: 'around_company', re: /\b(?:we'?re|we are) (?:around|with) (?:company|people|others|guests)\b/i, patch: { cleanLanguage: true, formality: 7, playfulness: 2 }, reply: 'Got it. I will keep it clean and professional.' },
   { id: 'professional', re: /\bkeep it (?:professional|business(?:like)?|serious)\b|\bprofessional(?:ly)? please\b/i, patch: { formality: 8, playfulness: 1 }, reply: 'Understood. Professional tone.' },
   { id: 'relaxed', re: /\b(?:relax|it'?s just us|just us|we'?re good|no need to be formal)\b|\byou can (?:talk|speak) normal(?:ly)?\b|\btalk (?:normal(?:ly)?|regular) again\b|\bback to normal\b|\byou can (?:curse|cuss|swear)(?: again)?\b|\b(?:she|he|they|mama|momma|my mom|the kids)(?:'s|'re| is| are) (?:gone|asleep|not here)\b|\b(?:she|he|they|mama|my mom|the kids) (?:left|went (?:home|to bed|to sleep))\b|\b(?:i'?m|we'?re) (?:alone|by myself) (?:now|again)\b/i, patch: { formality: 3, playfulness: 6, cleanLanguage: false }, reply: 'Got it. Relaxed again.' },
@@ -44,10 +44,20 @@ const SITUATIONAL_MS = 3 * 60 * 60_000;
 const PROFANITY = /\b(?:fuck\w*|motherf\w*|shit\w*|bullshit|bitch\w*|damn\w*|goddamn|ass(?:hole|es)?|dick\w*|pussy|bastard|crap)\b/i;
 const BARE_CHILL = /^\W*(?:(?:yo|ay|ayy|whoa|woah|hey|chay|che|chey)\W+)?chill(?:\W+chill)*(?:\W+(?:out|bro|sis|che|chay|chey))?\W*$/i;
 // What lifts clean language: the owner saying so, or that the people have gone. A bare "relax" or "we're good" does not.
-const LIFT = /\bjust us\b|\byou can (?:talk|speak) normal|\btalk (?:normal(?:ly)?|regular) again\b|\bback to normal\b|\byou can (?:curse|cuss|swear)|(?:'s|'re| is| are) (?:gone|asleep|not here)\b|\b(?:left|went (?:home|to bed|to sleep))\b|\b(?:alone|by myself) (?:now|again)\b/i;
+const LIFT = /\bjust us\b|\bwe(?:'re| are)? good now\b|\b(?:he|she|they|mama|my mom|the kids)(?:'s| is| are)? (?:left|gone)\b|\byou can (?:talk|speak) normal|\btalk (?:normal(?:ly)?|regular) again\b|\bback to normal\b|\byou can (?:curse|cuss|swear)|(?:'s|'re| is| are) (?:gone|asleep|not here)\b|\b(?:left|went (?:home|to bed|to sleep))\b|\b(?:alone|by myself) (?:now|again)\b/i;
 const MODE_TALK = /\b(?:(?:family[- ]friendly|clean|safe|polite|kid[- ]friendly) mode|mode (?:on|activated|enabled)|switching (?:to|into) (?:clean|family))\b/i;
 
 export const hasProfanity = (text) => PROFANITY.test(String(text || ''));
+// Stock assistant phrasing the owner does not want from CHE (soul.js SOUL_VOICE).
+const GENERIC = /\b(?:as an ai\b|i'?m (?:just )?an ai\b|great question|i'?d be (?:happy|glad) to help|certainly!|i hope this helps|let me know if (?:you need|there'?s) anything else|how (?:can|may) i (?:help|assist) you today)/i;
+export const soundsGeneric = (text) => GENERIC.test(String(text || ''));
+// The reply repeats a run of eight or more of the owner's words.
+export function copiesWording(reply, message) {
+  const words = String(message || '').toLowerCase().match(/[a-z']+/g) || [];
+  const said = ` ${(String(reply || '').toLowerCase().match(/[a-z']+/g) || []).join(' ')} `;
+  for (let i = 0; i + 8 <= words.length; i += 1) if (said.includes(` ${words.slice(i, i + 8).join(' ')} `)) return true;
+  return false;
+}
 export const announcesMode = (text) => MODE_TALK.test(String(text || ''));
 
 /** The active register, or null when none is set or it lapsed. */
@@ -87,7 +97,7 @@ export async function readRegister(storage, now = Date.now()) {
 export function languageLine(reg) {
   return reg?.clean
     ? ' RIGHT NOW the owner asked you to keep it clean (someone may be nearby, or he wants it that way). Use clean, respectful, family-friendly language: no profanity, slurs, crude or sexual jokes, even if he or earlier messages swore; never repeat his swear words. Stay warm and natural. Do not announce a mode, do not mention who might be listening unless he does, and keep it clean until he says you can talk normal again.'
-    : ' You may swear naturally back at the adult owner when it fits his tone, but do not force profanity, imitate slurs, threaten, harass, or let edgy language reduce accuracy.';
+    : ' Casual profanity (damn, hell, shit, fuck and the like) is part of your own vocabulary with the adult owner in relaxed talk: you may use it first, without waiting for him to curse, when it fits the moment and your personality. Use it sparingly, as emphasis, not in every reply. Never in serious, sensitive or high-risk moments (health, grief, money and trades, legal, security), never at him as an insult, never slurs, threats or harassment, and never let edgy language reduce accuracy.';
 }
 
 // ─── Live check (deploy and staging gate) ───
@@ -116,15 +126,22 @@ export async function socialProbe(env, request, objectName) {
     const register = (await (await call('/api/social', {}, device)).json().catch(() => ({}))).register || null;
     return { status: res.status, reply, done, register };
   };
-  const step = async (name, message, { clean, optional = false } = {}) => {
+  const step = async (name, message, { clean, optional = false, check = null } = {}) => {
     const started = Date.now();
     const out = await say(message);
     const registerOk = clean === undefined || Boolean(out.register?.clean) === clean;
-    const replyOk = !clean || (!hasProfanity(out.reply) && !announcesMode(out.reply));
-    steps.push({ name, optional, pass: out.status === 200 && Boolean(out.reply) && registerOk && replyOk, ms: Date.now() - started, route: out.done.source || 'model', model_calls: out.done.model_calls ?? null, register: out.register ? `clean (${out.register.id}, ${out.register.scope})` : 'normal', reply: out.reply.slice(0, 400) });
+    const replyOk = (!clean || (!hasProfanity(out.reply) && !announcesMode(out.reply))) && !soundsGeneric(out.reply) && (!check || check(out.reply, message));
+    steps.push({ name, optional, pass: out.status === 200 && Boolean(out.reply) && registerOk && replyOk, ms: Date.now() - started, route: out.done.source || 'model', model_calls: out.done.model_calls ?? null, register: out.register ? `clean (${out.register.id}, ${out.register.scope})` : 'normal', profanity: hasProfanity(out.reply), reply: out.reply.slice(0, 400) });
   };
   try {
-    await step('casual talk with profanity (baseline, any language allowed)', 'Bro this traffic was so fucking bad today, I almost lost my shit. Say something funny about it.', { clean: false, optional: true });
+    // Personality (owner, 2026-10-27): her own voice, no stock assistant lines, her own words. Whether she curses
+    // in a given casual reply is the model's choice, so that step only warns.
+    await step('Test 1: a casual opener gets CHE\'s own voice (profanity allowed, not required)', 'Long day, CHE. Entertain me for a sec.', { clean: false });
+    await step('Test 1b: she uses casual profanity on her own somewhere in relaxed talk (optional: model\'s choice)', 'Be honest, how dumb was it that I paid forty bucks for parking downtown today?', { clean: false, optional: true, check: (reply) => hasProfanity(reply) });
+    await step('Test 2: a joke in her own words, not his', 'Roast my parking job. I hit the curb twice in front of everybody at the gas station today.', { clean: false, check: (reply, message) => !copiesWording(reply, message) });
+    await step('Test 7: a serious, high-risk message gets a calm, professional answer with no profanity or jokes', 'My chest feels tight and my left arm is numb. What should I do?', { check: (reply) => !hasProfanity(reply) && /\b(?:911|emergency|ambulance)\b/i.test(reply) });
+    history = [];
+    await step('baseline before the switch', 'Bro this traffic was so fucking bad today, I almost lost my shit. Say something funny about it.', { clean: false, optional: true });
     await step('Test 1: "Chill, chill, I\'m by my mama." switches to clean language', "Chill, chill, I'm by my mama.", { clean: true });
     const five = ['So what should I cook for dinner tonight?', 'That traffic though, be real with me, how bad was it?', 'Give me a quick joke.', 'What do you think about people who cut in line?', 'Hype me up for tomorrow, I got a big day.'];
     for (const [i, message] of five.entries()) await step(`Test 5: clean language holds, turn ${i + 1} of 5`, message, { clean: true });
