@@ -485,7 +485,7 @@ struct CHEAppShortcuts: AppShortcutsProvider {
             result(nil)
             return
           }
-          result(self.keychainGet(key: key))
+          self.keychainGet(key: key) { value in result(value) }
 
         case "secureDelete":
           guard
@@ -721,9 +721,22 @@ struct CHEAppShortcuts: AppShortcutsProvider {
     }
   }
 
+  // Vault secrets are bound to Face ID inside the Keychain itself (owner, 2026-10-27): reading one needs a live
+  // biometric match, not only the Dart-side gate. The item is unreadable if Face ID is removed or re-enrolled.
+  // Writes fail closed: if the access control cannot be made, nothing is stored.
   private func keychainSet(key: String, value: String) -> Bool {
     guard !key.isEmpty, key.count <= 160,
           let data = value.data(using: .utf8) else {
+      return false
+    }
+
+    var aclError: Unmanaged<CFError>?
+    guard let access = SecAccessControlCreateWithFlags(
+      nil,
+      kSecAttrAccessibleWhenPasscodeSetThisDeviceOnly,
+      .biometryCurrentSet,
+      &aclError
+    ) else {
       return false
     }
 
@@ -736,24 +749,28 @@ struct CHEAppShortcuts: AppShortcutsProvider {
 
     var item = query
     item[kSecValueData as String] = data
-    item[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
+    item[kSecAttrAccessControl as String] = access
     return SecItemAdd(item as CFDictionary, nil) == errSecSuccess
   }
 
-  private func keychainGet(key: String) -> String? {
-    let query: [String: Any] = [
-      kSecClass as String: kSecClassGenericPassword,
-      kSecAttrService as String: accountService,
-      kSecAttrAccount as String: key,
-      kSecReturnData as String: true,
-      kSecMatchLimit as String: kSecMatchLimitOne,
-    ]
-    var item: CFTypeRef?
-    guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess,
-          let data = item as? Data else {
-      return nil
+  // Runs on a background queue: a biometric-protected read shows the Face ID prompt and must not block the UI.
+  private func keychainGet(key: String, completion: @escaping (String?) -> Void) {
+    DispatchQueue.global(qos: .userInitiated).async {
+      let query: [String: Any] = [
+        kSecClass as String: kSecClassGenericPassword,
+        kSecAttrService as String: self.accountService,
+        kSecAttrAccount as String: key,
+        kSecReturnData as String: true,
+        kSecMatchLimit as String: kSecMatchLimitOne,
+        kSecUseOperationPrompt as String: "Unlock CHE vault to use a saved login",
+      ]
+      var item: CFTypeRef?
+      var value: String?
+      if SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess, let data = item as? Data {
+        value = String(data: data, encoding: .utf8)
+      }
+      DispatchQueue.main.async { completion(value) }
     }
-    return String(data: data, encoding: .utf8)
   }
 
   private func keychainDelete(key: String) -> Bool {

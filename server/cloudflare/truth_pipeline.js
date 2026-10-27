@@ -17,6 +17,7 @@ import { sanitizeOwnerText } from './che_errors.js';
 import { auditEvidenceFrom, auditReply, claimKindsIn, guardRemovalEntries, recordAudit } from './hallucination_auditor.js';
 import { answerEvidenceReceipt, LAST_ANSWER_EVIDENCE_KEY } from './knowledge_cache.js';
 import { brainRecordForProvenance, guardOwnerAttributions, guardRememberBlock, guardSpeakerAttributions, loadRetractions, ownerWords, storyRequested } from './memory_provenance.js';
+import { numericNotes } from './numeric_truth.js';
 import { groundedReply } from './personal_recall.js';
 import { redactGoogleIds } from './research_memory.js';
 import { guardEngineClaims, guardSoulClaims } from './soul.js';
@@ -199,6 +200,13 @@ export const TRUTH_STAGES = Object.freeze([
     if (!ctx.body.attachment) return { text: reply, removed: [] };
     const m = ctx.multimodal;
     return { text: `${reply} ${m?.summary ? `(Seen with ${m.engine || 'the connected vision engine'}.)` : `(Vision: the attachment was not analyzed${m?.error ? `: ${m.error}` : ''})`}`.trim(), removed: [] };
+  } },
+  // Numbers: units, exact conversions and reference ranges are checked by arithmetic (numeric_truth.js). A wrong figure
+  // gets a correction beside it, an estimate is labelled as one, and nothing is silently rewritten. It runs last so no
+  // earlier stage can strip the note.
+  { name: 'numeric_check', run(reply) {
+    const notes = numericNotes(reply);
+    return { text: notes ? `${reply} ${notes}`.trim() : reply, removed: [] };
   } },
 ]);
 

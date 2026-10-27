@@ -832,7 +832,11 @@ export function tradingIntent(message, { followup = '', referent = '' } = {}) {
   const sized = (intent) => (interval && interval !== '1d' ? { ...intent, interval } : intent);
   if (/\b(?:what (?:have|did) you (?:learn|learned)|trading (?:skills?|lessons?|learning)|learn(?:ed|ing)? (?:about )?trading|new (?:trading )?(?:skills?|strateg(?:y|ies)))\b/i.test(text) && /\b(?:trad|market|futures|stocks?|crypto)/i.test(text)) return { kind: 'learning' };
   if (/\bbacktest/i.test(text) && !/\b(?:code|app|feature|function)\b/i.test(text)) return sized({ kind: 'backtest', symbol: pick() || 'BTCUSDT' });
-  if (/\b(?:paper trade|watch)\b[\s\S]{0,30}/i.test(text) && /\b(?:paper|trade|market)\b/i.test(text)) return { kind: 'watch', symbol: pick() };
+  // A watch needs a market. Asked for none ("place a paper trade"), CHE asks which one instead of looking up a ticker.
+  if (/\b(?:paper trade|watch)\b[\s\S]{0,30}/i.test(text) && /\b(?:paper|trade|market)\b/i.test(text)) {
+    const symbol = pick();
+    return symbol ? { kind: 'watch', symbol } : { kind: 'clarify', about: 'watch', question: 'Which market should I paper trade, sir? Say a ticker like AAPL, a coin like bitcoin, or MNQ.' };
+  }
   if (/\b(?:swing (?:highs?|lows?)|entry points?|entries|candlestick|scan|analy[sz]e)\b/i.test(text) && /\b(?:chart|market|stock|crypto|bitcoin|btc|eth|ethereum|solana|s&p|nasdaq|dow|swing|entry|entries|candlestick|ticker|price action)\b/i.test(text)) {
     return sized({ kind: 'analyze', symbol: pick() || 'BTCUSDT' });
   }

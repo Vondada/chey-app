@@ -13,6 +13,7 @@ import '../che_ui/che_hud.dart';
 import '../che_ui/che_theme.dart';
 import '../platform/che_platform_screens.dart';
 import 'che_fact_check.dart';
+import 'che_ai_model_status.dart';
 import 'che_mail_time.dart';
 import 'che_message_split.dart';
 
@@ -41,12 +42,15 @@ class _CheMailboxScreenState extends State<CheMailboxScreen> {
   List<Map<String, dynamic>> _letters = const [];
   List<Map<String, dynamic>> _providers = const [];
   Map<String, dynamic> _youtube = const {};
+  CheAiModelStatus? _aiStatus;
   Map<String, dynamic> _flag = const {};
   List<Map<String, dynamic>> _archive = const [];
   String? _openThread;
   bool _loading = true;
   String _status = '';
   String _keyQuery = '';
+  // The last Save-and-test result, kept at the top of the Keys tab so the owner can read it there.
+  String _keyResult = '';
 
   @override
   void initState() {
@@ -91,6 +95,8 @@ class _CheMailboxScreenState extends State<CheMailboxScreen> {
             ? (keys['providers'] as List).whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList()
             : const [];
         _youtube = youtube is Map ? Map<String, dynamic>.from(youtube) : const {};
+        // Which AI models CHE may use at zero cost; shown quietly, read only on request.
+        _aiStatus = keys is Map ? CheAiModelStatus.fromJson(keys['ai_model_status']) : null;
         _loading = false;
       });
       final unread = _letters.where((l) => l['read'] != true).length;
@@ -214,6 +220,7 @@ class _CheMailboxScreenState extends State<CheMailboxScreen> {
     controller.dispose();
     if (key == null || key.isEmpty) return;
     _say('Testing the $name key.');
+    var result = 'I could not reach my server to test the key. Nothing was saved.';
     try {
       final response = await http.post(
         Uri.parse('${widget.baseUrl}/api/keys'),
@@ -223,15 +230,19 @@ class _CheMailboxScreenState extends State<CheMailboxScreen> {
       final data = jsonDecode(response.body);
       if (response.statusCode == 200 && data is Map) {
         HapticFeedback.mediumImpact();
-        _say('$name key saved and tested. It ends in ${data['last4']} and is now in my rotation.');
+        result = '$name key saved and tested. It ends in ${data['last4']} and is now in my rotation.';
       } else {
         HapticFeedback.heavyImpact();
-        _say(data is Map ? '${data['detail'] ?? 'That key did not work.'}' : 'That key did not work.');
+        result = data is Map ? '${data['detail'] ?? 'That key did not work.'}' : 'That key did not work.';
       }
     } catch (_) {
-      _say('I could not reach my server to test the key. Nothing was saved.');
+      HapticFeedback.heavyImpact();
     }
+    // Reload first: the reload writes its own banner, so the key result is shown after it, not overwritten by it.
     await _load();
+    if (!mounted) return;
+    setState(() => _keyResult = result);
+    _say(result);
   }
 
   Future<void> _flagAction(String action) async {
@@ -760,10 +771,36 @@ class _CheMailboxScreenState extends State<CheMailboxScreen> {
 
     return Column(
       children: [
+        if (_keyResult.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 12, 12, 0),
+            child: Semantics(
+              liveRegion: true,
+              child: Card(
+                color: cheHudActive ? null : CheColors.surface,
+                child: Padding(
+                  padding: const EdgeInsets.all(12),
+                  child: Row(children: [
+                    Expanded(child: Text(_keyResult, style: CheType.body)),
+                    IconButton(
+                      tooltip: 'Read this result',
+                      onPressed: () => _say(_keyResult),
+                      icon: const Icon(Icons.volume_up_rounded),
+                    ),
+                  ]),
+                ),
+              ),
+            ),
+          ),
         Padding(
-          padding: const EdgeInsets.fromLTRB(12, 12, 12, 0),
+          padding: EdgeInsets.fromLTRB(12, _keyResult.isEmpty ? 12 : 8, 12, 0),
           child: _youtubeCard(),
         ),
+        if (_aiStatus != null)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+            child: CheAiModelStatusCard(status: _aiStatus!, onReadAloud: _say),
+          ),
         Padding(
           padding: const EdgeInsets.fromLTRB(12, 12, 12, 4),
           child: Semantics(

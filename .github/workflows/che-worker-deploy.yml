@@ -391,6 +391,12 @@ jobs:
       - name: Check Private Mode and Knox's privacy answers through the live Worker (real model)
         run: node .github/scripts/che_live_probes.mjs privacy
 
+      - name: Check CHE's conversational code-switching through the live Worker (real model)
+        run: node .github/scripts/che_live_probes.mjs social
+
+      - name: Check a study assignment through the live Worker (real search and model)
+        run: node .github/scripts/che_live_probes.mjs study
+
       - name: Audit the owner's stored projects (counts only)
         continue-on-error: true
         run: node .github/scripts/che_live_probes.mjs projects-audit
