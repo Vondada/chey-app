@@ -1,0 +1,124 @@
+# Diagnoses CHE's existing Modal connection without changing it (owner, 2026-10-27). Manual only. Nothing is deployed,
+# no token is created or rotated, no secret is written and no Modal app is created. It reports, by name only:
+#   - whether the GitHub secrets MODAL_TOKEN_ID / MODAL_TOKEN_SECRET / CLOUDFLARE_API_TOKEN exist and look right;
+#   - whether the deployed Modal app che-gpu and its auth secret che-gpu-auth exist;
+#   - whether the Worker secret MODAL_TOKEN exists;
+#   - that the endpoint answers and refuses an unauthenticated request (401).
+# With gpu_test it calls the deployed function gpu_check once: one 256x256 Cycles render of the default cube on the
+# app's T4, a few seconds of GPU time. Its GPU name, Cycles device, render and wall seconds, PNG SHA-256 and the Modal
+# function-call ID come from Modal's real answer. No secret value is printed.
+# The authenticated /health with the Worker's own credential runs in every Worker deploy (che-worker-deploy.yml).
+name: CHE Modal check
+
+on:
+  # Live, read-only, before merge: a PR that touches the Modal connection runs this (never the GPU test).
+  pull_request:
+    branches: [main]
+    paths:
+      - "server/cloudflare/modal_gpu.js"
+      - "tools/modal/**"
+      - ".github/workflows/che-modal-check.yml"
+      - ".github/workflows/che-modal-deploy.yml"
+  workflow_dispatch:
+    inputs:
+      endpoint:
+        description: The deployed che-gpu endpoint
+        type: string
+        default: https://vondada--che-gpu.us-east.modal.run
+      gpu_test:
+        description: Also run gpu_check once (one short T4 render of the default cube)
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: che-modal-deploy
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+      MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: c49b395e8f1138b5fae36ab88222542c
+      ENDPOINT: ${{ inputs.endpoint || 'https://vondada--che-gpu.us-east.modal.run' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: GitHub secrets (names and format only)
+        run: |
+          ok=1
+          for n in MODAL_TOKEN_ID MODAL_TOKEN_SECRET CLOUDFLARE_API_TOKEN; do
+            if [ -n "${!n:-}" ]; then echo "$n: present"; else echo "::error::$n: missing"; ok=0; fi
+          done
+          [[ "${MODAL_TOKEN_ID:-}" =~ ^ak-[A-Za-z0-9]{6,}$ ]] && echo "MODAL_TOKEN_ID format: ok (ak-…)" || echo "::warning::MODAL_TOKEN_ID is not in Modal's ak-… format"
+          [[ "${MODAL_TOKEN_SECRET:-}" =~ ^as-[A-Za-z0-9]{6,}$ ]] && echo "MODAL_TOKEN_SECRET format: ok (as-…)" || echo "::warning::MODAL_TOKEN_SECRET is not in Modal's as-… format"
+          [ "$ok" = 1 ]
+      - name: Install the Modal CLI
+        run: python3 -m pip install --quiet 'modal>=1.0,<2'
+      - name: Modal app and auth secret (names and state only)
+        run: |
+          python3 - <<'PY'
+          import json, subprocess, os
+          def cli(*args):
+              p = subprocess.run(["modal", *args], capture_output=True, text=True)
+              return p.returncode, p.stdout, p.stderr
+          summary = open(os.environ["GITHUB_STEP_SUMMARY"], "a")
+          code, out, err = cli("app", "list", "--json")
+          apps = json.loads(out) if code == 0 and out.strip().startswith("[") else []
+          mine = [a for a in apps if str(a.get("Description") or a.get("description") or a.get("name") or "") == "che-gpu"]
+          if code != 0:
+              print(f"::error::modal app list failed (exit {code}): {err.strip()[-300:]}")
+          for a in mine:
+              row = {k: a.get(k) for k in ("App ID", "Description", "State", "Tasks", "Created at", "Stopped at") if k in a}
+              print("che-gpu app:", json.dumps(row))
+          print(f"che-gpu app found: {bool(mine)} ({len(apps)} apps listed)")
+          summary.write(f"- Modal app che-gpu: {'found, ' + str(mine[0].get('State')) if mine else 'NOT found'}\n")
+          code, out, err = cli("secret", "list", "--json")
+          secrets = json.loads(out) if code == 0 and out.strip().startswith("[") else []
+          auth = [s for s in secrets if str(s.get("Name") or s.get("name") or "") == "che-gpu-auth"]
+          if code != 0:
+              print(f"::error::modal secret list failed (exit {code}): {err.strip()[-300:]}")
+          for s in auth:
+              print("che-gpu-auth secret:", json.dumps({k: s.get(k) for k in ("Name", "Created at", "Last used at") if k in s}))
+          print(f"che-gpu-auth secret found: {bool(auth)}")
+          summary.write(f"- Modal secret che-gpu-auth: {'present' if auth else 'NOT found'} (value never read)\n")
+          PY
+      - name: Worker secret MODAL_TOKEN (name only)
+        working-directory: server/cloudflare
+        run: |
+          out=$(npx --yes wrangler@4 secret list 2>&1) || { echo "::error::wrangler secret list failed"; echo "$out" | tail -n 5; exit 1; }
+          if echo "$out" | grep -q '"MODAL_TOKEN"'; then
+            echo "Worker secret MODAL_TOKEN: present"; echo "- Worker secret MODAL_TOKEN: present (value never read)" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "::warning::Worker secret MODAL_TOKEN: NOT present"; echo "- Worker secret MODAL_TOKEN: NOT present" >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Endpoint answers and refuses an unauthenticated request
+        run: |
+          code=$(curl -s -o /tmp/anon.json -w '%{http_code}' --max-time 120 "$ENDPOINT/health" || true)
+          echo "Unauthenticated $ENDPOINT/health: HTTP $code $(head -c 120 /tmp/anon.json)"
+          echo "- Unauthenticated /health: HTTP $code (401 is correct: the app is up and requires the token)" >> "$GITHUB_STEP_SUMMARY"
+          [ "$code" = "401" ] || echo "::warning::expected 401 from an unauthenticated request, got $code"
+      - name: GPU test (gpu_check once on the deployed app)
+        if: inputs.gpu_test
+        run: |
+          python3 - <<'PY'
+          import json, os, time, modal
+          f = modal.Function.from_name("che-gpu", "gpu_check")
+          t = time.time()
+          call = f.spawn()
+          r = call.get(timeout=900)
+          r["wall_seconds"] = round(time.time() - t, 1)
+          r["function_call_id"] = call.object_id
+          print(json.dumps(r))
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as s:
+              s.write("### GPU test (gpu_check)\n```\n" + json.dumps(r, indent=1) + "\n```\n")
+          assert r.get("ok"), "gpu_check did not render on a GPU"
+          PY

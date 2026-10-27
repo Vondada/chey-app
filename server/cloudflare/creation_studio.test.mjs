@@ -18,6 +18,33 @@ const GPU = 'Tesla T4, 550.54.15, 15360 MiB';
 const DEV = "DEVICE OPTIX ['Tesla T4'] 384x480";
 const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3, 4]);
 
+test('retrying Render after reopening reuses a completed version instead of submitting a duplicate', async () => {
+  const s = setup();
+  const p = (await s.call('/api/creations', 'POST', {base:'che'})).body.project;
+  const a = (await s.call(`/api/creations/${p.id}/generate`, 'POST', {})).body;
+  const jobs = await s.storage.get('gpu:jobs');
+  jobs.find(j => j.id === a.job.id).state = 'completed';
+  await s.storage.put('gpu:jobs', jobs);
+  const b = (await s.call(`/api/creations/${p.id}/generate`, 'POST', {})).body;
+  assert.equal(b.job.id, a.job.id);
+  assert.equal(b.duplicate, true);
+});
+
+test('undo followed by a divergent edit never reuses the abandoned version render', async () => {
+  const s = setup();
+  const p = (await s.call('/api/creations', 'POST', {base:'che'})).body.project;
+  const path = `/api/creations/${p.id}`;
+  await s.call(`${path}/edit`, 'POST', {text:'make the nose wider'});
+  const a = (await s.call(`${path}/generate`, 'POST', {})).body;
+  await s.call(`${path}/undo`, 'POST', {});
+  await s.call(`${path}/edit`, 'POST', {text:'make the nose narrower'});
+  const b = (await s.call(`${path}/generate`, 'POST', {})).body;
+  assert.notEqual(b.job.id, a.job.id);
+  assert.notEqual(b.job.request_key, a.job.request_key);
+  const retry = (await s.call(`${path}/generate`, 'POST', {})).body;
+  assert.equal(retry.job.id, b.job.id);
+});
+
 /** A minimal valid GLB v2: 12-byte header, one JSON chunk. */
 function glb(extra = 0) {
   const jsonText = JSON.stringify({ asset: { version: '2.0' }, pad: 'x'.repeat(extra) });
@@ -163,7 +190,7 @@ test('edits make versions; undo, redo and save move through them; view commands 
 
   const outfit = await call(`/api/creations/${p.id}/edit`, 'POST', { text: 'Change the outfit' });
   assert.equal(outfit.body.changed, true);
-  assert.match(outfit.body.applied[0], /^Outfit colour changed to .*do not show clothes yet/);
+  assert.match(outfit.body.applied[0], /^Outfit colour changed to .*The full-body model's top uses this colour/);
   assert.notEqual(outfit.body.project.params.outfit.color, p.params.outfit.color);
 
   const photo = await call(`/api/creations/${p.id}/edit`, 'POST', { text: 'make it stylized' });
@@ -226,8 +253,8 @@ test('the edit vocabulary maps plain sentences to valid preset changes, and refu
   assert.deepEqual(parseEdit('side view', che, 'photoreal').viewport, { action: 'view', deg: 90 });
   // CHE's hair is already the longest style.
   assert.match(parseEdit('make the hair longer', che, 'photoreal').unsupported[0], /already as long/);
-  // A not-built style says so honestly.
-  assert.match(parseEdit('make the hair shorter', che, 'photoreal').applied[0], /not built yet, so the model and previews show it close-cropped/);
+  // A style the bust has no strands for says so honestly (the full-body model builds every style).
+  assert.match(parseEdit('make the hair shorter', che, 'photoreal').applied[0], /full-body model has it; the head-and-shoulders preview shows it close-cropped/);
   // Lighter skin until the renderer's albedo limit: refused, never saved invalid.
   let p = BUILT_IN.find((x) => x.id === 'iris');
   let refused = false;

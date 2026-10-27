@@ -148,3 +148,12 @@ export function cloudDailyLimit(error, now = Date.now()) {
     retry_after_s: Math.ceil((reset.getTime() - now) / 1000),
   };
 }
+
+/**
+ * A short, non-secret cause for a failed Flagstaff reply, for the owner's receipt and the stored record. Only a
+ * known category is shown; anything else is "unclassified", never the raw error text (which can hold private data).
+ */
+export function flagstaffFailureCause(error) {
+  const category = String(error?.category || '');
+  return ERROR_CATEGORIES.includes(category) ? category : 'unclassified';
+}

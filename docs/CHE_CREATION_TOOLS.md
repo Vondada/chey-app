@@ -168,6 +168,99 @@ R15. Then import `walk_r15.fbx` in the Animation Editor. CHE serves both at `/ap
 - **Stop.** Code Studio lists the Creation Engine's waiting and running builds with a Stop each and a "Stop the job" button; voice "stop the job" stops the one active job or reads a numbered list. It uses the queue's existing cancel; a running build's worker gets `stop` at its next heartbeat (≤ 30 s) and ends Blender, and that heartbeat is recorded (`stop_confirmed_at`), so Refresh reports the real outcome. A running coding job still cannot be cancelled (existing rule), and Code Studio says so.
 - **CI.** Roblox and benchmark workflows were already green (runs 40135088487, 40134296546). Added: the benchmark now also runs when `mpfb_body.py` changes; `flutter-check.yml` now runs the worker scripts' Python tests (`test_che_creation_job`, `test_che_gpu_worker`, `test_che_gpu_face_preview`, `test_che_gpu_push_results`, `test_avatar_body_verify`) and `test_cc0_textures`, which no workflow ran before.
 
+## Reference photo, body shape and hair (2026-10-25, lane/char-photo)
+
+Contract: `docs/CHE_CHARACTER_REALISM_CHECKLIST.md` (job setting `REFERENCE`, receipt `reference_fit` and
+`device_summary`). Everything below is free and local: Blender, CC0 MakeHuman/MPFB2 data, an Apache-2.0 landmark model,
+the CPU. No account, key or paid service.
+
+- **Landmarks: MediaPipe Face Landmarker.** pip `mediapipe==1.1.1` (Apache-2.0, github.com/google-ai-edge/mediapipe)
+  and `face_landmarker.task` float16 v1 from
+  `storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task`
+  (3,758,596 bytes, SHA-256 `64184e22…bc9ff`, pinned in `tools/avatar_face/photo_fit.py`, checked on every use). Licence
+  read from the three model cards the task file bundles (Face Mesh V2, Blendshape V2, BlazeFace short range): each says
+  "LICENSED UNDER Apache License, Version 2.0". 478 landmarks and the head pose per face, on the CPU, about 0.3 s.
+  The native library needs `libEGL.so.1` (`libegl1`, already installed by the worker).
+- **Refusals** (exit 2 for the job, receipt `status: reference_refused` with the reason): no face; more than one face;
+  eyes closer than 28 px; head turned or tilted more than 20 degrees (pose matrix and a 2D nose-centring check); a photo
+  whose SHA-256 differs from `REFERENCE.sha256`; no consent (`self` or `fictional`).
+- **Shape fit, measured not assumed.** Landmarks in the eye frame (origin between the irises, unit = their distance).
+  A detector reports only part of a shape change, so mapping its points straight onto mesh vertices under-read every
+  slider (first attempt: errors up to 0.6 and wrong signs). Instead `photo_calibration.npz` records how the detector's
+  468 landmarks move per slider on 28 synthetic renders (base, each frontal slider at +-0.6, three colour renders;
+  `make_photo_fixtures.py --calibrate`), and the sliders are fitted by coordinate descent against that response, with a
+  pull to the average and a +-0.8 bound. Fitted: `head_w, chin_h, mouth_w, mouth_up, lip_lower, nose_h` (the sliders a
+  frontal photo moves by at least 0.018 eye gaps per unit). Not fitted, left at the average and listed in the receipt as
+  `not_measured`: `nose_w`, `nose_flare`, `chin_w`, `cheek_bones`, `lip_upper` (the detector barely sees them; fitting
+  `nose_w` gave the wrong sign on 3 of 4 fixtures), `nose_up` (trades against `nose_h` in a frontal view) and every depth
+  slider. A render-in-the-loop refinement (re-render the fit, re-detect, Gauss-Newton with re-measured responses) was
+  tried and dropped: 5 minutes per photo on this CPU and no better sliders.
+- **Measured on synthetic fixtures** (`tools/fixtures/photo_fit`, `test/fixtures/character/synthetic_face.png`;
+  renders of the CC0 base with known values, never a real person): mean absolute slider error over the fitted sliders
+  0.081 (wide), 0.156 (long), 0.090 (narrow_nose), 0.143 (synthetic_face); worst single slider 0.36 (`nose_h` on
+  synthetic_face). Colours (max sRGB channel difference): skin 3-16, hair 5-20, iris 18-46. These are renders under the
+  calibration light; a real photo's lens, light and expression add error the fixtures cannot measure, so the receipt
+  always calls the result an approximate likeness.
+- **In the person job** (`che_gpu_face_preview.py`, STAGE reference): the worker fetches the photo from
+  `/api/gpu/worker/reference` with its own credential, checks the SHA-256 and passes a private temporary file
+  (`che_gpu_worker.py reference_photo`, deleted after the job). The fit is cached in the job folder by SHA-256
+  (`reference_fit_<sha16>.json`); the job id hashes the SHA-256, never the URL; the photo is never copied into the job
+  folder. The fitted sliders replace CHE's built-in face features (`FIT`, `FIT_W=1`, `FACE` cleared unless the job set
+  it); the photo's colours apply unless the job set that colour itself.
+- **Body macros** (`mpfb_base.macro_from_settings`): `BODY_GENDER, BODY_AGE, BODY_HEIGHT, BODY_WEIGHT, BODY_MUSCLE,
+  BODY_PROPORTIONS` (0..1; `BODY_PROPORTIONS` 0.5 is today's half-way-to-ideal look). With none set the body is
+  byte-for-byte the previous `macro_woman` body (test). Measured on saved GLBs: height 1.305 m (`BODY_HEIGHT 0`),
+  1.672 m (default), 2.395 m (`BODY_HEIGHT 1`); waist width 0.156 m (weight and muscle 0) vs 0.199 m (both 1); the rig
+  check (`verify_glb.py`) passes at every extreme.
+- **Hair as meshes** (`mpfb_body.py hair_style`): every style in `identity.HAIR_BUILT` (`long_wavy, wavy_medium,
+  bun_high, bun_low, curly_short, afro, beanie, close_crop`) is a mesh in the GLB, rigid to the head bone, in
+  `HAIR_SRGB`. Measured hair vertices: close_crop 283, buns 893, long/medium 1,018, curly/afro/beanie 1,201. The bust
+  preview (`mpfb_dress.py`) still has strands only for long_wavy and shows other styles close-cropped.
+- **`OUTFIT_TOP=t_shirt`** builds short sleeves; the other tops (hoodie, sweater, shirt, coat, blazer, jacket) are recorded
+  in the GLB (`asset.extras.che_character.outfit_top`) and built as the long-sleeved top (`outfit_top_built`).
+- **What built the GLB** is written into it: `asset.extras.che_character` (face sliders, FACE targets, body macros,
+  hair style, reference SHA-256, outfit). `tools/avatar_body/glb_inspect.py` reads it and measures the file without
+  Blender: height, chest/waist/hip widths, face widths, hair meshes and vertices, garment materials, joints, clips.
+- **Realism pass:** the eye was one orange blot (a 32x16 sphere with its pole pointing up smeared the iris vertex
+  colours); now a 48x40 sphere looks forward with a round pupil, iris, limbal ring and an off-white sclera. The
+  hairline was a saw-tooth (the cap's edge stepped from 3 mm to full thickness at one ring of quads); it now thins over
+  three rings and its edge loop is smoothed. Both change the default GLB's bytes (the eye adds 2,784 vertices).
+
+## Looks, brows, lashes and calibrated skin (2026-10-25, lane/char-photo)
+The Create Room demo close-ups showed "warm brown skin, a woman in her thirties" as a pale, childlike face under a
+helmet-like cap, with no brows or lashes, and three looks that barely differed. Causes found and fixed (all measured
+on local builds with the PyPI `bpy` 5.0.1 module and MPFB2 at the CI's pinned commit; the CI CPU worker has not run
+this code yet):
+- Pale skin: the studio light at Blender's default exposure under AgX doubled skin luminance and halved its saturation.
+  `render_glb.py` now renders at exposure -0.6 EV with the AgX Punchy look. Cheek of albedo 110,66,44: 181,131,108
+  (luma 140, HSV saturation 0.40) before, 128,81,57 (luma 89, saturation 0.56) after.
+- Settings: the demo's `characters.json` was hand-written (no hair style, MATURE 0.05 = 27 years, an outfit colour the
+  parser did not know). Its base is now generated by `tools/demo/describe_settings.mjs` through `describePerson`, the
+  path the Create button uses; `creation_demo_settings.test.mjs` fails when they drift. Parser fixes: clothing colours
+  (terracotta, charcoal, olive, burgundy, khaki ...; an unknown colour used to take the next palette colour silently),
+  green-brown/brown-green eyes, "round face", and a trousers colour sent as TROUSERS_SRGB.
+- Brows and lashes: meshes in the GLB (`mpfb_body.py brows_and_lashes`). Brows follow an arched, tapering curve above
+  each eye projected onto the face; lashes are MakeHuman's own lash helper geometry. Both get the face morphs by
+  nearest-vertex transfer and are keyed in the idle, wave and talk clips (lash blink 8.1 mm, brows_up 4.7 mm).
+- Hair: hair cards over the cap, swept back from a parting point; the cap is thinner with a 0.8 mm edge (crown
+  12.4 mm above the scalp for medium wavy hair, 10.9 mm for a close crop including strands; 16.9 mm before).
+- Looks (`character_style.py`, written to the GLB as `che_character.style_spec`):
+
+| | hyperrealistic | game-like | stylized |
+|---|---|---|---|
+| head scale (eye spacing / height) | 1.00 (0.0350) | 1.07 (0.0371) | 1.18 (0.0403) |
+| skin roughness / specular | 0.50 / 0.35 | 0.64 / 0.22 | 0.88 / 0.06 |
+| colour saturation (sRGB) / emissive share | 1.0 / 0 | 1.1 / 0.04 | 1.2 / 0.14 |
+| brows (GLB vertices) | strands (2128) | tufts (1064) | solid ribbon (144) |
+| hair cards (vertices) | fine (9610) | clumps (3790) | chunks (682) |
+| render shading | subsurface skin | game PBR, no subsurface | toon (2 bands) |
+
+  Mean absolute pixel difference between the looks' face close-ups: 12.7 (photoreal-hybrid), 19.1 (hybrid-stylized),
+  23.5 (photoreal-stylized) out of 255; before: 0.2, 3.3, 3.5.
+- Limits: hair is still a shaped cap plus cards and a flat curtain, not strand hair; brows and lashes are opaque cards
+  (no alpha textures); the toon look is a Cycles render-time shader, while glTF viewers only see the stylized
+  materials (matte, saturated, emissive) and proportions. Build time on 4 local CPU threads: 9-11 s per look.
+
 ## Next steps (not done)
 
 1. Run the GitHub-runner benchmark (automatic on the PR) and replace the local numbers above with its clean ones.

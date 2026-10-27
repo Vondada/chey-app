@@ -21,7 +21,7 @@ import { groundedReply } from './personal_recall.js';
 import { redactGoogleIds } from './research_memory.js';
 import { guardEngineClaims, guardSoulClaims } from './soul.js';
 import { guardCitations } from './source_verification.js';
-import { guardClaimedOwnerActions, guardClaimedResearchActions, guardExecutionClaims, guardOwnerReply, recordReceipt, verifiedStatusText } from './truth_layer.js';
+import { guardClaimedOwnerActions, guardClaimedResearchActions, guardExecutionClaims, validateCodingEvidence, guardOwnerReply, recordReceipt, verifiedStatusText } from './truth_layer.js';
 
 const userTurns = (history, n) => (Array.isArray(history) ? history : []).filter((turn) => turn?.role === 'user').slice(-n).map((turn) => String(turn.content ?? turn.text ?? ''));
 
@@ -164,8 +164,9 @@ export const TRUTH_STAGES = Object.freeze([
   } },
   // Final owner-facing boundary: keep internal provider/model failover chatter out of chat and TTS.
   { name: 'execution_claims', run(reply, ctx) {
-    const guard = guardExecutionClaims(sanitizeOwnerText(reply, { truncate: false }), { message: ctx.rawMessage, receipts: ctx.skillResults.map((r) => r.execution_receipt), documentRead: ctx.shared.documentRead, verifiedText: ctx.brainContext });
-    return { text: guard.text, removed: guard.removed };
+    const coding = validateCodingEvidence(sanitizeOwnerText(reply, { truncate: false }), { message: ctx.rawMessage });
+    const guard = guardExecutionClaims(coding.text, { message: ctx.rawMessage, receipts: ctx.skillResults.map((r) => r.execution_receipt), documentRead: ctx.shared.documentRead, verifiedText: ctx.brainContext });
+    return { text: guard.text, removed: [...(coding.ok === false || coding.cleaned ? [{ rule: coding.reason || 'internal_memory_block', sentence: reply }] : []), ...guard.removed] };
   } },
   // Hallucination auditor: each completion claim must match a receipt from this request. An unreadable evidence
   // list fails closed. This stage writes the one ledger entry for the whole pipeline.
@@ -173,7 +174,7 @@ export const TRUTH_STAGES = Object.freeze([
   { name: 'auditor', async run(reply, ctx) {
     const fiction = storyRequested(ctx.rawMessage);
     try {
-      const audit = auditReply(reply, { evidence: await auditEvidenceFrom(ctx.storage, { executions: ctx.skillResults.map((r) => r.execution_receipt) }), requestId: ctx.requestId, fiction });
+      const audit = auditReply(reply, { evidence: await auditEvidenceFrom(ctx.storage, { executions: ctx.skillResults.map((r) => r.execution_receipt), requestId: ctx.requestId }), requestId: ctx.requestId, fiction });
       if (audit.outcome === 'corrected' || audit.outcome === 'blocked') console.log('CHE hallucination auditor', audit.outcome, JSON.stringify(audit.claims).slice(0, 400));
       await recordAudit(ctx.storage, [...ctx.shared.removals, ...audit.entries]);
       ctx.shared.audit = audit;

@@ -1,0 +1,112 @@
+name: CHE live Worker log capture
+
+# Run by hand. Captures the live Worker's logs with `wrangler tail` while it
+# calls the paper trading probe and the memory probe, then saves the
+# redacted log as an artifact. Read-only apart from rotating the probe token
+# (the same token step as che-trading-probe.yml). Paper only.
+on:
+  workflow_dispatch:
+    inputs:
+      seconds:
+        description: How long to capture (30-180)
+        type: number
+        default: 90
+
+permissions:
+  contents: read
+
+# Shares the production deploy's group: the deploy writes CHE_VOICE_PROBE_TOKEN too,
+# so a probe must never run while a deploy is writing it.
+concurrency:
+  group: che-worker-deploy
+  cancel-in-progress: false
+
+jobs:
+  capture:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: c49b395e8f1138b5fae36ab88222542c
+      CHE_LIVE_BASE: https://chey-app.henryjavoni.workers.dev
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Make a new probe token and store it on the production Worker
+        working-directory: server/cloudflare
+        run: |
+          token="$(openssl rand -hex 32)"
+          echo "::add-mask::$token"
+          printf '%s' "$token" | npx --yes wrangler@4 secret put CHE_VOICE_PROBE_TOKEN
+          echo "CHE_VOICE_PROBE_TOKEN=$token" >> "$GITHUB_ENV"
+          sleep 20
+
+      - name: Capture logs while the probes run
+        working-directory: server/cloudflare
+        env:
+          SECONDS_TO_CAPTURE: ${{ inputs.seconds }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/logs"
+          secs="${SECONDS_TO_CAPTURE:-90}"
+          if [ "$secs" -lt 30 ] || [ "$secs" -gt 180 ]; then secs=90; fi
+          timeout "$((secs + 20))" npx --yes wrangler@4 tail chey-app --format json > "$RUNNER_TEMP/logs/tail.jsonl" 2> "$RUNNER_TEMP/logs/tail.err" &
+          tail_pid=$!
+          sleep 25
+          for path in /api/trading/probe; do
+            curl -s -o "$RUNNER_TEMP/logs/probe-$(basename $path).json" -w "$path HTTP %{http_code}\n" -X POST -H "Authorization: Bearer $CHE_VOICE_PROBE_TOKEN" "$CHE_LIVE_BASE$path" || true
+          done
+          sleep "$secs"
+          kill "$tail_pid" 2>/dev/null || true
+          wait "$tail_pid" 2>/dev/null || true
+          # Redact anything that looks like a credential or an e-mail address.
+          for f in "$RUNNER_TEMP/logs/tail.jsonl" "$RUNNER_TEMP/logs/tail.err"; do
+            [ -f "$f" ] && sed -E 's/(Bearer |token[=:" ]+)[A-Za-z0-9._-]{12,}/\1[redacted]/Ig; s/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/[email]/g' "$f" > "$f.redacted" && mv "$f.redacted" "$f"
+          done
+          # Tally real outcomes from the captured events (wrangler tail JSON).
+          python3 - "$RUNNER_TEMP/logs/tail.jsonl" <<'PY'
+          import json, sys, collections
+          # wrangler tail writes pretty-printed JSON objects back to back, not one per line.
+          text = open(sys.argv[1], encoding="utf-8", errors="replace").read()
+          decoder = json.JSONDecoder()
+          counts, messages, pos, bad = collections.Counter(), [], 0, 0
+          while True:
+              while pos < len(text) and text[pos].isspace():
+                  pos += 1
+              if pos >= len(text):
+                  break
+              try:
+                  event, pos = decoder.raw_decode(text, pos)
+              except ValueError:
+                  bad += 1
+                  nxt = text.find("\n", pos)
+                  pos = len(text) if nxt < 0 else nxt + 1
+                  continue
+              if not isinstance(event, dict):
+                  counts["non-object"] += 1
+                  continue
+              if not isinstance(event, dict):
+                  counts["non-object line"] += 1
+                  continue
+              counts[str(event.get("outcome"))] += 1
+              for exc in event.get("exceptions") or []:
+                  if len(messages) < 10:
+                      text_ = exc.get("message") if isinstance(exc, dict) else exc
+                      messages.append(str(text_ or exc)[:200])
+          print(f"events: {sum(counts.values())} (undecodable segments: {bad})")
+          print("outcomes: " + ", ".join(f"{k}={v}" for k, v in sorted(counts.items())))
+          for m in messages:
+              print("exception: " + m)
+          PY
+
+      - name: Keep the captured logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: che-worker-logs-${{ github.run_id }}
+          path: ${{ runner.temp }}/logs
+          if-no-files-found: warn
+          retention-days: 14

@@ -38,6 +38,7 @@ import 'security/che_session_store.dart';
 import 'brain/che_brain_ledger_screen.dart';
 import 'brain/che_brain_overview.dart';
 import 'brain/che_brain_regions.dart' show CheBrainNav, CheBrainSourceKind, CheBrainSourceLink;
+import 'brain/che_brain_reliability_screen.dart';
 import 'brain/che_brain_truth_screen.dart';
 import 'rooms/che_cloud_computer_room.dart';
 import 'brain/che_brain_list.dart' show CheBrainRecordLinks;
@@ -77,6 +78,7 @@ import 'che_wake_match.dart';
 import 'che_voice_health.dart';
 import 'che_voice_state.dart';
 import 'che_local_voice_loop.dart';
+import 'che_private_voice.dart';
 import 'che_cloud_voice_picker.dart';
 import 'che_voice_studio.dart';
 import 'che_voice_ui.dart';
@@ -84,6 +86,7 @@ import 'che_app_portal.dart';
 import 'che_video.dart';
 import 'che_creations.dart';
 import 'avatar/che_character_generator.dart';
+import 'world/che_world_population_panel.dart';
 import 'rooms/che_invention_studio.dart';
 import 'rooms/che_invention_viewer.dart';
 import 'che_ui/che_showroom.dart';
@@ -102,6 +105,7 @@ import 'create/che_creative_studio.dart';
 import 'create/che_project_manager.dart';
 import 'create/che_creation_engine_page.dart';
 import 'create/che_gpu_browser.dart';
+import 'create/che_gpu_connect.dart';
 import 'create/che_live_studio.dart';
 import 'agents/che_agent_runtime.dart';
 import 'agents/che_office_floor_screen.dart';
@@ -132,12 +136,14 @@ import 'che_ui/che_log.dart' show CheTranscriptScreen;
 import 'home/che_home_chat.dart';
 import 'home/screen_command.dart';
 import 'home/che_inline_preview.dart';
+import 'home/che_chat_media.dart';
 import 'home/che_grok_chat_screen.dart';
 import 'home/che_mockup_home.dart';
 import 'home/che_home_tiles.dart';
 import 'home/che_flagstaff_banner.dart';
 import 'home/che_more_tab.dart';
 import 'home/che_connections_screen.dart';
+import 'home/che_broker_return.dart';
 import 'home/che_projects_board.dart';
 import 'home/che_memory_brain.dart';
 import 'che_ui/che_phone_shell.dart';
@@ -171,9 +177,13 @@ import 'rooms/che_art_studio.dart';
 import 'rooms/che_theater_room.dart';
 import 'rooms/che_workshop_room.dart';
 import 'security/che_app_permissions.dart';
+import 'connect/che_service_onboarding.dart';
 import 'security/che_password_vault.dart';
 import 'security/che_vault_auth.dart';
 import 'browser/che_browser.dart' show CheBrowserActions, CheBrowserScreen;
+import 'browser/che_form_filler.dart' show CheFormFillVoice;
+import 'browser/che_master_profile.dart';
+import 'browser/che_master_profile_screen.dart';
 import 'browser/che_video_voice.dart';
 import 'browser/che_embedded_app_shell.dart' show CheEmbeddedAppAnnouncer;
 import 'brain/che_brain_space.dart' show CheBrainSpaceController;
@@ -540,6 +550,8 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
   Timer? _proactiveTimer;
 
   StreamSubscription<Map<String, dynamic>>? _nativeIosVoiceSub;
+  // Links opened into CHE (che://), such as the return from Tradovate's sign-in page.
+  StreamSubscription<Uri>? _deepLinkSub;
   bool _nativeIosVoiceActive = false;
   // True while native iOS recognition is taking ownership of the microphone.
   // speech_to_text callbacks can fire during cancellation; this prevents those
@@ -705,6 +717,19 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
     await Navigator.of(context).push(MaterialPageRoute<void>(
       builder: (_) => CheBrainTruthScreen(
         client: CheBrainTruthClient(baseUrl: cheAgentBaseUrl, headers: () => _authHeaders),
+        onSpeak: (text) => unawaited(speakText(text, record: false, readOnDemand: true)),
+        onListen: () => unawaited(toggleListening()),
+      ),
+    ));
+  }
+
+  /// More → Reliability Registry: every recorded test of CHE, by session and question, with grades and evidence
+  /// (also asked in chat: "what take are we on?", "open the test registry").
+  Future<void> _openBrainReliability() async {
+    HapticFeedback.selectionClick();
+    await Navigator.of(context).push(MaterialPageRoute<void>(
+      builder: (_) => CheBrainReliabilityScreen(
+        client: CheReliabilityClient(baseUrl: cheAgentBaseUrl, headers: () => _authHeaders),
         onSpeak: (text) => unawaited(speakText(text, record: false, readOnDemand: true)),
         onListen: () => unawaited(toggleListening()),
       ),
@@ -1141,6 +1166,8 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
   Map<String, String>? _pendingAttachment;
   String? _streamMediaUrl;
   String? _streamMediaType;
+  // The saved media ID, thumbnail and library list of the reply (che_chat_media.dart), shown as tiles under it.
+  Map<String, String> _streamMediaExtra = {};
   // How CHE read a held or multi-step turn (issue #345), shown quietly under the reply.
   String? _streamUnderstoodAs;
   // The reply's Soul and engine provenance (Response Details → Personality), from its done event.
@@ -1441,6 +1468,7 @@ OWNER AGENCY
     _screenToken = CheScreenAwareness.register(context, _shellScreenReport);
     unawaited(CheNotifications.requestPermission());
     unawaited(_syncUiVoicePrefs());
+    unawaited(ChePrivateVoice.load());
     CheUiPreferences.instance.addListener(_onUiPrefsChanged);
     WidgetsBinding.instance.addObserver(this);
     // No wake listening at launch: the mic opens only from the mic button,
@@ -1452,6 +1480,7 @@ OWNER AGENCY
     _wireBrowser();
     initializeVoice();
     _loadSecuritySession();
+    _deepLinkSub = CheDeepLinks.listen(_onDeepLink);
     // The Rithmic session the owner left on comes back by itself (login from the on-device vault; off after Disconnect).
     if (!kIsWeb) unawaited(cheRithmicResume());
     _jobPollTimer = Timer.periodic(const Duration(seconds: 15), (_) {
@@ -1581,6 +1610,7 @@ OWNER AGENCY
 
   @override
   void dispose() {
+    unawaited(_deepLinkSub?.cancel());
     CheScreenAwareness.unregister(_screenToken);
     CheUiPreferences.instance.removeListener(_onUiPrefsChanged);
     WidgetsBinding.instance.removeObserver(this);
@@ -1704,6 +1734,11 @@ OWNER AGENCY
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
+        // Private voice: one quiet line while it is on (never spoken by itself).
+        ChePrivateVoiceBanner(onTurnOff: () {
+          controller.text = 'turn off private voice';
+          unawaited(sendMessage());
+        }),
         ChePatchBanner(onSpeak: (text) => speakText(text, record: false, readOnDemand: true)),
         CheJobActivityBanner(
           fetch: (path, body) => _postAgentJson(path, body),
@@ -1789,6 +1824,7 @@ OWNER AGENCY
       onConnectRithmic: () => unawaited(_openRithmic()),
       onOpenCreate: () => _openAssistantHub(tab: 5),
       onOpenWorld: () => _goShellTab(3),
+      onOpenRecordingStudio: () => unawaited(_openRecordingStudio()),
       onOpenSecurity: () => unawaited(_openSecurity()),
       onOfficeStatus: () => unawaited(_speakOfficeStatus()),
       onTapAgent: (agent) => _openOfficeFloor(agentName: agent.name),
@@ -2268,6 +2304,11 @@ OWNER AGENCY
               }());
             }
           },
+          onPrivateVoiceChanged: (on) {
+            if (!mounted) return;
+            controller.text = on ? 'turn on private voice' : 'turn off private voice';
+            unawaited(sendMessage());
+          },
           onVoiceVolumeChanged: (_) {
             unawaited(flutterTts.setVolume(CheUiPreferences.instance.voiceVolume));
           },
@@ -2287,14 +2328,32 @@ OWNER AGENCY
     await Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => const CheRithmicScreen()));
   }
 
-  Future<void> _openConnections({String autoConnect = ''}) async {
+  // che://broker/tradovate: back from Tradovate's sign-in. An open Connections page re-checks and
+  // reports; otherwise Connections opens and does. Other links are ignored.
+  void _onDeepLink(Uri uri) {
+    final back = CheBrokerReturn.parse(uri);
+    if (back == null) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final open = CheConnectionsVoice.brokerReturn;
+      if (open != null) {
+        unawaited(open(back.result));
+      } else {
+        unawaited(_openConnections(brokerReturn: back.result));
+      }
+    });
+  }
+
+  Future<void> _openConnections({String autoConnect = '', String brokerReturn = ''}) async {
     await Navigator.of(context).push(MaterialPageRoute<void>(
       builder: (_) => CheConnectionsScreen(
         baseUrl: cheAgentBaseUrl,
         headers: () => _authHeaders,
         autoConnect: autoConnect,
+        brokerReturn: brokerReturn,
         onSpeak: (line) => unawaited(speakText(line, record: false, readOnDemand: true)),
         onCloudComputer: _openCreationEngine,
+        onColabGpu: () => unawaited(_showGpuBrowser()),
         onVoiceSettings: _openVoiceSelector,
         onKeys: () {
           Navigator.of(context).pop();
@@ -2382,6 +2441,13 @@ OWNER AGENCY
           title: 'Truth & Verification',
           subtitle: 'What CHE verified, labelled inference or removed, from real audit records',
           onTap: () => unawaited(_openBrainTruth()),
+          hue: kit.CheColors.accent,
+        ),
+        CheMoreItem(
+          icon: Icons.fact_check_rounded,
+          title: 'Reliability Registry',
+          subtitle: 'Every test of CHE: sessions, questions, her replies and grades',
+          onTap: () => unawaited(_openBrainReliability()),
           hue: kit.CheColors.accent,
         ),
         CheMoreItem(

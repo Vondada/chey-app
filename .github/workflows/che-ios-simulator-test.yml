@@ -1,0 +1,52 @@
+name: CHE iOS simulator smoke test
+
+# Starts the real CHE app on an iOS simulator (macOS runner) and fails if it
+# throws during startup. Nothing is signed or published.
+#
+# Manual and informational only (owner, 2026-10-27): it is NOT a merge gate and
+# does not run on pull requests. The pre-merge gate is the live staging test
+# (che-worker-staging.yml, job "live (staging)") plus the release gate's
+# worker, flutter and coding jobs. Run this by hand from the Actions tab when a
+# change needs an on-simulator startup check.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  simulator:
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Use newest Xcode
+        run: |
+          latest="$(ls -d /Applications/Xcode_2[6-9]*.app 2>/dev/null | sort -V | tail -1 || true)"
+          if [[ -n "$latest" ]]; then sudo xcode-select -s "$latest/Contents/Developer"; fi
+          xcodebuild -version
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Bootstrap native projects
+        run: bash ./tool/bootstrap.sh
+
+      - name: Enable local AI + voice tuning bridge
+        run: python3 ./tool/patch_local_runtime.py
+
+      - name: Boot an iPhone simulator
+        id: sim
+        run: |
+          udid="$(xcrun simctl list devices available | grep -m1 -E 'iPhone 1[5-6]' | grep -oE '[0-9A-F-]{36}')"
+          test -n "$udid"
+          xcrun simctl boot "$udid" || true
+          xcrun simctl bootstatus "$udid" -b
+          echo "udid=$udid" >> "$GITHUB_OUTPUT"
+
+      - name: Run the smoke test on the simulator
+        run: flutter test integration_test/app_smoke_test.dart -d "${{ steps.sim.outputs.udid }}"

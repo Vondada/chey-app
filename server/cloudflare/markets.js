@@ -110,6 +110,8 @@ export function parseStooqCsv(text) {
   }).filter((row) => row.date && [row.open, row.high, row.low, row.close].every(Number.isFinite));
 }
 
+const CANDLE_FETCH_MS = 2500;
+
 export async function candles(symbol, fetcher = fetch, { store = null, background = null } = {}) {
   const clean = String(symbol || '').toLowerCase();
   if (!/^\^?[a-z0-9.]{1,12}$/.test(clean)) return { error: 'Unknown symbol.' };
@@ -120,7 +122,9 @@ export async function candles(symbol, fetcher = fetch, { store = null, backgroun
   };
   return cached(`candles:${clean}`, 10 * 60_000, async () => {
     try {
-      const text = await fetchText(`https://stooq.com/q/d/l/?s=${encodeURIComponent(clean)}&i=d`, fetcher);
+      // Foreground wait fits the live GET budget (perf_watch: 800 ms p95). A slow source keeps
+      // filling the cache in the background and answers 'still loading' now.
+      const text = await fetchText(`https://stooq.com/q/d/l/?s=${encodeURIComponent(clean)}&i=d`, fetcher, CANDLE_FETCH_MS);
       const rows = parseStooqCsv(text).slice(-40);
       if (!rows.length) return { symbol: clean, candles: [], error: 'No data from the delayed index source.' };
       return { symbol: clean, candles: rows, source: 'Stooq (delayed)' };

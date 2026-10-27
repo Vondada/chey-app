@@ -146,6 +146,14 @@ extension _CheHomeStreaming on _CHEHomeState {
       caseSensitive: false,
     ).firstMatch(trimmedRequest);
 
+    // Private voice: coding jobs and new projects are worked by outside AI
+    // services, so CHE says so instead of sending the words.
+    if (ChePrivateVoice.isOn && (codeRequest || (!installedSkillRequest && !terminalChatOnly && projectMatch != null))) {
+      const reply = 'Private voice is on, so I did not start that: coding jobs and new projects are worked on by outside AI services, and that would send your words to them. Nothing was sent. Say "turn off private voice" if you want me to go ahead.';
+      onPartial(reply);
+      return reply;
+    }
+
     if (!installedSkillRequest && !terminalChatOnly && !codeRequest && projectMatch != null) {
       var projectType = projectMatch.group(1)!.toLowerCase();
       if (projectType == 'site') projectType = 'website';
@@ -322,6 +330,9 @@ extension _CheHomeStreaming on _CHEHomeState {
       'explain_level': explainLevel,
       'reply_language': _replyLanguage,
       'plugin_recommendations': true,
+      // Private voice: the Worker answers with Cloudflare Workers AI only and
+      // refuses tools that would send these words to anyone else.
+      ...ChePrivateVoice.chatFields(),
       'client': {
         'platform': kIsWeb ? 'web' : 'flutter',
         'open_conversation': openConversation,
@@ -389,6 +400,7 @@ extension _CheHomeStreaming on _CHEHomeState {
     final complete = StringBuffer();
     _streamMediaUrl = null;
     _streamMediaType = null;
+    _streamMediaExtra = {};
     _streamUnderstoodAs = null;
     _streamResponseDetails = null;
     _streamRecordIds = const [];
@@ -486,8 +498,18 @@ extension _CheHomeStreaming on _CHEHomeState {
         if (data['open_screen'] == 'recording_studio' && data['source'] == 'che_recording_studio' && mounted) unawaited(_openRecordingStudio());
         // "Open your cloud computer": only the Cloud Computer Manager's own reply opens the room.
         if (data['open_screen'] == 'cloud_computer' && data['source'] == 'che_cloud_computer' && mounted) unawaited(_openCloudComputer());
+        // "How many characters live in CHE World?": the Worker's population answer also shows the three counts on screen.
+        if (data['open_screen'] == 'world_population' && data['source'] == 'che_world_population' && mounted) unawaited(_openWorldPopulation());
+        // "Connect GPU" matched by the Worker (/cloud-gpu connect): the owner's own command, so the flow may open Colab.
+        if (data['open_screen'] == 'gpu_connect' && data['source'] == 'che_cloud_computer' && mounted) {
+          _configureGpuConnect();
+          CheGpuConnect.instance.start('/cloud-gpu connect');
+          unawaited(_showGpuBrowser());
+        }
         // "Open Truth and Verification": only the Worker's own truth handler opens the Brain Room section.
         if (data['open_screen'] == 'brain_truth' && data['source'] == 'che_brain_truth' && mounted) unawaited(_openBrainTruth());
+        // "Open the test registry": only the Worker's registry handler opens the Reliability Registry.
+        if (data['open_screen'] == 'brain_reliability' && data['source'] == 'che_reliability_registry' && mounted) unawaited(_openBrainReliability());
         // Owner Improvements: a setting CHE changed applies here at once, and the app reports what it now uses.
         if (data['source'] == 'che_owner_improvement') {
           if (data['open_screen'] == 'owner_improvements' && mounted) unawaited(_openOwnerImprovements());
@@ -600,6 +622,21 @@ extension _CheHomeStreaming on _CHEHomeState {
         if (data['open_view'] == 'alpaca_paper' && mounted) {
           unawaited(Navigator.of(context).push(CheAlpacaPaperPage.route(baseUrl: () => cheAgentBaseUrl, headers: () => _authHeaders, onAsk: _runHubPrompt)));
         }
+        // "CHE, connect Hugging Face": only the Worker's onboarding reply opens the onboarding screen. The owner's
+        // own words named the service, so that is recorded as his permission for it before anything is opened.
+        final onboarding = data['onboarding'];
+        if (data['open_screen'] == 'service_onboarding' && data['source'] == 'che_onboarding' && onboarding is Map && mounted) {
+          final provider = '${onboarding['provider'] ?? ''}';
+          unawaited(CheAppPermissions.grant(provider == 'huggingface' ? 'hugging face' : provider).then((_) {
+            if (!mounted) return;
+            unawaited(Navigator.of(context).push(CheServiceOnboardingScreen.route(
+              baseUrl: cheAgentBaseUrl,
+              headers: () => _authHeaders,
+              onboarding: Map<String, dynamic>.from(onboarding),
+              onSpeak: (text) => speakText(text, record: false),
+            )));
+          }));
+        }
         // "Design a wearable robotics prototype…": the Worker made a plan; the Plan Room shows it.
         final planId = data['plan_id']?.toString().trim() ?? '';
         if (data['source'] == 'che_project_plan' && planId.isNotEmpty && data['follow_up'] == null && mounted) {
@@ -624,6 +661,9 @@ extension _CheHomeStreaming on _CHEHomeState {
           _streamMediaUrl = mediaUrl;
           _streamMediaType = mediaType;
         }
+        // A library answer lists several videos with no single media_url, so the media fields are read on their own.
+        final mediaExtra = cheChatMediaExtra(data);
+        if (mediaExtra.isNotEmpty) _streamMediaExtra = {..._streamMediaExtra, ...mediaExtra};
         // "Open it in 3D", "rotate it", "change the color": the Worker built or found the invention's saved 3D model.
         final inventionId = data['invention_id']?.toString().trim() ?? '';
         if (data['open_invention_3d'] == true && inventionId.isNotEmpty && mounted) {

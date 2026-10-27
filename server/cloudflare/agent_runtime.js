@@ -38,6 +38,10 @@ export const TASK_FINISHED = new Set(['complete', 'failed', 'cancelled', 'reject
 // Work an agent still holds: not finished and not blocked on a permission or credential.
 export const TASK_OPEN = new Set(['queued', 'running', 'reviewing', 'review_pending', 'needs_review']);
 export const MAX_REPAIR_PASSES = 2;
+// A coding-job mirror (atlas_coding_tasks.js) only reflects a data.jobs coding job. The Office cannot steer,
+// hand off, review or cancel it: none of that would reach the job, so it is refused instead of reported done.
+export const CODING_JOB_MIRROR_ERROR = 'That is a CHE coding job shown on the Office desk. The Office cannot steer, hand off, review or cancel it; it follows the coding job itself. Ask "coding status" for that job.';
+const isCodingMirror = (task) => task?.source === 'coding_job';
 export const MAX_REVIEW_ATTEMPTS = 3;
 export const MAX_WORK_RETRIES = 8;
 export const MAX_STALE_RECOVERIES = 3;
@@ -48,6 +52,12 @@ export function retryDelayMs(attempt, base = 60_000, cap = 3_600_000) {
 }
 
 /** CHE's review verdict: 'approved', 'needs_work', or null when the review said neither. */
+/** True when a new review says what the last one said (case and spacing ignored): a repair that changed nothing. */
+export function sameReviewFeedback(previous, next) {
+  const norm = (text) => String(text || '').toLowerCase().replace(/\s+/g, ' ').trim();
+  return Boolean(norm(previous)) && norm(previous) === norm(next);
+}
+
 export function reviewVerdict(review) {
   const first = (String(review || '').trim().split('\n')[0] || '').replace(/^\W*(?:(?:CHE\s+)?(?:verdict|review|decision)\s*[:\-]\s*)/i, '');
   // "Not approved" is a rejection, whatever follows it.
@@ -725,6 +735,7 @@ function matchedOfficeSkills(data, task, max = 3, agent = null) {
 export function steerAgentTask(data, taskId, instruction) {
   const task = data.team_tasks.find((item) => item.id === taskId);
   if (!task) return { error: 'Office task not found.' };
+  if (isCodingMirror(task)) return { error: CODING_JOB_MIRROR_ERROR, coding_job: true };
   if (TASK_FINISHED.has(task.status)) return { error: 'That task is already finished.' };
   const text = clip(instruction, 1200);
   if (!text) return { error: 'Steering instruction required.' };
@@ -763,7 +774,10 @@ export function cancelAgentTasks(data, agentName, reason = 'Owner stopped it.') 
   const name = String(agentName || '').toLowerCase();
   const agent = (data.team || []).find((a) => String(a.name || '').toLowerCase() === name && !a.retired);
   if (!agent) return { agent: null, cancelled: [] };
-  const cancelled = (data.team_tasks || []).filter((t) => t.partner_id === agent.id && TASK_OPEN.has(t.status));
+  const open = (data.team_tasks || []).filter((t) => t.partner_id === agent.id && TASK_OPEN.has(t.status));
+  // Coding-job mirrors are not cancelled here: that would not stop the real job (CODING_JOB_MIRROR_ERROR).
+  const kept = open.filter(isCodingMirror);
+  const cancelled = open.filter((t) => !isCodingMirror(t));
   const at = now();
   for (const task of cancelled) {
     task.status = 'cancelled';
@@ -771,13 +785,13 @@ export function cancelAgentTasks(data, agentName, reason = 'Owner stopped it.') 
     task.retry_at = null;
     task.updated_at = at;
   }
-  if (cancelled.length) {
+  if (cancelled.length && !kept.length) {
     agent.runtime_status = 'idle';
     agent.runtime_task = null;
     agent.runtime_updated_at = at;
     agent.status = 'available';
   }
-  return { agent, cancelled };
+  return { agent, cancelled, kept };
 }
 
 // "Review it again": a result CHE could not review goes back to CHE's review as is; the agent's
@@ -785,6 +799,7 @@ export function cancelAgentTasks(data, agentName, reason = 'Owner stopped it.') 
 export function requeueAgentReview(data, taskId) {
   const task = data.team_tasks.find((item) => item.id === taskId);
   if (!task) return { error: 'Office task not found.' };
+  if (isCodingMirror(task)) return { error: CODING_JOB_MIRROR_ERROR, coding_job: true };
   if (!['needs_review', 'review_pending'].includes(task.status) || !task.result) return { error: 'That task has no result waiting for review.' };
   task.status = 'review_pending';
   task.review_attempts = 0;
@@ -797,6 +812,7 @@ export function requeueAgentReview(data, taskId) {
 export function handoffAgentTask(data, taskId, targetAgentId, note = '') {
   const task = data.team_tasks.find((item) => item.id === taskId);
   if (!task) return { error: 'Office task not found.' };
+  if (isCodingMirror(task)) return { error: CODING_JOB_MIRROR_ERROR, coding_job: true };
   if (TASK_FINISHED.has(task.status)) return { error: 'That task is already finished.' };
   const target = data.team.find((item) => item.id === targetAgentId && !item.retired);
   if (!target) return { error: 'Target agent not found.' };
@@ -1020,19 +1036,24 @@ export function meetingView(meeting) {
 
 // ─── Execution (called from the Durable Object alarm) ───────────────────
 
-function agentSystemPrompt(agent, extra) {
+export function agentSystemPrompt(agent, extra) {
   return [
     `You are ${agent.name}, an AI agent on CHE's Office team. CHE is the Office Boss and your manager; you never address the owner directly. Report to CHE, accept steering, and hand finished work back for CHE review.`,
     `Role: ${agent.role}. Specialty: ${agent.specialty || 'general specialist work'}.`,
-    `Personality (stay in character, briefly): ${agent.personality}`,
+    `Personality (keep it: this is how you think and speak): ${agent.personality}`,
     agent.mission ? `Mission: ${agent.mission}` : '',
     agent.responsibilities?.length ? `Ongoing responsibilities: ${agent.responsibilities.join('; ')}` : '',
     agent.workspace?.notes?.length ? `Persistent workspace notes: ${agent.workspace.notes.slice(-8).join(' | ')}` : '',
-    agent.messages?.length ? `Recent Office messages: ${agent.messages.slice(-8).map((m) => `${m.from}: ${m.text}`).join(' | ')}` : '',
+    // Only the last few lines, clipped: a long history of chatter is what made the team repeat itself.
+    agent.messages?.length ? `Recent Office messages: ${agent.messages.slice(-3).map((m) => `${m.from}: ${clip(m.text, 160)}`).join(' | ')}` : '',
     'Deliver concrete, useful work: findings, decisions, risks, next actions. No filler.',
+    // How a teammate talks in the team chat (owner, 2026-10-26): plain working language, no performance.
+    'Work with your teammates: name the task by its title, say what you found, and give the next step and who owns it. Build on what holds up in a teammate\'s point, and add one new point or disagree with one specific claim rather than restating it.',
+    'Skip filler greetings and sign-offs. Do not address the owner directly. Never say you are an AI.',
     'Use verified prior results as evidence when they are relevant. Compare patterns, combine compatible lessons, and explain why the combination makes sense.',
     'Never promote an unverified prior result, memory, estimate or hypothesis into a fact.',
     'If a task asks for a backtest, benchmark, live quote, account number or measured result, use only supplied tool/connector output. If none exists, give the test method and label it UNTESTED instead of inventing numbers.',
+    'Never list files, uploads, record IDs, dates or past results unless they appear in the supplied context. If nothing was supplied, say that nothing was supplied; do not make up a list.',
     'Never claim you searched the web, ran code, traded, paid, or contacted anyone. You only have your own reasoning here unless a connected result is included; label assumptions.',
     extra || '',
   ].filter(Boolean).join('\n');
@@ -1119,9 +1140,10 @@ async function runOneTask(ctx) {
   if (data.autonomy === false) return false;
   const due = (item) => !item.retry_at || item.retry_at <= Date.now();
   const oldestFirst = [...data.team_tasks].reverse();
-  const pendingReview = oldestFirst.find((item) => item.status === 'review_pending' && due(item));
+  const pendingReview = oldestFirst.find((item) => item.status === 'review_pending' && due(item) && !isCodingMirror(item));
   if (pendingReview) return reviewDelegatedResult(ctx, pendingReview.id);
-  const task = oldestFirst.find((item) => item.status === 'queued' && due(item));
+  // A coding-job mirror (atlas_coding_tasks.js) only reflects data.jobs; the Office never runs it.
+  const task = oldestFirst.find((item) => item.status === 'queued' && due(item) && item.source !== 'coding_job');
   if (!task) return false;
   const agent = data.team.find((item) => item.id === task.partner_id);
   if (!agent) {
@@ -1333,7 +1355,8 @@ async function reviewDelegatedResult(ctx, taskId, { saved = false } = {}) {
   const { env, load, save, notify, models } = ctx;
   let data = await load();
   const t0 = data.team_tasks.find((item) => item.id === taskId);
-  if (!t0) return true;
+  // A coding-job mirror is complete only on merge proof (atlas_coding_tasks.js), never on a model's approval.
+  if (!t0 || isCodingMirror(t0)) return true;
   const agent = data.team.find((item) => item.id === t0.partner_id) || { name: t0.partner_name || 'Office agent' };
   const result = t0.result || '';
   const task = { task: t0.task };
@@ -1353,6 +1376,7 @@ async function reviewDelegatedResult(ctx, taskId, { saved = false } = {}) {
       'First line must be exactly APPROVED or NEEDS WORK.',
       'Then at most 3 short lines: what is solid, what is weak or unverified, what to do next.',
       'Do not invent facts. Unverifiable claims are weak. A claim that something was deployed, merged, sent, bought or published is unverified without a tool receipt.',
+      'Judge the work against the task only. Do not reject a result for how the agent describes its own role, nature, or knowledge cutoff.',
     ].join('\n'), JSON.stringify({ task: task.task, agent: agent.name, result, receipts: t0.receipts || [] }), 260);
   } catch (_) {
     review = '';
@@ -1420,7 +1444,9 @@ async function reviewDelegatedResult(ctx, taskId, { saved = false } = {}) {
 
   if (!approved) {
     const feedback = clip(verdict === 'needs_work' ? review : receiptNote, 1800);
-    if (Number(t2.revision_count || 0) < MAX_REPAIR_PASSES) {
+    // The same review twice means the repair changed nothing; sending it again would loop. Hold it for the owner.
+    const repeated = sameReviewFeedback(t2.review_feedback, feedback);
+    if (!repeated && Number(t2.revision_count || 0) < MAX_REPAIR_PASSES) {
       t2.prior_result = result;
       t2.review_feedback = feedback;
       t2.revision_count = Number(t2.revision_count || 0) + 1;
@@ -1436,7 +1462,9 @@ async function reviewDelegatedResult(ctx, taskId, { saved = false } = {}) {
     }
     t2.status = 'rejected';
     t2.review_feedback = feedback;
-    t2.error = `CHE did not approve this result after ${MAX_REPAIR_PASSES} repair passes. It is not complete.`;
+    t2.error = repeated
+      ? 'CHE gave the same review twice, so the repair was not sent again. It is held for the owner and is not complete.'
+      : `CHE did not approve this result after ${MAX_REPAIR_PASSES} repair passes. It is not complete.`;
     recordAgentWork(data, { task: t2, agent: a2 || agent, outcome: 'rejected', verified: false, error: t2.error });
     await reportRoomEvent(ctx, officeTaskEvent(t2, { agent: (a2 || agent)?.name, outcome: 'rejected', at: t2.updated_at }));
     if (a2) {
@@ -1611,7 +1639,7 @@ async function advanceMeeting(ctx) {
       const target = drafts[(own + 1) % drafts.length];
       try {
         const text = await runModel(env, modelFor(env, agent, models),
-          agentSystemPrompt(agent, 'You are cross-checking a teammate in the War Room. Challenge weak assumptions directly but constructively, in character.'),
+          agentSystemPrompt(agent, 'You are cross-checking a teammate in the War Room. Say what holds up, quote the one claim you doubt and why, and give one concrete fix.'),
           `Objective: ${meeting.objective}\n${target.from}'s draft:\n${target.text}\n\nReply to ${target.from}: what holds up, what is weak or missing, and one concrete fix. Under 120 words.`, 350,
           routingForAgent(agent, data, { task: meeting.objective }, 'war_room_review'));
         return { from: agent.name, agent_id: agent.id, to: target.from, kind: 'critique', text: clip(text, 3000), at: now() };
@@ -1665,7 +1693,7 @@ export async function processAgentWork(ctx, budget = 6) {
     if (!did) return false;
   }
   const data = await ctx.load();
-  return data.team_tasks.some((item) => ['queued', 'review_pending'].includes(item.status)) ||
+  return data.team_tasks.some((item) => ['queued', 'review_pending'].includes(item.status) && item.source !== 'coding_job') ||
     (data.meetings || []).some((item) => ['drafting', 'cross_check', 'synthesizing'].includes(item.status));
 }
 
@@ -1679,7 +1707,7 @@ export function recoverStaleWork(data, maxAgeMs = 5 * 60_000) {
   let changed = false;
   const cutoff = Date.now() - maxAgeMs;
   for (const task of data.team_tasks) {
-    if (!['running', 'reviewing'].includes(task.status) || !(Date.parse(task.updated_at) < cutoff)) continue;
+    if (!['running', 'reviewing'].includes(task.status) || !(Date.parse(task.updated_at) < cutoff) || task.source === 'coding_job') continue;
     task.stale_recoveries = Number(task.stale_recoveries || 0) + 1;
     task.updated_at = now();
     changed = true;

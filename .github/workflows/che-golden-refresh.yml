@@ -1,0 +1,49 @@
+name: CHE golden refresh (owner-started)
+
+# Regenerates the Office golden image after an intended layout change (owner, 2026-10-26). It runs only when the owner
+# starts it, and it pushes the new image to its own golden/ branch for review. Nothing merges here: the owner reviews the
+# image on GitHub, then says merge.
+on:
+  workflow_dispatch:
+    inputs:
+      target_ref:
+        description: Branch to regenerate from (the PR branch, e.g. release-gate)
+        required: true
+        default: release-gate
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.target_ref }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+      - run: bash tool/bootstrap.sh
+      - name: Regenerate the Office golden image
+        run: flutter test --update-goldens test/che_hud_office_golden_test.dart
+      - name: Push the new image to its own branch for review
+        run: |
+          set -e
+          git config user.name "claude-golden-refresh"
+          git config user.email "noreply@anthropic.com"
+          branch="golden/office-floor-${GITHUB_SHA::8}"
+          git checkout -b "$branch"
+          git add test/goldens
+          if git diff --cached --quiet; then
+            echo "No golden image changed; nothing to push."
+            exit 0
+          fi
+          git commit -m "Regenerate the Office floor golden image (owner-started refresh)"
+          git push origin "$branch"
+          echo "Review the image on branch $branch before anything merges."

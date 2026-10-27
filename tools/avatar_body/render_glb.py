@@ -27,6 +27,12 @@ from mpfb_body import FPS, stage  # noqa: E402
 from render_device import setup as render_setup  # noqa: E402
 import render_profiles  # noqa: E402
 
+# Colour calibration (2026-10-25). The studio light at Blender's default exposure under AgX rendered skin at about twice
+# its albedo's luminance with half its saturation: "warm brown skin" (albedo 110,66,44) came out as light peach in the
+# Create Room demo close-ups. VIEW_EXPOSURE / VIEW_LOOK (env) override these defaults.
+VIEW_EXPOSURE = -0.6
+VIEW_LOOK = 'AgX - Punchy'
+
 
 def load(path):
     bpy.ops.wm.read_factory_settings(use_empty=True)
@@ -37,6 +43,15 @@ def load(path):
         if o.type == 'MESH' and o.parent is None and not o.data.shape_keys and o.name.startswith('Icosphere'):
             o.hide_render = True
     return sc, arm
+
+
+def shading_of(path):
+    """The look's render shading recorded in the GLB (asset.extras.che_character.style_spec.shading, mpfb_body.py);
+    a model built before the looks differed renders as before (subsurface)."""
+    from glb_inspect import read_glb
+    try: js, _ = read_glb(path)
+    except (OSError, ValueError): return 'subsurface'
+    return ((((js.get('asset') or {}).get('extras') or {}).get('che_character') or {}).get('style_spec') or {}).get('shading') or 'subsurface'
 
 
 def owners(sc, arm):
@@ -73,10 +88,12 @@ def render(path):
     profile = render_profiles.profile_name()
     gpu = os.environ.get('CYCLES_DEVICE', 'CPU').upper() != 'CPU'
     render_profiles.apply(sc, profile, int(os.environ.get('SAMPLES', '32')), gpu)
-    if profile == 'final': render_profiles.upgrade_materials(sc.objects)
+    if profile == 'final': render_profiles.upgrade_materials(sc.objects, shading_of(path))
     if os.environ.get('CPU_THREADS'):
         sc.render.threads_mode = 'FIXED'; sc.render.threads = int(os.environ['CPU_THREADS'])
     sc.view_settings.view_transform = 'AgX'
+    sc.view_settings.look = os.environ.get('VIEW_LOOK', VIEW_LOOK)
+    sc.view_settings.exposure = float(os.environ.get('VIEW_EXPOSURE', VIEW_EXPOSURE))
     out = os.environ.get('OUT_DIR', '.'); os.makedirs(out, exist_ok=True)
     dist = float(os.environ.get('CAM_DIST', '3.1'))
     tgt.location = (0, 0, float(os.environ.get('TARGET_Z', '0.9')))   # TARGET_Z 1.62, CAM_Z 1.62, CAM_DIST 0.7: a face close-up

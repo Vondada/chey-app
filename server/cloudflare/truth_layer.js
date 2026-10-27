@@ -674,66 +674,7 @@ export function guardClaimedResearchActions(reply, { research = null, tools = []
   // documents" are execution claims too: they need a real research, tool or
   // document result from this turn.
   const claimedVerification = /\b(?:i|we)(?:'ve|\s+have)?\s+(?:independently\s+|personally\s+|already\s+)?(?:verified|fact.?checked|double.?checked|validated)\s+(?:this|that|it|the|each|every|all|these|those|your|with|against)\b/i.test(text);
-  const claimedDocumentReview = /\b(?:i|we)(?:'ve|\s+have)?\s+(?:reviewed|read|examined|analy[sz]ed|went through|looked through)\s+(?:the|your|those|these|several|multiple|some|all|each|every)\s+(?:\w+\s+){0,2}(?:documents?|articles?|pages?|papers?|reports?|files?|pdfs?|links?|studies|filings?)\b/i.test(text);
-  // A step-by-step report with no "I" ("1. Searched fresh sources – …",
-  // "- Compared the info") claims the same actions.
-  const stepReport = /(?:^|\n)[ \t]*(?:\d+[.)]|[-*•])[ \t]*\**[ \t]*(?:searched|looked up|researched|browsed|pulled|compared|cross.?checked|fact.?checked|verified|reviewed|checked)\b/i.test(text);
-  const claimedSourceLook = /\b(?:i|we)(?:'ve|\s+have)?\s+(?:looked at|checked|went over|compared)\s+(?:the|each|every|all|both|several|multiple|those|these)\s+(?:\w+\s+){0,2}(?:sources?|articles?|sites?|websites?)\b/i.test(text);
-  // Opening, reading or clicking a page or article (2026-10-15: "I opened the
-  // MIT Technology Review article" with nothing opened), "after browsing
-  // several news sites", and reading code all claim work that left a receipt.
-  const claimedOpen = /\b(?:i|we)(?:'ve|\s+have)?\s+(?:just\s+|already\s+|also\s+)?(?:opened|visited|clicked(?:\s+on)?|browsed|read|followed|loaded|pulled\s+up|skimmed)\s+(?:through\s+)?(?:the|that|this|your|their|its|each|both|all|several|those|these|a\s+few|some)\s+(?:[\w'-]+\s+){0,4}(?:links?|urls?|pages?|articles?|sites?|websites?|stor(?:y|ies)|posts?|press\s+releases?|reports?|papers?|studies|sources?)\b/i.test(text)
-    || /\b(?:after|from)\s+(?:searching|browsing|checking|reviewing|reading|scanning|comparing|looking\s+(?:at|through))\s+(?:through\s+)?(?:\w+\s+){0,3}(?:sources?|sites?|websites?|news|articles?|outlets?|the\s+web|online|reports?|pages?)\b/i.test(text);
-  // Where something was learned ("I learned this from research and studies on Cortana and Google Assistant") is a
-  // provenance claim: it needs a receipt from this turn, like a search does. General knowledge is answered without one.
-  const claimedProvenance = /\b(?:i|we)(?:'ve|\s+have)?\s+(?:learned|learnt|read|studied|found|picked\s+up)\s+(?:this|that|it|these|those|about\s+[\w' -]{1,60}?)?\s*(?:from|in|through|via)\s+(?:(?:the|some|several|recent|a\s+few|published|academic|independent)\s+)?(?:research|studies|study|papers?|articles?|sources?|reports?|books?|websites?|documentation|docs?|surveys?)\b/i.test(text)
-    || /\b(?:my|our)\s+(?:research|studies|reading)\s+(?:and|or)\s+(?:studies|research|reading)\b/i.test(text);
-  const claimedCode = /\b(?:i|we)(?:'ve|\s+have)?\s+(?:just\s+|already\s+|also\s+)?(?:inspected|reviewed|examined|read(?:\s+through)?|looked\s+(?:at|through)|went\s+through|scanned|audited)\s+(?:the|your|my|its|their|che's)\s+(?:[\w'-]+\s+){0,2}(?:code(?:base)?|source\s+code|repo(?:sitory)?|source\s+files?|worker\.js|dart\s+files?)\b/i.test(text);
-  const opened = (Array.isArray(research?.articles) && research.articles.some((a) => a?.ok)) || actualResearch;
-  const anyReceipt = actualResearch || comparisonReceipt || successful.length > 0;
-  if ((claimedBrowser && !actualBrowser) || (claimedSearch && !actualResearch) ||
-      (claimedComparison && !comparisonReceipt) ||
-      (claimedVerification && !anyReceipt) ||
-      (claimedDocumentReview && !anyReceipt && !documentRead) ||
-      ((stepReport || claimedSourceLook) && !anyReceipt) ||
-      (claimedOpen && !opened && !successful.length && !documentRead) ||
-      (claimedProvenance && !actualResearch && !documentRead)) {
-    return {
-      text: 'I need to correct that, sir: I do not have execution receipts proving I performed the search or comparison I described. I have not independently fact-checked that answer.',
-      corrected: true,
-    };
-  }
-  if (claimedCode && !successful.length && !documentRead) {
-    return {
-      text: 'I need to correct that, sir: I did not read any code for this answer, so I cannot claim I reviewed it. Ask me to inspect the code and I will read it first.',
-      corrected: true,
-    };
-  }
-  return { text, corrected: false };
-}
-
-// A model reply on the chat path can never have sent, bought, deleted, uploaded, rendered, traded or opened
-// anything: those run only through their own routes, which answer with their own records before the model
-// is reached. So "Done, sir. I sent it and bought it." is invented whatever was asked (comprehension audit,
-// issue #350). Each such sentence is taken out and the owner is told plainly that nothing was done.
-// Strong verbs claim an outside effect on their own; weak ones only with what they act on.
-const STRONG_DONE = {
-  sent: 'sent', emailed: 'sent', texted: 'sent', messaged: 'sent', forwarded: 'sent',
-  bought: 'bought', purchased: 'bought', ordered: 'ordered', subscribed: 'bought',
-  paid: 'paid', transferred: 'paid', deleted: 'deleted', erased: 'deleted', wiped: 'deleted',
-  uploaded: 'uploaded', published: 'uploaded', posted: 'uploaded',
-  booked: 'scheduled', scheduled: 'scheduled', sold: 'sold',
-};
-// Ordinary ways of speaking that use the same verbs: "I paid close attention", "I ordered them by date".
-const NOT_AN_ACTION_AFTER = { paid: /^\s+(?:close\s+|careful\s+|special\s+|extra\s+|more\s+)?attention\b/i, ordered: /^\s+(?:[\w-]+\s+){0,3}?(?:by|alphabetically|chronologically|from\s+\w+\s+to)\b/i };
-const WEAK_DONE = {
-  placed: 'placed', executed: 'placed', submitted: 'placed', closed: 'closed', flattened: 'closed', removed: 'deleted', cancelled: 'cancelled', canceled: 'cancelled',
-  opened: 'opened', launched: 'opened', started: 'started', queued: 'started', dispatched: 'started', 'kicked off': 'started', rendered: 'rendered',
-  switched: 'changed', changed: 'changed', connected: 'connected', set: 'set', added: 'added', created: 'created',
-};
-const ACTED_ON = String.raw`(?:order|trade|position|payment|purchase|transfer|subscription|email|e-mail|message|text|reminder|alarm|timer|event|meeting|appointment|invite|calendar|cart|draft|video|render|upload|job|task|investigation|build|exam|app|youtube|notes|spotify|account|broker|voice|mode|live|paper|note|file|post|bill|invoice|rent)s?`;
-const FILLER_ADVERBS = String.raw`(?:(?:just|already|now|also|successfully|gone\s+ahead\s+and|went\s+ahead\s+and)\s+)*`;
-const STRONG_RE = new RegExp(String.raw`\b(?:I|we)(?:['’]ve|\s+have|\s+had)?\s+${FILLER_ADVERBS}(${Object.keys(STRONG_DONE).join('|')})\b`, 'i');
+  const claimedDocumentReview = /\b(?:i|we)(?:'ve|\s+have)?\s+(?:reviewed|read|examined|analy[sz]ed|went through|looked through)\s+(?:the|your|those|these|several|multiple|some|all|each|every)\s+(?:\w+\s+){0,2}(?:documents?|articles?|pages?|papers?|re…1576 tokens truncated… 'i');
 const WEAK_RE = new RegExp(String.raw`\b(?:I|we)(?:['’]ve|\s+have|\s+had)?\s+${FILLER_ADVERBS}(${Object.keys(WEAK_DONE).join('|').replace(' ', '\\s+')})\b(?:\s+(?:it|that|this|them|you|everything))?(?:\s+(?:up|on|over|off|to|for|in|into))?(?:\s+(?:a|an|the|your|my|one|two|\d+|new|live|paper))?(?:\s+[\w-]+){0,2}?\s+${ACTED_ON}\b`, 'i');
 const PASSIVE_RE = new RegExp(String.raw`\b(?:it|that|this|everything|all\s+of\s+(?:it|them)|your\s+[\w-]+(?:\s+[\w-]+)?|the\s+(?:[\w-]+\s+)?${ACTED_ON})\s+(?:(?:has|have|had)\s+been|is|was|were|are)\s+(?:now\s+|successfully\s+|already\s+)?(${[...Object.keys(STRONG_DONE), 'placed', 'executed', 'submitted', 'removed', 'cancelled', 'canceled', 'rendered', 'closed'].join('|')})\b`, 'i');
 // "I made the video", but never "I made a note of that" (an ordinary way to say "I'll keep it in mind").
@@ -1063,21 +1004,22 @@ export function guardClaimedOwnerActions(reply, { message = '', acted = false, r
 export const VALID_SHA = /^[0-9a-f]{40}$/;
 export const PLACEHOLDER_MSG = /\b(?:feature|bug\s*fix|documentation)\s+[XYZ]\b/i;
 
-export function validateCodingEvidence(text, { receipts = [] } = {}) {
+export function validateCodingEvidence(text, { message = '' } = {}) {
   const t = String(text || '');
-  const shaMatches = t.match(/\b[0-9a-f]{7,64}\b/gi) || [];
+  if (storyRequested(message)) return { ok: true, text: t };
+  const shaMatches = [...t.matchAll(/\b(?:commit(?:\s+(?:sha|hash))?|sha)\s*(?:(?:is|at)\s+|[:=#]\s*)?([0-9a-f]{7,64})\b/gi)].map((m) => m[1]);
   for (const m of shaMatches) {
     if (!VALID_SHA.test(m.toLowerCase())) {
       return { ok: false, reason: 'invalid_sha', text: 'I cannot verify that commit SHA. A real GitHub SHA is 40 hex characters. No verified execution receipt backs this answer.' };
     }
   }
-  if (PLACEHOLDER_MSG.test(t)) {
+  if (/\bcommit(?: message)?[^.!?\n]{0,80}/i.test(t) && PLACEHOLDER_MSG.test(t)) {
     return { ok: false, reason: 'placeholder_message', text: 'I will not report placeholder commit messages. Real commit messages come only from a verified GitHub read.' };
   }
   // Strip any leaked che-remember blocks from coding replies.
   const cleaned = t.replace(/```che-remember[\s\S]*?```/gi, '').trim();
-  if (cleaned !== t && !receipts.some(isExecutionReceipt)) {
-    return { ok: true, text: cleaned || 'Coding inspection complete. No memory commands were part of this reply.', cleaned: true };
+  if (cleaned !== t) {
+    return { ok: true, text: cleaned || 'An internal memory instruction was omitted. No verified coding result was provided.', cleaned: true };
   }
   return { ok: true, text: cleaned };
 }
