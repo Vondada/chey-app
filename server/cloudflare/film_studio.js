@@ -201,7 +201,7 @@ export async function farmProviders(env = {}, storage, { now = Date.now(), inter
   const nameMissing = {
     network: 'Kaggle could not be reached to read your account name. I try again on the next check; your token is kept.',
     unauthorized: 'Kaggle rejected the token when reading your account name. Re-save it in Keys.',
-    no_name: 'Kaggle accepted the token but did not return an account name. Type your Kaggle username once in Keys (not the token).',
+    no_name: 'Kaggle accepted the token but did not return an account name. In Keys, save your same Kaggle token as yourusername:yourtoken. No new token is needed.',
     unknown: 'Kaggle answered without an account name. I try again on the next check; your token is kept.',
   }[kv.username_error] || 'I am reading your Kaggle account name.';
   add('kaggle', {

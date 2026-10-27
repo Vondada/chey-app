@@ -98,7 +98,8 @@ test('the farm reads the name for a modern token and tells the owner exactly wha
   assert.equal(kaggle.usable, false);
   assert.equal(kaggle.status, 'connected, account name not read');
   assert.match(kaggle.detail, /token works/);
-  assert.doesNotMatch(kaggle.detail, /username:token/, 'the old instruction to paste the token again is gone');
+  assert.match(kaggle.detail, /same Kaggle token as yourusername:yourtoken/, 'the recovery is the supported username:token save');
+  assert.match(kaggle.detail, /No new token is needed/);
   assert.equal(JSON.stringify(kaggle).includes(TOKEN), false, 'the token is not in the status');
 
   await st.put(FILM_VALIDATION_KEY, { github_actions: { ok: true, checked_ms: NOW }, kaggle: { ok: true, status: 'healthy', username: 'alice', username_source: 'kaggle', allowed_s: 30 * 3600, used_s: 0, reserved_s: 0, checked_ms: NOW } });
