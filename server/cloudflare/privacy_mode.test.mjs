@@ -230,3 +230,12 @@ test('a failure inside the Private Mode check is reported as a failed check, not
   assert.equal(report.ok, false);
   assert.match(report.error, /storage unavailable/);
 });
+
+test('the Private Mode probe route names an object the Worker imports (a missing import made the live check answer 500)', async () => {
+  const source = readFileSync(new URL('./worker.js', import.meta.url), 'utf8');
+  const route = source.split('\n').find((line) => line.includes("'/api/privacy/probe'"));
+  assert.ok(route, 'the route exists');
+  for (const name of route.match(/[A-Z_]{6,}/g) || []) {
+    assert.match(source, new RegExp(`import \\{[^}]*\\b${name}\\b[^}]*\\} from`), `${name} must be imported`);
+  }
+});

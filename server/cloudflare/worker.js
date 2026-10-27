@@ -171,7 +171,7 @@ import { auditLedger, knowVsGuessQuestion, knowVsGuessReply, MEMORY_CLAIM_MS, me
 import { verifyReply } from './truth_pipeline.js';
 import { auditReply } from './hallucination_auditor.js';
 import { memoryTruthProbe } from './memory_probe.js';
-import { probeObjectName, isMemoryProbeObject } from './probe_identity.js';
+import { MEMORY_PROBE_OBJECT, probeObjectName, isMemoryProbeObject } from './probe_identity.js';
 import { commandCenterProbe } from './command_probe.js';
 import { asksForCurrentOwnerLocation, executeWithReceipt, guardExecutionClaims, guardRetrievalClaims, changeHistoryIntent, guardClaimedOwnerActions, guardClaimedResearchActions, guardGroundedFacts, guardLocationWeatherReply, guardOwnerReply, loadChangeHistory, loadReceipts, OWNER_LOCATION_NOT_VERIFIED, recordReceipt, requestedCodeNames, speakChangeHistory, vagueResearchRequest, verifiedState, verifiedStatusText } from './truth_layer.js';
 import { ENGINEERING_PLAYBOOK_SPOKEN, playbookIntent } from './engineering_playbook.js';
