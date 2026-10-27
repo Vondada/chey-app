@@ -13,6 +13,7 @@ import '../che_ui/che_hud.dart';
 import '../che_ui/che_theme.dart';
 import '../platform/che_platform_screens.dart';
 import 'che_fact_check.dart';
+import 'che_ai_model_status.dart';
 import 'che_mail_time.dart';
 import 'che_message_split.dart';
 
@@ -41,6 +42,7 @@ class _CheMailboxScreenState extends State<CheMailboxScreen> {
   List<Map<String, dynamic>> _letters = const [];
   List<Map<String, dynamic>> _providers = const [];
   Map<String, dynamic> _youtube = const {};
+  CheAiModelStatus? _aiStatus;
   Map<String, dynamic> _flag = const {};
   List<Map<String, dynamic>> _archive = const [];
   String? _openThread;
@@ -91,6 +93,8 @@ class _CheMailboxScreenState extends State<CheMailboxScreen> {
             ? (keys['providers'] as List).whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList()
             : const [];
         _youtube = youtube is Map ? Map<String, dynamic>.from(youtube) : const {};
+        // Which AI models CHE may use at zero cost; shown quietly, read only on request.
+        _aiStatus = keys is Map ? CheAiModelStatus.fromJson(keys['ai_model_status']) : null;
         _loading = false;
       });
       final unread = _letters.where((l) => l['read'] != true).length;
@@ -764,6 +768,11 @@ class _CheMailboxScreenState extends State<CheMailboxScreen> {
           padding: const EdgeInsets.fromLTRB(12, 12, 12, 0),
           child: _youtubeCard(),
         ),
+        if (_aiStatus != null)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+            child: CheAiModelStatusCard(status: _aiStatus!, onReadAloud: _say),
+          ),
         Padding(
           padding: const EdgeInsets.fromLTRB(12, 12, 12, 4),
           child: Semantics(

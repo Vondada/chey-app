@@ -269,7 +269,7 @@ function runFakePaid(box, gateExit = 0) {
   return { status: result.status, stderr: result.stderr, stdout: result.stdout, outputs, calls };
 }
 
-test('the separately gated final paid step continues from a free-engine checkpoint', () => {
+test('owner rule 2026-10-27: the paid step never invokes a model, even when its cap gate is faked to pass', () => {
   const box = sandbox();
   const plan = {
     [FREE_A]: { writes: { 'src/a.mjs': 'export const a = 2;\n' }, stderr: 'quota exceeded', exit: 1 },
@@ -279,13 +279,76 @@ test('the separately gated final paid step continues from a free-engine checkpoi
   const free = run(box, { free: FREE_A + ' ' + FREE_B, paid: PAID, plan });
   assert.notEqual(free.outputs.exit_code, '0');
   assert.deepEqual(free.calls.map(x => x.split('|')[0]), [FREE_A, FREE_B]);
+  // The fake gate exits 0 and exports no authorization, so the step must still refuse.
   const paid = runFakePaid(box, 0);
   assert.equal(paid.status, 0, paid.stderr);
-  assert.equal(paid.outputs.exit_code, '0', paid.stderr);
-  assert.equal(paid.outputs.model, PAID);
-  assert.deepEqual(paid.calls.map(x => x.split('|')[0]), [FREE_A, FREE_B, PAID]);
-  assert.equal(paid.calls[2], PAID + '|progress|export const a = 2;');
-  assert.equal(readFileSync(join(box.repo, 'src/final.mjs'), 'utf8'), 'export const final = true;\n');
+  assert.notEqual(paid.outputs.exit_code, '0');
+  assert.deepEqual(paid.calls.map(x => x.split('|')[0]), [FREE_A, FREE_B], 'the paid model never ran');
+  assert.match(paid.stdout, /Paid coding fallback is disabled: the owner authorized \$0/);
+  assert.equal(existsSync(join(box.repo, 'src/final.mjs')), false);
+  // The real gate (not a fake) reports $0 authorization, so the step refuses with it too.
+  cpSync(join(ROOT, 'tools/che_coding_paid_gate.mjs'), join(box.trusted, 'tools/che_coding_paid_gate.mjs'));
+  const real = spawnSync('node', ['--input-type=module', '-e', "const m = await import(process.argv[1]); process.stdout.write(Number(m.AUTHORIZED_CODING_SPEND_USD) > 0 ? 'authorized' : 'zero');", join(box.trusted, 'tools/che_coding_paid_gate.mjs')], { encoding: 'utf8' });
+  assert.equal(real.stdout, 'zero');
+});
+
+test('an auth failure stops every model of that provider for the run; another provider continues the same job', () => {
+  const box = sandbox();
+  const GROQ = 'groq/openai/gpt-oss-120b';
+  // The real runner keeps the decoded owner request here.
+  writeFileSync(join(box.runnerTemp, 'che-runtime-prompt.txt'), 'ORIGINAL REQUEST: finish the change.');
+  const result = run(box, {
+    free: `${FREE_A} ${FREE_B} ${GROQ}`,
+    plan: {
+      [FREE_A]: { writes: { 'src/a.mjs': 'export const a = 5;\n' }, stderr: '{"statusCode": 401, "message": "No auth credentials found"}', exit: 1 },
+      [FREE_B]: { exit: 0 },
+      [GROQ]: { writes: { 'src/g.mjs': 'export const g = 1;\n' }, exit: 0 },
+    },
+    env: { K_GROQ: 'fake-groq' },
+  });
+  assert.equal(result.outputs.exit_code, '0', result.stderr);
+  assert.equal(result.outputs.model, GROQ);
+  assert.deepEqual(result.calls.map(x => x.split('|')[0]), [FREE_A, GROQ], 'the second OpenRouter model was skipped, not retried');
+  assert.equal(result.calls[1], `${GROQ}|progress|export const a = 5;`, 'the next provider continues from the verified change');
+  assert.match(result.stdout + result.stderr, /openrouter is stopped for the rest of this run \(auth_failure\)/);
+  const receipts = readFileSync(join(box.runnerTemp, 'che-attempts.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+  assert.deepEqual(receipts.map((r) => [r.model, r.provider, r.error_class, r.decision, r.outcome, r.progress]), [
+    [FREE_A, 'openrouter', 'auth_failure', 'next_provider', 'failed', 'verified'],
+    [GROQ, 'groq', null, 'completed', 'success', 'delivered'],
+  ]);
+  const prompt = readFileSync(join(box.runnerTemp, 'che-checkpoint/next-prompt.txt'), 'utf8');
+  assert.match(prompt, /ORIGINAL REQUEST: finish the change\./, 'the original instructions are kept');
+  assert.match(prompt, /Changed files so far: src\/a\.mjs/);
+  assert.match(prompt, /Checks already passed: syntax of src\/a\.mjs/);
+});
+
+test('the earlier attempts reach the next model as classes only, never as provider text', () => {
+  const box = sandbox();
+  const result = run(box, {
+    free: `${FREE_A} ${FREE_B} ${FREE_C}`,
+    plan: {
+      [FREE_A]: { stderr: 'Unexpected server error. Check server logs for details.', exit: 1 },
+      [FREE_B]: { writes: { 'src/a.mjs': 'export const a = 3;\n' }, stderr: 'timed out', exit: 124 },
+      [FREE_C]: { exit: 0 },
+    },
+  });
+  assert.equal(result.outputs.exit_code, '0', result.stderr);
+  const prompt = readFileSync(join(box.runnerTemp, 'che-checkpoint/next-prompt.txt'), 'utf8');
+  assert.match(prompt, /Earlier attempts in this job: openrouter\/free-a:free \(provider_unavailable\)/);
+  assert.doesNotMatch(prompt, /Check server logs/);
+});
+
+test('with no zero-cost model the step runs nothing and says why, so nothing can be spent', () => {
+  const box = sandbox();
+  const route = join(box.runnerTemp, 'che-route');
+  mkdirSync(route, { recursive: true });
+  writeFileSync(join(route, 'summary.txt'), 'No model is verified at zero cost right now (openrouter: key_can_spend_credits). Nothing was spent.');
+  const result = run(box, { free: '', plan: {} });
+  assert.notEqual(result.outputs.exit_code, '0');
+  assert.equal(result.outputs.failure_kind, 'no_eligible_model');
+  assert.equal(result.outputs.resumable, 'false');
+  assert.deepEqual(result.calls, []);
+  assert.match(result.outputs.error, /key_can_spend_credits/);
 });
 
 test('the final paid step cannot invoke a model when its cap gate refuses', () => {
