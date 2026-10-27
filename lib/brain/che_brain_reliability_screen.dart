@@ -289,10 +289,13 @@ class _CheBrainReliabilityScreenState extends State<CheBrainReliabilityScreen> {
   }
 
   Widget _tile(IconData icon, String title, String value, String detail) {
+    // The tap lives on this Semantics node: ExcludeSemantics below drops the ListTile's own tap action, so without
+    // it VoiceOver would announce a button it cannot activate (review of #684).
     return Semantics(
       container: true,
       button: widget.onSpeak != null,
       label: '$title: $value. $detail.',
+      onTap: widget.onSpeak == null ? null : () => _say('$title: $value. $detail.'),
       child: ExcludeSemantics(
         child: ListTile(
           contentPadding: EdgeInsets.zero,
@@ -308,16 +311,12 @@ class _CheBrainReliabilityScreenState extends State<CheBrainReliabilityScreen> {
 
   Widget _session(CheReliabilityView v, CheTestSession s) {
     final label = 'Session ${s.number}: ${s.title}. ${cheDateLabel(s.firstAt)}. ${s.attempts} ${s.attempts == 1 ? 'question' : 'questions'}: ${s.outcomeLine}.';
-    return Semantics(
-      container: true,
-      label: label,
-      hint: 'Double tap to show the questions',
-      child: ExpansionTile(
-        tilePadding: EdgeInsets.zero,
-        title: Text('Session ${s.number}: ${s.title}', maxLines: 2, overflow: TextOverflow.ellipsis),
-        subtitle: Text('${cheDateLabel(s.firstAt)} · ${s.outcomeLine}'),
-        children: [for (final a in v.attemptsOf(s.number)) _attempt(a)],
-      ),
+    // The label sits inside the header, so it is on the same node as ExpansionTile's own tap (expand/collapse).
+    return ExpansionTile(
+      tilePadding: EdgeInsets.zero,
+      title: Semantics(label: label, excludeSemantics: true, child: Text('Session ${s.number}: ${s.title}', maxLines: 2, overflow: TextOverflow.ellipsis)),
+      subtitle: ExcludeSemantics(child: Text('${cheDateLabel(s.firstAt)} · ${s.outcomeLine}')),
+      children: [for (final a in v.attemptsOf(s.number)) _attempt(a)],
     );
   }
 
@@ -333,6 +332,7 @@ class _CheBrainReliabilityScreenState extends State<CheBrainReliabilityScreen> {
       container: true,
       button: widget.onSpeak != null,
       label: a.spoken,
+      onTap: widget.onSpeak == null ? null : () => _say(a.spoken),
       child: ExcludeSemantics(
         child: ListTile(
           leading: Icon(icon),

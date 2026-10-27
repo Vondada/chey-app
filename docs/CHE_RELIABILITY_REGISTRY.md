@@ -32,6 +32,12 @@ that is only the failed-answer fallback or "Working on it" is graded fail automa
 grade. "End the test" closes it; two idle hours close it too. Each live question also becomes one Brain record in
 the Reliability Registry room (`room_events.js`).
 
+## Storage
+Never one value (a Durable Object value holds at most 128 KiB): a small meta record names the chunks, and sessions,
+attempts, proposed tests and grades are each stored in chunks of at most 96 KiB. A failed write is counted under
+`che_reliability_registry_v1:failures`, and "what take are we on" and the page summary say how many questions could
+not be recorded. A conversation imported with no stored reply stays "unknown".
+
 ## Code
 - `server/cloudflare/reliability_registry.js`: intents, dedupe, retest links, totals, live sessions, import, chat and
   `GET /api/brain/reliability`, `POST /api/brain/reliability/grade`, `POST /api/brain/reliability/import` (owner only).

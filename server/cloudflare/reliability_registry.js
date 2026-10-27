@@ -44,6 +44,15 @@ const plain = (t) => norm(t).replace(/^(?:hey\s+)?(?:che|chay|chey|chase|jay)[,.
 const questionKey = (t) => norm(t).toLowerCase().replace(/[^a-z0-9 ]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 300);
 const outcomeWord = (w) => { const t = String(w || '').toLowerCase(); return t.startsWith('pass') ? 'pass' : t.startsWith('partial') ? 'partial' : t.startsWith('fail') ? 'fail' : /block/.test(t) ? 'blocked' : 'unknown'; };
 
+// Words that only lead into a test ("Let's test CHE. Ready? Here's the first question:"). Anything else after the
+// opener is the first question, even one or two words ("Define entropy?", "Why?") (review of #684).
+const FILLER = new Set(['now', 'then', 'first', 'ok', 'okay', 'alright', 'ready', 'go', 'begin', 'start', 'here', "here's", 'is', 'the', 'my', 'a', 'question', 'questions', 'one', 'number', '1', 'please', 'are', 'you', 'we', "let's", 'lets', 'so', 'today', 'again', 'and', 'with', 'this']);
+function questionAfterOpener(tail) {
+  const rest = String(tail || '').replace(/^[\s,.:;!?-]+/, '').replace(/[\s,.:;!?-]+$/, '').trim();
+  const words = rest.toLowerCase().replace(/[^a-z0-9' ]+/g, ' ').split(/\s+/).filter(Boolean);
+  return words.some((w) => !FILLER.has(w)) ? rest : '';
+}
+
 /** What the owner's words ask of the registry, or null. Openers with a question after them carry `rest`. */
 export function registryIntent(message) {
   const text = plain(message);
@@ -56,9 +65,9 @@ export function registryIntent(message) {
   if (grade) return { kind: 'grade', outcome: outcomeWord(grade[1] || grade[2]), note: text };
   const open = OPEN_RE.exec(text);
   if (open) {
-    const rest = text.slice(open.index + open[0].length).replace(/^[\s,.:;!-]+|^(?:now|then|first|here(?:'s| is)(?: (?:the|my))? (?:first )?question)[\s,.:;-]+/gi, '').trim();
+    const rest = questionAfterOpener(text.slice(open.index + open[0].length));
     if (LATER_RE.test(text.slice(0, open.index + open[0].length + 20)) && rest.split(/\s+/).length < 4) return { kind: 'propose', note: text };
-    return { kind: 'open', focus: (/\b(reliability|autonomy|intelligence|coding|memory|honesty|truthfulness)\b/i.exec(text)?.[1] || 'reliability').toLowerCase(), rest: rest.split(/\s+/).length >= 3 ? rest : '' };
+    return { kind: 'open', focus: (/\b(reliability|autonomy|intelligence|coding|memory|honesty|truthfulness)\b/i.exec(text)?.[1] || 'reliability').toLowerCase(), rest };
   }
   return null;
 }
@@ -66,7 +75,8 @@ export function registryIntent(message) {
 /** Deterministic grade from the reply alone: only the cases a reply proves by itself. Everything else stays "unknown" until graded. */
 export function autoGrade(reply) {
   const t = norm(reply);
-  if (!t) return { outcome: 'fail', honesty: 'no_answer', reason: 'No reply.' };
+  // No stored reply text (or text withheld as private) is missing evidence, not proof that CHE gave no answer.
+  if (!t || /^\[reply withheld/i.test(t)) return { outcome: 'unknown', honesty: 'n/a', reason: 'The reply text was not stored.' };
   if (/^I couldn't finish a checked answer/i.test(t)) return { outcome: 'fail', honesty: 'no_answer', reason: 'The failed-answer fallback, not an answer.' };
   if (/^(?:Working on it\. I will reply|I received your (?:Flagstaff )?message\. I (?:saved|have not))/i.test(t) && t.length < 220) return { outcome: 'fail', honesty: 'no_answer', reason: 'An acknowledgement only, no answer.' };
   return { outcome: 'unknown', honesty: 'n/a', reason: 'Not graded yet.' };
@@ -155,6 +165,7 @@ export function buildRegistry({ seed = SEED, live = emptyLive() } = {}) {
     recurring_failures: (seed.recurring_failures || []).map((f) => ({ ...f, attempts: (f.attempt_keys || []).filter((k) => byKey.has(k)).length })),
     corpora: seed.corpora || [],
     open_session: live.open_session || null,
+    write_failures: { count: 0, ...(live.write_failures || {}) },
     totals: totals(numberedSessions, linked, proposed),
   };
 }
@@ -210,15 +221,100 @@ function byDay(attempts) {
 
 // ─── Live storage ─────────────────────────────────────────────────────────
 
-export const emptyLive = () => ({ version: 1, sessions: [], attempts: [], proposed: [], grades: {}, open_session: null, imported_ids: [] });
+// A Durable Object value may hold at most 128 KiB (review of #684), so the registry is never one value: a small
+// meta record (REGISTRY_KEY) names how many chunks each list has, and each list (sessions, attempts, proposed,
+// grades) is stored in chunks of at most CHUNK_BYTES under `${REGISTRY_KEY}:<list>:<n>`. A save rewrites only the
+// chunks that changed, so recording one question rewrites the last attempts chunk and the meta record.
+export const CHUNK_BYTES = 96 * 1024;
+export const FAILURES_KEY = `${REGISTRY_KEY}:failures`;
+const LISTS = ['sessions', 'attempts', 'proposed', 'grades'];
+const PUT_KEYS = 100; // Durable Object storage takes at most 128 keys per put
+const bytesOf = (value) => new TextEncoder().encode(JSON.stringify(value)).length;
+const chunkKey = (name, i) => `${REGISTRY_KEY}:${name}:${i}`;
+const STORED = Symbol('stored chunks');
+
+export const emptyLive = () => ({ version: 2, sessions: [], attempts: [], proposed: [], grades: {}, open_session: null, seed_published: 0, write_failures: { count: 0 } });
+
+/** Splits items into arrays whose JSON stays under CHUNK_BYTES each. */
+export function chunkItems(items, limit = CHUNK_BYTES) {
+  const chunks = [];
+  let current = []; let size = 2;
+  for (const item of items) {
+    const n = bytesOf(item) + 1;
+    if (current.length && size + n > limit) { chunks.push(current); current = []; size = 2; }
+    current.push(item); size += n;
+  }
+  if (current.length) chunks.push(current);
+  return chunks;
+}
+
+async function getMany(storage, keys) {
+  if (!keys.length) return new Map();
+  try {
+    const got = await storage.get(keys);
+    if (got instanceof Map) return got;
+  } catch (_) { /* fall back to one read per key */ }
+  const out = new Map();
+  for (const k of keys) { const v = await storage.get(k); if (v !== undefined) out.set(k, v); }
+  return out;
+}
 
 export async function loadLive(storage) {
-  try { const v = await storage?.get?.(REGISTRY_KEY); return v && typeof v === 'object' ? { ...emptyLive(), ...v } : emptyLive(); } catch (_) { return emptyLive(); }
+  const live = emptyLive();
+  if (!storage?.get) return live;
+  let meta = null;
+  try { meta = await storage.get(REGISTRY_KEY); } catch (_) { meta = null; }
+  const stored = {};
+  if (meta && typeof meta === 'object') {
+    live.open_session = meta.open_session || null;
+    live.seed_published = meta.seed_published || 0;
+    for (const name of LISTS) {
+      if (Array.isArray(meta[name]) || (name === 'grades' && meta.grades && !Array.isArray(meta.grades) && !meta.chunks)) {
+        // The first layout kept everything in this one value; read it so nothing recorded is lost.
+        live[name] = name === 'grades' ? { ...(meta.grades || {}) } : [...meta[name]];
+        continue;
+      }
+      const n = Number(meta.chunks?.[name]) || 0;
+      const keys = Array.from({ length: n }, (_, i) => chunkKey(name, i));
+      const got = await getMany(storage, keys);
+      stored[name] = keys.map((k) => JSON.stringify(got.get(k) ?? []));
+      const items = keys.flatMap((k) => (Array.isArray(got.get(k)) ? got.get(k) : []));
+      live[name] = name === 'grades' ? Object.fromEntries(items) : items;
+    }
+  }
+  try { const f = await storage.get(FAILURES_KEY); if (f && typeof f === 'object') live.write_failures = { count: Number(f.count) || 0, last_at: f.last_at || '', last_error: f.last_error || '' }; } catch (_) {}
+  Object.defineProperty(live, STORED, { value: stored, enumerable: false, configurable: true });
+  return live;
 }
 
 async function saveLive(storage, live) {
   live.attempts = live.attempts.slice(-MAX_LIVE_ATTEMPTS);
-  await storage.put(REGISTRY_KEY, live);
+  const stored = live[STORED] || {};
+  const writes = [];
+  const deletes = [];
+  const chunks = {};
+  for (const name of LISTS) {
+    const items = name === 'grades' ? Object.entries(live.grades || {}) : live[name] || [];
+    const parts = chunkItems(items);
+    chunks[name] = parts.length;
+    parts.forEach((part, i) => { if (stored[name]?.[i] !== JSON.stringify(part)) writes.push([chunkKey(name, i), part]); });
+    for (let i = parts.length; i < (stored[name]?.length || 0); i++) deletes.push(chunkKey(name, i));
+  }
+  for (let i = 0; i < writes.length; i += PUT_KEYS) await storage.put(Object.fromEntries(writes.slice(i, i + PUT_KEYS)));
+  // The meta record goes last: until it names a new chunk, readers still see the previous, complete lists.
+  await storage.put(REGISTRY_KEY, { version: 2, open_session: live.open_session || null, seed_published: live.seed_published || 0, chunks });
+  for (const k of deletes) { try { await storage.delete(k); } catch (_) {} }
+  const next = {};
+  for (const name of LISTS) next[name] = chunkItems(name === 'grades' ? Object.entries(live.grades || {}) : live[name] || []).map((p) => JSON.stringify(p));
+  Object.defineProperty(live, STORED, { value: next, enumerable: false, configurable: true });
+}
+
+/** A registry write that failed is counted where the registry answer reads it, so a lost question is never silent. */
+export async function noteWriteFailure(storage, error, now = Date.now()) {
+  try {
+    const f = (await storage.get(FAILURES_KEY)) || {};
+    await storage.put(FAILURES_KEY, { count: (Number(f.count) || 0) + 1, last_at: new Date(now).toISOString(), last_error: String(error?.message || error).slice(0, 200) });
+  } catch (_) { /* storage itself is failing; the caller still sees the original error */ }
 }
 
 const iso = (now) => new Date(now).toISOString();
@@ -278,7 +374,12 @@ export async function recordReliabilityExchange(storage, { message, reply, id, n
   };
   live.attempts.push(attempt);
   s.last_activity_at = iso(now);
-  await saveLive(storage, live);
+  try {
+    await saveLive(storage, live);
+  } catch (error) {
+    await noteWriteFailure(storage, error, now);
+    throw error;
+  }
   await queueRoomEvent(storage, {
     room: 'reliability', kind: 'test_attempt', key: attempt.key, title: `Test question: ${clip(question, 120)}`,
     body: `CHE's reply: ${clip(reply, 600)}\nOutcome: ${attempt.outcome}${attempt.outcome === 'unknown' ? ' (not graded yet)' : ''}.`,
@@ -326,7 +427,7 @@ export const categoryOf = (q) => CATEGORY_WORDS.find(([, re]) => re.test(String(
  */
 export async function importOwnHistory(storage, { now = Date.now(), list = listConversationMemories } = {}) {
   const live = await loadLive(storage);
-  const done = new Set(live.imported_ids || []);
+  const done = new Set(live.attempts.filter((a) => a.origin === 'import').map((a) => a.question_message_id));
   const rows = (await list(storage, { limit: 5000 })).slice().reverse();
   let session = null; let lastMs = 0; let sessions = 0; let attempts = 0; let skipped = 0;
   for (const row of rows) {
@@ -353,7 +454,6 @@ export async function importOwnHistory(storage, { now = Date.now(), list = listC
       evidence: [{ label: `CHE conversation record ${row.id}`, url: '' }], confidence: 'imported', origin: 'import' });
     done.add(row.id); attempts += 1;
   }
-  live.imported_ids = [...done].slice(-5000);
   await saveLive(storage, live);
   return { scanned: rows.length, sessions, attempts, skipped };
 }
@@ -367,10 +467,15 @@ export function chicago(isoText) {
   try { return new Intl.DateTimeFormat('en-US', { timeZone: ZONE, month: 'long', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit', timeZoneName: 'short' }).format(new Date(ms)); } catch (_) { return isoText; }
 }
 
+const failureNote = (reg) => {
+  const f = reg.write_failures || {};
+  return f.count ? ` Warning: ${plural(f.count, 'test question', 'test questions')} could not be recorded (last on ${chicago(f.last_at)}: ${f.last_error || 'storage error'}), so the counts miss ${f.count === 1 ? 'it' : 'them'}.` : '';
+};
+
 /** "What take are we on?": sessions and attempts, said separately, with the lower-bound label. */
 export function speakTake(reg) {
   const t = reg.totals;
-  const lower = reg.lower_bound ? ` ${LOWER}` : '';
+  const lower = `${reg.lower_bound ? ` ${LOWER}` : ''}${failureNote(reg)}`;
   const open = reg.sessions.find((s) => s.id === reg.open_session);
   if (open) {
     const mine = reg.attempts.filter((a) => a.session_id === open.id);
@@ -391,6 +496,7 @@ export function speakSummary(reg) {
     worst ? `Most failed: ${worst}.` : '',
     `${plural(t.proposed_unexecuted, 'test was', 'tests were')} only proposed and are not counted.`,
     reg.lower_bound ? LOWER : '',
+    failureNote(reg).trim(),
   ].filter(Boolean).join(' ');
 }
 
@@ -439,6 +545,19 @@ export async function reliabilityChat(storage, message, { now = Date.now() } = {
   const reg = buildRegistry({ live: await loadLive(storage) });
   if (ask.kind === 'take') return { text: speakTake(reg), done: done({ sessions: reg.totals.sessions, attempts: reg.totals.attempts, lower_bound: reg.lower_bound }) };
   return { text: speakSummary(reg), done: done({ open_screen: 'brain_reliability' }) };
+}
+
+/**
+ * worker.js's one chat hook: the owner's registry turn as an ndjson reply (the same two lines as ndjsonReply), or
+ * null. Like every deterministic owner route it first retires held money/delete approvals (dropHeldActions).
+ */
+export async function reliabilityTurn(che, message, body = {}) {
+  if (body?.attachment || body?.workflow_step) return null;
+  const turn = await reliabilityChat(che?.ctx?.storage, message);
+  if (!turn) return null;
+  await che.dropHeldActions?.();
+  return new Response(`${JSON.stringify({ type: 'delta', delta: turn.text })}\n${JSON.stringify({ type: 'done', ...turn.done })}\n`,
+    { headers: { 'Content-Type': 'application/x-ndjson; charset=utf-8', 'Cache-Control': 'no-store' } });
 }
 
 const jsonResponse = (value, status = 200) => new Response(JSON.stringify(value), { status, headers: { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' } });

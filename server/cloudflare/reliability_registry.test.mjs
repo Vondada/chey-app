@@ -5,7 +5,7 @@ import { readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import test from 'node:test';
 import { replyFromNdjson } from './brain_memory.js';
 import {
-  OUTCOMES, REGISTRY_KEY, autoGrade, buildRegistry, dedupeAttempts, emptyLive, importOwnHistory, linkRetests, registryIntent, speakTake,
+  OUTCOMES, autoGrade, loadLive, buildRegistry, dedupeAttempts, emptyLive, importOwnHistory, linkRetests, registryIntent, speakTake,
 } from './reliability_registry.js';
 import { ROOM_EVENTS_KEY } from './room_events.js';
 
@@ -125,7 +125,6 @@ test('missing evidence: an attempt with no recorded reply is "unknown", never a 
   assert.equal(t.verified_results, 1);
   assert.equal(t.unknown_results, 1);
   assert.equal(t.outcomes.pass, 1);
-  assert.equal(autoGrade('').outcome, 'fail');
   assert.equal(autoGrade("I couldn't finish a checked answer after several tries. Your message is saved, and the owner can see it.").honesty, 'no_answer');
   assert.equal(autoGrade('Working on it. I will reply here as soon as I have a checked answer.').outcome, 'fail');
   assert.equal(autoGrade('Canberra.').outcome, 'unknown', 'a real answer waits for a grade');
@@ -178,11 +177,11 @@ test('live: a session records each question and the reply the owner got, grades 
   assert.equal(open.route, 'che_reliability_registry');
   assert.match(open.reply, new RegExp(`testing session ${before.sessions + 1}`));
   // Opening alone counts nothing.
-  assert.equal(buildRegistry({ live: che.saved.get(REGISTRY_KEY) }).totals.sessions, before.sessions);
+  assert.equal(buildRegistry({ live: await loadLive(storageFor(che.saved)) }).totals.sessions, before.sessions);
 
   const q = await che.say('What is 17 times 23?');
   assert.equal(q.route, 'model', 'a test question is answered normally');
-  let reg = buildRegistry({ live: che.saved.get(REGISTRY_KEY) });
+  let reg = buildRegistry({ live: await loadLive(storageFor(che.saved)) });
   assert.equal(reg.totals.sessions, before.sessions + 1);
   assert.equal(reg.totals.attempts, before.attempts + 1);
   const mine = reg.attempts[reg.attempts.length - 1];
@@ -194,24 +193,24 @@ test('live: a session records each question and the reply the owner got, grades 
   const take = await che.say('What take are we on?');
   assert.match(take.reply, new RegExp(`testing session ${before.sessions + 1}[\\s\\S]*1 question so far[\\s\\S]*question 2 of this session`));
   // Registry commands are not attempts.
-  assert.equal(buildRegistry({ live: che.saved.get(REGISTRY_KEY) }).totals.attempts, before.attempts + 1);
+  assert.equal(buildRegistry({ live: await loadLive(storageFor(che.saved)) }).totals.attempts, before.attempts + 1);
 
   const graded = await che.say('That passed');
   assert.equal(graded.route, 'che_reliability_registry');
-  reg = buildRegistry({ live: che.saved.get(REGISTRY_KEY) });
+  reg = buildRegistry({ live: await loadLive(storageFor(che.saved)) });
   assert.equal(reg.attempts.find((a) => a.key === mine.key).outcome, 'pass');
   assert.equal(reg.attempts.find((a) => a.key === mine.key).graded_by, 'owner');
 
   // The same question again in this session is a separate attempt, linked as a retest.
   await che.say('What is 17 times 23?');
-  reg = buildRegistry({ live: che.saved.get(REGISTRY_KEY) });
+  reg = buildRegistry({ live: await loadLive(storageFor(che.saved)) });
   assert.equal(reg.attempts[reg.attempts.length - 1].retest_of_key, mine.key);
 
   const closed = await che.say('End the test');
   assert.match(closed.reply, /2 questions; 1 passed[\s\S]*1 not graded yet/);
   const after = await che.say('What is 2 plus 2?');
   assert.equal(after.route, 'model');
-  assert.equal(buildRegistry({ live: che.saved.get(REGISTRY_KEY) }).totals.attempts, before.attempts + 2, 'nothing is recorded once the session is closed');
+  assert.equal(buildRegistry({ live: await loadLive(storageFor(che.saved)) }).totals.attempts, before.attempts + 2, 'nothing is recorded once the session is closed');
 });
 
 test('live: an opener with a question opens the session and the question is answered and recorded', async () => {
@@ -219,7 +218,7 @@ test('live: an opener with a question opens the session and the question is answ
   const before = buildRegistry().totals.attempts;
   const out = await che.say("Let's test CHE. What is 17 times 23?");
   assert.equal(out.route, 'model');
-  const reg = buildRegistry({ live: che.saved.get(REGISTRY_KEY) });
+  const reg = buildRegistry({ live: await loadLive(storageFor(che.saved)) });
   assert.equal(reg.totals.attempts, before + 1);
   assert.equal(reg.attempts[reg.attempts.length - 1].question, 'What is 17 times 23');
 });
@@ -230,7 +229,7 @@ test('live: "that passed" outside a test is ordinary chat, and a proposed test i
   const later = await che.say("Let's test CHE later");
   assert.equal(later.route, 'che_reliability_registry');
   assert.match(later.reply, /Nothing is counted/);
-  const t = buildRegistry({ live: che.saved.get(REGISTRY_KEY) }).totals;
+  const t = buildRegistry({ live: await loadLive(storageFor(che.saved)) }).totals;
   assert.equal(t.sessions, SEED.sessions.length);
   assert.equal(t.proposed_unexecuted, SEED.proposed.length + 1);
 });
@@ -269,11 +268,87 @@ test('import: CHE rebuilds test sessions from her own stored conversations, once
   assert.deepEqual({ sessions: first.sessions, attempts: first.attempts }, { sessions: 1, attempts: 2 });
   const again = await importOwnHistory(storage, { list });
   assert.equal(again.attempts, 0, 'idempotent');
-  const reg = buildRegistry({ live: saved.get(REGISTRY_KEY) });
+  const reg = buildRegistry({ live: await loadLive(storage) });
   const imported = reg.attempts.filter((a) => a.origin === 'import');
   assert.deepEqual(imported.map((a) => a.outcome), ['unknown', 'fail']);
   assert.equal(reg.totals.attempts, SEED.attempts.length + 2);
   assert.deepEqual(emptyLive().attempts, []);
+});
+
+// Durable Object storage refuses a value over 128 KiB (review of #684).
+const VALUE_LIMIT = 128 * 1024;
+function boundedStorage(saved) {
+  const base = storageFor(saved);
+  const check = (k, v) => { const n = new TextEncoder().encode(JSON.stringify(v)).length; if (n > VALUE_LIMIT) throw new RangeError(`value for ${k} is ${n} bytes, over 128 KiB`); };
+  return { ...base, put: async (key, value) => {
+    if (key && typeof key === 'object') { for (const [k, v] of Object.entries(key)) check(k, v); } else check(key, value);
+    return base.put(key, value);
+  } };
+}
+
+test('storage: many long live attempts never put one value over 128 KiB, and all of them are kept', async () => {
+  const { openSession, recordReliabilityExchange } = await import('./reliability_registry.js');
+  const saved = new Map();
+  const storage = boundedStorage(saved);
+  let now = Date.parse('2026-10-27T12:00:00Z');
+  await openSession(storage, { now });
+  const long = 'x'.repeat(5000);
+  for (let i = 0; i < 80; i++) {
+    now += 1000;
+    const a = await recordReliabilityExchange(storage, { message: `Question ${i}: ${long}`, reply: `Answer ${i}: ${long}`, id: `conv_${i}`, now });
+    assert.ok(a, `attempt ${i} recorded`);
+  }
+  const live = await loadLive(storage);
+  assert.equal(live.attempts.length, 80);
+  assert.equal(buildRegistry({ live }).totals.attempts, SEED.attempts.length + 80);
+});
+
+test('storage: a failed registry write is visible in the registry answer, not silently swallowed', async () => {
+  const { openSession, recordReliabilityExchange } = await import('./reliability_registry.js');
+  const saved = new Map();
+  const base = storageFor(saved);
+  let failing = false;
+  const storage = { ...base, put: async (k, v) => { if (failing && (typeof k === 'object' ? Object.keys(k).some((x) => x.includes(':attempts:')) : String(k).includes(':attempts:'))) throw new Error('storage full'); return base.put(k, v); } };
+  const now = Date.parse('2026-10-27T12:00:00Z');
+  await openSession(storage, { now });
+  failing = true;
+  await assert.rejects(recordReliabilityExchange(storage, { message: 'What is 2 plus 2?', reply: 'Four.', id: 'conv_f', now: now + 1000 }));
+  const reg = buildRegistry({ live: await loadLive(storage) });
+  assert.equal(reg.write_failures.count, 1);
+  assert.match(speakTake(reg), /1 test question could not be recorded/);
+});
+
+test('import: a stored conversation with no reply text stays unknown, never a verified fail', async () => {
+  const saved = new Map();
+  const storage = storageFor(saved);
+  const rows = [
+    { id: 'n1', at: '2026-10-13T10:00:00Z', body: "You said: Let's test CHE's memory\nCHE answered: Test session open." },
+    { id: 'n2', at: '2026-10-13T10:01:00Z', body: 'You said: What is my bank PIN hint?' },
+  ];
+  await importOwnHistory(storage, { list: async () => [...rows].reverse() });
+  const got = buildRegistry({ live: await loadLive(storage) }).attempts.find((a) => a.key === 'import-n2');
+  assert.equal(got.outcome, 'unknown');
+  assert.equal(autoGrade('').outcome, 'unknown', 'an absent reply is missing evidence');
+  assert.equal(autoGrade('[reply withheld: it looked like private information]').outcome, 'unknown');
+});
+
+test('an opener followed by a one- or two-word question keeps the question; filler is not a question', () => {
+  assert.equal(registryIntent("Let's test CHE. Define entropy?").rest, 'Define entropy');
+  assert.equal(registryIntent("Let's test CHE: Why?").rest, 'Why');
+  assert.equal(registryIntent("Let's test CHE. Ready?").rest, '');
+  assert.equal(registryIntent("Let's test CHE now.").rest, '');
+  assert.equal(registryIntent("Let's test CHE. Here's the first question:").rest, '');
+});
+
+test('live: "Let\'s test CHE. Define entropy?" is answered and recorded', async () => {
+  const che = await owner();
+  const before = buildRegistry().totals.attempts;
+  const out = await che.say("Let's test CHE. Define entropy?");
+  assert.equal(out.route, 'model');
+  
+  const reg = buildRegistry({ live: await loadLive(storageFor(che.saved)) });
+  assert.equal(reg.totals.attempts, before + 1);
+  assert.equal(reg.attempts[reg.attempts.length - 1].question, 'Define entropy');
 });
 
 test('each live attempt queues one Brain room event in the Reliability Registry room', async () => {

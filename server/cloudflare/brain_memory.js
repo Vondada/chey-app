@@ -112,7 +112,10 @@ export async function recordConversationMemory(storage, { message, reply, now = 
   // An open test session (reliability_registry.js) records this question and the reply the owner actually got.
   try {
     await recordReliabilityExchange(storage, { message: said, reply: answered && isSafeMemoryText(answered) ? answered : '[reply withheld: it looked like private information]', id: memory.id, now });
-  } catch (_) {}
+  } catch (error) {
+    // The registry has already counted the failure where "what take are we on" reads it; the conversation is still kept.
+    console.error('CHE Reliability Registry: test question not recorded:', error?.message || error);
+  }
 
   // Build on earlier memories: link to the most related recent ones and
   // strengthen them (each link is a real shared topic, never invented).

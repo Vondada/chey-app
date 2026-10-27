@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:chey/brain/che_brain_reliability_screen.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/semantics.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
@@ -89,6 +90,30 @@ void main() {
     expect(find.bySemanticsLabel(RegExp(r'^Test question 2, question 2 of session 1.*Result: fail, Invented a line')), findsOneWidget);
     await tester.tap(find.textContaining('#2 · FAIL'));
     expect(spoken.last, contains('The question was: Which two engines does publicResearch query?'));
+  });
+
+  testWidgets('VoiceOver can activate every row it announces as a button (semantics tap, not a finger)', (tester) async {
+    tester.view.physicalSize = const Size(1200, 3200);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final handle = tester.ensureSemantics();
+    final spoken = <String>[];
+    await tester.pumpWidget(MaterialApp(home: CheBrainReliabilityScreen(client: _client(_seeded()), onSpeak: spoken.add)));
+    await tester.pumpAndSettle();
+
+    Future<void> activate(RegExp label) async {
+      final node = tester.getSemantics(find.bySemanticsLabel(label));
+      expect(node.getSemanticsData().hasAction(SemanticsAction.tap), isTrue, reason: '$label must carry a tap action');
+      node.owner!.performAction(node.id, SemanticsAction.tap);
+      await tester.pumpAndSettle();
+    }
+
+    await activate(RegExp(r'^Testing sessions: at least 2\.'));
+    expect(spoken.last, startsWith('Testing sessions: at least 2.'));
+    await activate(RegExp(r'^Session 1: Autonomy test round 1\.'));
+    await activate(RegExp(r'^Test question 1, question 1 of session 1'));
+    expect(spoken.last, contains('The question was: What is 17 times 23?'));
+    handle.dispose();
   });
 
   testWidgets('an empty registry shows how to start, not zeros', (tester) async {
