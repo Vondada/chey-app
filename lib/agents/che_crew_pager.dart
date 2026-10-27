@@ -41,15 +41,11 @@ class _CheCrewPagerState extends State<CheCrewPager> {
     return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
       SizedBox(
         height: expanded ? 400 : 210,
-        // The neighbouring cards stay built, and each card paints on its own layer, so a swipe moves layers instead
-        // of building and painting the next card mid-swipe (the screens gate counts dropped frames).
         child: PageView.builder(
           controller: _pages,
-          allowImplicitScrolling: true,
           itemCount: widget.agents.length,
           onPageChanged: (i) => setState(() => _index = i),
-          itemBuilder: (context, i) => RepaintBoundary(
-            child: Padding(
+          itemBuilder: (context, i) => Padding(
             padding: const EdgeInsets.symmetric(horizontal: 6),
             child: _ProfileCard(
               agent: widget.agents[i],
@@ -60,7 +56,6 @@ class _CheCrewPagerState extends State<CheCrewPager> {
               }),
               onOpen: () => widget.onOpen(widget.agents[i]),
               onReadAloud: () => widget.onReadAloud(widget.agents[i]),
-            ),
             ),
           ),
         ),
