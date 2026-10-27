@@ -256,6 +256,39 @@ void main() {
     expect(rect.bottom, lessThanOrEqualTo(viewport.bottom));
   });
 
+  // Codex review on PR #666: conversation(taskId: ...) keeps the agent record, and the screen used to render the
+  // agent panel whenever an agent was present, so a task view showed the agent's active task instead of the task.
+  testWidgets('a task-scoped view shows the selected task panel, with the agent kept as context', (tester) async {
+    final body = _queuedAtlas(messages: [
+      _message(seq: 1, kind: 'request', text: 'Older finished task', taskTitle: 'Older finished task', taskState: 'Completed', taskRaw: 'complete', at: '2026-10-26T09:00:00.000Z'),
+    ]);
+    final record = body['conversation'] as Map<String, dynamic>;
+    record['scope'] = 'task';
+    record['task'] = {
+      'id': 'task-old-0001',
+      'title': 'Older finished task',
+      'state': 'Completed',
+      'raw_status': 'complete',
+      'reason': 'Approved by CHE.',
+      'partner_name': 'Atlas',
+      'verified_by_che': true,
+      'created_at': '2026-10-26T09:00:00.000Z',
+      'updated_at': '2026-10-26T09:30:00.000Z',
+    };
+    await _pump(tester, CheOfficeConversation.fromResponse(body));
+    await tester.pumpAndSettle();
+    // The task panel: the selected task's title, state and reason.
+    expect(find.byWidgetPredicate((w) => w is SelectableText && w.data == 'Older finished task', skipOffstage: false), findsWidgets);
+    expect(find.text('Approved by CHE.', skipOffstage: false), findsOneWidget);
+    // Not the agent panel, which would show the agent's active (queued) task and current step.
+    expect(find.text('CURRENT STEP', skipOffstage: false), findsNothing);
+    expect(find.text('ACTIVE TASK', skipOffstage: false), findsNothing);
+    expect(find.text('Queued. Not started yet.', skipOffstage: false), findsNothing);
+    // The agent stays as context: its name and its own status.
+    expect(find.text('AGENT', skipOffstage: false), findsOneWidget);
+    expect(find.textContaining('Atlas · Research', skipOffstage: false), findsOneWidget);
+  });
+
   test('the client reads the conversation from the agent record, and a task view keeps only that task', () async {
     final body = _queuedAtlas(messages: [
       _message(seq: 1, kind: 'request', text: 'First task', at: '2026-10-26T10:00:00.000Z', details: {'record_id': 'task-a'}),
