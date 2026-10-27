@@ -170,6 +170,7 @@ test('an OpenRouter model is eligible only as a live zero-price :free variant wi
   assert.equal(ok({ id: 'openrouter/a:free', pricing: FREE, supports_tools: false }).reason, 'no_tool_calling');
   assert.equal(ok({ id: 'openrouter/a:free', pricing: FREE, context_length: 8192 }).reason, 'context_too_small');
   assert.equal(pricingIsZero({ prompt: '0', completion: '0', image: '0.001' }), false);
+  assert.equal(ok({ id: 'openrouter/meta-llama/llama-3.3-70b-instruct:free', pricing: FREE, context_length: 131072 }).reason, 'retired_by_provider', 'PR #628: never ranked again');
 });
 
 // ─── Ranking ───

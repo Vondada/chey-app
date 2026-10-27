@@ -226,9 +226,13 @@ export function providerVerdict(id, { evidence = {}, attested = [], now = Date.n
 
 // Whether one model may run, given its provider's verdict. A model is never eligible on a
 // blocked provider; an OpenRouter model must also be a live zero-price :free variant.
+// Models a provider retired (HTTP 404 on 2026-10-17; PR #628): never ranked, however a list is filtered.
+export const RETIRED_MODELS = Object.freeze([/llama-3\.3/i]);
+
 export function modelEligibility(model, verdict) {
   const id = String(model?.id || '');
   if (!verdict || verdict.coverage === 'blocked') return { eligible: false, reason: verdict?.reason || 'provider_blocked' };
+  if (RETIRED_MODELS.some((pattern) => pattern.test(id))) return { eligible: false, reason: 'retired_by_provider' };
   if (verdict.id === 'openrouter') {
     if (!/:free$/.test(id)) return { eligible: false, reason: 'not_free_variant' };
     if (!pricingIsZero(model.pricing)) return { eligible: false, reason: 'live_price_not_zero' };
