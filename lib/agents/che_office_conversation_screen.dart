@@ -2,9 +2,18 @@
 // Shows the agent's real state, then every recorded message in order, with exact untruncated text, search, filter
 // groups and expandable details. Newest message at the bottom; the view opens scrolled there. The search box and
 // filter groups stay fixed at the top. Passive: nothing here speaks on its own. Read aloud happens only when the
-// owner taps a Read button.
+// owner taps a Read button or asks by voice.
+//
+// Voice route (AGENTS.md): while this screen is open, the home navigator (lib/home_state/send.dart) offers each
+// spoken or typed turn to [CheOfficeConversationScreen.voiceHandler] first. Every on-screen action has a spoken
+// form: describe the screen, read the status, read message N or the latest message, message N details, search,
+// clear the search, filter by group, refresh, and a numbered list of options with spoken choices. Each reply is
+// also shown as large text at the top of the screen.
+
+import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../che_ui/che_theme.dart';
 import 'che_office_conversation.dart';
@@ -25,6 +34,10 @@ class CheOfficeConversationScreen extends StatefulWidget {
   /// Speaks one message's text when the owner taps its Read button.
   final void Function(String text)? onReadAloud;
 
+  /// Spoken and typed control while this screen is open. Returns the reply to speak and show, or null when the
+  /// words are not for this screen (they then go on to Chat). Null when the screen is closed.
+  static Future<String?> Function(String words)? voiceHandler;
+
   @override
   State<CheOfficeConversationScreen> createState() => _CheOfficeConversationScreenState();
 }
@@ -37,9 +50,19 @@ class _CheOfficeConversationScreenState extends State<CheOfficeConversationScree
   String? _error;
   bool _refreshing = false;
 
+  /// The last reply to a spoken or typed command, shown as large text so nothing is only spoken.
+  String? _reply;
+
+  /// Messages whose details the owner opened by voice.
+  final Set<int> _expanded = {};
+
+  /// True right after the numbered options were read, so a bare number picks one.
+  bool _optionsOffered = false;
+
   @override
   void initState() {
     super.initState();
+    CheOfficeConversationScreen.voiceHandler = _voice;
     _jumpToNewestSoon();
   }
 
@@ -54,6 +77,7 @@ class _CheOfficeConversationScreenState extends State<CheOfficeConversationScree
 
   @override
   void dispose() {
+    if (CheOfficeConversationScreen.voiceHandler == _voice) CheOfficeConversationScreen.voiceHandler = null;
     _search.dispose();
     _scroll.dispose();
     super.dispose();
@@ -65,20 +89,24 @@ class _CheOfficeConversationScreenState extends State<CheOfficeConversationScree
     });
   }
 
-  Future<void> _refresh() async {
+  /// Re-reads the record. Returns true when it was refreshed, false when it failed or cannot refresh.
+  Future<bool> _refresh() async {
     final load = widget.onRefresh;
-    if (load == null || _refreshing) return;
+    if (load == null || _refreshing) return false;
     setState(() => _refreshing = true);
     try {
       final next = await load();
-      if (!mounted) return;
+      if (!mounted) return false;
       setState(() {
         _c = next;
         _error = null;
+        _expanded.clear();
       });
       _jumpToNewestSoon();
+      return true;
     } catch (e) {
       if (mounted) setState(() => _error = '$e');
+      return false;
     } finally {
       if (mounted) setState(() => _refreshing = false);
     }
@@ -89,12 +117,205 @@ class _CheOfficeConversationScreenState extends State<CheOfficeConversationScree
     return kinds == null || kinds.contains(m.kind);
   }
 
+  List<CheConversationMessage> get _visible => [
+        for (final m in _c.messages)
+          if (_matchesFilter(m) && cheConversationMatches(m, _search.text)) m,
+      ];
+
+  static const List<String> _options = [
+    'Describe this screen',
+    'Read the status',
+    'Read the latest message',
+    'Read a message by its number',
+    'Read the details of a message',
+    'Search the conversation',
+    'Filter the messages',
+    'Refresh the conversation',
+  ];
+
+  /// Shows [text] as large text at the top of the screen, with a light haptic, and returns it to be spoken.
+  String _say(String text, {bool offered = false}) {
+    HapticFeedback.selectionClick();
+    if (mounted) setState(() => _reply = text);
+    _optionsOffered = offered;
+    return text;
+  }
+
+  String _messageSpeech(CheConversationMessage m) {
+    final text = m.text.isEmpty ? 'No text recorded.' : m.text;
+    final time = m.at == null ? 'time not recorded' : cheAbsoluteTime(m.at);
+    return 'Message ${m.seq}, ${m.kindLabel}, from ${m.speaker} to ${m.to}, $time. $text';
+  }
+
+  String _statusSpeech() {
+    final a = _c.agent;
+    final task = _c.task;
+    if (_c.scope == 'task' && task != null) {
+      return 'Task: ${task.title}. Status: ${task.state?.label ?? 'not recorded'}. ${task.reason}'
+          '${a == null ? '' : ' Agent: ${a.name}, whose status is ${a.status?.label ?? 'not recorded'}.'}';
+    }
+    if (a != null) {
+      return '${a.name}${a.role.isEmpty ? '' : ', ${a.role}'}. Status: ${a.status?.label ?? 'no task recorded'}. ${a.statusReason} '
+          'Active task: ${a.activeTask?.title ?? 'none'}. Current step: ${a.currentStep ?? 'not recorded'}. '
+          'Next scheduled action: ${a.nextScheduled ?? 'not recorded'}. '
+          '${a.blockers.isEmpty ? 'No blockers recorded.' : 'Blockers: ${a.blockers.map((b) => b.text).join('; ')}.'}';
+    }
+    return task == null ? 'No status is recorded.' : 'Task: ${task.title}. Status: ${task.state?.label ?? 'not recorded'}. ${task.reason}';
+  }
+
+  String _optionsSpeech() =>
+      'You can say: ${[for (var i = 0; i < _options.length; i++) '${i + 1}. ${_options[i]}'].join('. ')}. Say a number to choose.';
+
+  String _filtersSpeech() {
+    final names = cheConversationFilters.keys.toList();
+    return 'Filters: ${[for (var i = 0; i < names.length; i++) '${i + 1}. ${names[i]}'].join('. ')}. Say, for example, filter errors.';
+  }
+
+  CheConversationMessage? _bySeq(int seq) {
+    for (final m in _c.messages) {
+      if (m.seq == seq) return m;
+    }
+    return null;
+  }
+
+  Future<String> _choose(int n) async {
+    switch (n) {
+      case 1:
+        return _say(_describe());
+      case 2:
+        return _say(_statusSpeech());
+      case 3:
+        final v = _visible;
+        return _say(v.isEmpty ? 'No messages are showing.' : _messageSpeech(v.last));
+      case 4:
+        return _say('Say read message, then its number. Messages are numbered 1 to ${_c.messages.length}.');
+      case 5:
+        return _say('Say details for message, then its number.');
+      case 6:
+        return _say('Say search for, then the words to find.');
+      case 7:
+        return _say(_filtersSpeech());
+      case 8:
+        return _refreshSpeech();
+    }
+    return _say('There is no option $n. ${_optionsSpeech()}', offered: true);
+  }
+
+  Future<String> _refreshSpeech() async {
+    if (widget.onRefresh == null) return _say('This conversation cannot be refreshed here.');
+    if (_refreshing) return _say('Already refreshing.');
+    final ok = await _refresh();
+    return _say(ok
+        ? 'Refreshed. ${_c.messages.length} messages. Status: ${(_c.scope == 'task' ? _c.task?.state : _c.agent?.status)?.label ?? 'not recorded'}.'
+        : 'The refresh failed: ${_error ?? 'no reason was given'}. The screen still shows the earlier record.');
+  }
+
+  String _describe() {
+    final a = _c.agent;
+    final who = _c.scope == 'task' ? 'the task conversation${a == null ? '' : ' for ${a.name}'}' : '${a?.name ?? 'an Office'} conversation';
+    final v = _visible;
+    final search = _search.text.trim();
+    return 'This is $who. ${_statusSpeech()} '
+        'Showing ${v.length} of ${_c.messages.length} messages, filter $_filter${search.isEmpty ? '' : ', search "$search"'}. '
+        'Oldest first; the newest is message ${v.isEmpty ? 'none' : v.last.seq}. Say options to hear what you can do.';
+  }
+
+  /// Spoken and typed commands for this screen. Anything else returns null and goes on to Chat.
+  Future<String?> _voice(String words) async {
+    if (!mounted) return null;
+    final t = words.trim().toLowerCase().replaceAll('’', "'").replaceAll(RegExp(r'[.!?]+$'), '').trim();
+    if (t.isEmpty) return null;
+    final offered = _optionsOffered;
+    _optionsOffered = false;
+
+    const numberWords = {'one': 1, 'two': 2, 'three': 3, 'four': 4, 'five': 5, 'six': 6, 'seven': 7, 'eight': 8, 'nine': 9, 'ten': 10};
+    int? num(String s) => int.tryParse(s) ?? numberWords[s];
+
+    final choice = RegExp(r'^(?:option|choice|number)\s+(\w+)$').firstMatch(t) ??
+        (offered ? RegExp(r'^(\d+|one|two|three|four|five|six|seven|eight)$').firstMatch(t) : null);
+    if (choice != null && num(choice.group(1)!) != null) return _choose(num(choice.group(1)!)!);
+
+    if (RegExp(r'^(?:options|help|what can i (?:say|do)(?: here)?|read (?:the |my )?options|list (?:the )?options)$').hasMatch(t)) {
+      return _say(_optionsSpeech(), offered: true);
+    }
+    if (RegExp(r"^(?:describe|read)(?: this| the)? (?:screen|page|view)$|^what(?:'s| is) on (?:this|the) (?:screen|page)$|^where am i$").hasMatch(t)) {
+      return _say(_describe());
+    }
+    if (RegExp(r"^(?:read|say|what(?:'s| is))(?: me)?(?: the| his| her| their| this)? (?:status|state|current step|progress)$|^what is (?:he|she|it|the agent) doing$").hasMatch(t)) {
+      return _say(_statusSpeech());
+    }
+    if (RegExp(r'^read(?: me)?(?: the)? (?:latest|last|newest)(?: message)?$').hasMatch(t)) {
+      final v = _visible;
+      return _say(v.isEmpty ? 'No messages are showing.' : _messageSpeech(v.last));
+    }
+    final read = RegExp(r'^read(?: me)?(?: the)? message (?:number )?(\w+)$').firstMatch(t);
+    if (read != null) {
+      final n = num(read.group(1)!);
+      final m = n == null ? null : _bySeq(n);
+      return _say(m == null ? 'There is no message ${read.group(1)}. Messages are numbered 1 to ${_c.messages.length}.' : _messageSpeech(m));
+    }
+    final details = RegExp(r'^(?:(?:read |show |open |expand )?(?:the )?details (?:for|of|on) message|expand message|open message) (?:number )?(\w+)(?: details)?$')
+        .firstMatch(t);
+    if (details != null) {
+      final n = num(details.group(1)!);
+      final m = n == null ? null : _bySeq(n);
+      if (m == null) return _say('There is no message ${details.group(1)}. Messages are numbered 1 to ${_c.messages.length}.');
+      setState(() {
+        _expanded.add(m.seq);
+        if (!_visible.contains(m)) {
+          _filter = 'All';
+          _search.clear();
+        }
+      });
+      final rows = [for (final (label, value) in _detailRows(m)) '$label: ${value == null || value.trim().isEmpty ? 'Not recorded' : value}'];
+      return _say('Details for message ${m.seq}. ${rows.join('. ')}.');
+    }
+    if (RegExp(r'^(?:clear|reset|remove)(?: the)? search$').hasMatch(t)) {
+      setState(() => _search.clear());
+      _jumpToNewestSoon();
+      return _say('Search cleared. Showing ${_visible.length} of ${_c.messages.length} messages.');
+    }
+    // "search for X", "look for X", "find X in this conversation". A bare "find me a restaurant" goes on to Chat.
+    final search = RegExp(r'^(?:search(?: (?:this|the) conversation)?(?: for)?|look for) (.+?)(?: in (?:this|the) conversation)?$').firstMatch(t) ??
+        RegExp(r'^find (.+?) in (?:this|the) conversation$').firstMatch(t);
+    if (search != null) {
+      final q = search.group(1)!.replaceFirst(RegExp(r'^(?:the words? |messages? (?:about|with) )'), '').trim();
+      setState(() => _search.text = q);
+      _jumpToNewestSoon();
+      final v = _visible;
+      return _say(v.isEmpty
+          ? 'No messages match "$q" with the $_filter filter.'
+          : '${v.length} ${v.length == 1 ? 'message matches' : 'messages match'} "$q". The newest is message ${v.last.seq}. Say read message ${v.last.seq} to hear it.');
+    }
+    if (RegExp(r'^(?:filters|list (?:the )?filters|what filters(?: are there)?|read (?:the )?filters)$').hasMatch(t)) {
+      return _say(_filtersSpeech());
+    }
+    final filter = RegExp(r'^(?:filter(?: by| to)?|show(?: me)?(?: only)?(?: the)?|only show(?: the)?)\s+(.+?)(?: messages| only| filter)?$').firstMatch(t);
+    if (filter != null) {
+      final want = filter.group(1)!.trim();
+      final names = cheConversationFilters.keys.toList();
+      String? pick;
+      final n = num(want);
+      if (n != null && n >= 1 && n <= names.length) pick = names[n - 1];
+      pick ??= names.where((k) {
+        final key = k.toLowerCase();
+        return key == want || key == '${want}s' || '${key}s' == want || (want == 'everything' && k == 'All') || (want == 'reviews' && k == 'CHE review') || (want == 'review' && k == 'CHE review');
+      }).firstOrNull;
+      if (pick == null) return want.startsWith('filter') ? _say(_filtersSpeech()) : null;
+      setState(() => _filter = pick!);
+      _jumpToNewestSoon();
+      final v = _visible;
+      return _say('Filter $pick. Showing ${v.length} of ${_c.messages.length} messages${v.isEmpty ? '' : '; the newest is message ${v.last.seq}'}.');
+    }
+    if (RegExp(r'^(?:refresh|reload|update)(?: the| this)?(?: conversation| screen| messages)?$').hasMatch(t)) {
+      return _refreshSpeech();
+    }
+    return null;
+  }
+
   @override
   Widget build(BuildContext context) {
-    final visible = [
-      for (final m in _c.messages)
-        if (_matchesFilter(m) && cheConversationMatches(m, _search.text)) m,
-    ];
+    final visible = _visible;
     final agent = _c.agent;
     final title = _c.scope == 'task'
         ? (agent == null ? 'Office task' : '${agent.name} · task conversation')
@@ -106,7 +327,7 @@ class _CheOfficeConversationScreenState extends State<CheOfficeConversationScree
           if (widget.onRefresh != null)
             IconButton(
               tooltip: 'Refresh conversation',
-              onPressed: _refreshing ? null : _refresh,
+              onPressed: _refreshing ? null : () => unawaited(_refresh()),
               icon: const Icon(Icons.refresh_rounded),
             ),
         ],
@@ -117,6 +338,26 @@ class _CheOfficeConversationScreenState extends State<CheOfficeConversationScree
           Padding(
             padding: const EdgeInsets.fromLTRB(CheSpace.gutter, CheSpace.sm, CheSpace.gutter, 0),
             child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+              if (_reply != null)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: CheSpace.sm),
+                  child: Semantics(
+                    liveRegion: true,
+                    label: 'CHE said: $_reply',
+                    child: ExcludeSemantics(
+                      child: Container(
+                        padding: const EdgeInsets.all(CheSpace.md),
+                        decoration: BoxDecoration(
+                          color: CheColors.surfaceHi,
+                          borderRadius: BorderRadius.circular(CheRadius.md),
+                          border: Border.all(color: CheColors.accent),
+                        ),
+                        constraints: const BoxConstraints(maxHeight: 180),
+                        child: SingleChildScrollView(child: Text(_reply!, style: CheType.title)),
+                      ),
+                    ),
+                  ),
+                ),
               Semantics(
                 label: 'Search this conversation',
                 textField: true,
@@ -184,7 +425,13 @@ class _CheOfficeConversationScreenState extends State<CheOfficeConversationScree
                   Text('No messages are recorded for this conversation yet.', style: CheType.bodyDim)
                 else if (visible.isEmpty)
                   Text('No messages match this search and filter.', style: CheType.bodyDim),
-                for (final m in visible) _MessageCard(message: m, onReadAloud: widget.onReadAloud),
+                for (final m in visible)
+                  _MessageCard(
+                    key: ValueKey('message-${m.seq}-${_expanded.contains(m.seq)}'),
+                    message: m,
+                    onReadAloud: widget.onReadAloud,
+                    detailsOpen: _expanded.contains(m.seq),
+                  ),
               ],
             ),
           ),
@@ -384,9 +631,12 @@ List<(String, String?)> _detailRows(CheConversationMessage m) {
 }
 
 class _MessageCard extends StatelessWidget {
-  const _MessageCard({required this.message, this.onReadAloud});
+  const _MessageCard({super.key, required this.message, this.onReadAloud, this.detailsOpen = false});
   final CheConversationMessage message;
   final void Function(String text)? onReadAloud;
+
+  /// True when the owner opened this message's details by voice.
+  final bool detailsOpen;
 
   @override
   Widget build(BuildContext context) {
@@ -425,10 +675,11 @@ class _MessageCard extends StatelessWidget {
                 ),
             ]),
             ExpansionTile(
+              initiallyExpanded: detailsOpen,
               tilePadding: EdgeInsets.zero,
               childrenPadding: const EdgeInsets.only(bottom: CheSpace.sm),
               shape: const Border(),
-              title: Text('Details', style: CheType.label),
+              title: Text('Details', style: CheType.label, semanticsLabel: 'Details for message ${m.seq}'),
               children: [
                 for (final (label, value) in _detailRows(m)) _Kv(label, value),
               ],

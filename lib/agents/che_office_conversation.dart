@@ -321,3 +321,26 @@ class CheOfficeConversation {
         generatedAt: _time(j['generated_at']),
       );
 }
+
+/// The agent name in a spoken or typed request to open one Office agent's full conversation, or null.
+/// "Open Atlas's conversation", "show me the full conversation with Knox", "read Nova's full conversation".
+/// The plural "agent conversations" (every group chat) is a different command and returns null here.
+String? cheOfficeConversationAgentName(String text) {
+  final t = text
+      .trim()
+      .replaceAll(RegExp(r'[.!?]+$'), '')
+      .replaceAll('’', "'")
+      .replaceFirst(RegExp(r'^(?:che|chey|chay)[,:]?\s+', caseSensitive: false), '')
+      .replaceFirst(RegExp(r'^(?:please|can you|could you)\s+', caseSensitive: false), '');
+  const verb = r"(?:open|show|read|pull up|bring up)(?: me)?";
+  final possessive = RegExp("^$verb\\s+([a-z][a-z' -]{0,40}?)(?:'s|s')\\s+(?:full |whole |entire )?(?:conversation|chat history|messages)(?: (?:screen|view))?(?: please)?\$",
+      caseSensitive: false);
+  final withName = RegExp("^$verb\\s+(?:the |a )?(?:full |whole |entire )?(?:conversation|chat history|messages) (?:with|for|of|from) ([a-z][a-z' -]{0,40}?)(?: please)?\$",
+      caseSensitive: false);
+  final m = possessive.firstMatch(t) ?? withName.firstMatch(t);
+  if (m == null) return null;
+  final name = m.group(1)!.trim();
+  const notAgents = {'the', 'my', 'agent', 'agents', 'the agent', 'my agent', 'ai', 'ais', 'office', 'crew', 'war room', 'everyone', 'all', 'group', 'the agents'};
+  if (name.isEmpty || notAgents.contains(name.toLowerCase())) return null;
+  return name;
+}

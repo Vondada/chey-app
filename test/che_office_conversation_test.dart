@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:chey/agents/che_agent_runtime.dart';
 import 'package:chey/agents/che_office_conversation.dart';
 import 'package:chey/agents/che_office_conversation_screen.dart';
+import 'package:chey/home/screen_command.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
@@ -312,5 +313,123 @@ void main() {
     final one = await client.conversation(agentId: 'agent-atlas-0001', taskId: 'task-a');
     expect(one.scope, 'task');
     expect(one.messages.map((m) => m.text), ['First task']);
+  });
+
+  // Codex review on PR #666 (P1): every action on this screen has a voice route through the home navigator.
+  group('voice route', () {
+    test('the open request names one agent; the plural group-chat command is left to its own route', () {
+      expect(cheOfficeConversationAgentName("Open Atlas's conversation"), 'Atlas');
+      expect(cheOfficeConversationAgentName('CHE, show me the full conversation with Knox.'), 'Knox');
+      expect(cheOfficeConversationAgentName('read Nova’s full conversation'), 'Nova');
+      expect(cheOfficeConversationAgentName('pull up the conversation for Mira please'), 'Mira');
+      expect(cheOfficeConversationAgentName('show the agent conversations'), isNull);
+      expect(cheOfficeConversationAgentName("show the agents' messages"), isNull);
+      expect(cheOfficeConversationAgentName('open group chats'), isNull);
+      expect(cheOfficeConversationAgentName('open the conversation'), isNull);
+      expect(cheOfficeConversationAgentName('what is the weather'), isNull);
+    });
+
+    test('the earlier screen-command route does not take the open request first', () {
+      for (final s in ["Open Atlas's conversation", 'show me the full conversation with Knox']) {
+        expect(parseScreenCommand(s), isNull, reason: s);
+      }
+    });
+
+    CheOfficeConversation twoMessages() => CheOfficeConversation.fromResponse(_queuedAtlas(messages: [
+          _message(seq: 1, kind: 'request', text: 'Research competitors in Houston', at: '2026-10-26T10:00:00.000Z'),
+          _message(seq: 2, kind: 'error', text: 'Permission denied on the repo', speaker: 'Office runtime', to: 'CHE', at: '2026-10-26T10:02:00.000Z'),
+        ]));
+
+    testWidgets('the handler exists only while the screen is open, and other words go on to Chat', (tester) async {
+      expect(CheOfficeConversationScreen.voiceHandler, isNull);
+      await _pump(tester, twoMessages());
+      await tester.pumpAndSettle();
+      final voice = CheOfficeConversationScreen.voiceHandler;
+      expect(voice, isNotNull);
+      expect(await voice!('what is the capital of France'), isNull);
+      await tester.pumpWidget(const SizedBox());
+      expect(CheOfficeConversationScreen.voiceHandler, isNull);
+    });
+
+    testWidgets('options are a numbered list, a spoken number picks one, and every reply shows as large text', (tester) async {
+      await _pump(tester, twoMessages());
+      await tester.pumpAndSettle();
+      final voice = CheOfficeConversationScreen.voiceHandler!;
+      final options = await voice('options');
+      expect(options, contains('1. Describe this screen'));
+      expect(options, contains('8. Refresh the conversation'));
+      await tester.pump();
+      expect(find.text(options!), findsOneWidget);
+      final status = await voice('2');
+      expect(status, contains('Status: Queued'));
+      expect(status, isNot(contains('Running')));
+      // A bare number is a choice only right after the options were read.
+      expect(await voice('2'), isNull);
+      expect(await voice('option 3'), contains('Permission denied on the repo'));
+    });
+
+    testWidgets('describe the screen uses the record, not a guess', (tester) async {
+      await _pump(tester, twoMessages());
+      await tester.pumpAndSettle();
+      final said = await CheOfficeConversationScreen.voiceHandler!('describe this screen');
+      expect(said, contains('Atlas conversation'));
+      expect(said, contains('Showing 2 of 2 messages'));
+      expect(said, contains('the newest is message 2'));
+    });
+
+    testWidgets('read message N reads the exact text; an unknown number says so', (tester) async {
+      await _pump(tester, twoMessages());
+      await tester.pumpAndSettle();
+      final voice = CheOfficeConversationScreen.voiceHandler!;
+      expect(await voice('read message 1'), contains('Research competitors in Houston'));
+      expect(await voice('read message nine'), contains('There is no message nine'));
+      expect(await voice('read the latest message'), contains('Permission denied on the repo'));
+    });
+
+    testWidgets('search, clear search and filter change what is shown and report the count', (tester) async {
+      await _pump(tester, twoMessages());
+      await tester.pumpAndSettle();
+      final voice = CheOfficeConversationScreen.voiceHandler!;
+      expect(await voice('search for permission denied'), contains('1 message matches "permission denied"'));
+      await tester.pumpAndSettle();
+      expect(_bodyWith('Permission denied on the repo'), findsOneWidget);
+      expect(_bodyWith('Research competitors in Houston'), findsNothing);
+      expect(await voice('find nothing like this in this conversation'), contains('No messages match "nothing like this"'));
+      expect(await voice('clear the search'), contains('Showing 2 of 2'));
+      expect(await voice('filter errors'), contains('Filter Errors. Showing 1 of 2'));
+      await tester.pumpAndSettle();
+      expect(_bodyWith('Permission denied on the repo'), findsOneWidget);
+      expect(_bodyWith('Research competitors in Houston'), findsNothing);
+      expect(await voice('filters'), contains('1. All'));
+      expect(await voice('show everything'), contains('Filter All'));
+    });
+
+    testWidgets('details for message N reads the record fields and opens them on screen', (tester) async {
+      await _pump(tester, twoMessages());
+      await tester.pumpAndSettle();
+      final said = await CheOfficeConversationScreen.voiceHandler!('details for message 1');
+      expect(said, contains('Record id: task-atlas-0001'));
+      await tester.pumpAndSettle();
+      expect(find.text('RECORD ID'), findsOneWidget);
+    });
+
+    testWidgets('refresh reports the real outcome, success or failure', (tester) async {
+      var fail = false;
+      await tester.pumpWidget(MaterialApp(
+        home: CheOfficeConversationScreen(
+          conversation: twoMessages(),
+          onRefresh: () async {
+            if (fail) throw Exception('network down');
+            return twoMessages();
+          },
+        ),
+      ));
+      await tester.pumpAndSettle();
+      final voice = CheOfficeConversationScreen.voiceHandler!;
+      expect(await voice('refresh'), startsWith('Refreshed. 2 messages. Status: Queued'));
+      fail = true;
+      expect(await voice('refresh the conversation'), contains('The refresh failed'));
+      await tester.pumpAndSettle();
+    });
   });
 }
