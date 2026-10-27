@@ -239,6 +239,17 @@ export const COMMANDS = Object.freeze([
     produces: 'status', evidence: 'The job record read back after the change: its id and status.',
     cost: 'Free: no AI engine is used.', keywords: ['cancel', 'cancel job', 'coding job', 'fake commit', 'call off', 'abort'],
   }),
+  C('che-study', 'intelligence', 'BUILD', 'Study public comedy sources and manage the saved assignment.', {
+    title: 'Comedy Study',
+    does: 'Starts, checks, pauses or resumes the existing public-source comedy study. Reports summaries read and saved lessons, never episodes watched.',
+    needs: ['research', 'memory'], route: 'che_study', handler: 'comedy_study.studyChatTurn → studyTurn',
+    input: { name: 'request', required: false, hint: 'Study Martin. Learn comedy timing; study status; pause studying; resume studying' },
+    examples: ['Study Martin. Learn comedy timing.', 'Study status', 'Pause studying', 'Resume studying'],
+    prompt: 'Comedy study: {input}', produces: 'study_status',
+    evidence: 'Assignment checkpoints, opened public sources and saved lessons; failed reads remain retryable.',
+    cost: 'Public sources and the existing Workers AI binding; no paid subscription.',
+    keywords: ['study', 'comedy', 'humor', 'pause studying', 'resume studying'],
+  }),
   C('che-model-status', 'intelligence', 'EXPLORE', 'Read verified coding-provider availability and cost evidence.', {
     title: 'AI Model Status',
     does: 'Reads the existing coding runner model ledger and reports provider availability, pauses and verified billing evidence. Changes nothing.',
