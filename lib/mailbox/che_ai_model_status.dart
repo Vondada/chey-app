@@ -252,7 +252,7 @@ class CheAiModelStatusCard extends StatelessWidget {
                 excludeSemantics: true,
                 child: OutlinedButton.icon(
                   onPressed: () => _details(context),
-                  icon: const Icon(Icons.list_alt_rounded),
+                  icon: const Icon(Icons.menu_book_rounded),
                   label: const Text('Providers'),
                 ),
               ),
@@ -292,7 +292,7 @@ class _ProviderTile extends StatelessWidget {
       child: Card(
         color: CheColors.surfaceHi,
         child: ListTile(
-          leading: Icon(ok ? Icons.check_circle_rounded : Icons.do_not_disturb_on_rounded,
+          leading: Icon(ok ? Icons.check_circle_rounded : Icons.block_rounded,
               color: ok ? CheColors.success : CheColors.warning),
           title: Text(p.name, style: CheType.label),
           subtitle: Text(lines.join('\n'), style: CheType.caption),
