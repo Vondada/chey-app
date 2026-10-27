@@ -10,7 +10,8 @@
 ## Cause and fix (branch `claude/render-bench-fix`, commit e66e52d1)
 - `lib/widgets/che_render_bench.dart`: the orbit ticker only rotated the camera. The Brain view advances the scene with
   `tick(dt, repaint: budget.admitTick())`, which is what bumps the repaint counter. The benchmark now does the same.
-- `test/che_render_bench_test.dart`: regression assertion, more than 10 frames counted in one second. Not run here (no Flutter in this container).
+- `test/che_render_bench_test.dart`: regression assertion, more than 10 frames counted in one second. Run 2026-10-27 on a
+  Linux VM (flutter test): passes with the fix; with main's old ticker it fails with "the native pass counted 1 frames in one second".
 
 ## Not done yet
 - Real-scene benchmark: `assets/brain3d/bench.html` draws synthetic orbs only. A WebGL/WebGPU comparison on CHE's actual Brain
