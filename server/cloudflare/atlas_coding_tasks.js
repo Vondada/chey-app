@@ -10,7 +10,8 @@ import { queueAgentTask } from './agent_runtime.js';
 
 export const CODING_JOB_SOURCE = 'coding_job';
 const LINKABLE = new Set(['queued', 'running']);
-const SETTLED = new Set(['complete', 'failed', 'cancelled', 'rejected']);
+// A complete mirror keeps refreshing its merge and deploy evidence (it never leaves complete); these never change.
+const SETTLED = new Set(['failed', 'cancelled', 'rejected']);
 const clip = (value, n) => String(value ?? '').replace(/\s+/g, ' ').trim().slice(0, n);
 
 export const isCodingJobMirror = (task) => task?.source === CODING_JOB_SOURCE;
@@ -86,6 +87,8 @@ export function syncAtlasCodingTasks(data, at = new Date().toISOString()) {
     const job = data.jobs.find((j) => j?.id === task.job_id);
     const next = job && codingJobTaskState(job, data.jobs);
     if (!next) continue;
+    // Complete means merged; later evidence (the deploy check) updates the result but never undoes the merge.
+    if (task.status === 'complete' && next.status !== 'complete') continue;
     const before = JSON.stringify([task.status, task.result, task.error, task.progress_note, task.pr_number, task.pr_url, task.merge_commit_sha]);
     task.status = next.status;
     task.job_status = next.job_status;

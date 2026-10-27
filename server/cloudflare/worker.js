@@ -12,6 +12,7 @@ import {
   processAgentWork,
   requeueAgentReview,
   cancelAgentTasks,
+  CODING_JOB_MIRROR_ERROR,
   TASK_FINISHED,
   ensureJobAgent,
   queueAgentTask,
@@ -9311,6 +9312,7 @@ export class CheState extends DurableObject {
           const task = data.team_tasks.find((item) => item.id === taskId);
           if (!task) outcome = { error: 'Office task not found.' };
           else if (TASK_FINISHED.has(task.status)) outcome = { error: 'That task is already finished.' };
+          else if (task.source === 'coding_job') outcome = { error: CODING_JOB_MIRROR_ERROR };
           else {
             task.status = 'cancelled';
             task.updated_at = new Date().toISOString();
@@ -12000,7 +12002,7 @@ export class CheState extends DurableObject {
           });
         }
         if (officePhrase?.type === 'reviewAgentTask') {
-          const held = (data.team_tasks || []).filter((t) => ['needs_review', 'review_pending'].includes(t.status) && t.result
+          const held = (data.team_tasks || []).filter((t) => ['needs_review', 'review_pending'].includes(t.status) && t.result && t.source !== 'coding_job'
             && (!officePhrase.agentId || String(t.partner_name || '').toLowerCase() === officePhrase.agentId));
           const target = held[0];
           const outcome = target ? requeueAgentReview(data, target.id) : { error: 'none' };
@@ -12016,18 +12018,20 @@ export class CheState extends DurableObject {
         }
         if (officePhrase?.type === 'stopAgentTask') {
           // Cancels in durable state first; the reply says only what the record now holds.
-          const { agent, cancelled } = cancelAgentTasks(data, officePhrase.agentId);
+          const { agent, cancelled, kept = [] } = cancelAgentTasks(data, officePhrase.agentId);
           if (cancelled.length) {
             await this.ctx.storage.put('che', data);
             this.broadcastAgents(data);
           }
           const name = agent?.name || officePhrase.agentId.charAt(0).toUpperCase() + officePhrase.agentId.slice(1);
           const list = cancelled.map((t) => `"${String(t.task || '').slice(0, 70)}"`).join(', ');
+          // A coding job shown on the desk is not stopped by this (CODING_JOB_MIRROR_ERROR), and the reply says so.
+          const keptNote = kept.length ? ` I did not stop ${kept.length === 1 ? 'the CHE coding job' : `${kept.length} CHE coding jobs`} on ${name}'s desk: the Office cannot stop a coding job, so it keeps running.` : '';
           return ndjsonReply(!agent
             ? `${name} is not in your Office, sir, so there was nothing to stop.`
             : cancelled.length
-              ? `Stopped, sir. I cancelled ${name}'s ${cancelled.length === 1 ? 'task' : `${cancelled.length} tasks`}: ${list}. Anything ${name} already finished stays as it was.`
-              : `${name} has no open task, sir, so nothing was stopped.`,
+              ? `Stopped, sir. I cancelled ${name}'s ${cancelled.length === 1 ? 'task' : `${cancelled.length} tasks`}: ${list}. Anything ${name} already finished stays as it was.${keptNote}`
+              : kept.length ? `Nothing was stopped, sir.${keptNote}` : `${name} has no open task, sir, so nothing was stopped.`,
           { source: 'office', office: 'stopAgentTask', cancelled: cancelled.map((t) => t.id) });
         }
         if (officePhrase?.type === 'standDown') {
@@ -15684,6 +15688,8 @@ export class CheState extends DurableObject {
         }
       }
     }
+    // A swept coding job reaches Atlas's desk before any early return below.
+    if (swept) syncAtlasCodingTasks(data);
     if (ownerApprovedOnly && !data.jobs.some((job) => OWNER_APPROVED_JOB_KINDS.has(job.kind) && job.status === 'queued')) {
       if (swept) await this.ctx.storage.put('che', data);
       return false;
