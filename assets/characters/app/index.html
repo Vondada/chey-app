@@ -28,7 +28,7 @@ button:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
 <div id="stage" aria-hidden="true"></div>
 <div id="status" role="status" aria-live="polite">CHE loading…<small id="sub">Rigged 3D prototype</small></div>
 <div id="pad" role="application" aria-label="Movement joystick. Drag to walk; push further to run. Keyboard: arrow keys." tabindex="0"><div id="knob"></div></div>
-<div id="crew" role="group" aria-label="Office crew. Choose an agent to hear their role."></div>
+<div id="crew" role="group" aria-label="Office crew and workstations. Choose an agent to hear their role, or a workstation to see its current task."></div>
 <div id="dock">
   <div id="clips" role="group" aria-label="CHE animations"></div>
 </div>
@@ -64,16 +64,23 @@ const CLIPS = [
 const ONE_SHOT = new Set(['sit', 'stand']);
 const ROOM = 5.5;
 const DESK = { x: 2.2, z: -2.5, hx: 0.8, hz: 0.35 };
-// CHE's office agents (roles from lib/che_ui/che_brain.dart), each at a spot with a looping clip.
+// CHE's office agents, each at a spot with a looping clip. Roles follow the server roster
+// (server/cloudflare/office_company.js LA_AGENCIA_ROLES), worded for VoiceOver ("and", not "/").
 // Everyone starts idle; the app sets each clip from the agent's real runtime status (CHE.setStates).
 const CREW = [
-  { id: 'nova', name: 'Nova', role: 'Product and listings', at: [-2.2, -2.2], clip: 'idle', face: 0.6 },
-  { id: 'atlas', name: 'Atlas', role: 'Research and sourcing', at: [-0.9, -3.0], clip: 'idle', face: 0.2 },
-  { id: 'mira', name: 'Mira', role: 'Support copy and translation', at: [0.6, -3.2], clip: 'idle', face: 0 },
-  { id: 'knox', name: 'Knox', role: 'Engineering', at: [2.2, -1.6], clip: 'idle', face: -0.6 },
-  { id: 'sage', name: 'Sage', role: 'Finance reports, read only', at: [3.0, 0.2], clip: 'idle', face: -1.2 },
-  { id: 'lyra', name: 'Lyra', role: 'Content and social', at: [-3.0, 0.0], clip: 'idle', face: 1.2 },
-  { id: 'iris', name: 'Iris', role: 'Ad Studio', at: [-2.4, 1.6], clip: 'idle', face: 2.2 },
+  { id: 'nova', name: 'Nova', role: 'Operations and coordination', at: [-2.2, -2.2], clip: 'idle', face: 0.6 },
+  { id: 'atlas', name: 'Atlas', role: 'Engineering and Codex coding jobs', at: [-0.9, -3.0], clip: 'idle', face: 0.2 },
+  { id: 'mira', name: 'Mira', role: 'Research and education', at: [0.6, -3.2], clip: 'idle', face: 0 },
+  { id: 'knox', name: 'Knox', role: 'Security and protection', at: [2.2, -1.6], clip: 'idle', face: -0.6 },
+  { id: 'sage', name: 'Sage', role: 'Intelligence and strategy', at: [3.0, 0.2], clip: 'idle', face: -1.2 },
+  { id: 'lyra', name: 'Lyra', role: 'Creative production', at: [-3.0, 0.0], clip: 'idle', face: 1.2 },
+  { id: 'iris', name: 'Iris', role: 'Experience and accessibility', at: [-2.4, 1.6], clip: 'idle', face: 2.2 },
+];
+// Named workstations: the owner taps one (or taps while standing within WS_REACH of it) and the app is told
+// { type: 'workstationTap', id }, so it can show that agent's real task. Atlas's desk sits in front of him.
+const WS_REACH = 1.2;
+const WORKSTATIONS = [
+  { id: 'atlas', label: "Atlas's workstation", x: -0.9, z: -2.35, hx: 0.5, hz: 0.25 },
 ];
 
 const $status = document.getElementById('status');
@@ -128,6 +135,25 @@ scene.add(desk);
 const screen = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.36, 0.03), new THREE.MeshStandardMaterial({ color: 0x06302f, emissive: 0x2ee6d6, emissiveIntensity: 0.8 }));
 screen.position.set(DESK.x, 0.66, DESK.z - 0.15);
 scene.add(screen);
+// Each workstation reuses the desk material and screen look; its group is named ws:<id> for raycasts.
+const screenMat = screen.material;
+const wsMeshes = [];
+for (const w of WORKSTATIONS) {
+  const g = new THREE.Group();
+  g.name = `ws:${w.id}`;
+  g.userData.workstation = w.id;
+  const top = new THREE.Mesh(new THREE.BoxGeometry(w.hx * 2, 0.46, w.hz * 2), deskMat);
+  top.position.set(0, 0.23, 0);
+  top.castShadow = top.receiveShadow = true;
+  const mon = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.3, 0.03), screenMat.clone());
+  mon.position.set(0, 0.62, 0.05);
+  top.name = `ws:${w.id}:desk`;
+  mon.name = `ws:${w.id}:screen`;
+  g.add(top, mon);
+  g.position.set(w.x, 0, w.z);
+  scene.add(g);
+  wsMeshes.push({ ...w, group: g, screen: mon });
+}
 
 const ring = new THREE.Mesh(new THREE.RingGeometry(0.26, 0.31, 48), new THREE.MeshBasicMaterial({ color: 0x2ee6d6, transparent: true, opacity: 0.85, side: THREE.DoubleSide }));
 ring.rotation.x = -Math.PI / 2;
@@ -261,9 +287,56 @@ const keys = new Set();
 window.addEventListener('keydown', (e) => { if (e.key.startsWith('Arrow')) { keys.add(e.key); e.preventDefault(); } });
 window.addEventListener('keyup', (e) => keys.delete(e.key));
 
+// ---------- workstations: a direct tap, a tap while standing close, the crew-list button or CHE.tapWorkstation
+const $wsButtons = {};
+for (const w of WORKSTATIONS) {
+  const b = document.createElement('button');
+  b.type = 'button';
+  b.textContent = w.label;
+  b.setAttribute('aria-label', `${w.label}. Show ${w.label.replace(/'s workstation$/, '')}'s current task.`);
+  b.addEventListener('click', () => useWorkstation(w.id));
+  $wsButtons[w.id] = b;
+  $crew.appendChild(b);
+}
+function wsDistance(w) { return Math.max(0, Math.hypot(Math.max(0, Math.abs(pos.x - w.x) - w.hx), Math.max(0, Math.abs(pos.z - w.z) - w.hz))); }
+function nearestWorkstation() {
+  let best = null;
+  for (const w of wsMeshes) { const d = wsDistance(w); if (d <= WS_REACH && (!best || d < best.d)) best = { w, d }; }
+  return best && best.w;
+}
+function useWorkstation(id) {
+  const w = wsMeshes.find((x) => x.id === id);
+  if (!w) return false;
+  // A short glow on the monitor; the app decides what to show and says it.
+  w.screen.material.emissiveIntensity = 1.6;
+  setTimeout(() => { w.screen.material.emissiveIntensity = 0.8; }, 600);
+  say(w.label, window.CheBridge ? 'Asking CHE for this desk’s current task.' : 'Open this room inside CHE to see this desk’s task.');
+  tellApp({ type: 'workstationTap', id });
+  return true;
+}
+
 // ---------- tap CHE to select her (keeps the ring and status in sync)
 const ray = new THREE.Raycaster();
 const ndc = new THREE.Vector2();
+// A tap (little movement between down and up) on a workstation, or anywhere while standing next to one.
+let tapStart = null;
+renderer.domElement.addEventListener('pointerdown', (e) => { tapStart = { x: e.clientX, y: e.clientY }; });
+renderer.domElement.addEventListener('pointerup', (e) => {
+  if (!tapStart || Math.hypot(e.clientX - tapStart.x, e.clientY - tapStart.y) > 10) { tapStart = null; return; }
+  tapStart = null;
+  const r = renderer.domElement.getBoundingClientRect();
+  ndc.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
+  ray.setFromCamera(ndc, camera);
+  // The nearest thing under the finger wins: an agent standing in front of a desk is greeted, not the desk.
+  const first = (o) => { const h = ray.intersectObject(o, true); return h.length ? h[0].distance : Infinity; };
+  const person = Math.min(first(hero), ...crew.map((c) => first(c.root)));
+  let hitWs = null, wsDist = Infinity;
+  for (const w of wsMeshes) { const d = first(w.group); if (d < wsDist) { wsDist = d; hitWs = w; } }
+  if (hitWs && wsDist < person) { useWorkstation(hitWs.id); return; }
+  if (person < Infinity) return;
+  const near = nearestWorkstation();
+  if (near) useWorkstation(near.id);
+});
 renderer.domElement.addEventListener('pointerdown', (e) => {
   if (!mixer) return;
   const r = renderer.domElement.getBoundingClientRect();
@@ -281,9 +354,13 @@ renderer.domElement.addEventListener('pointerdown', (e) => {
 // ---------- movement, collision, camera
 const MOVE = { walk: 0.75, run: 1.8 };
 let camYaw = 0;
+// Camera tilt down toward CHE, radians (default matches the original 1.45 m height at 2.7 m behind her).
+const CAM_DIST = Math.hypot(0.83, 2.7);
+let camPitch = Math.atan2(0.83, 2.7);
+let snapCam = false;
 function blocked(x, z) {
   if (crew.some((c) => Math.hypot(x - c.at[0], z - c.at[1]) < 0.45)) return true;
-  return Math.abs(x - DESK.x) < DESK.hx + 0.25 && Math.abs(z - DESK.z) < DESK.hz + 0.25;
+  return [DESK, ...WORKSTATIONS].some((d) => Math.abs(x - d.x) < d.hx + 0.25 && Math.abs(z - d.z) < d.hz + 0.25);
 }
 function update(dt) {
   let sx = stick.x, sy = stick.y;
@@ -319,8 +396,9 @@ function update(dt) {
   for (const c of crew) if (!c.still) c.mixer.update(dt);
   // Camera: follows CHE from behind, orbit by dragging empty space.
   const target = new THREE.Vector3(pos.x, 0.62, pos.z);
-  const want = new THREE.Vector3(target.x + Math.sin(camYaw) * 2.7, 1.45, target.z + Math.cos(camYaw) * 2.7);
-  camera.position.lerp(want, 1 - Math.pow(0.02, dt));
+  const flat = Math.cos(camPitch) * CAM_DIST;
+  const want = new THREE.Vector3(target.x + Math.sin(camYaw) * flat, target.y + Math.sin(camPitch) * CAM_DIST, target.z + Math.cos(camYaw) * flat);
+  if (snapCam) { camera.position.copy(want); snapCam = false; } else camera.position.lerp(want, 1 - Math.pow(0.02, dt));
   camera.lookAt(target);
 }
 
@@ -358,6 +436,28 @@ function setStates(states) {
   }
 }
 
+// ---------- pose: where CHE stands and how the camera looks, so the app can save and restore a visit
+function getPose() {
+  return { x: pos.x, y: pos.y, z: pos.z, heading, yaw: camYaw, pitch: camPitch, near: (nearestWorkstation() || {}).id || null };
+}
+function setPose(p) {
+  const n = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
+  p = p || {};
+  const x = n(p.x), z = n(p.z);
+  if (x !== null && z !== null) {
+    const cx = Math.max(-ROOM + 0.5, Math.min(ROOM - 0.5, x));
+    const cz = Math.max(-ROOM + 0.5, Math.min(ROOM - 0.5, z));
+    if (!blocked(cx, cz)) { pos.x = cx; pos.z = cz; }
+  }
+  if (n(p.heading) !== null) heading = p.heading;
+  if (n(p.yaw) !== null) camYaw = p.yaw;
+  if (n(p.pitch) !== null) camPitch = Math.max(0.05, Math.min(1.2, p.pitch));
+  hero.position.copy(pos);
+  hero.rotation.y = heading;
+  snapCam = true;
+  return getPose();
+}
+
 // ---------- the render loop stops while the page is hidden or the app pauses it (no GPU work off screen)
 let last = performance.now();
 let paused = false;
@@ -390,6 +490,10 @@ window.CHE = {
   get paused() { return paused || !running; },
   get crewLoaded() { return crew.length; },
   get state() { return { clip: current && Object.keys(actions).find((k) => actions[k] === current), pos: pos.toArray(), sitting, selected }; },
+  getPose: () => getPose(),
+  setPose: (p) => setPose(p),
+  tapWorkstation: (id) => useWorkstation(id),
+  get workstations() { return WORKSTATIONS.map((w) => ({ id: w.id, label: w.label, x: w.x, z: w.z })); },
 };
 </script>
 </body>

@@ -11,7 +11,7 @@ node .claude/skills/che-release/scripts/release_status.mjs [--pr N | --sha SHA] 
 ```
 It reports:
 - the PR state and merge SHA;
-- the checks on the head (`Workers Builds: chey-app` is non-gating);
+- the checks on the head (`Workers Builds: chey-app`, `screens` and `simulator` are non-gating; an open PR is `NOT READY` until `live (staging)` passes);
 - the main head;
 - the Worker deploy run for the target commit, with what it verified live (the live commit, the memory probe, the voice probe);
 - the Shorebird and IPA runs;
@@ -20,6 +20,9 @@ It reports:
 - with `--installed` (the version+build the owner's CHE Updates screen shows): whether that phone is behind, on or ahead of the newest published IPA. In chat, CHE answers the same from the phone's own report (`self_update.js` `appStatusReport`).
 
 **UNKNOWN means not verified.** Never report it as success. The iPhone is never verifiable from here.
+
+## The pre-merge gate: live tests on staging (owner, 2026-10-27)
+Merge only when `live (staging)` (`che-worker-staging.yml`) and `worker`, `flutter`, `coding` are green on the exact head. The iOS simulator is never a gate. A SKIPPED probe is not a pass. Details: `reference/live-gate.md`.
 
 ## Authorization gate
 
@@ -33,7 +36,7 @@ It reports:
 | YouTube publish, payments, deleting | — | The owner's direct yes, every time (AGENTS.md) |
 
 ## Merge and verify
-1. Run `release_status.mjs --pr N` and confirm checks are `GREEN` on the exact head.
+1. Run `release_status.mjs --pr N` and confirm checks are `GREEN` on the exact head, including `live (staging)`.
 2. Read the review threads. Codex P1/P2 and red-circle findings are bug reports: fix them or answer them.
 3. Squash merge with `expectedHeadSha`. Add `[worker-deploy]` when the Worker changed.
 4. Merge `origin/main` back into the work branch. Force-push is denied here.
@@ -41,7 +44,7 @@ It reports:
 6. Update `mailbox/briefs/LIVE-HANDOFF.md` §2 on `che-mailbox`, and append one line to `mailbox/claude.jsonl`.
 
 ## Never
-- Never call something live from a green PR, or from a deploy that is still running.
+- Never call something live from a green PR, or from a deploy that is still running. Staging green is not production.
 - Never claim iPhone behavior without the owner's device evidence.
 - Never re-run CI with an empty commit. Never skip or disable a test.
 - Never print secrets. The script needs none, and an optional `GITHUB_TOKEN` is never printed.

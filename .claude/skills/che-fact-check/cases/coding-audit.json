@@ -1,0 +1,14 @@
+{
+  "about": "Reliability Test 2 (2026-10-27): asked why her coding agent failed, CHE's model said she had no authorized telemetry connection. The runner's own records on che-mailbox answer, with 0 model calls. Offline: GitHub is refused, so the honest answer is the failed read and its status. With --network and CHE_GITHUB_TOKEN/CHE_GITHUB_REPO set: the live records.",
+  "model": "I don't have an authorized telemetry or audit-log connection to my coding providers' runtime records, sir.",
+  "turns": [
+    { "message": "Why did my coding agent fail, what did it try, and what actually happened?",
+      "expect": { "route": "che_coding_audit", "model_calls": 0, "not": "telemetry|audit-log connection" } },
+    { "message": "What did the coding agent try?", "expect": { "route": "che_coding_audit", "model_calls": 0 } },
+    { "message": "Show coding attempts for ocr-49bea5b4", "expect": { "route": "che_coding_audit", "model_calls": 0 } },
+    { "message": "Show coding attempts for ocr-00000000", "expect": { "route": "che_coding_audit", "model_calls": 0, "not": "attempt: 1\\." } },
+    { "message": "why did my coating agent fail", "expect": { "route": "che_coding_audit", "model_calls": 0 } },
+    { "message": "show my coding runs", "expect": { "route": "che_coding_audit", "model_calls": 0 } },
+    { "message": "Why did the coding job fail?", "expect": { "route": "che_coding_history", "model_calls": 0 } }
+  ]
+}
