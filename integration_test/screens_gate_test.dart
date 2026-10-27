@@ -6,7 +6,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
 
+import 'package:chey/agents/che_office_floor_screen.dart';
 import 'package:chey/main.dart' as app;
+
+import '../test/support/che_office_fixture.dart';
 
 /// Frames over budget allowed while swiping the Office sections. Tune only from measured runs, never to pass a regression.
 const int maxMissedFrames = 6;
@@ -34,14 +37,17 @@ void main() {
   });
 
   testWidgets('the Office sections swipe smoothly', (tester) async {
-    app.main();
-    await tester.pump(const Duration(seconds: 5));
-    await tester.tap(find.bySemanticsLabel('Office tab'));
+    // The roster comes from a fixed fixture (test/support/che_office_fixture.dart), not the Worker: CI has no agent
+    // server, so the app's own Office would show its empty state and there would be nothing to swipe.
+    if (defaultTargetPlatform == TargetPlatform.iOS) await binding.convertFlutterSurfaceToImage();
+    await tester.pumpWidget(MaterialApp(home: Scaffold(body: CheOfficeFloorScreen(client: fixtureOfficeClient()))));
     await tester.pump(const Duration(seconds: 2));
     final pager = find.byType(PageView);
-    if (pager.evaluate().isEmpty) {
-      fail('The Office has no section pager to swipe');
-    }
+    expect(pager, findsOneWidget, reason: 'The Office has no section pager to swipe');
+    expect(find.text('Nova'), findsWidgets, reason: 'The first crew member is not on screen');
+    await tester.fling(pager.first, const Offset(-300, 0), 1200);
+    await tester.pumpAndSettle(const Duration(milliseconds: 100), EnginePhase.sendSemanticsUpdate, const Duration(seconds: 5));
+    expect(tester.widget<PageView>(pager.first).controller!.page, closeTo(1, 0.01), reason: 'A left swipe did not move to the next member');
     await binding.watchPerformance(() async {
       for (var i = 0; i < 4; i++) {
         await tester.fling(pager.first, const Offset(-300, 0), 1200);
