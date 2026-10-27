@@ -16,13 +16,13 @@ Statuses: `open`, `in progress`, `waiting on owner`, `built, not verified`, `ver
 ## Open items
 | id | owner request | status | branch / PR | next step | evidence |
 |---|---|---|---|---|---|
-| Q-01 | Release gate green for PR #672 | in progress | `release-gate` (PR #672 open) | Rerun the gate on `7d327382`. Trading order check and screenshots should now run. | Gate run 40417405846 on `b6435ad3`: worker, coding, flutter pass; screens fails (Office pager, trading wait, screenshots, now fixed) |
+| Q-01 | Release gate green for PR #672 | done | `release-gate` (PR #672 merged, `4b724dfa`) | None. Since #682 (`3c7c52d7`) the iOS `screens` job is manual and informational; `live (staging)` gates PRs. | Gate run 40417405846 on `b6435ad3`: worker, coding, flutter pass; screens fails (Office pager, trading wait, screenshots, now fixed) |
 | Q-02 | Decide the Office swipe | waiting on owner | PR #672 | Owner says: add real swipeable Office sections, or gate a different scroll. | Phone Office tab has no pager (`CheOfficeFloorScreen`) |
 | Q-03 | Chat: fact-check status on each CHE reply | open | `fact-check-chat` | Show "Waiting for Claude" / "Checked by Claude" under the reply, using the mailbox thread. | Mailbox side built in `83233b39`, not compiled |
 | Q-04 | Mailbox: verdicts and status | built, not verified | `fact-check-chat` (83233b39) | Dart compile in CI, phone check. | Node mailbox tests 13/13; Flutter not run |
 | Q-05 | Mailbox: who typed each message | built, not verified | `mailbox-origin` (646d7c7c) | Dart compile, phone check. Older messages keep the old label. | Node tests 13/13 |
 | Q-06 | Money colors everywhere | built, not verified | `claude/money-colors` (WIP commits) | Review the combined diff, compile, decide the yellow calendar tint (gray per owner rule). | WIP commits; Flutter not run |
-| Q-07 | Rendering benchmark native pass counted 1 frame | built, not verified | `claude/render-bench-fix` (e66e52d1) | CI, then the owner reruns the benchmark on the iPhone. | Root cause in `docs/CHE_RENDER_BENCH_RESULTS.md` |
+| Q-07 | Rendering benchmark native pass counted 1 frame | built, not verified | `claude/render-bench-fix` (PR #700) | CI, then the owner reruns the benchmark on the iPhone. | Root cause in `docs/CHE_RENDER_BENCH_RESULTS.md`; regression test passes with the fix and fails (1 frame) without it (2026-10-27, Linux VM) |
 | Q-08 | "Make me a beat" gets a text refusal | built, not verified | `fix-beat-request` (8723faf5) | CI, Shorebird patch, phone test. | Parser tests added |
 | Q-09 | Common-sense and conversation eval | built offline; live run blocked | `fact-check-eval` (54ce677b) | Owner sets the daily cap above $0 to allow live runs. | Grader tests 5/5; live run refuses at $0 |
 | Q-10 | Trading room: order ticket visible to the owner | waiting on owner | `kShowAlpacaPaper = false` on main | Owner decides whether Alpaca PAPER shows in the room (he said no on 2026-10-23). | Test overrides the flag for its run only |
@@ -38,4 +38,5 @@ Statuses: `open`, `in progress`, `waiting on owner`, `built, not verified`, `ver
 - Whether automatic background runs are allowed (this would change the AGENTS.md rule and use more usage).
 
 ## Log
+- 2026-10-27: Q-01 done (#672 merged); Q-07 is PR #700.
 - 2026-10-26: queue created from the day's requests. Earlier work is recorded in the branches above and in `docs/CHE_MISSION_LEDGER.md`.
