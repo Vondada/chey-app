@@ -99,7 +99,7 @@ import { CALENDAR_SOURCE, calendarIntent, learningWindows, officeCalendar, offic
 import { cancelCandidates, cancelConfirmation, cancelOrderIntent, chartIntent, chartOpenReply, chartView, drawIntent, futuresOrderIntent, marketOrderFeedProblem, paperAccountIntent, readDrawings, saveDrawings, speakOrder } from './trading_chart.js';
 import { marketUniverse, searchUniverse } from './market_universe.js';
 import { readRithmicCandles, storeRithmicCandles } from './rithmic_dataset.js';
-import { gatherTradingStatus, tradingStatusIntent, tradingStatusReply } from './trading_status.js';
+import { gatherTradingStatus, tradingStatusIntent, tradingStatusReply } from './trading_answers.js';
 // A spoken cancel of one Alpaca PAPER order waiting for the owner's yes, or for his pick from a numbered list.
 const CHART_CANCEL_PENDING = 'trading_chart_cancel_pending';
 // "Number 2", "2", "the second one": a pick from a numbered list of n. 0 when the turn picks nothing.
