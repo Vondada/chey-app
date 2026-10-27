@@ -1137,11 +1137,11 @@ class _AgentDeskSheetState extends State<_AgentDeskSheet> {
 
   bool get _isChe => _agentId == 'che';
 
-  /// The six-state status of this agent's current work, from its real task records: the open task if any,
-  /// otherwise the newest task. Null when no task is recorded.
+  /// The six-state status of this agent's current work, from its real task records: running work before work
+  /// waiting for review or blocked, before queued work (see cheHeadlineTask), otherwise the newest task. Null when
+  /// no task is recorded.
   CheOfficeState? _headlineState(CheAgentDetail d) {
-    final open = d.history.where((t) => t.inProgress || t.status == 'needs_review' || t.status == 'blocked');
-    final pick = open.isNotEmpty ? open.first : (d.history.isNotEmpty ? d.history.first : null);
+    final pick = cheHeadlineTask(d.history);
     if (pick == null) return null;
     return cheOfficeStateForTaskStatus(pick.status, verified: pick.verifiedByChe);
   }

@@ -114,6 +114,31 @@ void main() {
     });
   });
 
+  group('desk headline precedence (Codex review on PR #666)', () {
+    CheAgentTask t(String id, String status) => CheAgentTask(
+        id: id, task: id, status: status, result: '', cheReview: '', verifiedByChe: false, error: '', createdAt: null);
+
+    test('an older running task outranks a newer queued one', () {
+      // History is newest first, as GET /api/agents/:id returns it.
+      final pick = cheHeadlineTask([t('newer-queued', 'queued'), t('older-running', 'running')]);
+      expect(pick?.id, 'older-running');
+      expect(cheOfficeStateForTaskStatus(pick!.status, verified: false), CheOfficeState.running);
+    });
+
+    test('reviewing outranks queued; waiting-for-review and blocked outrank queued', () {
+      expect(cheHeadlineTask([t('q', 'queued'), t('rv', 'reviewing')])?.id, 'rv');
+      expect(cheHeadlineTask([t('q', 'queued'), t('rp', 'review_pending')])?.id, 'rp');
+      expect(cheHeadlineTask([t('q', 'queued'), t('b', 'blocked')])?.id, 'b');
+      expect(cheHeadlineTask([t('rp', 'review_pending'), t('r', 'running')])?.id, 'r');
+    });
+
+    test('with only queued tasks, the oldest (started next) is the headline; with none open, the newest task', () {
+      expect(cheHeadlineTask([t('q3', 'queued'), t('q2', 'queued'), t('q1', 'queued')])?.id, 'q1');
+      expect(cheHeadlineTask([t('done-new', 'complete'), t('done-old', 'failed')])?.id, 'done-new');
+      expect(cheHeadlineTask(const []), isNull);
+    });
+  });
+
   test('time since last activity reads from the real timestamp', () {
     final now = DateTime.utc(2026, 10, 26, 12, 0);
     expect(cheTimeAgo(null, now: now), 'Not recorded');

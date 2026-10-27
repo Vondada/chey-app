@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import { readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import test from 'node:test';
 import { OFFICE_STATES, officeConversation, officeTaskState } from './office_conversation.js';
+import { retryDelayMs } from './agent_runtime.js';
 
 const T = (m) => new Date(Date.UTC(2026, 9, 26, 10, m)).toISOString();
 
@@ -138,6 +139,73 @@ test('blockers, retry and last completed come from the records', () => {
   assert.equal(c.agent.blockers[0].text, 'Permission denied');
   assert.equal(c.agent.blockers[1].text, 'Codex tool not configured');
   assert.equal(c.agent.next_scheduled.at, T(30));
+});
+
+// Codex review on PR #666: queueAgentTask prepends (newest first) and runOneTask runs the oldest queued task, so an
+// older running task and a newer queued one must read as Running, with the queued one as the next step.
+test('an older running task outranks a newer queued one, and the queued one is next', () => {
+  const data = {
+    team,
+    team_tasks: [
+      { id: 'task-new-queued', partner_id: 'agent-atlas-0001', partner_name: 'Atlas', task: 'Newer queued work', status: 'queued', source: 'owner', created_at: T(5), updated_at: T(5) },
+      { id: 'task-old-running', partner_id: 'agent-atlas-0001', partner_name: 'Atlas', task: 'Older running work', status: 'running', source: 'owner', created_at: T(0), updated_at: T(2) },
+    ],
+  };
+  const c = officeConversation(data, { agentId: 'agent-atlas-0001' });
+  assert.equal(c.agent.status, 'Running');
+  assert.equal(c.agent.active_task.id, 'task-old-running');
+  assert.equal(c.agent.current_step, 'Running. No provider attempt is recorded yet.');
+  assert.equal(c.agent.next_scheduled.text, 'Next queued: Newer queued work');
+  assert.equal(c.agent.next_scheduled.at, T(5));
+  assert.equal(c.task.id, 'task-old-running');
+});
+
+test('with only queued tasks, the oldest (the one the runtime starts next) is active and the next one follows it', () => {
+  const data = {
+    team,
+    team_tasks: [
+      { id: 'task-q-newest', partner_id: 'agent-atlas-0001', partner_name: 'Atlas', task: 'Third', status: 'queued', source: 'owner', created_at: T(9), updated_at: T(9) },
+      { id: 'task-q-middle', partner_id: 'agent-atlas-0001', partner_name: 'Atlas', task: 'Second', status: 'queued', source: 'owner', created_at: T(5), updated_at: T(5) },
+      { id: 'task-q-oldest', partner_id: 'agent-atlas-0001', partner_name: 'Atlas', task: 'First', status: 'queued', source: 'owner', created_at: T(1), updated_at: T(1) },
+    ],
+  };
+  const c = officeConversation(data, { agentId: 'agent-atlas-0001' });
+  assert.equal(c.agent.status, 'Queued');
+  assert.equal(c.agent.active_task.id, 'task-q-oldest');
+  assert.equal(c.agent.next_scheduled.text, 'Next queued: Second');
+});
+
+test('a reviewing task outranks a queued one', () => {
+  const data = {
+    team,
+    team_tasks: [
+      { id: 'task-q-1', partner_id: 'agent-atlas-0001', partner_name: 'Atlas', task: 'Queued', status: 'queued', source: 'owner', created_at: T(5) },
+      { id: 'task-rv-1', partner_id: 'agent-atlas-0001', partner_name: 'Atlas', task: 'Under review', status: 'reviewing', source: 'owner', created_at: T(0) },
+    ],
+  };
+  const c = officeConversation(data, { agentId: 'agent-atlas-0001' });
+  assert.equal(c.agent.active_task.id, 'task-rv-1');
+  assert.equal(c.agent.status, 'Running');
+});
+
+// Codex review on PR #666: the runtime stores retry_at as epoch milliseconds (Date.now() + retryDelayMs(...) in
+// agent_runtime.js), not an ISO string.
+test('a retry stored as epoch milliseconds, as the runtime writes it, is the next scheduled action', () => {
+  const retryAt = Date.UTC(2026, 9, 26, 10, 0) + retryDelayMs(1);
+  assert.equal(typeof retryAt, 'number');
+  const data = {
+    team,
+    team_tasks: [{ id: 'task-retry-ms', partner_id: 'agent-atlas-0001', partner_name: 'Atlas', task: 'Try again', status: 'queued', source: 'owner', created_at: T(0), updated_at: T(0), retry_at: retryAt }],
+  };
+  const c = officeConversation(data, { agentId: 'agent-atlas-0001' });
+  assert.ok(c.agent.next_scheduled, 'the retry is reported');
+  assert.equal(c.agent.next_scheduled.at, new Date(retryAt).toISOString());
+  assert.equal(c.agent.next_scheduled.text, `Retry scheduled at ${new Date(retryAt).toISOString()}.`);
+  // 0 and null mean no retry, and are never shown as 1970.
+  for (const none of [0, null]) {
+    const n = officeConversation({ team, team_tasks: [{ ...data.team_tasks[0], retry_at: none }] }, { agentId: 'agent-atlas-0001' });
+    assert.equal(n.agent.next_scheduled, null, String(none));
+  }
 });
 
 test('coding job evidence comes from the linked job record and is not invented', () => {
