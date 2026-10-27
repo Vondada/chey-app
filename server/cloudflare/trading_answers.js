@@ -17,6 +17,7 @@ const MEMORY = /\bmemor(?:y|ies)\b/i;
 const MEMORY_STATE = /\b(?:working|works|status|health|saved|stored|records?|how\s+many|count|check|is\s+(?:your|the)|are\s+(?:your|the)|available|on)\b/i;
 const LATEST = /\b(?:latest|last|newest|most\s+recent)\s+(?:paper\s+)?trade\b|\b(?:show|read|tell)\s+me\s+(?:your|the)\s+(?:latest|last|newest|most\s+recent)\b[\s\S]{0,15}\btrade\b/i;
 const FEED = /\b(?:real[-\s]?time|live)\s+(?:market\s+)?(?:data|feed|prices?|quotes?|bars?)\b|\b(?:receiv\w*|getting|get|have)\s+(?:any\s+|real[-\s]?time\s+)?(?:market\s+)?(?:data|prices?|bars?)\b|\b(?:is|are)\s+(?:your|the)\s+(?:trading|feed|market\s+data|data)\s+(?:live|on|connected|running|working|status)\b|\b(?:is|are)\s+(?:you|your\s+trading)\s+live\b/i;
+const EVIDENCE_WORDS = /\b(?:replay|evidence|prove|proof|verify|verified|why|explain|audit|receipt|reason)\b/i;
 const LEARNED = /\b(?:what\s+(?:have|did)\s+you\s+(?:learn|learned)|trading\s+(?:skills?|lessons?|learning))\b/i;
 
 /**
@@ -26,6 +27,8 @@ const LEARNED = /\b(?:what\s+(?:have|did)\s+you\s+(?:learn|learned)|trading\s+(?
 export function tradingStatusIntent(message) {
   const text = String(message || '').trim().replace(/[’']/g, "'");
   if (!text || text.length > MAX_STATUS_TURN) return null;
+  // Replays, proofs and explanations of a trade belong to the evidence and why routes, not the status route.
+  if (EVIDENCE_WORDS.test(text)) return null;
   if (RITHMIC.test(text) && RITHMIC_STATE.test(text)) return { kind: 'rithmic' };
   if (MEMORY.test(text) && MEMORY_STATE.test(text)) return { kind: 'memory' };
   if (LATEST.test(text)) return { kind: 'latest' };

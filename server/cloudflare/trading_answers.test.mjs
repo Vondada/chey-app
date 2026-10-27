@@ -152,3 +152,14 @@ test('rithmicStatus is empty when no candles were ever stored, and ignores a mal
   const storage = fakeStorage([['rithmic_1m_index:not-a-contract', ['2026-10-27T20']]]);
   assert.deepEqual(await rithmicStatus(storage), { symbols: [] });
 });
+
+test('"Replay my last trade" is left to the evidence route, not answered as a status', () => {
+  assert.equal(tradingStatusIntent('Replay my last trade'), null);
+});
+
+test('"Place a paper trade" with no market asks which one; it is never a ticker lookup', async () => {
+  const { tradingIntent } = await import('./trading_lab.js');
+  const intent = tradingIntent('Place a paper trade, not live.');
+  assert.equal(intent.kind, 'clarify');
+  assert.match(intent.question, /Which market should I paper trade/);
+});
