@@ -1557,6 +1557,10 @@ OWNER AGENCY
       // iOS may have dropped the socket while CHE was away: reconnect the session the owner left on.
       if (state == AppLifecycleState.resumed && !CheRithmicLive.instance.attached) unawaited(cheRithmicResume());
     }
+    // The Face ID vault session never survives leaving the app (the owner's vault must not stay open in the background).
+    if (state == AppLifecycleState.paused || state == AppLifecycleState.hidden) {
+      CheVaultAuth.instance.onAppBackgrounded();
+    }
     if (state == AppLifecycleState.resumed) {
       _updateHomeState(() { _priorityBannerVersion++; });
       unawaited(_loadAgentState(silent: true));
