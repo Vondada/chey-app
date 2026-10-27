@@ -136,6 +136,7 @@ The **how** of merging, deploying, patching and verifying lives in the che-relea
 - [ ] `bash .claude/skills/che-debug/scripts/run_checks.sh` passes for the changed paths (Worker syntax and suite, skills tests including every `che-fact-check/cases/*.json`, `flutter analyze --fatal-infos`, `flutter test`). "Flutter NOT RUN" is reported as not verified.
 - [ ] Chat behavior changes have a replay case or an `/api/chat` test using the owner's words; status/claim routes keep `model_calls: 0`.
 - [ ] No test skipped or weakened to get green; known bugs are `todo`, with file:line in the PR.
+- [ ] **Live test before merge:** the PR's `live (staging)` check (`che-worker-staging.yml`) is green on the exact head: the PR deployed to `chey-app-staging` and probed with the production probe suite (`.github/scripts/che_live_probes.mjs`). Its summary lists every probe as passed, warned or skipped with the reason; a skip is not a pass. The iOS simulator jobs (`screens`, `simulator`) are manual and informational, never a merge requirement (owner, 2026-10-27).
 
 ### 2. Backend change → deploy receipt
 - [ ] Anything under `server/cloudflare/` changed → the squash title carries `[worker-deploy]` (che-release gate).
