@@ -165,7 +165,7 @@ extension _CheHomeConnected on _CHEHomeState {
     final events = await _loadActivity();
     if (!mounted) return;
     if (events == null) {
-      await speakText('I couldn’t load the activity from the CHE server just now. Try again in a moment.', record: false);
+      await speakText('I couldn’t load the activity from the CHE server just now. Try again in a moment.', record: false, show: true);
       return;
     }
     if (readAloud) {

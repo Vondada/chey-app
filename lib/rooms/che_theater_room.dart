@@ -517,7 +517,7 @@ class _CheTheaterRoomState extends State<CheTheaterRoom> {
               label: 'Play this address in the Theater',
               excludeSemantics: true,
               onTap: () => _open(_address.text),
-              child: IconButton.filled(onPressed: () => _open(_address.text), icon: const Icon(Icons.play_arrow_rounded)),
+              child: IconButton.filled(tooltip: 'Play this address in the Theater', onPressed: () => _open(_address.text), icon: const Icon(Icons.play_arrow_rounded)),
             ),
           ]),
         ),

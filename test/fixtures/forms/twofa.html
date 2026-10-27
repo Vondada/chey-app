@@ -1,0 +1,10 @@
+<!doctype html>
+<html lang="en-US"><head><meta charset="utf-8"><title>Verify it's you</title></head>
+<body>
+<h1>Two-step verification</h1>
+<p>We sent a code to your phone ending in 47. Enter the 6-digit code.</p>
+<form onsubmit="event.preventDefault(); window.__submitted = 1;">
+  <label>Verification code <input name="otp" autocomplete="one-time-code" inputmode="numeric"></label>
+  <button type="submit">Verify</button>
+</form>
+</body></html>

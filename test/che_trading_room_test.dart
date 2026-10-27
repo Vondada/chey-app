@@ -3,56 +3,14 @@ import 'dart:convert';
 import 'dart:async';
 
 import 'package:chey/rooms/che_trading_chart.dart';
+import 'package:chey/rooms/che_alpaca_paper.dart';
 import 'package:chey/rooms/che_trading_room.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
+import 'support/che_trading_fixture.dart';
 
-Map<String, dynamic> _chart({String account = 'alpaca_paper', bool stale = false, bool entries = true, List<Map<String, dynamic>> drawings = const []}) {
-  final start = DateTime.utc(2026, 10, 20, 14, 0);
-  final bars = [
-    for (var i = 0; i < 40; i++)
-      {
-        't': start.add(Duration(minutes: 5 * i)).toIso8601String(),
-        'o': 100 + i * 0.5,
-        'h': 101.5 + i * 0.5,
-        'l': 99.5 + i * 0.5,
-        'c': 100.8 + i * 0.5,
-      },
-  ];
-  String at(int i) => start.add(Duration(minutes: 5 * i)).toIso8601String();
-  return {
-    'ok': true,
-    'account': account,
-    'state': 'verified',
-    'symbol': account == 'alpaca_paper' ? 'AAPL' : 'MNQ',
-    'timeframe': '5m',
-    'timeframes': ['1m', '5m', '15m', '1h', '1d'],
-    'bars': bars,
-    'feed': {'provider': account == 'alpaca_paper' ? 'Alpaca IEX' : 'Yahoo MNQ=F', 'status': account == 'alpaca_paper' ? 'REALTIME' : 'DELAYED', 'last_bar_time': at(39), 'age_s': stale ? 7200 : 60, 'stale': stale},
-    'entries_allowed': entries,
-    'market_orders_allowed': entries && !stale,
-    'entries_blocked_reason': !entries
-        ? 'No futures paper broker is connected (Tradovate is not signed in), so CHE takes no manual futures orders.'
-        : stale
-            ? 'The last bar is old (market closed or the feed stopped); market orders are blocked, limit orders queue for the next session.'
-            : '',
-    'markers': [
-      {'source': 'che_forward', 'id': 'f1', 'kind': 'entry', 'time': at(5), 'price': 103.0, 'side': 'long', 'strategy': 'ema_pullback', 'status': 'closed'},
-      {'source': 'che_forward', 'id': 'f2', 'kind': 'entry', 'time': at(9), 'price': 105.0, 'side': 'long', 'strategy': 'vwap', 'status': 'closed'},
-      {'source': 'che_sim', 'id': 's1', 'kind': 'entry', 'time': at(12), 'price': 106.5, 'side': 'long', 'strategy': 'ema_pullback', 'status': 'closed'},
-      {'source': 'alpaca_order', 'id': 'o1', 'kind': 'order', 'time': at(20), 'price': 109.0, 'side': 'buy', 'qty': '2', 'status': 'new', 'order_id': 'order-0001-abcd'},
-      {'source': 'alpaca_fill', 'id': 'x1', 'kind': 'fill', 'time': at(30), 'price': 115.2, 'side': 'buy', 'qty': '1', 'status': 'filled', 'order_id': 'order-0002-abcd'},
-    ],
-    'open_orders': account == 'alpaca_paper'
-        ? [
-            {'id': 'order-0001-abcd', 'symbol': 'AAPL', 'side': 'buy', 'qty': '2', 'type': 'limit', 'limit_price': '109.00', 'status': 'new'},
-          ]
-        : const [],
-    'drawings': drawings,
-  };
-}
 
 class _Server {
   _Server({this.stale = false});
@@ -68,7 +26,7 @@ class _Server {
     if (p == '/api/trading/chart') {
       if (failChart) return http.Response('{"error":"feed offline"}', 503);
       final account = r.url.queryParameters['account'] ?? 'alpaca_paper';
-      return http.Response(jsonEncode(_chart(account: account, stale: stale, entries: account == 'alpaca_paper', drawings: drawings)), 200);
+      return http.Response(jsonEncode(chartFixture(account: account, stale: stale, entries: account == 'alpaca_paper', drawings: drawings, tf: r.url.queryParameters['tf'] ?? '5m')), 200);
     }
     if (p == '/api/trading/chart/drawings') {
       final body = jsonDecode(r.body) as Map<String, dynamic>;
@@ -93,7 +51,9 @@ class _Server {
   Iterable<http.Request> to(String path) => requests.where((r) => r.url.path == path && r.method != 'GET');
 }
 
-Future<void> _pumpRoom(WidgetTester tester, _Server s, {CheTradingSection section = CheTradingSection.chart, List<String>? spoken, String? strategy, String account = 'alpaca_paper'}) async {
+/// The room, and (by default) its chart expanded: drawing, orders, zoom and the legend live in the expanded chart.
+Future<void> _pumpRoom(WidgetTester tester, _Server s,
+    {CheTradingSection section = CheTradingSection.chart, List<String>? spoken, String? strategy, String account = 'alpaca_paper', bool expand = true, String? timeframe}) async {
   tester.view.physicalSize = const Size(1170, 2532);
   tester.view.devicePixelRatio = 3;
   addTearDown(tester.view.reset);
@@ -109,11 +69,16 @@ Future<void> _pumpRoom(WidgetTester tester, _Server s, {CheTradingSection sectio
         initialSection: section,
         initialAccount: account,
         initialStrategy: strategy,
+        initialTimeframe: timeframe,
       ),
     ),
   ));
   await tester.pump();
   await tester.pump(const Duration(milliseconds: 50));
+  if (expand && section == CheTradingSection.chart) {
+    await tester.tap(find.byTooltip('Expand the chart'));
+    await tester.pumpAndSettle();
+  }
 }
 
 Future<void> _tap(WidgetTester tester, Finder f) async {
@@ -125,12 +90,16 @@ Future<void> _tap(WidgetTester tester, Finder f) async {
 Finder _chartArea() => find.byWidgetPredicate((w) => w is CustomPaint && w.painter.runtimeType.toString() == '_ChartPainter');
 
 void main() {
+  // The Alpaca tests below need the panel and chart account visible; the hidden-account test turns it off itself.
+  setUp(() => kShowAlpacaPaper = true);
+  tearDown(() => kShowAlpacaPaper = false);
+  alpacaHiddenTests();
   testWidgets('four sections; the chart opens first, silent, with every marker source, feed health and PAPER', (tester) async {
     final s = _Server();
     final spoken = <String>[];
     await _pumpRoom(tester, s, spoken: spoken);
-    for (final label in ['CHART', 'CHE TRADES', 'STRATEGIES', 'ACCOUNT']) {
-      expect(find.text(label), findsWidgets);
+    for (final label in ['CHART', 'SETUPS', 'JOURNAL', 'HISTORY', 'STRATEGY LAB', 'ACCOUNT', 'REPLAY', 'SIDE BY SIDE']) {
+      expect(find.text(label, skipOffstage: false), findsWidgets);
     }
     expect(find.text('PAPER'), findsOneWidget);
     expect(_chartArea(), findsOneWidget);
@@ -153,6 +122,44 @@ void main() {
     await tester.pump();
     expect(state.summary, isNot(contains('CHE strategy simulation')));
     expect(state.summary, isNot(contains('1 CHE simulation')));
+  });
+
+  // PR #515 review (P1): "And the 15 minute?" after "Open the Alpaca chart for AAPL": CHE said 15-minute bars, but the
+  // route dropped the reply's timeframe and the chart opened on 5 minutes. What is shown must match what was said.
+  testWidgets('the Worker reply\'s chart timeframe reaches the chart: it loads, shows and reads the bar size CHE named', (tester) async {
+    await tester.pumpWidget(const MaterialApp(home: Scaffold(body: SizedBox(key: Key('route_host')))));
+    final route = CheTradingRoomPage.route(
+      baseUrl: () => 'https://che.example',
+      headers: () => const {},
+      onAsk: (_) {},
+      chart: const {'section': 'chart', 'account': 'alpaca_paper', 'symbol': 'AAPL', 'filter': null, 'timeframe': '15m'},
+    ) as MaterialPageRoute<void>;
+    final page = route.builder(tester.element(find.byKey(const Key('route_host')))) as CheTradingRoomPage;
+    expect(page.timeframe, '15m');
+    expect(page.symbol, 'AAPL');
+
+    final s = _Server();
+    final spoken = <String>[];
+    await _pumpRoom(tester, s, spoken: spoken, timeframe: '15m', expand: false);
+    final charts = s.requests.where((r) => r.url.path == '/api/trading/chart').toList();
+    expect(charts, isNotEmpty);
+    expect(charts.first.url.queryParameters['tf'], '15m', reason: 'the first load asks for the bar size CHE named');
+    expect(charts.where((r) => r.url.queryParameters['tf'] == '5m'), isEmpty);
+    expect(tester.state<CheTradingChartState>(find.byType(CheTradingChart)).timeframe, '15m');
+    // Expanding keeps it, and the spoken read names the same bars the chart shows.
+    await tester.tap(find.byTooltip('Expand the chart'));
+    await tester.pumpAndSettle();
+    final expanded = tester.state<CheTradingChartState>(find.byType(CheTradingChart));
+    expect(expanded.timeframe, '15m');
+    await _tap(tester, find.byTooltip('Read chart aloud'));
+    expect(spoken.single, contains('AAPL, 15m candles'));
+
+    // No timeframe in the reply: the chart opens on its default, as before. A fresh tree, so the room above
+    // (still expanded) is not reused.
+    await tester.pumpWidget(const SizedBox());
+    final plain = _Server();
+    await _pumpRoom(tester, plain, expand: false);
+    expect(plain.requests.firstWhere((r) => r.url.path == '/api/trading/chart').url.queryParameters['tf'], '5m');
   });
 
   testWidgets('a chart price opens a PAPER ticket; nothing is sent until "Yes, place paper order"', (tester) async {
@@ -247,10 +254,10 @@ void main() {
   testWidgets('"show EMA trades" keeps only that strategy among CHE markers', (tester) async {
     final s = _Server();
     await _pumpRoom(tester, s, strategy: 'ema', account: 'futures_paper');
-    expect(find.textContaining('Showing CHE trades for EMA only'), findsOneWidget);
+    expect(find.textContaining('EMA only'), findsOneWidget);
     final state = tester.state<CheTradingChartState>(find.byType(CheTradingChart));
     expect(state.summary, contains('1 CHE forward paper'));
-    await _tap(tester, find.text('Show all strategies'));
+    await _tap(tester, find.textContaining('EMA only'));
     await tester.pump();
     expect(state.summary, contains('2 CHE forward paper'));
   });
@@ -308,13 +315,12 @@ void main() {
     await tester.pump();
     expect(find.byTooltip('Jump to the latest bar'), findsOneWidget);
     expect(state.summary, before); // the summary speaks of the latest bar, not the window
-    await tester.drag(find.byType(ListView).first, const Offset(0, 3000));
+    // Back in the room: the sections switch.
+    await tester.tap(find.byTooltip('Close the expanded chart'));
     await tester.pumpAndSettle();
-    await _tap(tester, find.text('STRATEGIES'));
+    await _tap(tester, find.text('STRATEGY LAB'));
     await tester.pump();
     expect(find.byType(CheTradingChart), findsNothing);
-    await tester.drag(find.byType(ListView).first, const Offset(0, 3000));
-    await tester.pumpAndSettle();
     await _tap(tester, find.text('CHART'));
     await tester.pump();
     expect(find.byType(CheTradingChart), findsOneWidget);
@@ -322,7 +328,7 @@ void main() {
 
   testWidgets('a voice reply naming a section switches the open room to it', (tester) async {
     final s = _Server();
-    await _pumpRoom(tester, s);
+    await _pumpRoom(tester, s, expand: false);
     expect(find.byType(CheTradingChart), findsOneWidget);
     CheTradingRoom.requestedSection.value = CheTradingSection.strategies;
     await tester.pump();
@@ -334,5 +340,28 @@ void main() {
     expect(cheTradingSectionNamed('strategies'), CheTradingSection.strategies);
     expect(cheTradingSectionNamed('che_trades'), CheTradingSection.cheTrades);
     expect(cheTradingSectionNamed(null), CheTradingSection.chart);
+    expect(cheTradingSectionNamed('setups'), CheTradingSection.setups);
+  });
+}
+
+// Owner (2026-10-23): "I don't want to see the alpaca at all. I just want to see mine and Che's paper trades."
+// The Alpaca PAPER panel and chart account stay in the code behind kShowAlpacaPaper, so restoring them is one line.
+void alpacaHiddenTests() {
+  testWidgets('Trading Room shows no Alpaca panel or chart account; both paper accounts are there', (tester) async {
+    kShowAlpacaPaper = false;
+    final s = _Server();
+    await _pumpRoom(tester, s, section: CheTradingSection.account);
+    expect(find.textContaining('Alpaca'), findsNothing);
+    // The paper account is a closed box until tapped (owner, 2026-10-26: small expandable boxes).
+    await tester.tap(find.byKey(const Key('fold_che_paper_compact')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('che_paper_account_compact')), findsOneWidget);
+    expect(find.byType(CheAlpacaPaperPanel), findsNothing);
+
+    // Rebuild from nothing: initialSection only applies to a new room.
+    await tester.pumpWidget(const SizedBox());
+    await _pumpRoom(tester, s, section: CheTradingSection.chart);
+    expect(find.text('Alpaca PAPER'), findsNothing);
+    expect(find.text('MNQ PAPER'), findsOneWidget);
   });
 }

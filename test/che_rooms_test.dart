@@ -24,6 +24,19 @@ void _phone(WidgetTester tester) {
   addTearDown(tester.view.reset);
 }
 
+/// The older market overview (index chart, quotes, 3D scene) is folded under the research cards; open it.
+Future<void> _openOverview(WidgetTester tester) async {
+  for (var i = 0; i < 20 && find.text('MARKET OVERVIEW', skipOffstage: false).evaluate().isEmpty; i++) {
+    await tester.drag(find.byType(ListView).first, const Offset(0, -300));
+    await tester.pump();
+  }
+  await tester.ensureVisible(find.text('MARKET OVERVIEW', skipOffstage: false));
+  await tester.pump();
+  await tester.tap(find.text('MARKET OVERVIEW'));
+  await tester.pump();
+  await tester.pump(const Duration(milliseconds: 300));
+}
+
 void main() {
   test('address bar: URLs open, anything else searches', () {
     expect(cheAddressToUri('example.com').toString(), 'https://example.com');
@@ -70,6 +83,16 @@ void main() {
   testWidgets('Markets room shows real quotes, labels unavailable ones, and draws candles', (tester) async {
     _phone(tester);
     final client = MockClient((request) async {
+      // CHE's own engines answer the capability check (owner, 2026-10-24): no external URL decides these cards.
+      if (request.url.path == '/api/trading/capabilities') {
+        return http.Response(jsonEncode({
+          'ok': true,
+          'cards': {
+            'analyze_markets': {'state': 'LIMITED', 'reason': 'It ran on MNQ 5m from Yahoo MNQ=F (DELAYED), not on live data.'},
+            'custom_indicators': {'state': 'AVAILABLE', 'reason': 'EMA 20 on live BTC-USD 5m is 67123.4.'},
+          },
+        }), 200);
+      }
       if (request.url.path == '/api/markets/snapshot') {
         return http.Response(jsonEncode({
           'source': 'Public sources',
@@ -106,6 +129,24 @@ void main() {
               connectorName: 'Backtest engine',
               onRun: () => ran = true,
             ),
+            CheDeskAction(
+              icon: Icons.candlestick_chart,
+              title: 'Analyze Markets',
+              body: 'Structure',
+              connected: false,
+              connectorName: 'Live market data (CHE_MARKET_DATA_URL)',
+              capability: 'analyze_markets',
+              onRun: () {},
+            ),
+            CheDeskAction(
+              icon: Icons.functions,
+              title: 'Custom Indicators',
+              body: 'Indicators',
+              connected: false,
+              connectorName: 'Historical data / backtest engine',
+              capability: 'custom_indicators',
+              onRun: () {},
+            ),
           ],
         ),
       ),
@@ -115,6 +156,7 @@ void main() {
     // Build 1: the CHART section opens on the interactive paper chart; the index futures chart
     // and the quote panels follow it under MARKET OVERVIEW.
     expect(find.text('CHART'), findsWidgets);
+    await _openOverview(tester);
     for (var i = 0; i < 12 && find.textContaining('E-mini S&P 500 futures', skipOffstage: false).evaluate().isEmpty; i++) {
       await tester.drag(find.byType(ListView).first, const Offset(0, -300));
       await tester.pump();
@@ -131,6 +173,12 @@ void main() {
     expect(find.text('Unavailable'), findsOneWidget);
     expect(find.textContaining('Stooq (delayed)'), findsOneWidget);
     expect(find.textContaining('Needs: Backtest engine'), findsOneWidget);
+    // The engine-served cards show what CHE's engine check found, never CONNECT for a missing URL.
+    expect(find.text('LIMITED', skipOffstage: false), findsOneWidget);
+    expect(find.textContaining('not on live data', skipOffstage: false), findsOneWidget);
+    expect(find.text('AVAILABLE', skipOffstage: false), findsOneWidget);
+    expect(find.textContaining('CHE_MARKET_DATA_URL', skipOffstage: false), findsNothing);
+    expect(find.text('CONNECT', skipOffstage: false), findsOneWidget, reason: 'only the card with no internal engine');
     await tester.ensureVisible(find.text('Backtesting Lab'));
     await tester.pump();
     await tester.tap(find.text('Backtesting Lab'));
@@ -310,7 +358,8 @@ void main() {
     ));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 100));
-    // The live chart sits above the delayed index panels.
+    // The live chart sits above the delayed index panels, which are folded under Market overview.
+    await _openOverview(tester);
     for (var i = 0; i < 12 && find.text('2.00', skipOffstage: false).evaluate().isEmpty; i++) {
       await tester.drag(find.byType(ListView).first, const Offset(0, -300));
       await tester.pump();

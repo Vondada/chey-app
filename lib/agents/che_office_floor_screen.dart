@@ -7,6 +7,7 @@
 
 import '../world/che_meetings.dart';
 import 'che_war_room_screen.dart';
+import '../office/che_office_calendar.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -14,6 +15,9 @@ import 'package:flutter/semantics.dart';
 import 'package:flutter/services.dart';
 
 import '../che_ui/che_agents.dart';
+import 'che_crew_pager.dart';
+import '../che_ui/che_progress_bar.dart';
+import '../che_ui/che_chrome_status.dart';
 import '../che_ui/che_hud.dart';
 import '../che_ui/che_rooms.dart';
 import '../che_ui/che_theme.dart';
@@ -22,7 +26,6 @@ import '../rooms/che_characters_room.dart';
 import 'che_agent_runtime.dart';
 import 'che_office_glass.dart';
 import 'che_office_store.dart';
-import '../widgets/che_native_scene_world.dart';
 
 /// Short, glanceable version of an agent's task or a meeting objective: the
 /// first clause, cut at a word boundary. The full text stays one tap (or one
@@ -41,6 +44,7 @@ class CheOfficeFloorScreen extends StatefulWidget {
   const CheOfficeFloorScreen({
     super.key,
     required this.client,
+    this.runtime,
     this.onTalkToChe,
     this.onSpeak,
     this.embedded = false,
@@ -48,6 +52,10 @@ class CheOfficeFloorScreen extends StatefulWidget {
   });
 
   final CheAgentRuntimeClient client;
+
+  /// The app's own Office runtime, when it already has one: the floor shows it instead of starting a second set of
+  /// polls on the same endpoints. Without it the floor runs (and disposes) its own.
+  final CheAgentRuntimeController? runtime;
 
   /// Opens CHE's chat from her desk sheet (Talk to CHE).
   final VoidCallback? onTalkToChe;
@@ -67,7 +75,8 @@ class CheOfficeFloorScreen extends StatefulWidget {
 }
 
 class _CheOfficeFloorScreenState extends State<CheOfficeFloorScreen> {
-  late final CheAgentRuntimeController _runtime = CheAgentRuntimeController(widget.client)..addListener(_changed);
+  late final bool _ownsRuntime = widget.runtime == null;
+  late final CheAgentRuntimeController _runtime = (widget.runtime ?? CheAgentRuntimeController(widget.client))..addListener(_changed);
 
   /// One store for the floor: desks update individually, the plan only
   /// rebuilds when desks are added or removed.
@@ -75,13 +84,12 @@ class _CheOfficeFloorScreenState extends State<CheOfficeFloorScreen> {
   CheOfficeToday? _lastBoard;
   String _filter = 'All'; // All | Research | Trading | Content
 
-  // Flat floor plan kept as a fallback when the WebView 3D surface fails.
+  // The office is the flat floor plan: no 3D crowd (2026-10-22 owner cleanup).
   late final Widget _floorPlan = CheOfficeFloorPlan(
     store: _store,
     onTapDesk: _openDesk,
     onWarRoom: _warRoom,
   );
-  bool _useFlatPlan = false;
 
   /// Deep link: open the requested agent's desk once the roster is known.
   /// Missing agents are shown visually, without unsolicited narration.
@@ -93,6 +101,12 @@ class _CheOfficeFloorScreenState extends State<CheOfficeFloorScreen> {
     super.initState();
     _pendingAgentName = widget.initialAgentName;
     _runtime.start();
+    // A shared runtime may already hold the roster; show it now rather than after its next poll.
+    if (_runtime.loaded) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _changed();
+      });
+    }
   }
 
   void _openInitialAgent() {
@@ -119,7 +133,7 @@ class _CheOfficeFloorScreenState extends State<CheOfficeFloorScreen> {
   @override
   void dispose() {
     _runtime.removeListener(_changed);
-    _runtime.dispose();
+    if (_ownsRuntime) _runtime.dispose();
     _store.dispose();
     super.dispose();
   }
@@ -337,62 +351,6 @@ class _CheOfficeFloorScreenState extends State<CheOfficeFloorScreen> {
   }
 
 
-  List<CheSceneEntity> _officeSceneEntities() {
-    CheSceneEntity entity(CheAgent agent) => CheSceneEntity(
-          id: agent.id,
-          label: agent.name,
-          description:
-              '${agent.role}. ${agent.task?.isNotEmpty == true ? agent.task : agent.status.label}.',
-          color: agent.color,
-          state: agent.status.name,
-          appearance: agent.appearance,
-        );
-    return [
-      entity(_runtime.che),
-      for (final p in _runtime.agents) entity(p.agent),
-    ];
-  }
-
-  Widget _officeStage() {
-    if (_useFlatPlan || !_runtime.loaded) return _floorPlan;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        ValueListenableBuilder<CheSceneQuality>(
-          valueListenable: CheSceneQualityStore.value,
-          builder: (context, quality, _) => CheNativeSceneWorld(
-            mode: CheSceneMode.office,
-            quality: quality,
-            entities: _officeSceneEntities(),
-            height: 420,
-            semanticsLabel: 'Immersive Office. Real agent state only.',
-            onEntityTap: (id) {
-              if (id.toLowerCase() == 'che') {
-                if (widget.onTalkToChe != null) {
-                  if (!widget.embedded) Navigator.of(context).pop();
-                  widget.onTalkToChe!();
-                }
-                return;
-              }
-              _openDesk(id);
-            },
-          ),
-        ),
-        Wrap(
-          alignment: WrapAlignment.end,
-          crossAxisAlignment: WrapCrossAlignment.center,
-          children: [
-            const CheSceneQualityButton(),
-            TextButton(
-              onPressed: () => setState(() => _useFlatPlan = true),
-              child: const Text('Flat floor plan'),
-            ),
-          ],
-        ),
-      ],
-    );
-  }
-
   String _officeSummary() {
     final r = _runtime;
     final working = r.agents.where((p) => p.working).length;
@@ -423,14 +381,14 @@ class _CheOfficeFloorScreenState extends State<CheOfficeFloorScreen> {
           actions: [
             CheVoiceAction(
               number: 1,
-              label: 'Office status',
+              label: 'Status',
               icon: Icons.mic_rounded,
               onTap: () => _speak('${cheOfficeBoardSpeech(r.today, r.connection)} ${_officeSummary()}'),
               semantics: '1. Office status',
             ),
             CheVoiceAction(
               number: 2,
-              label: 'Find an agent',
+              label: 'Find agent',
               icon: Icons.groups_rounded,
               onTap: () {
                 HapticFeedback.selectionClick();
@@ -460,7 +418,7 @@ class _CheOfficeFloorScreenState extends State<CheOfficeFloorScreen> {
           ],
         ),
         const SizedBox(height: CheSpace.md),
-        _officeStage(),
+        _floorPlan,
         const SizedBox(height: CheSpace.sm),
         if (r.codingJob != null) ...[
           CheCodingJobCard(
@@ -496,18 +454,14 @@ class _CheOfficeFloorScreenState extends State<CheOfficeFloorScreen> {
             style: CheType.bodyDim,
           )
         else
-          for (final p in agents)
-            Padding(
-              padding: const EdgeInsets.only(bottom: CheSpace.sm),
-              child: _AgentListCard(
-                agent: p.agent,
-                onTap: () => _openDesk(p.agent.id),
-                onReadAloud: () => _speak(
-                  '${p.agent.name}, ${p.agent.role}. ${p.agent.status.label}. '
-                  '${p.agent.task?.isNotEmpty == true ? p.agent.task : p.agent.specialty}',
-                ),
-              ),
+          CheCrewPager(
+            agents: [for (final p in agents) p.agent],
+            onOpen: (agent) => _openDesk(agent.id),
+            onReadAloud: (agent) => _speak(
+              '${agent.name}, ${agent.role}. ${agent.status.label}. '
+              '${agent.task?.isNotEmpty == true ? agent.task : agent.specialty}',
             ),
+          ),
         const SizedBox(height: CheSpace.lg),
         Text('WAR ROOM', style: cheOfficeLabel(CheType.overline)),
         const SizedBox(height: CheSpace.sm),
@@ -592,7 +546,7 @@ class _CheOfficeFloorScreenState extends State<CheOfficeFloorScreen> {
           maxLines: 3,
           decoration: const InputDecoration(
             labelText: 'Goal',
-            hintText: 'CHE splits it into jobs for Nova, Atlas, Mira, Knox, Sage, Lyra and Iris.',
+            hintText: 'CHE splits it into jobs for Nova, Atlas, Mira, Knox, Sage, Lyra, Orion, Iris and Vale.',
           ),
         ),
         actions: [
@@ -622,6 +576,25 @@ class _CheOfficeFloorScreenState extends State<CheOfficeFloorScreen> {
     }
   }
 
+  Widget _officeTitle() => Semantics(
+        header: true,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (cheHudActive)
+              CheChromeText('The Office', maxLines: 1, style: CheType.title)
+            else
+              Text('The Office', maxLines: 1, overflow: TextOverflow.ellipsis, style: CheType.title),
+            Text(
+              'Your team. Real work. Real results.',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: CheType.caption,
+            ),
+          ],
+        ),
+      );
+
   List<Widget> _actions() => [
         Semantics(
           button: true,
@@ -632,6 +605,13 @@ class _CheOfficeFloorScreenState extends State<CheOfficeFloorScreen> {
             icon: const Icon(Icons.volume_up_rounded),
             label: const Text('Read to me'),
           ),
+        ),
+        // What the Office did, day by day (owner, 2026-10-24): real jobs and their receipts.
+        IconButton(
+          key: const Key('office_calendar_button'),
+          tooltip: 'Office calendar',
+          onPressed: () => unawaited(Navigator.of(context).push(CheOfficeCalendarPage.route(baseUrl: widget.client.baseUrl, headers: widget.client.headers, onRead: (w) => unawaited(_speak(w))))),
+          icon: const Icon(Icons.calendar_month_rounded),
         ),
         IconButton(tooltip: 'Refresh', onPressed: _runtime.refresh, icon: const Icon(Icons.refresh_rounded)),
         IconButton(tooltip: 'New agent', onPressed: _newAgent, icon: const Icon(Icons.person_add_alt_1_rounded)),
@@ -655,29 +635,14 @@ class _CheOfficeFloorScreenState extends State<CheOfficeFloorScreen> {
           child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
             Padding(
               padding: const EdgeInsets.fromLTRB(CheSpace.gutter, CheSpace.xs, CheSpace.xs, 0),
-              child: Row(children: [
-                Expanded(
-                  child: Semantics(
-                    header: true,
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        if (cheHudActive)
-                          CheChromeText('The Office', maxLines: 1, style: CheType.title)
-                        else
-                          Text('The Office', maxLines: 1, overflow: TextOverflow.ellipsis, style: CheType.title),
-                        Text(
-                          'Your team. Real work. Real results.',
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: CheType.caption,
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-                ..._actions(),
-              ]),
+              // With Larger Text the actions move under the title instead of pushing past the screen edge; at
+              // ordinary sizes the header stays one row.
+              child: MediaQuery.textScalerOf(context).scale(1) > 1.25
+                  ? Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                      _officeTitle(),
+                      Wrap(crossAxisAlignment: WrapCrossAlignment.center, children: _actions()),
+                    ])
+                  : Row(children: [Expanded(child: _officeTitle()), ..._actions()]),
             ),
             CheOfficeHeader(today: r.today, connection: r.connection),
             Expanded(child: list),
@@ -726,16 +691,11 @@ class CheCodingJobCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final color = switch (status.state) {
-      'merged' || 'no_change' || 'approved_waiting_owner' => CheColors.success,
-      'review_rejected' || 'tests_failed' || 'rolled_back' || 'blocked' ||
-      'failed' || 'cancelled' || 'dead_letter' || 'opencode_failed' || 'deliver_failed' || 'interrupted' => CheColors.danger,
-      'reviewing' || 'pr_open' => CheColors.accent,
-      _ => CheColors.warning,
-    };
+    // Tone and motion come from the coding runtime's real state: queued or waiting never animates as running.
+    final (tone, activity) = cheCodingStatus(status.state);
+    final color = CheStatusPalette.of(tone).base;
     return Semantics(
       container: true,
-      liveRegion: true,
       label: 'CHE coding job. ${status.label}. ${status.speech}',
       excludeSemantics: true,
       child: CheOfficePanel(
@@ -760,6 +720,10 @@ class CheCodingJobCard extends StatelessWidget {
                       style: cheOfficeLabel(CheType.overline.copyWith(color: color), color: color)),
                   const SizedBox(height: 2),
                   Text(status.speech, style: CheType.caption),
+                  if (activity == CheActivity.running) ...[
+                    const SizedBox(height: 6),
+                    CheChromeProgress(tone: tone, label: status.label),
+                  ],
                 ],
               ),
             ),
@@ -829,7 +793,7 @@ class CheOfficeHeader extends StatelessWidget {
               Row(mainAxisSize: MainAxisSize.min, children: [
                 Icon(Icons.circle, size: 10, color: color),
                 const SizedBox(width: 4),
-                Text(lines[3], style: CheType.label.copyWith(color: color)),
+                Flexible(child: Text(lines[3], style: CheType.label.copyWith(color: color))),
               ]),
             ]),
             const SizedBox(height: 2),
@@ -981,94 +945,6 @@ class _FilterPill extends StatelessWidget {
   }
 }
 
-/// Large-chibi agent row matching mockup 03 (not postage-stamp).
-class _AgentListCard extends StatelessWidget {
-  const _AgentListCard({
-    required this.agent,
-    required this.onTap,
-    required this.onReadAloud,
-  });
-  final CheAgent agent;
-  final VoidCallback onTap;
-  final VoidCallback onReadAloud;
-
-  @override
-  Widget build(BuildContext context) {
-    final working = cheAgentIsMoving(agent.status);
-    final task = agent.task?.trim();
-    return Semantics(
-      button: true,
-      label: '${agent.name}, ${agent.role}. ${agent.status.label}. Double tap to open desk.',
-      excludeSemantics: true,
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          onTap: onTap,
-          onLongPress: onReadAloud,
-          borderRadius: BorderRadius.circular(CheRadius.lg),
-          child: CheOfficeInkPanel(
-            padding: const EdgeInsets.fromLTRB(10, 10, 12, 10),
-            glow: working ? CheColors.accent : null,
-            decoration: BoxDecoration(
-              color: CheColors.surfaceHi,
-              borderRadius: BorderRadius.circular(CheRadius.lg),
-              border: Border.all(
-                color: working
-                    ? CheColors.accent.withValues(alpha: 0.65)
-                    : CheColors.stroke,
-              ),
-              boxShadow: working
-                  ? [BoxShadow(color: CheColors.accent.withValues(alpha: 0.18), blurRadius: 16)]
-                  : null,
-            ),
-            child: Row(
-              children: [
-                CheMiniPerson(agent: agent, size: 72, showDesk: false),
-                const SizedBox(width: CheSpace.md),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(agent.name, style: CheType.headline, maxLines: 1, overflow: TextOverflow.ellipsis),
-                      Text(
-                        agent.role.isEmpty ? agent.specialty : agent.role,
-                        style: CheType.caption,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        task?.isNotEmpty == true ? task! : agent.status.label,
-                        style: CheType.caption.copyWith(
-                          color: working ? CheColors.success : CheColors.textDim,
-                        ),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      const SizedBox(height: 6),
-                      ClipRRect(
-                        borderRadius: BorderRadius.circular(99),
-                        child: LinearProgressIndicator(
-                          value: working ? null : (agent.status == CheAgentStatus.done ? 1 : 0.08),
-                          minHeight: 3,
-                          backgroundColor: CheColors.stroke,
-                          color: CheColors.accent,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                Icon(Icons.chevron_right_rounded, color: CheColors.textFaint),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-
 class _Banner extends StatelessWidget {
   const _Banner({required this.text, required this.color});
   final String text;
@@ -1106,7 +982,7 @@ class _MeetingTile extends StatelessWidget {
               maxLines: 1, overflow: TextOverflow.ellipsis, style: CheType.caption),
           if (meeting.live) ...[
             const SizedBox(height: 6),
-            LinearProgressIndicator(value: meeting.progress, color: amber, backgroundColor: CheColors.stroke),
+            CheProgressBar(value: meeting.progress, color: amber, background: CheColors.stroke, height: 6),
           ],
           Align(
             alignment: Alignment.centerLeft,
@@ -1274,21 +1150,26 @@ class _AgentDeskSheetState extends State<_AgentDeskSheet> {
     await _load();
   }
 
-  double _workflowProgress(CheAgentDetail detail) {
+  /// The measured share of a workflow that is finished: 1 when its task completed, otherwise null. No stage has a
+  /// measured percentage yet, so a running, queued or reviewing task shows an indeterminate bar and its real state
+  /// name, never a made-up percent (owner audit, 2026-10-26: the old fixed 0.55 and 0.22 were not measurements).
+  double? _workflowProgress(CheAgentDetail detail) {
     final status = detail.profile.assignmentStatus.toLowerCase();
     if (status.contains('complete') || status.contains('done')) return 1;
-    if (status.contains('review')) return 0.82;
-    if (status.contains('running') || detail.profile.working) return 0.55;
-    if (status.contains('queued') || status.contains('waiting')) return 0.22;
-    if (status.contains('fail') || status.contains('block')) return 0.08;
-    if (detail.history.isNotEmpty) {
-      final latest = detail.history.first.status.toLowerCase();
-      if (latest == 'complete') return 1;
-      if (latest == 'reviewing') return 0.82;
-      if (latest == 'running') return 0.55;
-      if (latest == 'queued') return 0.22;
+    if (status.contains('fail') || status.contains('block') || status.contains('review') || status.contains('running') ||
+        status.contains('queued') || status.contains('waiting') || detail.profile.working) {
+      return null;
     }
-    return 0;
+    if (detail.history.isNotEmpty && detail.history.first.status.toLowerCase() == 'complete') return 1;
+    return null;
+  }
+
+  /// The real state name for the progress line, from the same source as [_workflowProgress].
+  String _workflowStateLabel(CheAgentDetail detail) {
+    final status = detail.profile.assignmentStatus.trim();
+    if (status.isNotEmpty) return status;
+    if (detail.profile.working) return 'working';
+    return detail.history.isNotEmpty ? detail.history.first.status : 'no task';
   }
 
   String _verifiedOutputLine(CheAgentDetail detail) {
@@ -1428,7 +1309,7 @@ class _AgentDeskSheetState extends State<_AgentDeskSheet> {
                       : 'No active job right now. Status: ${a.status.label}.'),
             ),
             Semantics(
-              label: 'Verified productivity for ${a.name}. ${_verifiedOutputLine(d)}. Current workflow progress ${(progress * 100).round()} percent.',
+              label: 'Verified productivity for ${a.name}. ${_verifiedOutputLine(d)}. Current workflow state: ${_workflowStateLabel(d)}${progress == null ? '' : '. ${(progress * 100).round()} percent done'}.',
               child: CheOfficePanel(
                 padding: const EdgeInsets.all(CheSpace.md),
                 legacy: BoxDecoration(
@@ -1439,15 +1320,9 @@ class _AgentDeskSheetState extends State<_AgentDeskSheet> {
                 child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                   Text('VERIFIED PRODUCTIVITY', style: cheOfficeLabel(CheType.overline.copyWith(color: CheColors.accent))),
                   const SizedBox(height: 6),
-                  LinearProgressIndicator(
-                    value: progress,
-                    minHeight: 7,
-                    color: a.color,
-                    backgroundColor: CheColors.stroke,
-                    borderRadius: BorderRadius.circular(99),
-                  ),
+                  CheProgressBar(value: progress, color: a.color, background: CheColors.stroke),
                   const SizedBox(height: 6),
-                  Text('${(progress * 100).round()}% current workflow stage', style: CheType.label),
+                  Text(progress == null ? 'Current state: ${_workflowStateLabel(d)}. No measured percent yet.' : '${(progress * 100).round()}% done', style: CheType.label),
                   Text(_verifiedOutputLine(d), style: CheType.caption),
                   Text('Progress is based on real queued / working / review / completed states, not a guessed performance score.',
                       style: CheType.caption.copyWith(color: CheColors.textFaint)),
@@ -1457,6 +1332,7 @@ class _AgentDeskSheetState extends State<_AgentDeskSheet> {
             const SizedBox(height: CheSpace.md),
             if (a.personality.isNotEmpty) _Section('PERSONALITY', a.personality),
             if (a.specialty.isNotEmpty) _Section('JOB / SPECIALTY', a.specialty),
+            if (p.departmentTitle.isNotEmpty) _Section('DEPARTMENT', '${p.departmentTitle}. Reports to CHE.'),
             if (p.mission.isNotEmpty) _Section('MISSION', p.mission),
             _Section(
               'CAPABILITIES',
@@ -1615,7 +1491,8 @@ class _TaskCard extends StatelessWidget {
   final VoidCallback onReadAloud;
   @override
   Widget build(BuildContext context) {
-    final (label, color) = switch (task.status) {
+    final (tone, activity) = cheTaskStatus(task.status, verified: task.verifiedByChe);
+    final (label, _) = switch (task.status) {
       'queued' => ('Queued', CheColors.textDim),
       'running' => ('Working', CheColors.accent),
       'reviewing' => ('CHE reviewing', CheColors.accentAlt),
@@ -1635,7 +1512,7 @@ class _TaskCard extends StatelessWidget {
         title: Text(cheShortSummary(task.task),
             maxLines: 1, overflow: TextOverflow.ellipsis, style: CheType.label, semanticsLabel: task.task),
         subtitle: Row(children: [
-          Flexible(child: Text(label, maxLines: 1, overflow: TextOverflow.ellipsis, style: CheType.caption.copyWith(color: color))),
+          Flexible(child: CheStatusPill(label: label, tone: tone, activity: activity, compact: true, uppercase: false)),
           _ReadAloudButton(label: 'Read this task aloud', onPressed: onReadAloud),
         ]),
         childrenPadding: const EdgeInsets.fromLTRB(CheSpace.lg, 0, CheSpace.lg, CheSpace.md),

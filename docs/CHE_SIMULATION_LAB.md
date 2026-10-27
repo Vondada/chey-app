@@ -84,7 +84,7 @@ When no physics model fits (buildings, software, apparel, business…), only the
   ```
 
 ## Not yet
-- Models for structures, circuits and thermal behaviour, software load, unit economics, and orbital or rocket performance (high-level only).
+- Models for structures, circuits and thermal behaviour, software load, and orbital or rocket performance (high-level only). A unit-economics and cash-flow model, a small-drone multirotor model and a job-search funnel now exist in the Manifestation Engine (`docs/CHE_MANIFESTATION_ENGINE.md`); the lab does not call them yet.
 - Benchmarks against published measured data for each model.
 - 3D or exploded renders of candidates. Today each design is drawn as parameter gauges against today's range, plus a cost-vs-result chart with p10–p90 bars.
 - Runs longer than one request, for example a queued multi-hour search on a GitHub Actions runner (free minutes), with progress in the lab.

@@ -12,6 +12,7 @@ import { CheLibrary, queryTerms } from './library.js';
 import { BRAIN_REGIONS, CheBrainStore, fnv1a32 } from './brain_store.js';
 import { linkRelated } from './brain_rooms.js';
 import { expandByLinks } from './brain_relations.js';
+import { fromLibrary } from './brain_ledger.js';
 
 export const KNOWLEDGE_CATEGORIES = Object.freeze([
   { id: 'ai_agents', name: 'AI and Autonomous Agents' },
@@ -52,6 +53,12 @@ export const TEXT_LICENSES = Object.freeze({
 // Fiction and comics/movies are examples for creative design, never engineering instructions.
 const TECHNICAL_KINDS = new Set(['book', 'paper', 'documentation', 'transcript', 'note']);
 const CATEGORY_IDS = new Set(KNOWLEDGE_CATEGORIES.map((c) => c.id));
+// Expert-domain categories (expert_intelligence.js) sit beside the owner's 20; the 20 stay as he named them.
+const EXTRA_CATEGORIES = [];
+export function registerCategories(list = []) {
+  for (const c of list) if (c?.id && !CATEGORY_IDS.has(c.id)) { CATEGORY_IDS.add(c.id); EXTRA_CATEGORIES.push({ id: c.id, name: c.name }); }
+}
+const categoryInfo = (id) => KNOWLEDGE_CATEGORIES.find((c) => c.id === id) || EXTRA_CATEGORIES.find((c) => c.id === id);
 
 function clip(value, max) {
   return String(value ?? '').replace(/\s+/g, ' ').trim().slice(0, max);
@@ -95,7 +102,7 @@ export class KnowledgeLibrary {
     const title = clip(input.title, 200);
     if (!title) return { error: 'A reference needs a title.' };
     const category = CATEGORY_IDS.has(input.category) ? input.category : '';
-    if (!category) return { error: 'Pick one of the 20 categories, or request a new one.' };
+    if (!category) return { error: 'Pick one of the 20 categories (or an expert domain), or request a new one.' };
     const kind = KINDS.includes(input.kind) ? input.kind : 'note';
     const key = referenceKey({ title, creator: input.creator, edition: input.edition });
     const existing = this.get(key, { byKey: true });
@@ -126,6 +133,7 @@ export class KnowledgeLibrary {
     ref.id, ref.key, ref.category, ref.subcategory, ref.kind, ref.title, ref.creator, ref.source_url, ref.published,
     ref.edition, ref.license, ref.access, ref.topics, ref.trust, ref.note, ref.added);
     this.syncBrain(ref, { now });
+    fromLibrary(this.storage, ref, 'NOT READ', { now });
     return ref;
   }
 
@@ -141,14 +149,15 @@ export class KnowledgeLibrary {
       return { error: `Only the text of owner, public-domain or openly licensed references is stored. "${ref.title}" stays catalogued (licence: ${ref.license}).` };
     }
     const body = String(text || '');
-    if (body.trim().length < 20) return { error: 'There was nothing readable to index.' };
+    if (body.trim().length < 20) { fromLibrary(this.storage, ref, 'FAILED', { reason: 'nothing readable to index', now }); return { error: 'There was nothing readable to index.' }; }
     if (ref.doc_id) this.lib.remove(ref.doc_id);
     const saved = this.lib.add({ title: ref.title, text: body, source: ref.source_url || ref.license });
-    if (saved.error) return saved;
+    if (saved.error) { fromLibrary(this.storage, ref, 'FAILED', { reason: saved.error, now }); return saved; }
     this.sql.exec(`UPDATE kl_refs SET doc_id = ?, access = 'indexed', trust = ?, indexed_at = ?, revision = revision + 1 WHERE id = ?`,
       saved.id, trustOf(ref), now, ref.id);
     const updated = this.get(ref.id);
     this.syncBrain(updated, { now, text: body });
+    fromLibrary(this.storage, updated, 'INDEXED', { reason: `${saved.chunks} passages`, now });
     return { ...updated, chunks: saved.chunks, chars: saved.chars };
   }
 
@@ -159,7 +168,7 @@ export class KnowledgeLibrary {
    */
   syncBrain(ref, { now = new Date().toISOString(), text = '' } = {}) {
     if (!this.sql) return null;
-    const category = KNOWLEDGE_CATEGORIES.find((c) => c.id === ref.category);
+    const category = categoryInfo(ref.category);
     const indexed = ref.access === 'indexed';
     const opening = String(text || '').replace(/\s+/g, ' ').trim().slice(0, 300);
     const store = new CheBrainStore(this.storage);

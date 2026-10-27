@@ -17,6 +17,7 @@ import { reaInvestigations } from './rea_runner.js';
 import { splitAsk } from './memory_provenance.js';
 import { chicagoDayKey } from './chicago_time.js';
 import { readPullRequest } from './self_update.js';
+import { recordConnection } from './brain_ledger.js';
 
 export const BRAIN_ROOMS_SOURCE = 'che_brain_rooms';
 
@@ -161,6 +162,15 @@ export function linkRelated(store, record, { now = Date.now(), limit = 6 } = {})
       links: [...(other.links || []), { type: back.type, to: back.to }],
       source: { ...other.source, relations: [...(other.source?.relations || []).filter((r) => r.to !== record.id), back].slice(-12) },
     }, { origin: 'cloud', now });
+  }
+  // One CONNECTION_CREATED ledger event per new pair (brain_ledger.recordConnection; a repeat is never a second event).
+  for (const link of found) {
+    try {
+      recordConnection(store.storage, {
+        from: record.id, to: link.to, from_title: record.title, to_title: store.get(link.to)?.title || '',
+        reason: relationReason(link), basis: link.basis, status: link.status, origin: 'brain_relations', region: record.region || '',
+      }, new Date(now));
+    } catch (_) { /* a ledger failure never blocks a link */ }
   }
   return found;
 }

@@ -239,6 +239,27 @@ test('the owner\'s chart words through /api/chat', sqlite, async () => {
   assert.equal(progress.done.chart.section, 'strategies');
   const alpaca = await che.say('show me my Alpaca trades');
   assert.equal(alpaca.done.open_view, 'alpaca_paper', 'the Alpaca dashboard keeps its route');
+  // Side by side (owner, 2026-10-23): the room opens on SIDE BY SIDE by voice, and nothing is sent.
+  for (const phrase of ['Open side by side.', 'Show my trades next to CHE\'s.', 'Compare my trade with CHE\'s trade.', 'Open the live order preview.']) {
+    const sbs = await che.say(phrase);
+    assert.equal(sbs.route, 'che_trading_chart', phrase);
+    assert.equal(sbs.done.open_view, 'trading_chart', phrase);
+    assert.equal(sbs.done.chart.section, 'compare', phrase);
+    assert.equal(sbs.modelCalls, 0, phrase);
+    assert.match(sbs.reply, /Live orders stay disabled/, phrase);
+  }
+  // The CHE PAPER ACCOUNT lives on the phone: the Worker opens it and proposes the change; it never claims the balance changed.
+  const bal = await che.say('Set CHE paper balance to 500');
+  assert.equal(bal.route, 'che_trading_chart');
+  assert.equal(bal.modelCalls, 0);
+  assert.equal(bal.done.open_view, 'trading_chart');
+  assert.deepEqual(bal.done.chart, { section: 'che_trades' });
+  assert.equal(bal.done.paper_balance, 500);
+  assert.match(bal.reply, /balance change to \$500\.00 for you to confirm[\s\S]*Nothing changes until you confirm/);
+  const pos = await che.say('Show CHE positions');
+  assert.equal(pos.route, 'che_trading_chart');
+  assert.equal(pos.done.paper_balance, undefined);
+  assert.match(pos.reply, /CHE PAPER ACCOUNT positions[\s\S]*simulated account, separate from yours/);
 });
 
 test('a market order needs a current Alpaca price; limit orders still queue (Build 1: block entries on a stale feed)', async () => {
@@ -399,4 +420,109 @@ test('cancel by voice through /api/chat: one match is read back and cancelled on
     assert.match(guest.reply, /Only the CHE owner can cancel Alpaca PAPER orders\. Nothing was cancelled\./);
     assert.equal(deletes().length, 1);
   } finally { globalThis.fetch = prior; }
+});
+
+test('POST /api/trading/rithmic/candles stores the iPhone\'s closed Rithmic minutes; GET reads them; guests change nothing', sqlite, async () => {
+  const che = await owner();
+  await che.say('Hello CHE.');
+  const t = new Date(Math.floor((Date.now() - 10 * 60000) / 60000) * 60000).toISOString();
+  const candle = { t, symbol: 'MNQZ6', exchange: 'CME', o: 21000, h: 21004, l: 20998, c: 21002, v: 9, trades: 5, buy_volume: 5, sell_volume: 4, delta: 1, source: 'rithmic' };
+  const post = await che.raw('/api/trading/rithmic/candles', 'POST', { candles: [candle, { ...candle, source: 'yahoo' }] });
+  assert.equal(post.status, 200);
+  const saved = await post.json();
+  assert.deepEqual([saved.stored, saved.refused], [1, 1]);
+  const read = await che.api('/api/trading/rithmic/candles?symbol=MNQZ6');
+  assert.equal(read.candles.length, 1);
+  assert.equal(read.candles[0].source, 'rithmic');
+  assert.equal(read.candles[0].delta, 1);
+  const guest = await che.raw('/api/trading/rithmic/candles', 'POST', { candles: [{ ...candle, t: new Date(Date.parse(t) + 60000).toISOString() }] }, '');
+  assert.notEqual(guest.status, 200);
+  assert.equal((await che.api('/api/trading/rithmic/candles?symbol=MNQZ6')).candles.length, 1);
+});
+
+test('CHE paper account by voice: opens the phone account; a balance change is only proposed for confirmation', async () => {
+  const { paperAccountIntent } = await import('./trading_chart.js');
+  assert.deepEqual(paperAccountIntent('Set CHE paper balance to 500'), { kind: 'paper_balance', amount: 500 });
+  assert.deepEqual(paperAccountIntent("CHE, change your paper balance to $2,500"), { kind: 'paper_balance', amount: 2500 });
+  assert.deepEqual(paperAccountIntent("set che's paper balance to 50k"), { kind: 'paper_balance', amount: 50000 });
+  assert.deepEqual(paperAccountIntent('Show CHE positions'), { kind: 'paper_open' });
+  assert.deepEqual(paperAccountIntent("open CHE's paper account"), { kind: 'paper_open' });
+  for (const other of ['show my Alpaca paper balance', 'set my paper balance to 500', 'show my positions', 'what is CHE', 'open the MNQ chart', 'paper trading is on?']) {
+    assert.equal(paperAccountIntent(other), null, other);
+  }
+});
+
+test('market chart: any universe ticker on public data, honest feed label, research only', async () => {
+  const end = Date.parse('2026-10-20T15:00:00Z');
+  const fetcher = async (url) => {
+    const u = String(url);
+    if (u.endsWith('/products')) return new Response(JSON.stringify([{ id: 'ETH-USD', base_currency: 'ETH', quote_currency: 'USD', status: 'online' }]), { status: 200 });
+    if (u.includes('AssetPairs')) return new Response(JSON.stringify({ error: [], result: {} }), { status: 200 });
+    if (u.includes('/products/ETH-USD/candles?granularity=300')) return new Response(JSON.stringify(Array.from({ length: 20 }, (_, i) => [end / 1000 - (i + 1) * 300, 2990, 3010, 3000, 3005, 4])), { status: 200 });
+    throw new TypeError(`unexpected ${u}`);
+  };
+  const v = await chartView(memStorage(), {}, { account: 'market', symbol: 'COINBASE:ETH-USD', tf: '5m', now: Date.parse('2026-10-20T15:00:20Z'), fetcher });
+  assert.equal(v.ok, true);
+  assert.equal(v.ticker.id, 'coinbase:ETH-USD');
+  assert.equal(v.feed.status, 'LIVE');
+  assert.equal(v.feed.stale, false);
+  assert.equal(v.bars.length, 20);
+  assert.equal(v.spoken, 'Coinbase Exchange ETH-USD, 5m candles, live.');
+  assert.equal(v.entries_allowed, false);
+  assert.match(v.entries_blocked_reason, /places no orders/);
+  assert.ok(v.timeframes.includes('4h') && !v.timeframes.includes('15s'));
+
+  const offline = await chartView(memStorage(), {}, { account: 'market', symbol: 'DOGE', tf: '5m', now: NOW, fetcher: async () => { throw new TypeError('fetch failed'); } });
+  assert.equal(offline.ticker.id, 'futures:MNQ', 'an unknown ticker (nothing discovered) falls back to the MNQ default');
+  assert.equal(offline.feed.status, 'UNAVAILABLE');
+  assert.equal(offline.feed.stale, true);
+  assert.ok(offline.universe_problems.length >= 2);
+});
+
+test('GET /api/markets/universe and the market chart through the real Worker; guests refused; never LIVE offline', sqlite, async () => {
+  const che = await owner();
+  await che.say('Hello CHE.');
+  const u = await che.api('/api/markets/universe');
+  assert.equal(u.ok, true);
+  assert.equal(u.counts.futures, 25);
+  assert.deepEqual(u.results.slice(0, 4).map((i) => i.id), ['futures:MNQ', 'futures:NQ', 'futures:ES', 'futures:MES']);
+  assert.ok(u.problems.some((p) => /Coinbase/.test(p)), 'offline discovery is reported');
+  assert.ok(u.intervals.includes('15s'));
+  const gold = await che.api('/api/markets/universe?q=gold');
+  assert.equal(gold.results[0].id, 'futures:GC');
+  const chart = await che.api('/api/trading/chart?account=market&symbol=futures:ES&tf=15m');
+  assert.equal(chart.ticker.id, 'futures:ES');
+  assert.notEqual(chart.feed.status, 'LIVE');
+  assert.equal(chart.entries_allowed, false);
+  assert.equal((await che.api('/api/markets/universe')).last_ticker, 'futures:ES', 'the last ticker is remembered');
+  const put = await che.raw('/api/trading/chart/drawings', 'PUT', { account: 'market', symbol: 'futures:ES', drawings: [{ kind: 'hline', points: [{ price: 5000 }] }] });
+  assert.equal(put.status, 200);
+  assert.equal((await che.api('/api/trading/chart?account=market&symbol=futures:ES&tf=15m')).drawings.length, 1);
+  assert.notEqual((await che.raw('/api/markets/universe', 'GET', null, '')).status, 200);
+});
+
+// PR #515 review (P1): "and the 15 minute?" after "Open the Alpaca chart for AAPL" said 15-minute bars while the phone's
+// chart opened on 5 minutes. The reply carries the timeframe the phone opens on, and says only a bar size that chart has.
+test('a spoken chart timeframe is one the chart offers, and the reply says exactly what the phone opens on', async () => {
+  const che = await owner();
+  const open = await che.say('Open the Alpaca chart for AAPL');
+  assert.equal(open.route, 'che_trading_chart');
+  assert.equal(open.done.chart.symbol, 'AAPL');
+  const fifteen = await che.say('And the 15 minute?');
+  assert.equal(fifteen.route, 'che_trading_chart');
+  assert.equal(fifteen.modelCalls, 0);
+  assert.deepEqual(fifteen.done.chart, { section: 'chart', account: 'alpaca_paper', symbol: 'AAPL', filter: null, timeframe: '15m' });
+  assert.equal(fifteen.reply, 'Opening the Alpaca PAPER chart for AAPL on 15-minute bars, sir.');
+  // A bar size the chart does not have is said plainly, and the phone opens on the default bars the reply names.
+  const fourHour = await che.say('Switch the chart to the 4 hour');
+  assert.equal(fourHour.route, 'che_trading_chart');
+  assert.equal(fourHour.done.chart.timeframe, '5m');
+  assert.match(fourHour.reply, /^Opening the Alpaca PAPER chart for AAPL on 5-minute bars, sir\. That chart has no 4-hour bars; it offers 1-minute, 5-minute, 15-minute, hourly and daily\.$/);
+  const mnq = await che.say('Open the MNQ chart on the 1 minute');
+  assert.equal(mnq.done.chart.account, 'futures_paper');
+  assert.equal(mnq.done.chart.timeframe, '5m');
+  assert.match(mnq.reply, /on 5-minute bars, sir\. That chart has no 1-minute bars; it offers 5-minute, 15-minute, hourly and daily\.$/);
+  // No bar size asked: no timeframe is sent, so the chart keeps the one the owner left it on.
+  const plain = await che.say('Open Alpaca chart.');
+  assert.equal('timeframe' in plain.done.chart, false);
 });

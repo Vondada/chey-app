@@ -73,13 +73,33 @@ export function contentWords(text) {
  * True when one evidence text says most of what the claim says. A claim with
  * no content words of its own ("as you said, sir") asserts nothing to check.
  */
+// "your favorite color is green" claims a value for a subject; the stored record of that subject must hold that value.
+const SLOT_CLAIM = /\b(?:your|my|his|the owner s) ([a-z][a-z ]{1,40}?) (?:is|are|was|were) ([a-z0-9][a-z0-9 ]{0,60}?)(?: sir| now| today)?$/;
+const SLOT_RECORD = /^(?:my )?([a-z][a-z ]{1,40}?) (?:is|are|was|were) ([a-z0-9][a-z0-9 ]{0,80})$/;
+
+/**
+ * True when the claim is backed by one of the evidence texts: enough of its content words appear there, and, when it
+ * states a value for the owner's subject ("your favorite color is green"), the record of that subject holds that value.
+ * Overlap alone let a changed value through (subject-loss audit, 2026-10-24: "blue" on record, "green" in the reply).
+ */
 export function supportedBy(claim, evidenceTexts = []) {
   const words = contentWords(claim);
   if (!words.length) return true;
   const need = words.length === 1 ? 1 : Math.max(2, Math.ceil(words.length * 0.6));
+  const plain = plainWords(claim);
+  const slot = SLOT_CLAIM.exec(plain);
+  const claimedSubject = slot ? contentWords(slot[1]) : [];
+  const claimedValue = slot ? contentWords(slot[2]) : [];
   return evidenceTexts.some((text) => {
     const have = new Set(contentWords(text));
-    return words.filter((w) => have.has(w)).length >= need;
+    if (words.filter((w) => have.has(w)).length < need) return false;
+    if (!slot || !claimedValue.length) return true;
+    // The same subject on record with a different value is a contradiction, never support.
+    const record = SLOT_RECORD.exec(plainWords(text));
+    const sameSubject = record ? contentWords(record[1]).join(' ') === claimedSubject.join(' ') : false;
+    if (!sameSubject) return claimedValue.every((w) => have.has(w));
+    const recordValue = new Set(contentWords(record[2]));
+    return claimedValue.every((w) => recordValue.has(w));
   });
 }
 
@@ -162,7 +182,9 @@ const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 
 function spokenDate(iso) {
   const at = new Date(String(iso || ''));
   if (!Number.isFinite(at.getTime())) return '';
-  return `${MONTHS[at.getUTCMonth()]} ${at.getUTCDate()}`;
+  // The owner's calendar day (America/Chicago), the same day personal recall says, never the UTC one.
+  const p = Object.fromEntries(new Intl.DateTimeFormat('en-US', { timeZone: 'America/Chicago', month: 'numeric', day: 'numeric' }).formatToParts(at).map((x) => [x.type, x.value]));
+  return `${MONTHS[Number(p.month) - 1]} ${Number(p.day)}`;
 }
 
 function howRecorded(record) {
@@ -198,9 +220,13 @@ const ASK_FORM = /^(?:(?:can|could|would|will) you (?:please )?)?(?:tell me|name
  * Returns { topic } (topic '' for "anything") or null. Statements and commands
  * ("I confirmed the order", "confirm my booking") are not questions about memory.
  */
+// "What were we just discussing?", "what was that about?": the subject of the last exchange, from the conversation.
+const DISCUSSING = /^(?:what (?:were|are) we (?:just )?(?:talking about|discussing|on about)|what was (?:that|this|it|the last thing) (?:all )?about|what did we (?:just )?(?:talk about|discuss)|what (?:were|was) we (?:just )?(?:discussing|talking about)|where were we|what was i (?:just )?(?:asking|saying|talking about))$/;
+
 export function ownerMemoryQuestion(message) {
   const q = plainWords(splitAsk(message).ask);
   if (!q || q.split(' ').length > 30 || FICTION_REQUEST.test(q)) return null;
+  if (DISCUSSING.test(q.replace(/\b(?:che|chay|chey|shay)\b ?/g, '').trim())) return { topic: '', discussion: true };
   // The question itself must ask about memory: "I confirmed the order, what
   // is next?" is a statement followed by an unrelated question.
   if (!ASK_FORM.test(q) && !/^(?:anything|something|one thing)\b/.test(q)) return null;
@@ -236,6 +262,16 @@ function sameSlot(a, b) {
  * Returns { answer, records: [ids], kind }.
  */
 export function answerOwnerMemoryQuestion(data = {}, question = {}, history = []) {
+  if (question.discussion) {
+    // The last exchange before this question, quoted as it happened: no summary a model could get wrong.
+    const turns = (Array.isArray(history) ? history : []).filter((turn) => String(turn?.content ?? turn?.text ?? '').trim());
+    const lastUser = [...turns].reverse().find((turn) => turn.role === 'user');
+    const lastReply = lastUser ? turns.slice(turns.indexOf(lastUser) + 1).find((turn) => turn.role === 'assistant') : null;
+    if (!lastUser) return { kind: 'none', records: [], answer: "I don't have our earlier messages in this conversation, sir, so I can't say what we were discussing." };
+    const asked = clip(String(lastUser.content ?? lastUser.text).replace(/```[\s\S]*?```/g, ' ').trim(), 200);
+    const replied = lastReply ? clip(String(lastReply.content ?? lastReply.text).replace(/```[\s\S]*?```/g, ' ').trim(), 240) : '';
+    return { kind: 'owner_attested', records: [], answer: `We were just on this, sir. You said: "${asked}"${replied ? ` and I answered: "${replied}"` : ', and I had not answered yet'}.` };
+  }
   if (question.recent) {
     const last = [...(Array.isArray(history) ? history : [])].reverse().find((turn) => turn?.role === 'user' && String(turn.content ?? turn.text ?? '').trim());
     return last
@@ -444,6 +480,8 @@ export async function recordAnswerEvidence(storage, reply, receipt = {}, extra =
     sources: Array.isArray(receipt.sources) ? receipt.sources.slice(0, 5) : [],
     tools: Array.isArray(receipt.tools) ? receipt.tools.slice(0, 5) : [],
     records: Array.isArray(extra.records) ? extra.records.slice(0, 5) : [],
+    // The owner's words the answer quoted, with their stored date, for records outside memory_records (the Brain, saved preferences).
+    cited: Array.isArray(extra.cited) ? extra.cited.slice(0, 3).map((c) => ({ text: clip(c?.text, 300), created_at: c?.created_at || null, store: String(c?.store || '').slice(0, 40) })) : [],
     meta: extra.meta === true,
     attributions_removed: Number(extra.attributions_removed || 0),
   };
@@ -498,8 +536,12 @@ const EVIDENCE_ASK = [
   'who told you (?:that|this)',
   '(?:is|was) (?:that|this|it) (?:really )?(?:verified|confirmed|true|correct|accurate|real|right|a fact)',
   'did i (?:really |actually |ever )?(?:confirm|say|tell you|verify|approve|test) (?:that|this|it)(?: to you)?',
+  // "When did I say that?" / "when did I tell you that?": the record's date is the evidence (subject-loss audit, 2026-10-24).
+  'when did i (?:say|tell you|mention|confirm) (?:that|this|it)(?: to you)?',
+  'when was (?:that|this|it)(?: said| recorded| saved)?',
   'can you (?:prove|back up|verify|cite|source|fact check) (?:that|this|it|your answer|that answer)(?: for me)?',
-  'show (?:me )?(?:the |your )?(?:evidence|proof|sources?|receipts?)(?: (?:for|behind) (?:that|this|it))?',
+  // "Show your evidence for that answer" (owner acceptance question 8, 2026-10-23) names the answer, like line 500 does.
+  'show (?:me )?(?:the |your )?(?:evidence|proof|sources?|receipts?)(?: (?:for|behind) (?:that|this|it|your answer|that answer|the answer))?',
   'what makes you (?:think|say|so sure)(?: (?:that|so|this))?',
 ].map((core) => new RegExp(`^${ASK_LEAD}${core}${ASK_TAIL}$`));
 const REFERENT_ONLY = /^(?:the |that |your )?(?:last|previous|first|earlier) (?:one|answer|thing|claim|statement)(?: (?:we were|you were|i was) (?:just )?(?:talking|speaking) about| you (?:just )?(?:said|mentioned|told me))?$|^(?:the one|what) (?:we were|you were) (?:just )?(?:talking|speaking) about$|^what you (?:just )?said$/;
@@ -625,7 +667,8 @@ export function explainEvidenceFor({ referent = null, entry = null, records = []
     return { retract: [], text: `${quote}I do not have a recent evidence record for that answer, sir. I cannot honestly claim it was fact-checked.` };
   }
   if (entry.kind === 'owner_attested') {
-    const cited = records.filter((r) => entry.records?.includes(r.id));
+    const fromRecords = records.filter((r) => entry.records?.includes(r.id));
+    const cited = fromRecords.length ? fromRecords : (entry.cited || []).filter((c) => c.text).map((c) => ({ text: c.text, created_at: c.created_at, source: c.store === 'saved_preferences' ? 'inferred_text' : 'owner_chat' }));
     return {
       retract: [],
       text: `${quote}That came from what you told me${cited.length ? `: ${cited.map(quoteRecord).join(' ')}` : '.'} It is your own statement, not an independently verified outside fact.`,
@@ -642,6 +685,10 @@ export function explainEvidenceFor({ referent = null, entry = null, records = []
   }
   if (entry.kind === 'none') {
     return { retract: [], text: `${quote}That was me telling you I had no record to cite, sir. There is no evidence behind it because I did not claim anything.` };
+  }
+  // A fact read from the phone's Brain notes: undated, its author unrecorded, not the owner's attested words.
+  if (entry.kind === 'brain_note') {
+    return { retract: [], text: `${quote}That came from the Brain notes on your phone, not from a dated record. The note has no date, and it does not say whether you typed it or I saved it from a chat. It is not independently verified.` };
   }
   return { retract: [], text: `${quote}That answer came from my language model alone. It was not independently verified, and I have no source, tool result or record of yours behind it.` };
 }
@@ -735,8 +782,14 @@ export function ownerFactCorrection(rawMessage, records = []) {
   const plain = String(rawMessage || '').trim()
     .replace(/^(?:(?:hey |ok |okay )?(?:che|chay|chey|shay)[,:]?\s+)/i, '');
   const m = /^(?:no|nope|actually|correction|update|wait)[,.:!]?\s+(?:that(?:'s| is) (?:wrong|not right)[,.]?\s+)?(?:now\s+)?(my\s+[a-z0-9][a-z0-9 '\-]{1,60}?\s+(?:is|are)\s+[^.?!]{1,200}?)(?:\s+now)?(?:,?\s+not\s+[^.?!]{1,80})?[.!]?$/i.exec(plain);
-  if (!m) return null;
-  const statement = m[1].trim();
+  // "My latest confirmed favorite color is red" (owner, 2026-10-24) is a correction too, alone or after sentences that
+  // only talk about corrections or memory ("Ensure user corrections override outdated preferences."). Any other
+  // sentence beside it is a request of its own, so the turn is left to the routes that read the whole message.
+  const sentences = plain.split(/(?<=[.!])\s+/);
+  const q = !m && /^my\s+(?:(?:latest|current|newest|updated|correct|confirmed)\s+)+([a-z0-9][a-z0-9 '\-]{1,60}?\s+(?:is|are)\s+[^.?!]{1,200}?)[.!]?$/i.exec(sentences.at(-1) || '');
+  if (q && !sentences.slice(0, -1).every((s) => /\b(?:correct\w*|overrid\w*|outdated|old|preferences?|memor\w*|remember\w*|updat\w*|supersed\w*|latest|newest)\b/i.test(s) && !/\?|\b(?:send|buy|pay|order|delete|remove|forget|open|call|email|text|transfer|subscribe)\b/i.test(s))) return null;
+  if (!m && !q) return null;
+  const statement = m ? m[1].trim() : `my ${q[1].trim()}`;
   return (Array.isArray(records) ? records : []).some((r) => isOwnerAttested(r) && sameSlot(r.text, statement))
     ? statement
     : null;
@@ -815,4 +868,23 @@ export function guardSpeakerAttributions(reply, { records = [], message = '' } =
 /** A Brain record in the shape the owner-attribution check reads (text, verification_status). */
 export function brainRecordForProvenance(record = {}) {
   return { ...record, text: String(record.body ?? record.text ?? ''), verification_status: record.verification };
+}
+
+// ─── Tool outcomes: what a memory, history or mailbox read really returned ──────────────────────────────────────────
+// Owner live test (2026-10-25): an empty store, an unreadable store and a missing tool all came back as the same
+// model sentence ("no record", "no access"). Every deterministic read route names one of these on its done line, and
+// the reply is the route's own text: the model never rewrites it.
+export const RECALL_OUTCOMES = Object.freeze({
+  RETRIEVED: 'retrieved',            // the store was read and held matching records
+  NO_MATCH: 'no_match',              // the store was read and held none
+  STORED: 'stored',                  // a write that was read back from storage
+  STORAGE_FAILED: 'storage_failed',  // the store could not be read or written
+  PERMISSION_DENIED: 'permission_denied', // the asker may not read it (a guest)
+  TOOL_UNAVAILABLE: 'tool_unavailable',   // the reader is not configured (no GitHub mailbox credentials)
+});
+
+/** The outcome for a read: storage_failed when it threw, retrieved when it named records, otherwise no_match. */
+export function readOutcome({ failed = false, records = [] } = {}) {
+  if (failed) return RECALL_OUTCOMES.STORAGE_FAILED;
+  return (Array.isArray(records) ? records.length : Number(records) || 0) > 0 ? RECALL_OUTCOMES.RETRIEVED : RECALL_OUTCOMES.NO_MATCH;
 }

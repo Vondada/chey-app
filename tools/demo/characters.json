@@ -1,0 +1,54 @@
+{
+  "note": "Create Room demo (lane E). One fictional character ('Ava', invented for the demo, not a real person) described in words. 'base' is generated from 'description' by tools/demo/describe_settings.mjs through the Worker's own describePerson (the settings the Create button queues; creation_demo_settings.test.mjs keeps them in sync), then built by the real person_model job (scripts/che_gpu_face_preview.py --model) in three styles, plus three customised variants of the photoreal build. Body changes use the Create room's BODY_* macros (tools/avatar_face/mpfb_base.py).",
+  "description": "Ava, a fictional woman in her early thirties: warm brown skin, dark brown hair, green-brown eyes, friendly round face, terracotta long-sleeved top, charcoal trousers.",
+  "base": {
+    "BODY_AGE": "0.577",
+    "BROW_N": "800",
+    "BROW_W": "1.4",
+    "FACE": "lr:eyes/eye-scale-incr=0.15,lr:eyes/eye-corner2-up=0.1,mouth/mouth-upperlip-volume-incr=0.3,mouth/mouth-lowerlip-volume-incr=0.4,mouth/mouth-cupidsbow-incr=0.3,mouth/mouth-scale-horiz-incr=0.2,lr:cheek/cheek-volume-incr=0.2,head/head-round=0.2",
+    "HAIR_SRGB": "42,26,18",
+    "HAIR_STYLE": "wavy_medium",
+    "IDENTITY": "lyra",
+    "IRIS": "2.5",
+    "IRIS_SRGB": "106,106,58",
+    "LASH_LEN": "0.65",
+    "MATURE": "0.067",
+    "MODEL_MODE": "full_body",
+    "OUTFIT_SRGB": "184,84,58",
+    "OUTFIT_TOP": "jacket",
+    "PORES": "0.18",
+    "RACE": "african=0.4,caucasian=0.6",
+    "RENDER_PROFILE": "final",
+    "SEX": "0",
+    "STRANDS": "90",
+    "TARGET_SRGB": "122,74,44",
+    "TROUSERS_SRGB": "46,48,52"
+  },
+  "jobs": {
+    "photoreal": {
+      "STYLE": "photoreal"
+    },
+    "hybrid": {
+      "STYLE": "hybrid"
+    },
+    "stylized": {
+      "STYLE": "stylized"
+    },
+    "hair_copper": {
+      "STYLE": "photoreal",
+      "HAIR_SRGB": "150,62,30"
+    },
+    "outfit_navy": {
+      "STYLE": "photoreal",
+      "OUTFIT_SRGB": "40,62,112",
+      "TROUSERS_SRGB": "122,110,92",
+      "SHOES_SRGB": "92,58,36"
+    },
+    "body_tall_strong": {
+      "STYLE": "photoreal",
+      "BODY_HEIGHT": "0.8",
+      "BODY_MUSCLE": "0.75",
+      "BODY_WEIGHT": "0.6"
+    }
+  }
+}

@@ -17,7 +17,18 @@ Uint8List _hex(String text) {
 String _toHex(Uint8List bytes) => bytes.map((b) => b.toRadixString(16).padLeft(2, '0')).join();
 
 void main() {
-  test('login request matches the official client byte for byte', () {
+  test('Rithmic envelopes carry a big-endian payload length', () {
+    // Reference heartbeat packet: 4-byte length 4, then protobuf template_id 18.
+    final packet = encodeRithmicPacket(encodeHeartbeat());
+    expect(_toHex(packet), '0000000498b64b12');
+    expect(_toHex(decodeRithmicPacket(packet)), '98b64b12');
+    expect(() => decodeRithmicPacket(_hex('0000000598b64b12')), throwsFormatException);
+    expect(() => decodeRithmicPacket(_hex('98b64b12')), throwsFormatException);
+    expect(() => decodeRithmicPacket(_hex('00000000')), throwsFormatException);
+    expect(() => encodeRithmicPacket(Uint8List(0)), throwsFormatException);
+  });
+
+  test('login fixture encodes required protocol version separately from app version', () {
     final bytes = encodeLogin(
       user: 'user1',
       password: 'pass1',
@@ -26,7 +37,11 @@ void main() {
       appVersion: '1.0',
       infraType: RithmicInfra.ticker,
     );
-    expect(_toHex(bytes), '92bd3f03434845a2bd3f057061737331dafb3f057573657231daad4003312e30a8814b01e2814b0c526974686d6963205465737498b64b0a');
+    expect(_toHex(bytes), '92bd3f03434845a2bd3f057061737331dafb3f057573657231daad4003312e30a8814b01e2814b0c526974686d6963205465737492824b03332e3998b64b0a');
+  });
+
+  test('an empty template version cannot produce an incomplete login frame', () {
+    expect(() => encodeLogin(user: 'fixture', password: 'fixture', systemName: 'Rithmic Paper Trading', appName: 'CHE', appVersion: '1.0', templateVersion: ''), throwsArgumentError);
   });
 
   test('heartbeat request matches the official client', () {
@@ -61,12 +76,53 @@ void main() {
     expect(RithmicFrame.parse(_hex('80d24d03')).toLastTrade().size, 3);
   });
 
+  test('trade size, aggressor, snapshot, presence and exchange time decode from the public LastTrade field numbers', () {
+    // async_rithmic@a985931 last_trade.proto: trade_size 100178, aggressor 112003 (1 buy, 2 sell), is_snapshot 110121,
+    // presence_bits 149138 (bit 1 = trade), source_ssboe 150400, source_usecs 150401.
+    List<int> varint(int v) {
+      final out = <int>[];
+      while (v >= 0x80) {
+        out.add((v & 0x7f) | 0x80);
+        v >>= 7;
+      }
+      return out..add(v);
+    }
+    List<int> field(int n, int v) => [...varint(n << 3), ...varint(v)];
+    final bytes = Uint8List.fromList([
+      ...field(100178, 4),
+      ...field(112003, 2),
+      ...field(110121, 1),
+      ...field(149138, 1),
+      ...field(150400, 1700000123),
+      ...field(150401, 250000),
+    ]);
+    final t = RithmicFrame.parse(bytes).toLastTrade();
+    expect([t.size, t.aggressor, t.isSnapshot, t.presenceBits, t.isTrade, t.sourceSsboe, t.sourceUsecs], [4, 2, true, 1, true, 1700000123, 250000]);
+    expect(RithmicFrame.parse(Uint8List.fromList(field(149138, 8))).toLastTrade().isTrade, isFalse, reason: 'a volume-only update is not a trade');
+  });
+
   test('a successful login response is accepted and carries the heartbeat interval', () {
     final response = RithmicFrame.parse(_hex('89824b0000000000003e40ea994b0346434df2994b02494298b64b0b')).toLoginResponse();
     expect(response.accepted, isTrue);
     expect(response.heartbeatInterval, 30);
     expect(response.fcmId, 'FCM');
     expect(response.ibId, 'IB');
+  });
+
+  test('Rithmic answers a good login with response code "0": that is accepted, any other first code is not', () {
+    expect(RithmicFrame.parse(encodeLoginResponse(rpCodes: const ['0'])).toLoginResponse().accepted, isTrue);
+    expect(RithmicFrame.parse(encodeLoginResponse(rpCodes: const ['13', 'permission denied'])).toLoginResponse().accepted, isFalse);
+  });
+
+  test('discovery requests and answers round-trip: systems, then one system\'s gateways', () {
+    expect(RithmicFrame.parse(encodeSystemInfoRequest()).templateId(), RithmicTemplate.systemInfo);
+    final ask = RithmicFrame.parse(encodeGatewayInfoRequest(systemName: 'Rithmic Paper Trading'));
+    expect(ask.templateId(), RithmicTemplate.gatewayInfo);
+    final systems = RithmicFrame.parse(encodeSystemInfoResponse(systems: ['Rithmic Test', 'Rithmic Paper Trading'])).toSystemInfo();
+    expect(systems.accepted, isTrue);
+    expect(systems.systems, ['Rithmic Test', 'Rithmic Paper Trading']);
+    final gateways = RithmicFrame.parse(encodeGatewayInfoResponse(systemName: 'Rithmic Paper Trading', names: ['Chicago Area'], uris: ['wss://g.example:443'])).toGatewayInfo();
+    expect([gateways.systemName, gateways.names.single, gateways.uris.single], ['Rithmic Paper Trading', 'Chicago Area', 'wss://g.example:443']);
   });
 
   test('a refused login is never accepted, and its reason is kept', () {

@@ -9,12 +9,20 @@
 // orders are refused because no futures paper broker is connected. Live orders stay disabled.
 import { alpacaPaperDashboard, alpacaPaperOrder, openAlpacaPaperOrders, previewAlpacaPaperOrder } from './broker_alpaca.js';
 import { readSimState, readStoredTrades } from './strategy_sim.js';
-import { readTrades } from './trading_evidence.js';
+import { readTrades, overnightLevels } from './trading_evidence.js';
 import { LIVE_FEED, readLivePortfolios } from './trading_live.js';
+import { liveOrdersStatus } from './trading_environments.js';
+import { fromEvidence, fromSim, historyChart, naturalKey, provenanceOf, tradeIdOf } from './trading_visual.js';
+import { INTERVALS, describeFeed, marketUniverse, resolveTicker, universeCandles } from './market_universe.js';
+import { intervalFromWords, intervalLabel, symbolFromFollowup } from './trading_lab.js';
 
 export const ACCOUNTS = Object.freeze({
   alpaca_paper: { label: 'Alpaca PAPER', asset: 'stocks', mode: 'PAPER' },
   futures_paper: { label: 'MNQ futures PAPER (CHE research)', asset: 'futures', mode: 'PAPER' },
+  // NQ or MNQ candles from CHE's stored research datasets (owner, 2026-10-23): study only, no orders.
+  futures_history: { label: 'NQ/MNQ history (stored research data)', asset: 'futures', mode: 'HISTORICAL' },
+  // Any crypto or futures ticker from the universal selector (owner, 2026-10-24): public exchange data, research only.
+  market: { label: 'Market chart (public data, research)', asset: 'any', mode: 'RESEARCH' },
 });
 // Alpaca timeframes and how far back each reads; futures are built from the stored 5-minute bars.
 export const TIMEFRAMES = Object.freeze({
@@ -48,7 +56,8 @@ export function chartMarkers({ journal = [], portfolios = [], simTrades = [], or
   for (const t of journal) {
     if (sym && String(t.symbol || '').toUpperCase() !== sym) continue;
     const id = `${t.portfolio}|${t.entry?.time}`;
-    const base = { source: 'che_forward', id, symbol: t.symbol, strategy: t.strategy, variant: t.filter, side: t.side || 'long', stop: t.stop, target: t.target };
+    // trade_id is the ledger ID Trade Replay opens (trading_visual.tradeIdOf over the same natural key); id stays the record's own.
+    const base = { source: 'che_forward', id, trade_id: tradeIdOf(naturalKey(fromEvidence(t, 'forward_paper'))), symbol: t.symbol, strategy: t.strategy, variant: t.filter, side: t.side || 'long', stop: t.stop, target: t.target };
     add({ ...base, kind: 'entry', time: t.entry?.time, price: num(t.entry?.raw), status: 'closed' });
     add({ ...base, kind: 'exit', time: t.exit?.time, price: num(t.exit?.raw), status: 'closed', reason: t.exit?.reason, net_pnl: num(t.net_pnl), r: num(t.r_net) });
   }
@@ -59,7 +68,8 @@ export function chartMarkers({ journal = [], portfolios = [], simTrades = [], or
   }
   for (const t of simTrades) {
     if (sym && String(t.symbol || '').toUpperCase() !== sym) continue;
-    const base = { source: 'che_sim', id: t.id, symbol: t.symbol, strategy: t.strategy, side: 'long', stop: t.stop, target: t.target };
+    // Only a closed simulation trade is in the ledger, so only it carries the ID Trade Replay opens.
+    const base = { source: 'che_sim', id: t.id, ...(t.exit_t ? { trade_id: tradeIdOf(naturalKey(fromSim(t))) } : {}), symbol: t.symbol, strategy: t.strategy, side: 'long', stop: t.stop, target: t.target };
     add({ ...base, kind: 'entry', time: t.entry_t, price: num(t.entry_raw), status: t.exit_t ? 'closed' : 'open' });
     if (t.exit_t) add({ ...base, kind: 'exit', time: t.exit_t, price: num(t.exit_raw), status: 'closed', reason: t.exit_reason, r: num(t.r) });
   }
@@ -103,14 +113,16 @@ function feedHealth({ provider, status, lastBarTime, now, tf }) {
 }
 
 /** The chart for one account, symbol and timeframe: bars, feed health, the entry gate and markers. */
-export async function chartView(storage, env, { account = 'alpaca_paper', symbol = '', tf = '5m', now = Date.now(), fetcher = fetch } = {}) {
+export async function chartView(storage, env, { account = 'alpaca_paper', symbol = '', tf = '5m', at = null, now = Date.now(), fetcher = fetch } = {}) {
   if (!ACCOUNTS[account]) return { ok: false, error: `Choose an account: ${Object.keys(ACCOUNTS).join(' or ')}.` };
+  if (account === 'futures_history') return historyChart(storage, { market: symbol || 'MNQ', tf, at });
+  if (account === 'market') return marketChart(storage, { symbol, tf, now, fetcher });
   const offered = account === 'futures_paper' ? FUTURES_TIMEFRAMES : Object.keys(TIMEFRAMES);
   // A timeframe the account does not offer (futures at 1m) answers with 5-minute bars, labelled 5m.
   const frame = offered.includes(tf) ? tf : '5m';
-  const base = { ok: true, account, account_label: ACCOUNTS[account].label, mode: 'PAPER', timeframe: frame, timeframes: [...offered], live_orders: 'disabled', sources: MARKER_SOURCES };
+  const base = { ok: true, account, account_label: ACCOUNTS[account].label, mode: 'PAPER', timeframe: frame, timeframes: [...offered], live_orders: liveOrdersStatus(), sources: MARKER_SOURCES };
   if (account === 'alpaca_paper') {
-    const d = await alpacaPaperDashboard(env, { symbol, fetcher, now, timeframe: frame });
+    const d = await alpacaPaperDashboard(env, { symbol, fetcher, now, timeframe: frame, storage });
     if (d.state !== 'verified') {
       return { ...base, symbol: String(symbol || '').toUpperCase() || null, state: d.state, error: d.error || null, bars: [], markers: [],
         feed: feedHealth({ provider: 'Alpaca', status: 'UNAVAILABLE', now, tf: frame }), entries_allowed: false,
@@ -129,17 +141,64 @@ export async function chartView(storage, env, { account = 'alpaca_paper', symbol
   const stored = (await storage.get(LIVE_FEED)) || {};
   const five = Array.isArray(stored.bars) ? stored.bars : [];
   const minutes = TIMEFRAMES[frame].minutes;
-  const bars = minutes <= 5 ? five : rollUp(five, minutes);
+  let bars = minutes <= 5 ? five : rollUp(five, minutes);
+  // The owner's blank gray chart (2026-10-24): with no stored forward bars, draw Yahoo's delayed MNQ=F candles (the
+  // same public source, labelled DELAYED), and when that fails too, say exactly why instead of an empty chart.
+  let fallback = null;
+  if (!bars.length) {
+    const universe = await marketUniverse(storage, { fetcher, now }).catch(() => null);
+    const item = universe ? resolveTicker(universe, 'MNQ') : null;
+    const view = item ? await universeCandles(storage, item, frame, { fetcher, now }).catch((e) => ({ bars: [], feed: { status: 'UNAVAILABLE', error: String(e?.message || e) } })) : null;
+    fallback = view;
+    bars = (view?.bars || []).map(({ t, o, h, l, c, v }) => ({ t, o, h, l, c, v }));
+  }
+  const noDataReason = bars.length ? null
+    : `CHE's forward paper engine has stored no MNQ bars yet${stored.error ? ` (${String(stored.error).slice(0, 120)})` : ''}, and Yahoo's delayed MNQ=F chart could not be read${fallback?.feed?.error || fallback?.error ? `: ${String(fallback.feed?.error || fallback.error).slice(0, 160)}` : ''}. No candle was made up.`;
   const journal = await readTrades(storage, (t) => t.environment === 'paper' && t.data?.resolution === '5m');
   const portfolios = await readLivePortfolios(storage);
   const sim = await readSimState(storage).catch(() => null);
   const simTrades = sim ? (await readStoredTrades(storage, sim.trades).catch(() => [])).filter((t) => t.symbol === sym) : [];
-  const feed = feedHealth({ provider: stored.provider || 'Yahoo MNQ=F', status: stored.status, lastBarTime: stored.last_bar_time || five.at(-1)?.t, now, tf: frame });
+  const feed = fallback
+    ? feedHealth({ provider: fallback.provider || 'Yahoo Finance MNQ=F (delayed)', status: bars.length ? 'DELAYED' : 'UNAVAILABLE', lastBarTime: bars.at(-1)?.t, now, tf: frame })
+    : feedHealth({ provider: stored.provider || 'Yahoo MNQ=F', status: stored.status, lastBarTime: stored.last_bar_time || five.at(-1)?.t, now, tf: frame });
   return {
-    ...base, state: five.length ? 'verified' : 'no_data', symbol: sym, bars: bars.map(({ t, o, h, l, c, v }) => ({ t, o, h, l, c, v })), feed,
+    ...base, state: bars.length ? 'verified' : 'no_data', symbol: sym, bars: bars.map(({ t, o, h, l, c, v }) => ({ t, o, h, l, c, v })), feed,
+    ...(noDataReason ? { error: noDataReason, no_data_reason: noDataReason } : {}),
+    ...(fallback && bars.length ? { bars_source: 'Yahoo delayed MNQ=F (the forward engine has stored no bars yet)' } : {}),
+    provenance: provenanceOf({ dataType: 'live-paper', source: fallback ? (fallback.provider || 'Yahoo Finance MNQ=F (delayed)') : stored.provider || 'Yahoo MNQ=F', delay: stored.delayed_by_min != null ? `about ${stored.delayed_by_min} minutes (DELAYED)` : fallback?.delayed_by_min != null ? `about ${fallback.delayed_by_min} minutes (DELAYED)` : 'DELAYED', bars, tf: frame }),
     markers: chartMarkers({ journal, portfolios, simTrades, symbol: sym }),
+    // The overnight high/low and the 86-style bias (CHE's independent approximation, never the P2P indicator).
+    levels: five.length ? overnightLevels(five) : bars.length ? overnightLevels(bars) : null,
     entries_allowed: false, market_orders_allowed: false,
     entries_blocked_reason: 'No futures paper broker is connected (Tradovate is not signed in), so CHE takes no manual futures orders. CHE\'s MNQ trades here are research on DELAYED data.',
+  };
+}
+
+/**
+ * The universal chart: one ticker from the discovered universe (Coinbase, Kraken, CME front months via
+ * Yahoo, CHE's recorded Rithmic minutes), its candles with an honest feed label, and CHE's own simulation
+ * markers for that symbol. No orders: nothing here is connected to a broker.
+ */
+async function marketChart(storage, { symbol, tf, now, fetcher }) {
+  const universe = await marketUniverse(storage, { fetcher, now });
+  const item = resolveTicker(universe, symbol) || resolveTicker(universe, 'MNQ');
+  const frame = INTERVALS[tf] ? tf : '5m';
+  const view = await universeCandles(storage, item, frame, { fetcher, now });
+  const sim = await readSimState(storage).catch(() => null);
+  const simTrades = sim ? (await readStoredTrades(storage, sim.trades).catch(() => [])).filter((t) => t.symbol === item.symbol) : [];
+  const journal = item.category === 'futures' && item.symbol === 'MNQ' ? await readTrades(storage, (t) => t.environment === 'paper' && t.data?.resolution === '5m') : [];
+  const bars = (view.bars || []).map(({ t, o, h, l, c, v }) => ({ t, o, h, l, c, v }));
+  return {
+    ok: true, account: 'market', account_label: ACCOUNTS.market.label, mode: 'RESEARCH', timeframe: view.timeframe, timeframes: view.timeframes, live_orders: liveOrdersStatus(), sources: MARKER_SOURCES,
+    state: bars.length ? 'verified' : 'no_data', symbol: item.symbol, ticker: item, bars, built_from: view.built_from || null, fallback: view.fallback || false,
+    feed: { ...view.feed, last_bar_time: bars.at(-1)?.t || null, stale: view.feed.status === 'UNAVAILABLE' || view.feed.status === 'DISCONNECTED', delayed: view.feed.status === 'DELAYED' },
+    spoken: describeFeed(view), universe_problems: universe.problems,
+    markers: chartMarkers({ journal, simTrades, symbol: item.symbol }),
+    levels: item.category === 'futures' && bars.length ? overnightLevels(bars) : null,
+    entries_allowed: false, market_orders_allowed: false,
+    entries_blocked_reason: item.category === 'crypto'
+      ? `Research chart on ${item.exchange} public data. No crypto exchange account is connected, so CHE places no orders here.`
+      : 'Research chart on delayed public CME data. No futures broker is connected, so CHE places no orders here.',
   };
 }
 
@@ -184,8 +243,22 @@ export async function saveDrawings(storage, account, symbol, list, now = Date.no
   return { ok: true, drawings: clean };
 }
 
-/** "Draw a line at 21,450" / "draw a level at 21450 on MNQ": one horizontal level. Null otherwise. */
-export function drawIntent(message) {
+/**
+ * "Draw a line at 21,450" / "draw a level at 21450 on MNQ": one horizontal level. Null otherwise.
+ * A follow-up ("and one at 240" after "draw a line at 230 on AAPL") keeps the earlier symbol; a draw that names no
+ * symbol after "open the Alpaca chart for AAPL" takes that chart's.
+ */
+export function drawIntent(message, { followup = '', referent = '' } = {}) {
+  if (followup) {
+    const own = drawIntent(followup);
+    const base = drawIntent(referent);
+    const inherited = base?.symbol || chartIntent(referent)?.symbol || '';
+    if (own) return own.symbol || !inherited ? own : { ...own, symbol: inherited };
+    if (!base) return null;
+    const next = /\b(?:at|level|line|another(?:\s+one)?|one)\s+\$?([0-9][0-9,]*(?:\.[0-9]+)?)\b/.exec(String(followup).toLowerCase());
+    const price = next ? Number(next[1].replace(/,/g, '')) : NaN;
+    return Number.isFinite(price) && price > 0 && !intervalFromWords(followup) ? { kind: 'draw', drawing: { kind: 'hline', points: [{ price }] }, symbol: base.symbol } : null;
+  }
   const t = String(message || '').toLowerCase().replace(/[’']/g, "'");
   const m = /\b(?:draw|add|put|mark)\b[\s\S]{0,25}\b(?:line|level|horizontal line)\b[\s\S]{0,15}\bat\s+\$?([0-9][0-9,]*(?:\.[0-9]+)?)\b/.exec(t);
   if (!m) return null;
@@ -199,18 +272,104 @@ export function drawIntent(message) {
  * "Open Alpaca chart", "show the MNQ chart", "CHE, show EMA trades", "show strategy progress":
  * the chart (or the Strategies section) with the account, symbol and filter named. Null otherwise.
  */
-export function chartIntent(message) {
+const CHART_TIMEFRAMES = new Set(Object.keys(INTERVALS));
+
+/**
+ * The spoken reply and the phone's `chart` object for a chart_open intent. `lastSymbol` is the stock chart the owner
+ * last opened (stored as trading_chart_last_symbol), used when the request names none. The phone's Trading Room opens
+ * the futures chart when no account is named, and starts the chart on `chart.timeframe` (lib/rooms/che_trading_room.dart),
+ * so a bar size that chart does not offer is said plainly and the default bars it opens on are named (PR #515 review:
+ * the reply said 15-minute bars while the phone showed 5).
+ */
+export function chartOpenReply(ask = {}, { lastSymbol = '' } = {}) {
+  const symbol = ask.symbol || lastSymbol || '';
+  const account = ask.account || (lastSymbol ? 'alpaca_paper' : '');
+  let bars = '';
+  let note = '';
+  let timeframe = '';
+  if (ask.timeframe) {
+    const offered = (account || 'futures_paper') === 'futures_paper' ? FUTURES_TIMEFRAMES : Object.keys(TIMEFRAMES);
+    timeframe = offered.includes(ask.timeframe) ? ask.timeframe : '5m';
+    bars = ` on ${intervalLabel(timeframe)} bars`;
+    const list = offered.map(intervalLabel);
+    if (timeframe !== ask.timeframe) note = ` That chart has no ${intervalLabel(ask.timeframe)} bars; it offers ${list.slice(0, -1).join(', ')} and ${list[list.length - 1]}.`;
+  }
+  const text = ask.section === 'setups'
+    ? (ask.answer === 'ready' ? 'Here are the setups CHE is following on this iPhone, sir.' : 'Opening the Setup Progress Board, sir. These are CHE PAPER ACCOUNT setups from the live Rithmic candles.')
+    : ask.section === 'strategies' ? 'Opening Strategies, sir.'
+      : ask.section === 'compare' ? 'Opening Side by Side, sir: your account beside CHE\'s paper account. Live orders stay disabled.'
+        : `Opening the ${account === 'alpaca_paper' ? 'Alpaca PAPER ' : account === 'futures_paper' ? 'MNQ paper ' : ''}chart${symbol ? ` for ${symbol}` : ''}${bars}${ask.filter?.strategy ? `, showing only ${ask.filter.strategy.toUpperCase()} trades` : ''}, sir.${note}`;
+  const chart = { section: ask.section, account: account || null, symbol: symbol || null, filter: ask.filter || null, ...(timeframe ? { timeframe } : {}), ...(ask.answer ? { answer: ask.answer } : {}) };
+  // The spoken stock chart is remembered, so "draw a line at 230" and "switch it to the 5 minute" inherit it.
+  return { text, chart, remember: ask.section === 'chart' && symbol && account !== 'futures_paper' ? symbol : '' };
+}
+export function chartIntent(message, { followup = '', referent = '' } = {}) {
+  // A follow-up ("switch it to the 5 minute", "now the same for MSFT") carries the owner's new words alone in `followup`
+  // and the earlier request in `referent` (speech_intent.js): the new symbol or bar size comes from the new words and the
+  // chart from the earlier request. A market the Alpaca chart cannot show asks one question instead of re-opening AAPL.
+  if (followup) {
+    const own = chartIntent(followup);
+    if (own) return own;
+    const base = chartIntent(referent);
+    if (!base || base.kind !== 'chart_open' || base.section !== 'chart') return null;
+    const word = symbolFromFollowup(followup);
+    const tf = intervalFromWords(followup);
+    if (!word && !tf) return null;
+    const futures = /^m?nq$/i.test(word);
+    if (word && !futures && !/^[a-z]{1,5}$/i.test(word)) {
+      return { kind: 'clarify', question: `That chart shows Alpaca PAPER stocks, sir, not ${word}. Say "analyze the ${word} chart" for a read of ${word}, or name a stock.` };
+    }
+    const account = futures ? 'futures_paper' : word ? 'alpaca_paper' : base.account;
+    return { ...base, account, symbol: futures ? word.toUpperCase() : word ? word.toUpperCase() : base.symbol, inherit: !word, ...(tf && CHART_TIMEFRAMES.has(tf) ? { timeframe: tf } : {}) };
+  }
   const t = String(message || '').toLowerCase().replace(/[’']/g, "'").replace(/^\s*(?:hey\s+)?(?:che|chey|chay)[,\s]+/, '');
+  // "Switch to the 15 minute chart", "change the chart to the 1 hour": the open chart's bar size; the symbol stays.
+  if (/^(?:switch|change|flip|move|put)\b[\s\S]{0,30}\b(?:chart|bars?|timeframe|time frame)\b/.test(t) && intervalFromWords(t)) {
+    const tf = intervalFromWords(t);
+    return { kind: 'chart_open', section: 'chart', account: '', symbol: '', inherit: true, ...(CHART_TIMEFRAMES.has(tf) ? { timeframe: tf } : {}) };
+  }
   if (/^(?:show|open|bring up|pull up|go to)\b[\s\S]{0,25}\bstrateg(?:y|ies)\s+(?:progress|section|page)\b/.test(t)) return { kind: 'chart_open', section: 'strategies' };
+  // Signal Mode: "show setups", "show the setup progress board", "what setups are ready?". The board lives on the iPhone.
+  if (/^(?:what|which|any)\b[\s\S]{0,25}\bsetups?\b[\s\S]{0,25}\b(?:ready|forming|triggered|active|near entry|right now)\b/.test(t)) return { kind: 'chart_open', section: 'setups', answer: 'ready' };
+  if (/^(?:show|open|bring up|pull up|go to|see)\b[\s\S]{0,20}\b(?:setups|setup (?:progress|board)|signal mode|(?:trade |paper )?signals)\b/.test(t)) return { kind: 'chart_open', section: 'setups' };
+  // Side by side (owner, 2026-10-23): "open side by side", "show my trades next to CHE's", "compare my trade with CHE's",
+  // "open the live order preview". Opens the room's SIDE BY SIDE section; nothing is sent or placed.
+  if (/^(?:show|open|bring up|pull up|go to|see)\b[\s\S]{0,30}\b(?:side[\s-]by[\s-]side|both accounts|live order preview|my (?:trades?|positions?|account) (?:next to|beside|vs\.?|versus|against) (?:che|chey|chay))\b/.test(t)
+    || /^compare\b[\s\S]{0,30}\b(?:my|mine)\b[\s\S]{0,30}\b(?:che|chey|chay)(?:'s)?\b/.test(t)) {
+    return { kind: 'chart_open', section: 'compare' };
+  }
   const strat = /\b(ema|vwap|rsi|orb|opening range|silver bullet|order block|fvg|ict)\b[\s\S]{0,15}\btrades?\b/.exec(t);
   if (/^(?:show|open|bring up|pull up|go to|see)\b/.test(t) && strat) {
     return { kind: 'chart_open', section: 'chart', account: 'futures_paper', filter: { strategy: strat[1] } };
   }
-  const m = /^(?:show|open|bring up|pull up|go to|see)\b[\s\S]{0,40}\bchart\b(?:\s+(?:for|of)\s+([a-z]{1,5}))?\s*[.!?]*$/.exec(t);
+  // "Open the Alpaca chart for AAPL on the 5 minute": an optional bar size after the symbol, or in front ("the 5 minute chart").
+  const m = /^(?:show|open|bring up|pull up|go to|see)\b[\s\S]{0,40}\bchart\b(?:\s+(?:for|of)\s+([a-z]{1,5}))?(?:\s+(?:on|at|in)\s+(?:the\s+)?[\w -]{1,24}?(?:\s+(?:chart|bars?|timeframe))?)?\s*[.!?]*$/.exec(t);
   if (!m) return null;
   const account = /\b(?:alpaca|stocks?)\b/.test(t) ? 'alpaca_paper' : /\b(?:mnq|nq|futures|tradovate)\b/.test(t) ? 'futures_paper' : '';
   const symbol = (m[1] || '').toUpperCase();
-  return { kind: 'chart_open', section: 'chart', account, symbol };
+  const tf = intervalFromWords(t);
+  return { kind: 'chart_open', section: 'chart', account, symbol, ...(tf && CHART_TIMEFRAMES.has(tf) ? { timeframe: tf } : {}) };
+}
+
+/**
+ * "Set CHE paper balance to 500", "show CHE positions", "open CHE's paper account": the CHE PAPER
+ * ACCOUNT lives on the owner's iPhone, so the Worker only opens it there. A balance change is never
+ * made here: the phone shows the change for the owner to confirm. Null otherwise.
+ */
+export function paperAccountIntent(message) {
+  const t = String(message || '').toLowerCase().replace(/[’']/g, "'").replace(/^\s*(?:hey\s+)?(?:che|chey|chay)[,\s]+/, '');
+  // CHE's own account only: "my Alpaca paper balance" stays with the Alpaca dashboard.
+  if (/\b(?:alpaca|my|tradovate|fye|fund ?your ?edge|rithmic)\b/.test(t)) return null;
+  if (!/\b(?:che|chey|chay|your)(?:'s)?\s+(?:paper\b|positions?\b)/.test(t)) return null;
+  const set = /\b(?:set|change|make|put|reset)\b[\s\S]{0,40}\bbalance\b[\s\S]{0,12}?\b(?:to|at)\s+\$?\s*([0-9][0-9,]*(?:\.[0-9]{1,2})?)\s*(k|thousand)?\b/.exec(t);
+  if (set) {
+    let amount = Number(set[1].replace(/,/g, ''));
+    if (set[2]) amount *= 1000;
+    if (!Number.isFinite(amount) || amount <= 0) return null;
+    return { kind: 'paper_balance', amount: Math.round(amount * 100) / 100 };
+  }
+  if (/^(?:show|open|bring up|pull up|go to|see|what are|list)\b/.test(t) && /\b(?:positions?|trades?|account|balance)\b/.test(t)) return { kind: 'paper_open' };
+  return null;
 }
 
 /** "Buy 1 MNQ at 21,400": a manual futures paper order, which CHE cannot place (no futures paper broker). */

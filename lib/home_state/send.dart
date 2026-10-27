@@ -145,11 +145,30 @@ extension _CheHomeSend on _CHEHomeState {
     return true;
   }
 
+  Future<void> _openAppVersionDetails() async {
+    final installed = await CheInstalledBuild.read().timeout(const Duration(seconds: 2), onTimeout: () => null);
+    if (!mounted) return;
+    final reply = installed == null
+        ? 'Opening CHE app and update details. The native installed version and build could not be read; I will not substitute the latest published version.'
+        : 'Opening CHE app and update details. This iPhone reports installed CHE version ${installed.version}, build ${installed.build}. A Shorebird patch is listed separately when available.';
+    _set(() { messages.add({'role': 'assistant', 'text': reply}); });
+    ScaffoldMessenger.maybeOf(context)?.showSnackBar(SnackBar(
+      content: Text(reply, style: const TextStyle(fontSize: 18)),
+      duration: const Duration(seconds: 10),
+    ));
+    HapticFeedback.mediumImpact();
+    unawaited(speakText(reply, record: false, readOnDemand: true));
+    await Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => CheMobileUpdateScreen(
+      baseUrl: cheAgentBaseUrl, onSpeak: (text) => speakText(text, record: false, readOnDemand: true),
+    )));
+    return;
+  }
+
   Future<bool> _handleLocalNavigation(String message) async {
     final lower = message.toLowerCase();
 
     if (CheVideo.isRecentCommand(message)) {
-      await speakText('Opening recent videos, sir.', record: false);
+      await speakText('Opening recent videos, sir.', record: false, show: true);
       if (!mounted) return true;
       await Navigator.of(context).push(
         MaterialPageRoute<void>(
@@ -162,8 +181,16 @@ extension _CheHomeSend on _CHEHomeState {
       r'^(?:(?:chay|chey|shay|che)[, ]+)?(?:please\s+)?(?:update yourself|check\s+(?:for\s+)?(?:(?:an|any|my|the|new|che)\s+)*updates?|install (?:the )?che update|download (?:the )?che update)(?:,?\s+please)?\s*[.!?]*$',
       caseSensitive: false,
     );
+    // "Diagnose Rithmic", "why isn't Rithmic connecting": the four checks on this phone, read out with their real
+    // results. The password never leaves the phone and is never spoken.
+    if (cheRithmicDiagnoseCommand(message)) {
+      await speakText('Checking Rithmic: the saved login, the automatic reconnect, the connection and the login answer.', record: false, show: true);
+      final checks = await cheRithmicDiagnose();
+      await speakText(cheRithmicDiagnosisText(checks), record: false, show: true);
+      return true;
+    }
     if (updateCommand.hasMatch(message.trim())) {
-      await speakText('Checking CHE updates now, sir.', record: false);
+      await speakText('Checking CHE updates now, sir.', record: false, show: true);
       if (!mounted) return true;
       await Navigator.of(context).push(
         MaterialPageRoute<void>(
@@ -184,6 +211,7 @@ extension _CheHomeSend on _CHEHomeState {
       await speakText(
         'Opening CHE previous verified builds. I will ask before SideStore opens an older build, sir.',
         record: false,
+        show: true,
       );
       if (!mounted) return true;
       await Navigator.of(context).push(
@@ -198,6 +226,26 @@ extension _CheHomeSend on _CHEHomeState {
       return true;
     }
 
+    if (RegExp(r'\b(open|show|go to|start)\s+(the\s+|my\s+)?(character|avatar)\s+(generator|creator|maker|builder)\b').hasMatch(lower) ||
+        RegExp(r'^\W*(?:(?:che|chey|chay)[,:]?\s+)?(character|avatar)\s+generator\W*$').hasMatch(lower)) {
+      _openCharacterGenerator();
+      return true;
+    }
+    // Brain Room phrases off the Brain screen ("search my brain for red", "show live activity", "what is CHE
+    // learning"): open the Brain, then let its handler answer, so the same words work everywhere.
+    final brainPhrase = CheBrainOverview.voiceHandler == null ? CheBrainOverview.parse(message) : null;
+    if (brainPhrase != null && (brainPhrase.query != null || brainPhrase.learning || brainPhrase.section == CheBrainNav.activity)) {
+      if (_assistantHubOpen && mounted) Navigator.of(context).pop();
+      _openAssistantHub(tab: 0);
+      for (var i = 0; i < 14 && CheBrainOverview.voiceHandler == null; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 150));
+      }
+      final handler = CheBrainOverview.voiceHandler;
+      final reply = handler == null ? 'I opened your brain, sir, but it did not finish loading. Ask again in a moment.' : (await handler(message)) ?? '';
+      if (mounted) _set(() => controller.clear());
+      if (reply.isNotEmpty) await speakText(reply, record: false);
+      return true;
+    }
     if (RegExp(r'\b(open|show|go to)\s+(my\s+)?(memories?|brain|brain constellation)\b').hasMatch(lower)) {
       _openAssistantHub(tab: 0);
       return true;
@@ -218,8 +266,99 @@ extension _CheHomeSend on _CHEHomeState {
       _openAssistantHub(tab: 3);
       return true;
     }
+    // "Play a song from my playlist" is playback, never recording (owner, 2026-10-26). Playback needs the Apple Music
+    // connection; this route says what is real and does not claim a song is playing.
+    if (RegExp(r"\bplay\b.*\b(?:my|the)\s+(?:personal\s+)?playlists?\b|\bplay\s+(?:a\s+)?song\s+from\s+(?:my|the)\s+playlist\b", caseSensitive: false).hasMatch(lower)) {
+      await speakText('I can only play from your playlist once Apple Music is connected and its playback is wired up. I have opened Music so you can check the connection. Nothing is playing.', record: false);
+      if (!mounted) return true;
+      _openAssistantHub(tab: 4);
+      return true;
+    }
+    // Music Studio's recording workspace (owner, 2026-10-24): "record my vocals", "open the beat maker", "my songs".
+    if (CheRecordingStudio.voiceHandler == null) {
+      final rec = RegExp(r'\b(?:open|show|go to)\s+(?:the\s+|my\s+)?(recording studio|music studio|studio recorder|beat maker|my songs|mixer|mastering)\b').firstMatch(lower);
+      // "Let's start a song" means make a new song in the recording studio, not play one (owner, 2026-10-26).
+      final takeNow = RegExp(r'\b(record (my )?(vocals?|voice|a song|a take)|start recording (my )?(vocals?|a song)|(?:let.?s\s+)?(?:start|make|begin|create)\s+(?:a|my|the|new)\s+song|new song|new recording|make a beat|play the beat)\b').hasMatch(lower);
+      if (rec != null || takeNow) {
+        final name = rec?.group(1) ?? '';
+        // With words to act on, the studio says the real result itself; otherwise CHE says where she went.
+        if (!takeNow) await speakText('Opening the Recording Studio${name.isEmpty || name.endsWith('studio') ? '' : ', $name'}.', record: false);
+        if (!mounted) return true;
+        unawaited(_openRecordingStudio(
+          tab: name == 'beat maker' ? 2 : name == 'my songs' ? 1 : name == 'mixer' ? 3 : name == 'mastering' ? 5 : 0,
+          say: takeNow ? message : null,
+        ));
+        return true;
+      }
+    }
+    // The video series moved to Film Studio with the rest of video (2026-10-24).
+    if (RegExp(r'\b(open|show|go to)\s+(the\s+|my\s+)?(street smart explainers|video series|series studio|series panel)\b').hasMatch(lower)) {
+      await speakText('Opening Film Studio. The video series, Street Smart Explainers, is at the top.', record: false);
+      if (!mounted) return true;
+      unawaited(_openFilmStudio());
+      return true;
+    }
     if (RegExp(r'\b(open|show|go to)\s+(music|playlists?)\b').hasMatch(lower)) {
       _openAssistantHub(tab: 4);
+      return true;
+    }
+    // Creative Studio (Create tab): a studio by name scrolls to it; "create new" opens the Create New choices.
+    final studio = RegExp(r'\b(?:open|show|go to)\s+(?:the\s+|my\s+)?(creative studio|code studio|coding studio|art (?:and|&) character studio|character studio|art studio|projects)\b')
+        .firstMatch(lower);
+    if (studio != null) {
+      final name = studio.group(1)!;
+      _openCreativeStudio(
+        section: name.startsWith('code') || name.startsWith('coding')
+            ? CheStudioSection.code
+            : name.contains('art') || name.contains('character')
+                ? CheStudioSection.art
+                : name == 'projects'
+                    ? CheStudioSection.projects
+                    : null,
+      );
+      return true;
+    }
+    // Creation by voice from any screen, all inside CHE (owner, 2026-10-24: never a website in ordinary use).
+    final wake = r'^\W*(?:(?:che|chey|chay)[,:]?\s+)?';
+    if (RegExp('$wake(?:create|make|build)(?: me)? (?:a |an )?(?:new )?(?:person|character|human|avatar)\\W*\$').hasMatch(lower)) {
+      _openCreativeStudio(say: 'create a person');
+      return true;
+    }
+    if (RegExp('$wake(?:continue|resume|keep) (?:creating|building|my creation|the creation)\\W*\$').hasMatch(lower)) {
+      final said = await _continueCreating();
+      await speakText(said, record: false);
+      return true;
+    }
+    // Connect GPU (owner, 2026-10-25): CHE opens the notebook in her browser and verifies the GPU from her Worker.
+    // The owner's own words are the permission to open Colab; CheGpuConnect.start enforces and records it.
+    final gpuConnect = CheGpuConnect.instance;
+    if (cheGpuConnectCommand(message) || (gpuConnect.waitingForOwner && cheGpuContinueCommand(message))) {
+      _configureGpuConnect();
+      final said = cheGpuConnectCommand(message) ? gpuConnect.start(message) : gpuConnect.ownerContinue();
+      await _showGpuBrowser();
+      await speakText(said, record: false, show: true);
+      return true;
+    }
+    final gpuAccount = cheGpuAccountFromWords(message);
+    if (gpuAccount != null) {
+      await CheGpuAccount.save(gpuAccount);
+      await speakText('Saved. CHE uses $gpuAccount for Colab.', record: false, show: true);
+      return true;
+    }
+    if (RegExp('$wake(?:open|show)(?: my| the)? gpu browser\\W*\$').hasMatch(lower)) {
+      unawaited(Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) =>
+        CheGpuBrowser(baseUrl: cheAgentBaseUrl, headers: _authHeaders,
+          onRead: (text) => speakText(text, record: false, readOnDemand: true)))));
+      await speakText('Opening GPU Browser.', record: false);
+      return true;
+    }
+    if (RegExp('$wake(?:open|show|connect)(?: to)? (?:my |the )?(?:cloud computer|creation engine)\\W*\$').hasMatch(lower)) {
+      _openCreationEngine();
+      await speakText('Opening your Cloud Computer.', record: false);
+      return true;
+    }
+    if (RegExp(r'^\W*(?:(?:che|chey|chay)[,:]?\s+)?(?:create (?:something )?new|new creation|start a new creation)\W*$').hasMatch(lower)) {
+      _openCreativeStudio(createNew: true);
       return true;
     }
     if (RegExp(r'\b(open|show|go to)\s+(create|innovation|creator)\b').hasMatch(lower)) {
@@ -259,6 +398,11 @@ extension _CheHomeSend on _CHEHomeState {
         (source.last['text'] ?? '').trim() == currentMessage.trim()) {
       source.removeLast();
     }
+    // First request after a relaunch: the home chat is empty, but the owner may
+    // be answering what CHE said just before the app closed ("No, strawberry
+    // Sprite."). The last turns of the conversation her log restored are that
+    // request's history while they are still fresh (che_agent_chat.dart).
+    if (source.isEmpty) return _brainLog.restoredTurnsForHistory();
     // Earlier names, requirements and approvals remain part of this request.
     // The Worker selects an engine that can receive the complete history.
     return source
@@ -271,6 +415,97 @@ extension _CheHomeSend on _CHEHomeState {
         .toList();
   }
 
+  /// True when [message] was a master profile or form-fill turn (handled here, on the phone).
+  Future<bool> _runMasterProfileTurn(String message) async {
+    final command = CheProfileCommand.parse(message);
+    final fill = CheFormFillVoice.handler;
+    Future<void> reply(String text) async {
+      if (mounted) _set(() => controller.clear());
+      HapticFeedback.mediumImpact();
+      await speakText(text, record: false, show: true);
+    }
+
+    if (command != null) {
+      final store = CheMasterProfileStore.instance;
+      switch (command.kind) {
+        case 'set':
+          final label = cheProfileFieldLabels[command.field] ?? command.field;
+          final errors = <String>[];
+          final value = cheNormalizeProfileValue(command.field, command.value, error: errors);
+          if (value == null) {
+            await reply(errors.isEmpty ? 'I didn\'t save that, sir.' : '${errors.first} Nothing was saved.');
+            return true;
+          }
+          await store.setField(command.profile!, command.field, value);
+          await reply('Saved your ${command.profile!.spoken} $label on this iPhone and approved it for forms, sir.');
+          return true;
+        case 'clear':
+          final label = cheProfileFieldLabels[command.field] ?? command.field;
+          // Removing anything needs the owner's yes first (owner rule).
+          final sure = await showDialog<bool>(
+            context: context,
+            builder: (dialogContext) => AlertDialog(
+              title: Text('Remove your ${command.profile!.spoken} $label?'),
+              actions: [
+                TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('No, keep it')),
+                FilledButton(onPressed: () => Navigator.pop(dialogContext, true), child: const Text('Yes, remove')),
+              ],
+            ),
+          );
+          if (sure != true) {
+            await reply('Kept your ${command.profile!.spoken} $label, sir.');
+            return true;
+          }
+          final had = await store.clearField(command.profile!, command.field);
+          await reply(had ? 'Removed your ${command.profile!.spoken} $label, sir.' : 'Your ${command.profile!.spoken} profile had no $label saved, sir.');
+          return true;
+        case 'show':
+          final p = await store.load();
+          final kind = command.profile ?? CheProfileKind.personal;
+          final approved = p.approvedCount(kind);
+          // Spoken: field names only. On screen: masked values.
+          final names = [for (final e in cheProfileFieldLabels.entries) if (p.of(kind)[e.key]?.approved == true) e.value];
+          if (mounted) _showSpokenReply(cheProfileMaskedSummary(p, kind));
+          await speakText(
+            approved == 0
+                ? 'Your ${kind.spoken} profile has no approved fields yet, sir. Say "open my master profile" to fill it in.'
+                : 'Your ${kind.spoken} profile has $approved approved fields: ${names.join(', ')}. The values are on screen, partly hidden.',
+            record: false,
+          );
+          if (mounted) _set(() => controller.clear());
+          return true;
+        case 'open':
+          if (mounted) _set(() => controller.clear());
+          await speakText('Opening your master profile, sir.', record: false, show: true);
+          if (!mounted) return true;
+          await Navigator.of(context).push<void>(MaterialPageRoute(builder: (_) => const CheMasterProfileScreen()));
+          return true;
+        case 'use':
+          if (fill == null) {
+            await reply('Open the form\'s page in CHE\'s browser first, sir, then say "use my master profile". I only fill forms on the page that is open.');
+            return true;
+          }
+      }
+    }
+    if (fill == null) return false;
+    final answer = await fill(message);
+    if (answer == null) return false;
+    // "Read the fill details": masked values on screen only; the spoken part names fields.
+    final screen = CheFormFillVoice.screenDetail;
+    CheFormFillVoice.screenDetail = null;
+    if (screen != null) {
+      if (mounted) {
+        _set(() => controller.clear());
+        _showSpokenReply(screen);
+      }
+      HapticFeedback.mediumImpact();
+      await speakText(answer, record: false);
+      return true;
+    }
+    await reply(answer);
+    return true;
+  }
+
   Future<void> _runVaultCommand(CheVaultCommand command) async {
     final vault = CheVault.instance;
     var shown = '';
@@ -279,6 +514,9 @@ extension _CheHomeSend on _CHEHomeState {
       case 'save':
         await vault.save(CheVaultEntry(site: command.site, password: command.password, username: command.username));
         spoken = 'Saved your ${command.site} password in CHE\'s vault on this iPhone, sir.';
+        shown = spoken;
+      case 'ask_password':
+        spoken = 'Say: save my ${command.site} password as, then the password, all in one sentence, sir. It stays in CHE\'s vault on this iPhone and is never sent anywhere.';
         shown = spoken;
       case 'read':
         // Face ID before speaking/showing a vault password (TTL skips re-prompt).
@@ -500,6 +738,7 @@ extension _CheHomeSend on _CHEHomeState {
         return command.text == 'run' ? 'Opening the rendering benchmark and measuring, sir.' : 'Opening the rendering benchmark, sir.';
       case ScreenOp.clearChat:
         messages.clear();
+        _brainLog.dropRestoredContext();
         return 'Chat cleared, sir.';
       case ScreenOp.removeLast:
         if (messages.isEmpty) return 'There is no message to remove, sir.';
@@ -630,16 +869,152 @@ extension _CheHomeSend on _CHEHomeState {
       return;
     }
 
+    // Master profile (che_master_profile.dart / che_form_filler.dart): profile
+    // edits and form filling run on the phone. Replies are spoken and shown but
+    // not recorded, so nothing reaches the Worker, a model, chat history or memory.
+    if (_pendingAttachment == null && await _runMasterProfileTurn(message)) return;
+
+    // Private voice (che_private_voice.dart): turned on, off or explained on the
+    // phone from the actual current settings, by voice or typing.
+    if (_pendingAttachment == null && await _runPrivateVoiceTurn(message)) return;
+
+    // Security Intelligence: a password, key or token typed or spoken into ordinary chat never leaves the phone.
+    if (_pendingAttachment == null && cheChatLooksSecret(message)) {
+      if (mounted) _set(() => controller.clear());
+      await speakText('That looks like a password, key or token, so I did not send it anywhere. To keep a password, say save my password for, then the site; it stays in your Face ID vault on this iPhone. Keys go in the Keys tab.', record: false, show: true);
+      return;
+    }
+
     // The Command Center, while it is open, answers its own voice routes
     // first (search, numbered options, run, favorite, workflows, run
     // controls). Its reply is on its banner; CHE says it here. An empty
     // reply means the command went to Chat, which speaks the real result.
     final commandsVoice = CheCommandCenterVoice.handler;
-    if (commandsVoice != null && _pendingAttachment == null) {
+    if (commandsVoice != null && _pendingAttachment == null && !cheIsAppStatusRequest(message)) {
       final reply = await commandsVoice(message);
       if (reply != null) {
         if (mounted) _set(() => controller.clear());
         if (reply.isNotEmpty) await speakText(reply, record: false);
+        return;
+      }
+    }
+
+    // The Security Room, while open, opens its lists, searches and reads entries by voice.
+    final securityVoice = CheSecurityRoomVoice.handler;
+    if (securityVoice != null && _pendingAttachment == null && !cheIsAppStatusRequest(message)) {
+      final reply = await securityVoice(message);
+      if (reply != null) {
+        if (mounted) _set(() => controller.clear());
+        if (reply.isNotEmpty) await speakText(reply, record: false, show: true);
+        return;
+      }
+    }
+
+    // The Invention 3D viewer and the Invention Studio page, while open, take rotate, zoom, colour, "show me" and 3D.
+    for (final inventionVoice in [CheInventionViewer.voiceHandler, CheInventionStudioPage.voiceHandler]) {
+      if (inventionVoice == null || _pendingAttachment != null) continue;
+      final reply = await inventionVoice(message);
+      if (reply != null) {
+        if (mounted) _set(() => controller.clear());
+        if (reply.isNotEmpty) await speakText(reply, record: false);
+        return;
+      }
+    }
+
+    // The Recording Studio, while it is open, takes record, play, stop, effects, mixing, mastering and export.
+    final recordingVoice = CheRecordingStudio.voiceHandler;
+    if (recordingVoice != null && _pendingAttachment == null) {
+      final reply = await recordingVoice(message);
+      if (reply != null) {
+        if (mounted) _set(() => controller.clear());
+        if (reply.isNotEmpty) await speakText(reply, record: false);
+        return;
+      }
+    }
+
+    // Trade Replay, while it is open, takes play, pause, back or forward 10 seconds, restart and read.
+    final replayVoice = CheTradeReplayPage.voiceHandler;
+    if (replayVoice != null && _pendingAttachment == null) {
+      final reply = await replayVoice(message);
+      if (reply != null) {
+        if (mounted) _set(() => controller.clear());
+        if (reply.isNotEmpty) await speakText(reply, record: false);
+        return;
+      }
+    }
+
+    // The Brain Room, while it is on screen, opens its sections, searches the Brain and says what CHE is learning.
+    final brainRoomVoice = CheBrainOverview.voiceHandler;
+    if (brainRoomVoice != null && _pendingAttachment == null && !cheIsAppStatusRequest(message)) {
+      final reply = await brainRoomVoice(message);
+      if (reply != null) {
+        if (mounted) _set(() => controller.clear());
+        if (reply.isNotEmpty) await speakText(reply, record: false);
+        return;
+      }
+    }
+
+    // The Live 3D Studio, while it is open, takes viewport moves, edits, undo, redo, save and generate.
+    final gpuVoice = CheGpuBrowser.voiceHandler;
+    if (gpuVoice != null && _pendingAttachment == null) {
+      final reply = await gpuVoice(message);
+      if (reply != null) {
+        if (mounted) _set(() => controller.clear());
+        if (reply.isNotEmpty) await speakText(reply, record: false, show: true);
+        return;
+      }
+    }
+    final liveVoice = CheLiveStudio.voiceHandler;
+    if (liveVoice != null && _pendingAttachment == null) {
+      final reply = await liveVoice(message);
+      if (reply != null) {
+        if (mounted) _set(() => controller.clear());
+        if (reply.isNotEmpty) await speakText(reply, record: false, show: true);
+        return;
+      }
+    }
+
+    // The Code Studio workspace and the project manager, while open, take their own spoken actions.
+    for (final pageVoice in [CheCodeWorkspace.voiceHandler, CheProjectManager.voiceHandler]) {
+      if (pageVoice == null || _pendingAttachment != null) continue;
+      final reply = await pageVoice(message);
+      if (reply != null) {
+        if (mounted) _set(() => controller.clear());
+        if (reply.isNotEmpty) await speakText(reply, record: false);
+        return;
+      }
+    }
+
+    // The Creative Studio, while it is on screen, takes its numbered choices and named actions by voice or typing.
+    final studioVoice = CheCreativeStudio.voiceHandler;
+    if (studioVoice != null && _pendingAttachment == null && CheCharacterGenerator.voiceHandler == null && CheLiveStudio.voiceHandler == null) {
+      final reply = await studioVoice(message);
+      if (reply != null) {
+        if (mounted) _set(() => controller.clear());
+        if (reply.isNotEmpty) await speakText(reply, record: false, show: true);
+        return;
+      }
+    }
+
+    // CHE World population, while it is open (it sits above the Character Generator), takes read, refresh and the
+    // crowd viewer by voice or typing.
+    final populationVoice = CheWorldPopulationPanel.voiceHandler;
+    if (populationVoice != null && _pendingAttachment == null) {
+      final reply = await populationVoice(message);
+      if (reply != null) {
+        if (mounted) _set(() => controller.clear());
+        if (reply.isNotEmpty) await speakText(reply, record: false, show: true);
+        return;
+      }
+    }
+
+    // The Character Generator, while it is open, takes every one of its actions and settings by voice or typing.
+    final generatorVoice = CheCharacterGenerator.voiceHandler;
+    if (generatorVoice != null && _pendingAttachment == null) {
+      final reply = await generatorVoice(message);
+      if (reply != null) {
+        if (mounted) _set(() => controller.clear());
+        if (reply.isNotEmpty) await speakText(reply, record: false, show: true);
         return;
       }
     }
@@ -650,7 +1025,7 @@ extension _CheHomeSend on _CHEHomeState {
       final reply = await benchVoice(message);
       if (reply != null) {
         if (mounted) _set(() => controller.clear());
-        if (reply.isNotEmpty) await speakText(reply, record: false);
+        if (reply.isNotEmpty) await speakText(reply, record: false, show: true);
         return;
       }
     }
@@ -661,7 +1036,7 @@ extension _CheHomeSend on _CHEHomeState {
       final reply = await pickerVoice(message);
       if (reply != null) {
         if (mounted) _set(() => controller.clear());
-        if (reply.isNotEmpty) await speakText(reply, record: false);
+        if (reply.isNotEmpty) await speakText(reply, record: false, show: true);
         return;
       }
     }
@@ -672,7 +1047,7 @@ extension _CheHomeSend on _CHEHomeState {
       final reply = await connectionsVoice(message);
       if (reply != null) {
         if (mounted) _set(() => controller.clear());
-        if (reply.isNotEmpty) await speakText(reply, record: false);
+        if (reply.isNotEmpty) await speakText(reply, record: false, show: true);
         return;
       }
     }
@@ -684,7 +1059,7 @@ extension _CheHomeSend on _CHEHomeState {
       final reply = await atlasVoice(message);
       if (reply != null) {
         if (mounted) _set(() => controller.clear());
-        if (reply.isNotEmpty) await speakText(reply, record: false);
+        if (reply.isNotEmpty) await speakText(reply, record: false, show: true);
         return;
       }
     }
@@ -734,7 +1109,7 @@ extension _CheHomeSend on _CHEHomeState {
             screenCommand.op == ScreenOp.changeVoice ||
             screenCommand.op == ScreenOp.naturalVoice ||
             screenCommand.op == ScreenOp.openAtlas || screenCommand.op == ScreenOp.openRenderBench)) {
-          await speakText(reply, record: false);
+          await speakText(reply, record: false, show: true);
         }
         return;
       }
@@ -774,7 +1149,7 @@ extension _CheHomeSend on _CHEHomeState {
 
     // Voice navigation inside the CHE browser/app that is open right now.
     final browserVoice = CheBrowserActions.voice;
-    if (browserVoice != null && _pendingAttachment == null) {
+    if (browserVoice != null && _pendingAttachment == null && !cheIsAppStatusRequest(message)) {
       final reply = await browserVoice(message);
       if (reply != null) {
         if (mounted) _set(() => controller.clear());
@@ -1120,7 +1495,8 @@ extension _CheHomeSend on _CHEHomeState {
       _lastUserMessage = message;
       _stopRequested = false;
     });
-    _requestGate.begin();
+    // This request's own session: only a stop tapped while this request is in flight can say "Stopped." below.
+    final requestSession = _requestGate.begin();
 
     _scrollToBottom();
 
@@ -1142,6 +1518,7 @@ extension _CheHomeSend on _CHEHomeState {
 
       _scrollToBottom();
       await speakText(reply);
+      _sendHeldSpeechNext();
       return;
     }
 
@@ -1187,11 +1564,17 @@ extension _CheHomeSend on _CHEHomeState {
       }
 
       late final String reply;
+      final firstWords = CheLatency.begin(CheLatency.firstReply);
+      var heardFirstWords = false;
       try {
         reply = await _streamCheResponse(
           message,
           history,
           onPartial: (partialReply) {
+            if (!heardFirstWords) {
+              heardFirstWords = true;
+              firstWords.end();
+            }
             uiBatcher.add(partialReply);
             final clean = _sanitizeCheReply(partialReply);
             for (final chunk in speechChunker.addCumulative(clean)) {
@@ -1204,7 +1587,7 @@ extension _CheHomeSend on _CHEHomeState {
         uiBatcher.dispose();
       }
 
-      final stopped = _stopRequested;
+      final stopped = requestSession.cancelled;
       _stopRequested = false;
       final finalReply = reply.isEmpty
           ? (stopped ? 'Stopped.' : 'I could not generate a response, sir.')
@@ -1233,11 +1616,13 @@ extension _CheHomeSend on _CHEHomeState {
             messages[assistantIndex]['media_url'] = _streamMediaUrl!;
             messages[assistantIndex]['media_type'] = _streamMediaType ?? 'image';
           }
+          if (_streamMediaExtra.isNotEmpty) messages[assistantIndex].addAll(_streamMediaExtra);
           if (_streamUnderstoodAs != null) {
             messages[assistantIndex]['understood_as'] = _streamUnderstoodAs!;
           }
           final details = cheResponseDetailsJson(_streamResponseDetails);
           if (details != null) messages[assistantIndex]['response_details'] = details;
+          if (_streamRecordIds.isNotEmpty) messages[assistantIndex]['record_ids'] = _streamRecordIds.join('\n');
         }
         _isSending = false;
       });
@@ -1321,6 +1706,8 @@ extension _CheHomeSend on _CHEHomeState {
       await speakText(errorReply);
     } finally {
       _isSending = false;
+      // Words he spoke over this answer go next, with this reply in history.
+      _sendHeldSpeechNext();
     }
   }
 
@@ -1461,7 +1848,10 @@ extension _CheHomeSend on _CHEHomeState {
   Future<void> _runChartCommand(String message, CheChartCommand command) async {
     if (command.symbol != null) CheLiveChart.symbol.value = command.symbol!;
     if (command.interval != null) CheLiveChart.interval.value = command.interval!;
-    final reply = command.readPrice
+    // "turn on VWAP", "hide Bollinger": the Trading Room charts listen and save it; CHE says the new state.
+    final reply = command.changesIndicators
+        ? await CheLiveChart.applyIndicatorCommand(command)
+        : command.readPrice
         ? await CheLiveChart.readPrice(cheAgentBaseUrl, _authHeaders, command.symbol ?? CheLiveChart.symbol.value)
         : 'Loading ${CheLiveChart.symbol.value.name}, ${cheChartIntervals[CheLiveChart.interval.value] ?? CheLiveChart.interval.value} candles.';
     HapticFeedback.selectionClick();
@@ -1520,5 +1910,23 @@ extension _CheHomeSend on _CHEHomeState {
     }
     unawaited(say('Opening ${cheMeetingName(m)}, sir. It is ${cheMeetingStatusSpoken(m)}.'));
     if (mounted) unawaited(open(m.id));
+  }
+
+  /// Connect GPU's real ports: CHE's browser session and her Worker. Speech only for required steps and results.
+  void _configureGpuConnect() {
+    CheGpuConnect.instance.configure(
+      worker: CheGpuHttpWorker(baseUrl: cheAgentBaseUrl, headers: _authHeaders),
+      browser: CheGpuSessionBrowser(front: _showGpuBrowser),
+      speak: (text) => unawaited(speakText(text, record: false, show: true)),
+    );
+  }
+
+  /// Brings the GPU Browser (and its retained notebook) to the front without stacking a second copy.
+  Future<void> _showGpuBrowser() async {
+    if (!mounted || CheGpuBrowser.openCount > 0) return;
+    unawaited(Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) =>
+      CheGpuBrowser(baseUrl: cheAgentBaseUrl, headers: _authHeaders,
+        onRead: (text) => speakText(text, record: false, readOnDemand: true)))));
+    await Future<void>.delayed(const Duration(milliseconds: 600));
   }
 }

@@ -1,10 +1,13 @@
 name: CHE Autopilot
 
 on:
+  # Only the gating Flutter check. A `check_run` trigger cannot be filtered by name:
+  # it started a run for every completed check in the repo, this workflow's own jobs
+  # included (~290 skipped runs a day), and dispatched AI repairs for the non-gating
+  # Cloudflare "Workers Builds" check (release_status.mjs NON_GATING) while the owner
+  # was not in a session. Do not re-add it (tool/test_workflow_triggers.py).
   workflow_run:
     workflows: ["Check CHE Flutter client"]
-    types: [completed]
-  check_run:
     types: [completed]
 
 permissions:
@@ -14,7 +17,7 @@ permissions:
   pull-requests: read
 
 concurrency:
-  group: che-autopilot-${{ github.event.workflow_run.head_sha || github.event.check_run.head_sha || github.run_id }}
+  group: che-autopilot-${{ github.event.workflow_run.head_sha || github.run_id }}
   cancel-in-progress: false
 
 jobs:
@@ -546,14 +549,10 @@ jobs:
 
   main-failure:
     if: >-
-      (github.event_name == 'workflow_run' &&
-       github.event.workflow_run.head_branch == 'main' &&
-       github.event.workflow_run.conclusion == 'failure' &&
-       github.event.workflow_run.head_repository.full_name == github.repository) ||
-      (github.event_name == 'check_run' &&
-       github.event.check_run.name == 'Workers Builds: chey-app' &&
-       github.event.check_run.conclusion == 'failure' &&
-       github.event.check_run.check_suite.head_branch == 'main')
+      github.event_name == 'workflow_run' &&
+      github.event.workflow_run.head_branch == 'main' &&
+      github.event.workflow_run.conclusion == 'failure' &&
+      github.event.workflow_run.head_repository.full_name == github.repository
     runs-on: ubuntu-latest
     timeout-minutes: 12
     steps:
@@ -564,9 +563,8 @@ jobs:
           github-token: ${{ secrets.CHE_GITHUB_TOKEN }}
           script: |
             const mailboxBranch = 'che-mailbox';
-            const isWorkflow = context.eventName === 'workflow_run';
-            const sha = isWorkflow ? context.payload.workflow_run.head_sha : context.payload.check_run.head_sha;
-            const source = isWorkflow ? 'Check CHE Flutter client' : 'Workers Builds: chey-app';
+            const sha = context.payload.workflow_run.head_sha;
+            const source = 'Check CHE Flutter client';
 
             async function readJsonl(path) {
               try {

@@ -29,17 +29,18 @@ const { default: worker, CheState } = mod;
 const MISSION_IDS = {
   // 'learn' is the Knowledge Atlas (issue #346), one entry over knowledge_atlas.js.
   // 'che-cancel-job' cancels a queued coding job by voice or typing (owner, 2026-10-19).
-  intelligence: ['che', 'che-explore', 'che-plan', 'che-build', 'che-research', 'che-verify', 'che-memory', 'che-brain-review', 'che-flagstaff-import', 'che-outside-mail', 'che-recover', 'che-cancel-job', 'che-status', 'learn'],
+  intelligence: ['che', 'che-explore', 'che-plan', 'che-build', 'che-research', 'che-verify', 'che-memory', 'che-brain-record', 'che-memory-inspect', 'che-brain-review', 'che-performance', 'che-flagstaff-import', 'che-outside-mail', 'che-recover', 'che-improve', 'che-cancel-job', 'che-status', 'learn', 'manifest', 'security-access', 'security-chief', 'security-findings'],
   youtube: ['yt-ideas', 'yt-research', 'yt-script', 'yt-video', 'yt-voice', 'yt-thumbnail', 'yt-seo', 'yt-publish', 'yt-batch', 'yt-analytics', 'yt-grow'],
   // trade-connections reads the owner-only connections of #348 (issue #350).
-  trading: ['trade-open', 'trade-chart', 'trade-setup', 'trade-liquidity', 'trade-risk', 'trade-backtest', 'trade-learning', 'trade-research', 'trade-history', 'trade-journal', 'trade-alert', 'trade-sim', 'trade-controls', 'trade-emergency', 'trade-execute', 'trade-connections'],
+  // trade-setups opens the Signal Mode Setup Progress Board (owner, 2026-10-23).
+  trading: ['trade-open', 'trade-paper-account', 'trade-chart', 'trade-setup', 'trade-setups', 'trade-liquidity', 'trade-risk', 'trade-backtest', 'trade-learning', 'trade-research', 'trade-history', 'trade-matrix', 'trade-journal', 'trade-alert', 'trade-sim', 'trade-controls', 'trade-emergency', 'trade-execute', 'trade-connections', 'trade-pnl', 'trade-leader', 'trade-audit', 'trade-calendar', 'trade-crypto', 'trade-replay'],
   build: ['site-build', 'site-redesign', 'site-audit', 'site-publish', 'app-build', 'app-fix', 'ai-build', 'code-review', 'che-release', 'iphone-update', 'rea-inspect', 'rea-discover', 'rea-features', 'rea-explain', 'rea-debug', 'rea-compare', 'rea-rebuild', 'rea-build', 'rea-verify', 'rea-status'],
   money: ['money-dashboard', 'cashflow', 'budget', 'expenses', 'invoices', 'money-forecast', 'pricing', 'profit-report'],
   clients: ['lead-scout', 'lead-audit', 'lead-score', 'lead-match', 'lead-proposal', 'lead-outreach', 'lead-crm', 'lead-followup', 'client-deliver'],
   marketing: ['brand-build', 'marketing-plan', 'social-content', 'ads-plan', 'seo-growth', 'sales-funnel', 'business-launch'],
-  office: ['office-status', 'office-delegate', 'warroom', 'automate', 'skill-learn', 'connect', 'voice-test', 'create-3d'],
+  office: ['office-status', 'office-delegate', 'office-org', 'office-calendar', 'office-coordinate', 'office-jobs', 'warroom', 'automate', 'skill-learn', 'connect', 'connect-service', 'voice-test', 'create-3d', 'cloud-open', 'cloud-gpu', 'world-population', 'cloud-blender', 'cloud-render', 'cloud-tests', 'cloud-prs', 'cloud-install', 'cloud-agents', 'cloud-control', 'master-profile'],
   // Creator Studio (owner issue #347).
-  studio: ['studio-bible', 'studio-pilot', 'studio-render', 'studio-export', 'studio-post', 'studio-growth'],
+  studio: ['studio-bible', 'studio-pilot', 'studio-render', 'studio-export', 'studio-post', 'studio-growth', 'film-make', 'music-studio', 'film-status'],
 };
 
 const SITE_HTML = '<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Joe\'s Barbershop</title></head><body><header><h1>Joe\'s Barbershop</h1></header><main><p>Classic cuts in Phoenix.</p><a href="#book">Book a cut</a></main><footer>Open daily</footer></body></html>';
@@ -110,9 +111,9 @@ async function owner({ saved = new Map(), model = () => 'Here is the answer, sir
 
 // ─── 1. Catalog identities ────────────────────────────────────────────────
 
-test('1. the owner\'s 71 commands exist exactly as listed, plus ten REA, six Creator Studio, two Strategy Control Center, two strategy learning commands and the historical study, in 9 categories, each fully described', () => {
-  assert.equal(COMMANDS.length, 99);
-  assert.equal(new Set(COMMANDS.map((c) => c.id)).size, 99, 'ids are unique');
+test('1. the owner\'s 71 commands exist exactly as listed, plus ten REA, six Creator Studio, two Strategy Control Center, two strategy learning commands, the historical study, the timeframe matrix, the CHE paper account and the two calendars, in 9 categories, each fully described', () => {
+  assert.equal(COMMANDS.length, 135);
+  assert.equal(new Set(COMMANDS.map((c) => c.id)).size, 135, 'ids are unique');
   assert.deepEqual(CATEGORIES.map((c) => c.id), Object.keys(MISSION_IDS));
   for (const [category, ids] of Object.entries(MISSION_IDS)) {
     assert.deepEqual(COMMANDS.filter((c) => c.category === category).map((c) => c.id), ids, category);
@@ -163,7 +164,7 @@ test('2. availability comes from real configuration: ready, needs setup, unsuppo
   const expired = connectorStatus({ CHE_TRADOVATE_OAUTH_CLIENT_ID: 'x', CHE_TRADOVATE_OAUTH_CLIENT_SECRET: 'y' }, { broker: { expired: true } });
   assert.equal(expired.broker.state, 'needs_reconnect');
   const view = catalogView(bare);
-  assert.equal(view.commands.length, 99);
+  assert.equal(view.commands.length, 135);
   assert.ok(view.commands.every((c) => ['available', 'setup_required', 'unsupported', 'temporarily_unavailable'].includes(c.status)));
 });
 
@@ -188,6 +189,38 @@ test('every available command reaches the existing handler it names (no fake rou
   }
   // With these test secrets only the OAuth-backed ones need setup.
   assert.deepEqual(unavailable.sort(), ['trade-execute', 'yt-analytics', 'yt-publish']);
+});
+
+// The compute pool (compute_pool.js) by voice: one existing entry, /cloud-gpu, answers with input "pool".
+test('"which computers can build characters" and "why is my character waiting" reach /cloud-gpu (pool) with no model', async () => {
+  const che = await owner({ env: READY_ENV });
+  assert.equal(commandById('cloud-gpu').route, 'che_cloud_computer');
+  for (const said of ['Which computers can build characters?', 'Why is my character waiting?', 'show me the compute pool', '/cloud-gpu pool']) {
+    const out = await che.say(said);
+    assert.equal(out.route, 'che_cloud_computer', said);
+    assert.equal(out.modelCalls, 0, said);
+    assert.match(out.reply, /can build characters right now|No computer can build a character right now/, said);
+    assert.match(out.reply, /Cannot run Blender: Hugging Face ZeroGPU Space, Cloudflare Workers AI/, said);
+    assert.match(out.reply, /Spending limit: zero dollars/, said);
+    assert.doesNotMatch(out.reply, /ghp_test_only/, 'no secret is spoken');
+  }
+  assert.match((await che.say('What are my GPU jobs?')).reply, /^GPU jobs:/, 'the plain GPU question keeps its answer');
+});
+
+// Connect GPU (lib/create/che_gpu_connect.dart): the same /cloud-gpu entry with input "connect". The Worker never
+// claims a connection without a fresh GPU heartbeat; it tells the app to open its Connect GPU flow.
+test('"Connect GPU", "connect the GPU" and "start my GPU" reach /cloud-gpu (connect) with no model and open the flow', async () => {
+  const che = await owner({ env: READY_ENV });
+  for (const said of ['Connect GPU', 'CHE, connect the GPU', 'start my GPU', '/cloud-gpu connect']) {
+    const out = await che.say(said);
+    assert.equal(out.route, 'che_cloud_computer', said);
+    assert.equal(out.modelCalls, 0, said);
+    assert.equal(out.done.command, 'cloud-gpu', said);
+    assert.equal(out.done.open_screen, 'gpu_connect', said);
+    assert.match(out.reply, /^GPU not connected yet: no Colab GPU worker has checked in/, said);
+    assert.doesNotMatch(out.reply, /^GPU connected/, 'never connected without a heartbeat');
+  }
+  assert.doesNotMatch((await che.say('Can you connect the GPU?')).done.open_screen || '', /gpu_connect/, 'a question does not open it');
 });
 
 // ─── 3. Slash commands and natural-language equivalents ───────────────────
@@ -215,6 +248,8 @@ test('3. a slash command and its plain-English request reach the same handler', 
   const mailCe = await owner({ env: READY_ENV });
   for (const [said, route] of [
     ['/che-flagstaff-import', 'che_flagstaff_import'], ['Import the Flagstaff history', 'che_flagstaff_import'], ['import the flagstaff history', 'che_flagstaff_import'],
+    ['/che-brain-record', 'che_brain_record'], ['Show a saved Brain record', 'che_brain_record'],
+    ['/che-memory-inspect', 'che_memory_inspection'], ['Inspect your memory system', 'che_memory_inspection'],
     ['/che-outside-mail', 'che_outside_correspondence'], ['How many outside messages are in my Brain?', 'che_outside_correspondence'],
     ['how many outside messages are in my brain', 'che_outside_correspondence'], ['What did ChatGPT tell you about #350?', 'che_outside_correspondence'],
     ['What did you tell ChatGPT about #351?', 'che_outside_correspondence'], ['What did I tell you about #350?', 'che_memory_provenance'],
@@ -226,6 +261,43 @@ test('3. a slash command and its plain-English request reach the same handler', 
   assert.match((await che.say('/che-flagstaff-import')).reply, /needs setup[\s\S]*GitHub/, 'without GitHub the command says what it needs');
   assert.deepEqual(parseSlashCommand('/Trade-Chart  NQ please'), { name: 'trade-chart', command: commandById('trade-chart'), input: 'NQ please' });
   assert.equal(parseSlashCommand('Analyze the NQ chart'), null);
+});
+
+test('/world-population and "how many characters live in CHE World" read the population counts with no model call', async () => {
+  const c = commandById('world-population');
+  assert.equal(c.route, 'che_world_population');
+  assert.equal(c.local, 'world_population');
+  assert.equal(commandStatus(c, connectorStatus({ AI: {} })).status, 'available');
+  const che = await owner();
+  for (const said of ['/world-population', 'How many characters live in CHE World?', 'CHE, how many people are in CHE World?']) {
+    const out = await che.say(said);
+    assert.equal(out.route, 'che_world_population', said);
+    assert.equal(out.modelCalls, 0, said);
+    assert.match(out.reply, /100,000 character records: seeded descriptions, not built models\. 0 of 288 shared base models are generated/, said);
+    assert.equal(out.done.counts.active, null, 'the Worker never claims active characters');
+  }
+});
+
+test('/master-profile routes to the on-device form filler: the Worker answers where to do it, calls no model, fills nothing and stores nothing', async () => {
+  const c = commandById('master-profile');
+  assert.equal(c.route, 'che_master_profile');
+  assert.equal(c.local, 'master_profile');
+  assert.equal(c.confirm, '', 'filling never costs money; submitting is a separate command');
+  const che = await owner();
+  const before = JSON.stringify([...che.saved.entries()]);
+  for (const said of ['/master-profile', '/master-profile business everything']) {
+    const out = await che.say(said);
+    assert.equal(out.route, 'che_master_profile', said);
+    assert.equal(out.modelCalls, 0, said);
+    assert.equal(out.done.ok, false, 'nothing was filled from the Worker');
+    assert.equal(out.done.on_device_only, true);
+    assert.match(out.reply, /only on your iPhone[\s\S]*nothing was filled from here/);
+  }
+  // No profile store or form answers appear in the Worker's state.
+  // (The route name may appear in ordinary command receipts; the on-device stores' keys never do.)
+  const after = JSON.stringify([...che.saved.entries()]);
+  assert.ok(before.length <= after.length);
+  assert.ok(!/che_master_profiles_v1|che_form_answers_v1|che_profile_site_choice_v1/.test(after), 'no profile data stored by the Worker');
 });
 
 test('/che-cancel-job and its spoken forms reach the coding-job cancel route with no model, no approval and no delete hold', async () => {
@@ -372,6 +444,23 @@ test('/trade-history and plain questions reach the historical study; nothing is 
   assert.equal((await che.say('Backtest NQ')).route === 'che_trading_intelligence', false, 'the existing backtest command keeps its route');
   const dirty = await che.say('Test Dirty Trez on MNQ');
   assert.match(dirty.reply, /no written rules for Dirty Trez/);
+});
+
+// Timeframe backtest matrix: typed, spoken or /trade-matrix, owner only, no model call, nothing invented offline.
+test('/trade-matrix and timeframe questions reach the matrix; offline it reports no numbers', async () => {
+  const che = await owner({ model: siteModel, env: READY_ENV });
+  const before = await che.say('Which strategy works best on which timeframe for NQ?');
+  assert.equal(before.route, 'che_trading_matrix');
+  assert.equal(before.modelCalls, 0);
+  assert.match(before.reply, /has not run yet/);
+  const run = await che.say('/trade-matrix run');
+  assert.equal(run.route, 'che_trading_matrix');
+  assert.equal(run.modelCalls, 0);
+  assert.match(run.reply, /no order was placed/);
+  const view = await che.get('/api/trading/matrix');
+  assert.equal(view.ranking.length, 0, 'no ranking without data');
+  assert.equal(view.timeframes.find((t) => t.id === '15s').available, false);
+  assert.equal((await che.say('How did your strategies do historically on NQ since 1999?')).route, 'che_trading_intelligence', 'decades questions keep their route');
 });
 
 test('a guest device cannot read or run the historical study', async () => {
@@ -735,7 +824,7 @@ test('the Flutter catalog fixture matches what the Worker serves (regenerate: no
   const { fixtureCatalog } = await import('../../tool/dump_command_catalog.mjs');
   const fixture = JSON.parse(readFileSync(new URL('../../test/fixtures/command_catalog.json', import.meta.url), 'utf8'));
   assert.deepEqual(fixture, JSON.parse(JSON.stringify(fixtureCatalog())));
-  assert.equal(fixture.commands.length, 99);
+  assert.equal(fixture.commands.length, 135);
   assert.ok(fixture.templates.length >= 4);
 });
 
@@ -854,7 +943,7 @@ test('the owner\'s six spoken phrases are answered from the catalog with no mode
   for (const words of variants('CHE, open your Commands page.')) {
     const out = await che.say(words);
     assert.equal(out.route, 'che_command_center', words);
-    assert.match(out.reply, /99 commands in 9 groups[\s\S]*2\. YouTube, 11[\s\S]*9\. Creator Studio, 6[\s\S]*Nothing was run/, words);
+    assert.match(out.reply, /135 commands in 9 groups[\s\S]*2\. YouTube, 11[\s\S]*9\. Creator Studio, 9[\s\S]*Nothing was run/, words);
   }
   for (const words of variants('CHE, search for YouTube.')) {
     const out = await che.say(words);
@@ -1019,4 +1108,223 @@ test('comprehension audit: "what commands do you have?" is answered from the cat
   }
   assert.deepEqual(readCommandSpeech('open commands'), { kind: 'open' });
   assert.equal(readCommandSpeech('what commands should I use for youtube'), null);
+});
+
+// Music rights (owner, 2026-10-22): one song record in Projects carries samples, licences, splits and readiness.
+test('music rights: a sample blocks release until its licence is attached; splits never invented; no model call', async () => {
+  const che = await owner();
+  const created = await che.post('/api/music/rights', { action: 'create_song', title: 'Midnight' });
+  assert.equal(created.status, 200);
+  const id = created.body.project.id;
+  assert.equal(created.body.project.type, 'music', 'the song is an ordinary project record');
+  const added = await che.post('/api/music/rights', { action: 'add_sample', project_id: id, sample: { name: 'Soul vocal', provenance: 'LICENSED', source: 'a site' } });
+  assert.equal(added.body.evaluation.state, 'unresolved');
+  const splits = await che.post('/api/music/rights', { action: 'set_splits', project_id: id, splits: [{ group: 'songwriting', name: 'Owner', percent: 60, agreement: 'signed' }, { group: 'songwriting', name: 'Feature', percent: 30, agreement: 'signed' }] });
+  assert.ok(splits.body.check.issues.includes('Songwriting shares total 90%, not 100%.'));
+  const ask = await che.say('Is Midnight ready to release? Check my samples and splits.');
+  assert.equal(ask.route, 'che_music_rights');
+  assert.equal(ask.modelCalls, 0);
+  assert.match(ask.reply, /Midnight is not ready to release/);
+  assert.match(ask.reply, /Soul vocal/);
+  assert.match(ask.reply, /90%, not 100%/);
+  assert.doesNotMatch(ask.reply, /\bsafe\b|cannot be sued|guarantee/i);
+  const lic = await che.post('/api/music/rights', { action: 'attach_license', project_id: id, sample_id: added.body.sample.id, license: { license_type: 'Royalty-free pack licence', license_ref: 'invoice 1042', commercial_use: true } });
+  assert.equal(lic.body.evaluation.state, 'documented');
+  const read = await che.get(`/api/music/rights?project_id=${id}`);
+  assert.equal(read.readiness.items.find((i) => i.id === 'samples').ok, true, 'the licence was saved on the song');
+  assert.equal(read.readiness.ready, false, 'still no master, artwork or reconciled splits');
+  const defend = await che.say('Can we defend Midnight? How risky is this song?');
+  assert.equal(defend.route, 'che_music_rights');
+  assert.match(defend.reply, /UNCLEAR|LOWER RISK|HIGHER RISK|ATTORNEY REVIEW RECOMMENDED/);
+  const projects = (await che.get('/api/state')).projects || [];
+  assert.ok(projects.some((p) => p.id === id), 'the same record appears in Projects');
+});
+
+test('music rights by voice: add a song and a sample in chat, saved and read back, no model call', async () => {
+  const che = await owner();
+  const song = await che.say('CHE, add a song called Pressure');
+  assert.equal(song.route, 'che_music_rights');
+  assert.equal(song.modelCalls, 0);
+  const sample = await che.say('Add a sample called Rain loop to Pressure from freesound');
+  assert.match(sample.reply, /not verified yet/);
+  const id = ((await che.get('/api/state')).projects || []).find((p) => p.title === 'Pressure').id;
+  const read = await che.get(`/api/music/rights?project_id=${id}`);
+  assert.equal(read.project.music.samples[0].name, 'Rain loop');
+  assert.equal(read.readiness.items.find((i) => i.id === 'samples').ok, false);
+});
+
+test('music business by voice: a quote is a draft, a managed artist gets a private workspace, money is never invented', async () => {
+  const che = await owner();
+  const quote = await che.say('CHE, quote Jay R $250 for a mix and master');
+  assert.equal(quote.route, 'che_music_business');
+  assert.equal(quote.modelCalls, 0);
+  assert.match(quote.reply, /Draft quote for Jay R: mix and master, \$250\.00.*Nothing is sent until you approve it/);
+  const view = await che.get('/api/music/business');
+  const jay = view.workspaces.find((w) => w.name === 'Jay R');
+  assert.equal(jay.kind, 'CLIENT');
+  const deal = ((await che.get('/api/pipeline')).deals || []).find((d) => d.music_workspace_id === jay.id);
+  assert.equal(deal.stage, 'proposal', 'the quote waits in the existing pipeline for the owner');
+  const artist = await che.say("I'm managing Erica now");
+  assert.match(artist.reply, /private workspace for Erica/);
+  const dash = await che.say('How is my music business?');
+  assert.match(dash.reply, /No payments are recorded this month/);
+  assert.equal(view.dashboard.revenue_usd, null);
+});
+
+test('music business by voice: services, songs, quote approval, client feedback and delivery status, all spoken back', async () => {
+  const che = await owner();
+  assert.match((await che.say('Set my mix price to $200 with 1 revision')).reply, /mix is set at \$200\.00 with 1 revision/);
+  await che.say('Add a client called Jay R');
+  const song = await che.say('Add a song called Night Drive for Jay R');
+  assert.equal(song.route, 'che_music_business');
+  assert.match(song.reply, /not tied to a quote yet/);
+  await che.say('Quote Jay R $200 for a mix');
+  const approved = await che.say('Approve the quote for Jay R');
+  assert.match(approved.reply, /Approved the quote for Jay R: mix, \$200\.00\. It is yours to send\. Nothing was sent/);
+  const feedback = await che.say('Jay R wants changes on Night Drive: vocal louder');
+  assert.match(feedback.reply, /no version on record yet/);
+  const delivery = await che.say('Is Night Drive ready to deliver?');
+  assert.equal(delivery.route, 'che_music_business');
+  assert.match(delivery.reply, /Waiting for payment|not tied to one quote/);
+  assert.notEqual((await che.say('The bank approved my loan')).route, 'che_music_business', 'unknown names are not business actions');
+});
+
+test('Legal Intelligence by voice: home, "can I record somebody here?", a location change, a contract upload and one exclusive-sale answer', async () => {
+  const che = await owner();
+  assert.match((await che.say('Can I record somebody here?')).reply, /Where are you\? .*I do not track your location/);
+  assert.match((await che.say('My home state is Louisiana')).reply, /Louisiana is your home jurisdiction/);
+  const ask = await che.say('Can I record somebody here?');
+  assert.equal(ask.route, 'che_legal');
+  assert.equal(ask.modelCalls, 0);
+  assert.match(ask.reply, /Will you be part of the conversation you record\?/);
+  const mine = await che.say("Can I record a call I'm on here?");
+  assert.match(mine.reply, /Probably yes\. Louisiana law \(La\. R\.S\. 15:1303\) allows recording a conversation you take part in.*not checked live today/);
+  // Location stays off until the owner turns it on; then only his activities are compared.
+  assert.match((await che.say("I'm in California now, is there anything relevant that changed?")).reply, /Location-aware legal differences are off/);
+  assert.match((await che.say('Turn on location legal alerts')).reply, /never a precise location/);
+  const moved = await che.say("I'm in California now, is there anything relevant that changed?");
+  assert.match(moved.reply, /Legal difference \(IMPORTANT\): In California, Cal\. Penal Code § 632 requires the consent of everyone/);
+  assert.match(moved.reply, /Lawful option: Ask everyone for consent/);
+  // A contract upload: terms quoted from the text, flags, nothing invented.
+  const text = 'This producer agreement is made by and between Beat Lab LLC and the Artist. Artist assigns all right, title and interest in the master recordings to Beat Lab LLC. Beat Lab LLC shall pay Artist $500. This agreement shall be governed by the laws of the State of New York.';
+  const up = await che.say('Check this contract', { attachment: { name: 'producer-agreement.txt', media_type: 'text/plain', base64: Buffer.from(text).toString('base64') } });
+  assert.equal(up.route, 'che_legal');
+  assert.match(up.reply, /HIGH RISK: Assignment of all right, title and interest/);
+  assert.match(up.reply, /Not found in the text: .*Termination/);
+  const stored = await che.get('/api/legal');
+  assert.equal(stored.contracts[0].name, 'producer-agreement.txt');
+  assert.ok(stored.coverage.find((c) => c.id === 'us-la-new-orleans').status === 'NOT YET INDEXED');
+  // Sell a beat exclusively: Music, Business and Legal answer together.
+  await che.say('Add a beat called Smoke, basic lease $30, exclusive $500');
+  await che.say('Sold a basic lease of Smoke to Mike, payment cs_1');
+  assert.equal((await che.say('Sell Smoke exclusively')).route, 'held', 'an instruction to sell is a money action: it waits for the owner');
+  const ex = await che.say('Can I sell Smoke exclusively?');
+  assert.equal(ex.route, 'che_music_business');
+  assert.match(ex.reply, /Smoke is not ready for an exclusive sale at \$500\.00\. Legal: 1 lease is already sold \(Mike\)/);
+  assert.notEqual((await che.say('Can I trade NQ now?')).route, 'che_legal');
+});
+
+test('Expert Intelligence by voice: emergencies first, a private case, a Doctor Brief, a note kept verbatim, a measured test', async () => {
+  const che = await owner();
+  const urgent = await che.say('My dad has chest pain and shortness of breath right now');
+  assert.equal(urgent.route, 'che_health_urgent');
+  assert.equal(urgent.modelCalls, 0);
+  assert.match(urgent.reply, /^Chest pain with these symptoms can be a heart attack\. Call 911 now\./);
+  assert.match((await che.say("Prepare me for my doctor's appointment")).reply, /There is no medical case on file yet/);
+  assert.match((await che.say('Open a medical case called Back and leg')).reply, /private and kept apart/);
+  const brief = await che.say("Prepare me for my doctor's appointment");
+  assert.equal(brief.route, 'che_expert');
+  assert.match(brief.reply, /DOCTOR BRIEF: Back and leg[\s\S]*Missing from the file: reason for visit/);
+  assert.match((await che.say('My doctor said ordered an MRI of the lumbar spine')).reply, /Saved your doctor note word for word\. I added: ordered an MRI of the lumbar spine/);
+  const exam = await che.say('Test your legal knowledge');
+  assert.match(exam.reply, /Law test: 8 of 8 passed \(100%\)\. A test score is evidence of what I do, not a licence/);
+  assert.match((await che.say('How good are you at law?')).reply, /Latest test: 8 of 8 passed/);
+  const view = await che.get('/api/expert');
+  assert.equal(view.cases[0].title, 'Back and leg');
+  assert.ok(view.expertise.some((e) => e.domain === 'health' && e.level === 'not built'), 'no health sources yet, so no claim');
+});
+
+// ─── Codex review of #458/#459 through /api/chat ────────────────────────────
+
+test('a guest\'s emergency gets the deterministic 911 answer before any model call', async () => {
+  const che = await owner();
+  const tenant = await che.post('/api/platform/tenants', { name: 'Guest', role: 'family' });
+  const invite = await che.post('/api/platform/enrollments', { access: 'private', tenant_id: tenant.body?.tenant?.id });
+  const guest = (await (await che.send('/api/enroll', { enrollment_token: invite.body.enrollment.token, device_name: 'guest' })).json()).device_token;
+  const before = che.inputs.length;
+  const raw = await (await che.send('/api/chat', { message: 'My dad has chest pain and shortness of breath right now', history: [] }, guest)).text();
+  assert.match(replyFromNdjson(raw), /^Chest pain with these symptoms can be a heart attack\. Call 911 now\./);
+  assert.match(raw, /"source":"che_health_urgent"/);
+  assert.equal(che.inputs.length, before, 'no model call');
+});
+
+test('location alerts compare only what the owner records show he does: no recording alert out of nowhere', async () => {
+  const che = await owner();
+  await che.say('My home state is Louisiana');
+  await che.say('Turn on location legal alerts');
+  assert.match((await che.say("I'm in California now, is there anything relevant that changed?")).reply, /Nothing I have indexed for what you're doing changes in California/);
+  await che.say("Can I record a call I'm on here?");
+  assert.match((await che.say("I'm in California now, is there anything relevant that changed?")).reply, /Cal\. Penal Code § 632/);
+});
+
+// ChatGPT live iPhone report (2026-10-22): the single follow-up word "Collectively" came back as only "Stopped.".
+// The phone side is scoped per request (4001b2d, test/che_stop_state_test.dart); no Worker command reads it as a stop.
+test('"Collectively" is an ordinary follow-up: no command, no stop, and the conversation continues', () => {
+  const history = [{ role: 'user', content: 'What do these three studies say?' }, { role: 'assistant', content: 'Each one finds a small effect.' }];
+  for (const words of ['Collectively', 'Collectively?', 'collectively, what do they show?']) {
+    assert.equal(readCommandSpeech(words, history), null, words);
+    assert.equal(parseSlashCommand(words), null, words);
+    assert.equal(commandFromWords(words), null, words);
+  }
+});
+
+test('Signal Mode: /trade-setups and plain questions open the Setup Progress Board on the chart route, with no model and no order', async () => {
+  const c = commandById('trade-setups');
+  assert.equal(c.route, 'che_trading_chart');
+  assert.equal(c.confirm, '');
+  const che = await owner();
+  for (const [said, answer] of [['/trade-setups', undefined], ['Show setups', undefined], ['CHE, show the setup progress board', undefined], ['What setups are ready?', 'ready'], ['Which setups are near entry right now?', 'ready']]) {
+    const out = await che.say(said);
+    assert.equal(out.route, 'che_trading_chart', said);
+    assert.equal(out.modelCalls, 0, said);
+    assert.equal(out.done.open_view, 'trading_chart', said);
+    assert.equal(out.done.chart.section, 'setups', said);
+    assert.equal(out.done.chart.answer, answer, said);
+    assert.equal(out.done.order_sent, undefined, said);
+  }
+  assert.notEqual((await che.say('Find setups on MNQ')).done?.chart?.section, 'setups', 'the learned-strategy analysis keeps its own command');
+});
+
+// Manifestation Engine (owner, 2026-10-27): one catalog entry, /manifest, over manifest_api.js. No model call.
+test('/manifest and its spoken forms reach the Manifestation Engine with no model and save a real project', async () => {
+  const che = await owner();
+  assert.equal(commandById('manifest').route, 'che_manifest');
+  const slash = await che.say('/manifest a drone that carries 1 kg for 25 minutes');
+  assert.equal(slash.route, 'che_manifest');
+  assert.equal(slash.modelCalls, 0);
+  assert.equal(slash.done.status, 'PLAN');
+  assert.match(slash.reply, /Battery-electric multirotor hover/);
+  assert.match(slash.reply, /simulated results, not measurements/);
+  const plain = await che.say('CHE, manifest a flying car for 2 people that flies for 1 hour');
+  assert.equal(plain.route, 'che_manifest');
+  assert.equal(plain.modelCalls, 0);
+  assert.match(plain.reply, /theoretically plausible but unproven/);
+  assert.match(plain.reply, /Wh\/kg/);
+  const status = await che.say('Manifestation status');
+  assert.equal(status.route, 'che_manifest');
+  assert.match(status.reply, /1\. a flying car for 2 people/i);
+  const stored = await che.get(`/api/manifest/projects/${slash.done.project_id}`);
+  assert.equal(stored.project.status, 'PLAN');
+  assert.equal(stored.project.plan.steps.find((s) => s.consequential === 'money').status, 'todo', 'nothing is bought');
+  assert.equal((await che.say('What is the meaning of manifestation in psychology?')).route === 'che_manifest', false, 'a question about the word is not a project');
+  // Briefing, pause, resume and stop ride the same catalog entry.
+  const brief = await che.say('/manifest briefing 2');
+  assert.equal(brief.route, 'che_manifest');
+  assert.match(brief.reply, /Stage: PLAN\.[\s\S]*Options: 1\./);
+  const pause = await che.say('Pause manifestation project 2');
+  assert.equal(pause.route, 'che_manifest');
+  assert.equal(pause.done.status, 'BLOCKED');
+  assert.equal((await che.say('/manifest resume 2')).done.status, 'PLAN');
+  assert.equal((await che.say('Manifestation weekly review')).route, 'che_manifest');
+  assert.equal((await che.say('Pause the music')).route === 'che_manifest', false);
 });

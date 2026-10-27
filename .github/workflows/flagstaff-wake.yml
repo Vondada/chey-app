@@ -31,7 +31,10 @@ jobs:
           # Every peer message this push added (not only the last line), so a
           # batch of questions is answered in one run. CHE's own replies are skipped.
           # mailbox/archive/ holds moved history, not new mail, so it is excluded.
-          ids="$(git show -U0 --format= "$GITHUB_SHA" -- 'mailbox/*.jsonl' ':(exclude)mailbox/archive/*' | grep '^+{' | sed 's/^+//' | python3 -c '
+          # A push with no new line (handoff, brief, runtime, archive) is a skip, not a
+          # failure: grep's "no match" exit failed the job under pipefail (195 failed
+          # runs in two weeks; tool/test_workflow_triggers.py).
+          ids="$(git show -U0 --format= "$GITHUB_SHA" -- 'mailbox/*.jsonl' ':(exclude)mailbox/archive/*' | { grep '^+{' || true; } | sed 's/^+//' | python3 -c '
           import json, sys
           ids = []
           for line in sys.stdin:

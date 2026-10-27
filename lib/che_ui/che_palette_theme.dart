@@ -3,6 +3,7 @@
 import 'package:flutter/cupertino.dart' show CupertinoPageTransitionsBuilder;
 import 'package:flutter/material.dart';
 
+import 'che_chrome_type.dart';
 import 'che_hud.dart';
 import 'che_palettes.dart';
 import 'che_theme.dart';
@@ -35,6 +36,8 @@ ThemeData cheThemeFor(CheColorPalette p) {
     highlightColor: Colors.transparent,
     textTheme: TextTheme(
       headlineMedium: on(CheType.title, p.text),
+      // HUD: page titles (the AppBar's default) and section headings in the Home greeting's chrome (owner, 2026-10-23).
+      titleLarge: hud ? CheChrome.style(CheType.title.copyWith(fontSize: 20, fontWeight: FontWeight.w800), scale: 1.15) : null,
       titleMedium: on(CheType.headline, p.text),
       bodyLarge: on(CheType.body, p.text),
       bodyMedium: on(CheType.body, p.text),

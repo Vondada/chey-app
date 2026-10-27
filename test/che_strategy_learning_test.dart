@@ -28,7 +28,13 @@ void main() {
     )))));
     await tester.pumpAndSettle();
     expect(find.text('14 / 30 unique forward trades'), findsOneWidget);
+    // The duplicate-variant note sits behind the card's info control, not on the card at rest.
+    expect(find.textContaining('14 duplicate variant outcomes excluded'), findsNothing);
+    await tester.tap(find.byTooltip('About EMA Pullback'));
+    await tester.pumpAndSettle();
     expect(find.textContaining('14 duplicate variant outcomes excluded'), findsOneWidget);
+    await tester.tap(find.text('Close'));
+    await tester.pumpAndSettle();
     expect(find.textContaining('Live locked'), findsOneWidget);
     expect(find.text(r'$95.00'), findsOneWidget);
     expect(tester.widget<LinearProgressIndicator>(find.byType(LinearProgressIndicator)).value, closeTo(14 / 30, 0.0001));

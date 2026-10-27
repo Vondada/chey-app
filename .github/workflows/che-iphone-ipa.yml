@@ -12,9 +12,11 @@ jobs:
     timeout-minutes: 60
     env:
       CHE_AGENT_URL: ${{ secrets.CHE_AGENT_URL }}
-      # Screen sharing (ReplayKit extension + App Group). Set the repository
-      # variable CHE_SCREEN_BROADCAST to "off" to build without it.
-      CHE_SCREEN_BROADCAST: ${{ vars.CHE_SCREEN_BROADCAST || 'on' }}
+      # Screen sharing (ReplayKit extension + App Group) is off by default,
+      # matching tool/bootstrap.sh and lib/che_ui/che_screen_share.dart, which
+      # fails closed on cross-app pixels. Set the repository variable
+      # CHE_SCREEN_BROADCAST to "on" only after a reviewed privacy guard ships.
+      CHE_SCREEN_BROADCAST: ${{ vars.CHE_SCREEN_BROADCAST || 'off' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4

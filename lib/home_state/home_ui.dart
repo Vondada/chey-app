@@ -89,6 +89,13 @@ extension _CheHomeUi on _CHEHomeState {
     final details = <Widget>[
       if (!isLiveReply && (item['understood_as'] ?? '').isNotEmpty)
         CheUnderstoodAs(text: item['understood_as']!),
+      if (!isLiveReply && (item['record_ids'] ?? '').trim().isNotEmpty)
+        CheBrainRecordLinks(
+          ids: (item['record_ids'] ?? '').split('\n').where((l) => l.trim().isNotEmpty).toList(),
+          resolve: _brainDotById,
+          onReadAloud: (t) => speakText(t, record: false, readOnDemand: true),
+          onOpenEvidence: _openBrainEvidence,
+        ),
       if (!isLiveReply && cheResponseDetailsFromJson(item['response_details']) != null)
         CheResponseDetailsButton(details: cheResponseDetailsFromJson(item['response_details'])!),
       if (!isLiveReply && (item['thought_ms'] != null || (item['steps'] ?? '').trim().isNotEmpty))
@@ -112,30 +119,33 @@ extension _CheHomeUi on _CHEHomeState {
       if (item['media_type'] == 'image' && (item['media_url'] ?? '').startsWith('https://'))
         Padding(
           padding: const EdgeInsets.only(top: 10),
-          child: ClipRRect(
-            borderRadius: BorderRadius.circular(14),
-            child: Image.network(
-              item['media_url']!,
-              // Images CHE made on her own server need the paired-device token.
-              headers: item['media_url']!.startsWith(cheAgentBaseUrl) ? _authHeaders : null,
-              fit: BoxFit.cover,
-              // Decode at screen size, not full resolution, so images don't
-              // stall scrolling.
-              cacheWidth: (MediaQuery.sizeOf(context).width * MediaQuery.devicePixelRatioOf(context)).round(),
-              errorBuilder: (_, _, _) => const Padding(
-                padding: EdgeInsets.all(12),
-                child: Text('Generated image could not be displayed.'),
+          // Display is the phone's own result: the first decoded frame, or the load error (CheChatImage).
+          child: CheChatImage(
+            image: ResizeImage.resizeIfNeeded(
+              // Decode at screen size, not full resolution, so images don't stall scrolling.
+              (MediaQuery.sizeOf(context).width * MediaQuery.devicePixelRatioOf(context)).round(),
+              null,
+              NetworkImage(
+                item['media_url']!,
+                // Images on CHE's own server need the paired-device token.
+                headers: item['media_url']!.startsWith(cheAgentBaseUrl) ? _authHeaders : null,
               ),
             ),
+            label: _chatImageLabel(item['media_url']!),
+            onResult: (shown, detail) => _onChatImageResult(index, shown),
           ),
         ),
-      if ((item['media_type'] == 'video' || item['media_type'] == 'html' || item['media_type'] == 'page') &&
+      // A saved video on CHE's own server shows as its thumbnail tile (CheChatMediaExtras below), not a player in the chat.
+      if ((item['media_type'] == 'html' || item['media_type'] == 'page' ||
+              (item['media_type'] == 'video' && item['media_id'] == null)) &&
           (item['media_url'] ?? '').startsWith('https://'))
         CheInlinePreview(
           url: item['media_url']!,
           headers: item['media_url']!.startsWith(cheAgentBaseUrl) ? _authHeaders : const {},
           label: item['media_type'] == 'video' ? 'Video' : 'Page',
         ),
+      // Saved videos as tappable thumbnails, and a saved picture's "Open in Create room" (che_chat_media.dart).
+      if (!isLiveReply) CheChatMediaExtras(item: item, baseUrl: cheAgentBaseUrl, headers: _authHeaders),
       // Anything the crew rendered and linked in the reply shows right here.
       if (!isLiveReply)
         for (final url in _inlineImageUrls(text, item['media_url']))
@@ -262,5 +272,19 @@ extension _CheHomeUi on _CHEHomeState {
       .where((u) => !_imagePattern.hasMatch(u) && _pagePattern.hasMatch(u))
       .take(2)
       .toList();
-}
 
+  String _chatImageLabel(String url) {
+    final id = RegExp(r'/api/media/([0-9a-fA-F-]{36})/').firstMatch(url)?.group(1);
+    return id == null ? 'Image from CHE' : 'Saved image $id';
+  }
+
+  /// Records the phone's display result on the message once. A failure on the newest reply is said aloud, because
+  /// the owner asked for the picture and the spoken reply only covered retrieval.
+  void _onChatImageResult(int index, bool shown) {
+    if (index >= messages.length || (messages[index]['media_display'] ?? '').isNotEmpty) return;
+    _set(() => messages[index]['media_display'] = shown ? 'shown' : 'failed');
+    if (!shown && index == messages.length - 1) {
+      unawaited(speakText('I retrieved the picture, sir, but this iPhone could not display it.', record: false));
+    }
+  }
+}

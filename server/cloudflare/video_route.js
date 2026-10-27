@@ -8,6 +8,7 @@ import { runVideoLine } from './video_line.js';
 import { probeVideoEngine } from './video_engine.js';
 import { githubVideoConfigured, startGithubVideo, githubVideoStatus } from './github_video_renderer.js';
 import { generateVideo } from './media.js';
+import { recordVideoFailed, recordVideoVerified } from './action_receipts.js';
 import { recordReceipt } from './truth_layer.js';
 
 // The words of a video request that say how to make it, not what it is about.
@@ -76,10 +77,18 @@ export async function handleVideoLine(request, env, parsedBody, youtube = {}, st
           duration_verified: finished.item.duration_verified === true,
           status: 'complete',
         };
-      } else result = { ok: false, task_id: taskId, stage: finished.stage || 'failed', code: finished.code || 'failed', error: finished.detail || 'No verified video file was returned.' };
-    } else result = taskId.startsWith('gha_')
-      ? await githubVideoStatus(env, taskId, fetcher)
-      : await moneyPrinterStatus(env, taskId, fetcher);
+        // The file passed its real check (media.js), so the render's receipt can now say so.
+        await recordVideoVerified(storage, { task_id: taskId, media_id: finished.item.id, seconds: finished.item.duration_seconds || 0, source: 'github-actions' });
+      } else {
+        result = { ok: false, task_id: taskId, stage: finished.stage || 'failed', code: finished.code || 'failed', error: finished.detail || 'No verified video file was returned.' };
+        if (!finished.pending && (finished.stage === 'failed' || finished.code === 'failed' || finished.status >= 500)) await recordVideoFailed(storage, { task_id: taskId, error: result.error, source: 'github-actions' });
+      }
+    } else {
+      result = taskId.startsWith('gha_')
+        ? await githubVideoStatus(env, taskId, fetcher)
+        : await moneyPrinterStatus(env, taskId, fetcher);
+      if (storage && result?.verified === true && result.task_id) await recordVideoVerified(storage, { task_id: result.task_id, source: 'moneyprinter' });
+    }
   } else {
     const body = parsedBody ?? await request.json().catch(() => ({}));
     if (body.office === true && body.approve_upload !== true) {

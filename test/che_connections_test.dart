@@ -4,6 +4,7 @@ import 'package:chey/che_cloud_voice_picker.dart';
 import 'package:chey/che_ui/che_theme.dart';
 import 'package:chey/home/che_connections_screen.dart';
 import 'package:chey/home/screen_command.dart';
+import 'package:chey/security/che_session_store.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
@@ -11,6 +12,9 @@ import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
+  // Widget tests have no Keychain plugin: the sign-in lives in memory, fresh for every test.
+  setUp(() => CheSessionStore.instance = CheSessionStore(kv: CheMemoryKv()));
+
   setUp(() => SharedPreferences.setMockInitialValues({}));
 
   test('natural speech and typing route to local Connections and Voice Settings without any model', () {
@@ -56,7 +60,8 @@ void main() {
       home: CheConnectionsScreen(baseUrl: 'https://che.test', headers: () => {'Authorization': 'Bearer x'},
         client: client, onVoiceSettings: () {}, onKeys: () {})));
     await tester.pumpAndSettle();
-    expect(paths, ['/api/commands']);
+    // The NinjaTrader card's separate facts come from the trading connections view.
+    expect(paths, ['/api/commands', '/api/trading/connections']);
     expect(find.text('YouTube channel'), findsOneWidget);
     expect(find.text('Existing YouTube channel'), findsOneWidget);
     expect(find.text('NinjaTrader / Tradovate'), findsOneWidget);

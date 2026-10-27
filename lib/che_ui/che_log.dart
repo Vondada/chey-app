@@ -292,6 +292,7 @@ class _CheConversationLogScreenState extends State<CheConversationLogScreen> {
               subtitle: 'EVERY CONVERSATION WITH CHE',
               status: null,
               leading: IconButton(
+                tooltip: 'Back',
                 icon: Icon(Icons.arrow_back_ios_new_rounded, size: 19, color: CheColors.text),
                 onPressed: () => Navigator.of(context).maybePop(),
               ),
@@ -365,6 +366,7 @@ class _CheTranscriptScreenState extends State<CheTranscriptScreen> {
               subtitle: c.title.toUpperCase(),
               status: null,
               leading: IconButton(
+                tooltip: 'Back',
                 icon: Icon(Icons.arrow_back_ios_new_rounded, size: 19, color: CheColors.text),
                 onPressed: () => Navigator.of(context).maybePop(),
               ),

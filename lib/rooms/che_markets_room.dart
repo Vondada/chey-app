@@ -20,6 +20,17 @@ import 'che_live_chart.dart';
 import 'che_trading_hud.dart';
 import 'che_trading_room.dart';
 
+/// How fresh a market answer is, from the Worker's own labels (markets.js): quiet text, never spoken by itself.
+String cheMarketFreshness(Map<String, dynamic> j) {
+  if (j['loading'] == true) return 'Still loading from the source';
+  final age = (j['age_s'] as num?)?.toInt();
+  if (j['stale'] == true && age != null) {
+    final when = age < 90 ? '$age seconds' : age < 5400 ? '${(age / 60).round()} minutes' : '${(age / 3600).round()} hours';
+    return 'Last updated $when ago, refreshing';
+  }
+  return '';
+}
+
 class CheQuote {
   const CheQuote({required this.symbol, required this.name, this.price, this.changePct, required this.status, this.note});
   final String symbol;
@@ -56,6 +67,7 @@ class CheDeskAction {
     required this.connected,
     required this.connectorName,
     required this.onRun,
+    this.capability,
   });
   final IconData icon;
   final String title;
@@ -63,6 +75,24 @@ class CheDeskAction {
   final bool connected;
   final String connectorName;
   final VoidCallback onRun;
+
+  /// A card CHE's own engine serves (`analyze_markets`, `backtesting_lab`, `custom_indicators`): its state comes from
+  /// GET /api/trading/capabilities, where the engine really ran, not from whether an external URL is set.
+  final String? capability;
+}
+
+/// One card's state from /api/trading/capabilities: AVAILABLE, LIMITED, UNAVAILABLE or CONNECT, with its reason.
+class CheCapabilityState {
+  const CheCapabilityState(this.state, this.reason);
+  final String state, reason;
+  static Map<String, CheCapabilityState> fromJson(Object? j) {
+    final cards = j is Map ? j['cards'] : null;
+    if (cards is! Map) return const {};
+    return {
+      for (final e in cards.entries)
+        if (e.value is Map) '${e.key}': CheCapabilityState('${(e.value as Map)['state'] ?? ''}', '${(e.value as Map)['reason'] ?? ''}'),
+    };
+  }
 }
 
 class CheMarketsRoom extends StatefulWidget {
@@ -109,6 +139,9 @@ class _CheMarketsRoomState extends State<CheMarketsRoom> {
   Timer? _timer;
   // Live broker account from the Worker (/api/trading/account); null = unknown.
   Map<String, dynamic>? _account;
+  // The desk cards CHE's own engines serve, as the Worker last checked them; empty until the check answers.
+  Map<String, CheCapabilityState> _capabilities = const {};
+  String? _capabilitiesError;
   Timer? _accountTimer;
 
   @override
@@ -118,6 +151,7 @@ class _CheMarketsRoomState extends State<CheMarketsRoom> {
     unawaited(_loadCandles());
     _timer = Timer.periodic(const Duration(seconds: 60), (_) => unawaited(_load()));
     unawaited(_loadAccount());
+    unawaited(_loadCapabilities());
     _accountTimer = Timer.periodic(const Duration(seconds: 30), (_) => unawaited(_loadAccount()));
   }
 
@@ -126,6 +160,17 @@ class _CheMarketsRoomState extends State<CheMarketsRoom> {
       _account = await _get('/api/trading/account');
     } catch (_) {
       _account = null;
+    }
+    if (mounted) setState(() {});
+  }
+
+  /// Quiet: the card labels change, nothing is spoken.
+  Future<void> _loadCapabilities() async {
+    try {
+      _capabilities = CheCapabilityState.fromJson(await _get('/api/trading/capabilities'));
+      _capabilitiesError = null;
+    } catch (e) {
+      _capabilitiesError = '$e'.replaceFirst('Exception: ', '');
     }
     if (mounted) setState(() {});
   }
@@ -157,12 +202,30 @@ class _CheMarketsRoomState extends State<CheMarketsRoom> {
     try {
       final j = await _get('/api/markets/snapshot');
       _quotes = [for (final q in (j['quotes'] as List? ?? const [])) if (q is Map<String, dynamic>) CheQuote.fromJson(q)];
-      _source = '${j['source'] ?? ''}';
+      _source = [ '${j['source'] ?? ''}', cheMarketFreshness(j)].where((s) => s.isNotEmpty).join(' · ');
       _error = null;
+      _retryIfLoading(j, _load);
     } catch (e) {
       _error = '$e'.replaceFirst('Exception: ', '');
     }
     if (mounted) setState(() {});
+  }
+
+  final Map<Object, int> _followUps = {};
+
+  /// The Worker answers at once with stale data (refreshing in the background) or "still loading"; ask the same
+  /// thing again shortly so the refreshed answer reaches the screen, a few times at most per screen part.
+  void _retryIfLoading(Map<String, dynamic> j, Future<void> Function() again) {
+    if (j['loading'] != true && j['stale'] != true) {
+      _followUps.remove(again);
+      return;
+    }
+    final n = _followUps[again] ?? 0;
+    if (n >= 3) return;
+    _followUps[again] = n + 1;
+    Future<void>.delayed(const Duration(seconds: 5), () {
+      if (mounted) unawaited(again());
+    });
   }
 
   Future<void> _loadCandles() async {
@@ -177,7 +240,8 @@ class _CheMarketsRoomState extends State<CheMarketsRoom> {
             CheCandle('${c['date']}', (c['open'] as num).toDouble(), (c['high'] as num).toDouble(), (c['low'] as num).toDouble(),
                 (c['close'] as num).toDouble()),
       ];
-      _chartNote = j['error']?.toString() ?? j['source']?.toString();
+      _chartNote = [j['error']?.toString() ?? j['source']?.toString() ?? '', cheMarketFreshness(j)].where((s) => s.isNotEmpty).join(' · ');
+      _retryIfLoading(j, _loadCandles);
     } catch (e) {
       if (symbol != _chartSymbol) return;
       _candles = const [];
@@ -221,6 +285,9 @@ class _CheMarketsRoomState extends State<CheMarketsRoom> {
             onRead: widget.onRead,
             client: widget.client,
             header: _TickerTape(quotes: _quotes, fmt: _fmt),
+            // The live market the owner trades: MNQ futures first (NQ by the toggle).
+            initialAccount: 'futures_paper',
+            initialSymbol: 'MNQ',
             accountExtras: [
               Padding(
                 padding: const EdgeInsets.fromLTRB(CheSpace.gutter, CheSpace.md, CheSpace.gutter, 0),
@@ -398,7 +465,14 @@ class _CheMarketsRoomState extends State<CheMarketsRoom> {
                   const SizedBox(height: CheSpace.lg),
                   Text('TRADING DESK', style: cheTradingLabel(CheType.overline.copyWith(color: _gold))),
                   const SizedBox(height: CheSpace.sm),
-                  for (final a in widget.actions) _DeskCard(action: a),
+                  for (final a in widget.actions)
+                    _DeskCard(
+                      action: a,
+                      capability: a.capability == null
+                          ? null
+                          : _capabilities[a.capability] ??
+                              CheCapabilityState(_capabilitiesError == null ? 'CHECKING' : 'UNAVAILABLE', _capabilitiesError == null ? 'Checking CHE\'s own engine.' : 'The check could not be read: $_capabilitiesError'),
+                    ),
                   const SizedBox(height: CheSpace.sm),
                   Text(
                     'CHE never claims an order executed unless the broker confirms it. Trading needs a connected account, your authorization and risk limits.',
@@ -537,11 +611,22 @@ class _IndexPanel extends StatelessWidget {
 }
 
 class _DeskCard extends StatelessWidget {
-  const _DeskCard({required this.action});
+  const _DeskCard({required this.action, this.capability});
   final CheDeskAction action;
+  final CheCapabilityState? capability;
   @override
   Widget build(BuildContext context) {
     final a = action;
+    final c = capability;
+    // A card CHE's own engine serves shows what the engine check found; the others show their connector.
+    final label = c?.state ?? (a.connected ? 'CONNECTED' : 'CONNECT');
+    final good = c == null ? a.connected : c.state == 'AVAILABLE';
+    final color = good ? const Color(0xFF3DDC97) : c?.state == 'CHECKING' ? Colors.white70 : CheColors.warning;
+    final detail = c == null
+        ? (a.connected ? a.body : '${a.body}\nNeeds: ${a.connectorName} (not connected). CHE can still plan it with you.')
+        : c.state == 'AVAILABLE' || c.reason.isEmpty
+            ? a.body
+            : '${a.body}\n${c.reason}';
     final tile = ListTile(
         onTap: () {
           HapticFeedback.selectionClick();
@@ -549,15 +634,9 @@ class _DeskCard extends StatelessWidget {
         },
         leading: Icon(a.icon, color: cheTradingSelect),
         title: Text(a.title, maxLines: 1, overflow: TextOverflow.ellipsis, style: CheType.label),
-        subtitle: Text(
-          a.connected ? a.body : '${a.body}\nNeeds: ${a.connectorName} (not connected). CHE can still plan it with you.',
-          style: CheType.caption,
-        ),
-        isThreeLine: !a.connected,
-        trailing: Text(
-          a.connected ? 'CONNECTED' : 'CONNECT',
-          style: TextStyle(color: a.connected ? const Color(0xFF3DDC97) : CheColors.warning, fontSize: 10, fontWeight: FontWeight.w700),
-        ),
+        subtitle: Text(detail, style: CheType.caption, maxLines: 4, overflow: TextOverflow.ellipsis),
+        isThreeLine: detail.contains('\n'),
+        trailing: Text(label, style: TextStyle(color: color, fontSize: 10, fontWeight: FontWeight.w700)),
       );
     if (cheHudActive) {
       return CheTradingPanel(

@@ -11,6 +11,7 @@ dependencies:
     sdk: flutter
   cupertino_icons: ^1.0.8
   http: ^1.6.0
+  crypto: ^3.0.6
   shared_preferences: ^2.5.5
   speech_to_text: ^7.5.0
   flutter_tts: ^4.2.5
@@ -27,9 +28,12 @@ dependencies:
   flutter_secure_storage: ^9.2.4
   flutter_scene: ^0.23.0
   vector_math: ^2.1.4
+  app_links: ^7.2.2
 
 dev_dependencies:
   flutter_test:
+    sdk: flutter
+  integration_test:
     sdk: flutter
   flutter_lints: ^6.0.0
   flutter_launcher_icons: ^0.14.4
@@ -43,6 +47,7 @@ flutter:
     - assets/characters/app/
     - assets/characters/crew/
     - assets/atlas/
+    - assets/browser/
     - shorebird.yaml
 
 flutter_launcher_icons:

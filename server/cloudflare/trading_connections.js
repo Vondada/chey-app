@@ -3,6 +3,8 @@
 // Tradovate sign-in, the Alpaca paper check); it never changes a mode or a connection. Each
 // card says its real state, so nothing reads "connected" until the provider proved it.
 
+import { liveOrderBlock } from './trading_environments.js';
+
 export const MODE_LABEL = { paper: 'PAPER', sim: 'BROKER SIM', live: 'LIVE' };
 
 // What Tradovate itself requires before CHE can use its API (owner research, issue #344, Oct 18
@@ -54,6 +56,14 @@ function tradovateCard({ configured, conn, desk }) {
     risk_limits: desk.risk_limits,
     blocked_by: configured ? [] : TRADOVATE_PREREQUISITES,
     ...(configured ? {} : { blocked_note: TRADOVATE_BLOCKED_NOTE, worker_secrets: TRADOVATE_WORKER_SECRETS }),
+    // Each fact is reported on its own. A website sign-in is never proof of brokerage API access.
+    separate: {
+      website_login: 'Not visible to CHE. Signing in on NinjaTrader\'s website in Safari grants CHE no brokerage access.',
+      brokerage_authorized: state === 'signed_in',
+      accounts: desk.account?.live || desk.account?.sim ? { sim: desk.account.sim || null, live: desk.account.live || null } : null,
+      market_data: conn?.market_data_allowed === true ? 'allowed' : conn?.market_data_allowed === false ? 'not allowed' : 'unknown',
+      live_orders: 'disabled: needs verified account permissions, a preview and your explicit confirmation',
+    },
     open_account: TRADOVATE_OPEN_ACCOUNT,
     detail: state === 'signed_in' ? 'Signed in on Tradovate\'s own page; CHE never sees the password.'
       : state === 'expired' ? 'The Tradovate sign-in expired; say "connect NinjaTrader" to sign in again.'
@@ -121,7 +131,8 @@ export function tradingConnections({ paper = null, desk, tradovate = {}, alpaca 
       research: true,
       paper: true,
       sim_orders: desk.mode === 'sim' && signedIn ? 'on: CHE places her entries on the simulated account' : 'off',
-      live_orders: desk.mode === 'live' && signedIn && desk.risk_limits && desk.account.live ? 'each order needs your approval of that exact order' : 'off',
+      // The live kill switch first: off in code means off here, whatever the desk says.
+      live_orders: !liveOrderBlock() && desk.mode === 'live' && signedIn && desk.risk_limits && desk.account.live ? 'each order needs your approval of that exact order' : 'off',
     },
   };
 }

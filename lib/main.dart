@@ -25,9 +25,27 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:speech_to_text/speech_to_text.dart' as stt;
 import 'package:url_launcher/url_launcher.dart';
 import 'che_job_activity_banner.dart';
+import 'che_live_partial.dart';
 import 'che_mic_supervisor.dart';
+import 'che_ui/che_performance_note.dart';
+import 'che_ui/che_latency.dart';
 import 'che_ui/che_screen_awareness.dart';
 import 'che_ui/che_screen_capture.dart';
+import 'security/che_secret_scan.dart';
+import 'security/che_security_screen.dart';
+import 'security/che_security_visibility.dart';
+import 'security/che_session_store.dart';
+import 'brain/che_brain_ledger_screen.dart';
+import 'brain/che_brain_overview.dart';
+import 'brain/che_brain_regions.dart' show CheBrainNav, CheBrainSourceKind, CheBrainSourceLink;
+import 'brain/che_brain_truth_screen.dart';
+import 'rooms/che_cloud_computer_room.dart';
+import 'brain/che_brain_list.dart' show CheBrainRecordLinks;
+import 'brain/che_brain_sections.dart' show CheBrainEvidence, CheEvidenceKind, cheRecordIdsOf;
+import 'che_ui/che_owner_improvements.dart';
+import 'workflows/che_workflows_screen.dart';
+import 'film/che_film_studio_screen.dart';
+import 'music/che_recording_studio.dart';
 import 'world/che_meeting_room.dart';
 import 'world/che_meetings.dart';
 import 'world/che_plan_room.dart';
@@ -42,6 +60,7 @@ import 'che_speech_pipeline.dart';
 import 'che_notifications.dart';
 import 'platform/che_platform_client.dart';
 import 'platform/che_platform_screens.dart';
+import 'widgets/che_chat_image.dart';
 import 'widgets/che_render_bench.dart';
 import 'che_stream_batcher.dart';
 import 'che_spoken_text.dart';
@@ -58,27 +77,39 @@ import 'che_wake_match.dart';
 import 'che_voice_health.dart';
 import 'che_voice_state.dart';
 import 'che_local_voice_loop.dart';
+import 'che_private_voice.dart';
 import 'che_cloud_voice_picker.dart';
 import 'che_voice_studio.dart';
 import 'che_voice_ui.dart';
 import 'che_app_portal.dart';
 import 'che_video.dart';
 import 'che_creations.dart';
+import 'avatar/che_character_generator.dart';
+import 'world/che_world_population_panel.dart';
 import 'rooms/che_invention_studio.dart';
+import 'rooms/che_invention_viewer.dart';
 import 'che_ui/che_showroom.dart';
 import 'che_video_page.dart';
+import 'visual/che_visual_client.dart';
+import 'visual/che_visual_session.dart';
+import 'visual/che_visual_studio.dart';
 import 'che_plugin_manager.dart';
 import 'che_theme.dart';
 import 'che_world_hub.dart';
 import 'che_immersive_hub_shell.dart';
 import 'devices_hub_scene.dart';
 import 'music_studio_scene.dart';
-import 'create_gallery_scene.dart';
+import 'create/che_code_workspace.dart';
+import 'create/che_creative_studio.dart';
+import 'create/che_project_manager.dart';
+import 'create/che_creation_engine_page.dart';
+import 'create/che_gpu_browser.dart';
+import 'create/che_gpu_connect.dart';
+import 'create/che_live_studio.dart';
 import 'agents/che_agent_runtime.dart';
 import 'agents/che_office_floor_screen.dart';
 import 'home/che_activity_feed.dart';
 import 'home/che_ui_controls_screen.dart';
-import 'agents/che_office_world.dart' show CheRoomVisitors;
 import 'home/che_live_steps.dart';
 import 'home/che_insights_room.dart';
 import 'home/che_cloud_logs_screen.dart';
@@ -104,10 +135,14 @@ import 'che_ui/che_log.dart' show CheTranscriptScreen;
 import 'home/che_home_chat.dart';
 import 'home/screen_command.dart';
 import 'home/che_inline_preview.dart';
+import 'home/che_chat_media.dart';
 import 'home/che_grok_chat_screen.dart';
 import 'home/che_mockup_home.dart';
+import 'home/che_home_tiles.dart';
+import 'home/che_flagstaff_banner.dart';
 import 'home/che_more_tab.dart';
 import 'home/che_connections_screen.dart';
+import 'home/che_broker_return.dart';
 import 'home/che_projects_board.dart';
 import 'home/che_memory_brain.dart';
 import 'che_ui/che_phone_shell.dart';
@@ -121,25 +156,33 @@ import 'memory/che_brain_replica.dart';
 import 'memory/che_knowledge_cache.dart';
 import 'self_update/che_patch_banner.dart';
 import 'self_update/che_update_screen.dart';
+import 'self_update/che_mobile_update.dart';
 import 'self_update/che_update_card.dart';
 import 'self_update/che_self_update_intent.dart';
 import 'rooms/che_markets_room.dart';
 import 'rooms/che_alpaca_paper.dart';
 import 'rooms/che_strategy_controls.dart';
 import 'rooms/che_trading_room.dart';
+import 'trading/che_setup_desk.dart';
+import 'trading/che_trade_replay.dart';
+import 'trading/che_trading_calendar.dart';
+import 'office/che_office_calendar.dart';
 import 'che_ui/che_help.dart';
 import 'rooms/che_store_room.dart';
 import 'rooms/che_pipeline_room.dart';
 import 'rooms/che_creator_studio.dart';
 import 'rooms/che_series_studio.dart';
 import 'rooms/che_art_studio.dart';
-import 'rooms/che_room_segments.dart';
 import 'rooms/che_theater_room.dart';
 import 'rooms/che_workshop_room.dart';
 import 'security/che_app_permissions.dart';
+import 'connect/che_service_onboarding.dart';
 import 'security/che_password_vault.dart';
 import 'security/che_vault_auth.dart';
 import 'browser/che_browser.dart' show CheBrowserActions, CheBrowserScreen;
+import 'browser/che_form_filler.dart' show CheFormFillVoice;
+import 'browser/che_master_profile.dart';
+import 'browser/che_master_profile_screen.dart';
 import 'browser/che_video_voice.dart';
 import 'browser/che_embedded_app_shell.dart' show CheEmbeddedAppAnnouncer;
 import 'brain/che_brain_space.dart' show CheBrainSpaceController;
@@ -160,6 +203,10 @@ import 'che_web_voice_stub.dart'
     if (dart.library.js_interop) 'che_web_voice_web.dart' as che_web_voice;
 import 'knowledge/che_knowledge_library_screen.dart';
 import 'rithmic/che_rithmic_screen.dart';
+import 'rithmic/rithmic_live.dart';
+import 'rithmic/rithmic_session.dart';
+import 'rithmic/rithmic_recorder.dart';
+import 'trading/che_paper_account_panel.dart';
 
 part 'home_state/connected.dart';
 part 'home_state/home_ui.dart';
@@ -195,6 +242,15 @@ const String _defaultAgentBaseUrl = String.fromEnvironment(
 void main() {
   runApp(const CHEApp());
 }
+
+/// The text-scale range every CHE screen is verified at: the responsive guard (che_responsive_layout_test.dart) draws
+/// each guarded screen at 1.0 and 1.3. Larger text beyond this overflowed and overlapped (2026-10-23).
+const double kCheMinTextScale = 0.9;
+const double kCheMaxTextScale = 1.3;
+
+/// The text scale CHE draws with: the system's accessibility size times CHE's own setting, held to the verified range.
+double cheEffectiveTextScale(TextScaler system, double app) =>
+    (system.scale(1) * app).clamp(kCheMinTextScale, kCheMaxTextScale).toDouble();
 
 class CHEApp extends StatefulWidget {
   const CHEApp({super.key});
@@ -242,7 +298,9 @@ class _CHEAppState extends State<CHEApp> {
             final mq = MediaQuery.of(context);
             // "Look at my screen" captures from here: every page, sheet and dialog.
             return CheScreenCapture.wrap(MediaQuery(
-              data: mq.copyWith(textScaler: TextScaler.linear(_ui.textScale)),
+              // The iPhone's own text size (Settings > Accessibility > Larger Text) times CHE's Text size setting.
+              // Before 2026-10-23 CHE's setting replaced the system size, so Larger Text did nothing in CHE.
+              data: mq.copyWith(textScaler: TextScaler.linear(cheEffectiveTextScale(mq.textScaler, _ui.textScale))),
               child: child ?? const SizedBox.shrink(),
             ));
           },
@@ -367,6 +425,25 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
     finally { if (mounted) _set(() => _approvalBusy = false); }
   }
 
+  // The full state poll runs every 15 s only while it is needed: a background job is still running, or the Chat or
+  // Office tab is on screen. Otherwise (home, More, idle) it runs once a minute, so an idle phone sends far less.
+  int _idleStatePollTicks = 0;
+
+  bool _statePollDue() {
+    final jobsRunning = backgroundJobs.any((j) => !const {'complete', 'failed', 'cancelled', 'dead_letter'}.contains(j['status']));
+    if (jobsRunning || _shellTab == 1 || _shellTab == 2) {
+      _idleStatePollTicks = 0;
+      return true;
+    }
+    _idleStatePollTicks++;
+    if (_idleStatePollTicks < 4) return false;
+    _idleStatePollTicks = 0;
+    return true;
+  }
+
+  /// The owner is in a live voice conversation: CHE is awake and listening for turns (not standing by).
+  bool get _inActiveVoiceConversation => openConversation && !cheSleeping;
+
   Future<void> _notifyFinishedJobs() async {
     final prefs = await SharedPreferences.getInstance();
     final key = 'che_job_notices_$cheAgentBaseUrl';
@@ -378,7 +455,7 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
           ? 'Finished: ${job['title']}. ${job['result']}'
           : 'Work needs attention: ${job['title']}. ${job['error']}';
       final noticeBody = '${job['status'] == 'complete' ? job['result'] : job['error']}'
-          .replaceAll(RegExp(r'\\s+'), ' ')
+          .replaceAll(RegExp(r'\s+'), ' ')
           .trim();
       await CheNotifications.show(
         id: 'job-$id',
@@ -391,7 +468,10 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
       if (!mounted) return;
       _set(() => messages.add({'role': 'assistant', 'text': text}));
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text, maxLines: 4, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 20))));
-      if (!_isSpeaking && !_isSending) await speakText(text);
+      // Passive poll: no automatic speech unless the owner is talking with CHE right now.
+      if (chePassiveNoticeMaySpeak(activeConversation: _inActiveVoiceConversation, speaking: _isSpeaking, sending: _isSending)) {
+        await speakText(text, record: false);
+      }
     }
     await prefs.setStringList(key, _notifiedJobs.toList());
   }
@@ -431,6 +511,11 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
   bool _autoSentCurrentTurn = false;
   // Words held open while the owner pauses mid-thought (see microphone.dart).
   String _heldSpeech = '';
+  /// The text the last native partial transcript put in the composer (che_live_partial.dart).
+  String _nativePartialShown = '';
+  // Words the owner spoke while CHE was still answering; sent as the next turn
+  // when the current one finishes (voice.dart, send.dart).
+  final CheHeldUtterance _pendingSpokenText = CheHeldUtterance();
   int _heldSpeechRestarts = 0;
   Timer? _quickEndTimer;
   String? _lastVoiceEngine;
@@ -451,6 +536,8 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
   String? _lastAgentStateBody;
   // The last measured round trip of the state poll, shown as the Home reactor's LAT readout (real, never estimated).
   int? _stateLatencyMs;
+  /// The Worker's quiet over-budget line (che_ui/che_performance_note.dart); null while within budget.
+  String? _performanceNote;
   int _speechTurn = 0;
 
   // Single authority for automatic mic restarts (see che_mic_supervisor.dart).
@@ -462,6 +549,8 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
   Timer? _proactiveTimer;
 
   StreamSubscription<Map<String, dynamic>>? _nativeIosVoiceSub;
+  // Links opened into CHE (che://), such as the return from Tradovate's sign-in page.
+  StreamSubscription<Uri>? _deepLinkSub;
   bool _nativeIosVoiceActive = false;
   // True while native iOS recognition is taking ownership of the microphone.
   // speech_to_text callbacks can fire during cancellation; this prevents those
@@ -482,6 +571,7 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
 
   // Unread INCOMING mailbox messages (badge on the Chat mailbox icon).
   int _mailboxUnread = 0;
+  List<CheFlagstaffGist> _mailboxLatest = const [];
   // Changing this rebuilds the priority banner, so it reloads what is unread.
   int _priorityBannerVersion = 0;
   Timer? _mailboxBadgeTimer;
@@ -501,6 +591,9 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
   String? _realtimePendingMediaType;
 
   String? _deviceToken;
+
+  /// Why the sign-in ended (shown quietly until the owner pairs again); empty while signed in.
+  String _sessionNotice = '';
   String _agentBaseUrl = _defaultAgentBaseUrl;
   // A free sample asked for by voice; it plays after CHE finishes the spoken reply.
   String? _pendingVoicePreviewId;
@@ -511,6 +604,8 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
     baseUrl: () => cheAgentBaseUrl,
     headers: () => _authHeaders,
   );
+  // The Creative Studio on the Create tab, so a voice route can scroll it to a studio or open Create New.
+  final _creativeStudioKey = GlobalKey<CheCreativeStudioState>();
   late final CheAgentRuntimeController _officeRuntime =
       CheAgentRuntimeController(_agentRuntime)..addListener(_onOfficeChanged);
   bool _officeRuntimeStarted = false;
@@ -567,6 +662,8 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
     }
     if (!_isSending) return;
     HapticFeedback.lightImpact();
+    // Stop ends this turn; words he said over it are not sent as the next one.
+    _pendingSpokenText.drop();
     setState(() => _stopRequested = true);
     _requestGate.cancelCurrent();
   }
@@ -575,6 +672,7 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
   void _homeNewChat() {
     if (_isSending) return;
     HapticFeedback.selectionClick();
+    _pendingSpokenText.drop();
     setState(() {
       messages.clear();
       _liveSteps.clear();
@@ -592,6 +690,96 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
         baseUrl: () => cheAgentBaseUrl,
         headers: () => _authHeaders,
         onSpeak: (text) => unawaited(speakText(text, record: false, readOnDemand: true)),
+      ),
+    ));
+  }
+
+  /// SECURITY: Home → Security, More → Security, and "open security" by voice.
+  Future<void> _openSecurity({String? section}) async {
+    HapticFeedback.selectionClick();
+    await Navigator.of(context).push(MaterialPageRoute<void>(
+      builder: (_) => CheSecurityScreen(
+        client: CheSecurityClient(baseUrl: cheAgentBaseUrl, headers: () => _authHeaders),
+        onSpeak: (text) => unawaited(speakText(text, record: false, readOnDemand: true)),
+        onListen: () => unawaited(toggleListening()),
+        initialSection: section,
+        // Knox, the Security Chief, opens the same Office desk as the Office floor.
+        onOpenAgent: (name) => _openOfficeFloor(agentName: name),
+      ),
+    ));
+  }
+
+  /// More → Truth & Verification: what the hallucination auditor checked and which actions have a receipt
+  /// (also asked in chat: "what do you know versus what are you guessing?").
+  Future<void> _openBrainTruth() async {
+    HapticFeedback.selectionClick();
+    await Navigator.of(context).push(MaterialPageRoute<void>(
+      builder: (_) => CheBrainTruthScreen(
+        client: CheBrainTruthClient(baseUrl: cheAgentBaseUrl, headers: () => _authHeaders),
+        onSpeak: (text) => unawaited(speakText(text, record: false, readOnDemand: true)),
+        onListen: () => unawaited(toggleListening()),
+      ),
+    ));
+  }
+
+  /// More → Brain Ledger: what entered CHE's brain, when, by category (also asked in chat).
+  Future<void> _openBrainLedger() async {
+    HapticFeedback.selectionClick();
+    await Navigator.of(context).push(MaterialPageRoute<void>(
+      builder: (_) => CheBrainLedgerScreen(
+        client: CheBrainLedgerClient(baseUrl: cheAgentBaseUrl, headers: () => _authHeaders),
+        onSpeak: (text) => unawaited(speakText(text, record: false, readOnDemand: true)),
+        onListen: () => unawaited(toggleListening()),
+      ),
+    ));
+  }
+
+  /// More → Owner Improvements (also "open owner improvements" in chat): what the owner asked CHE to change.
+  Future<void> _openOwnerImprovements() async {
+    HapticFeedback.selectionClick();
+    await Navigator.of(context).push(MaterialPageRoute<void>(
+      builder: (_) => CheOwnerImprovementsScreen(
+        client: CheOwnerImprovementsClient(baseUrl: cheAgentBaseUrl, headers: () => _authHeaders),
+        onSpeak: (text) => unawaited(speakText(text, record: false, readOnDemand: true)),
+        onListen: () => unawaited(toggleListening()),
+      ),
+    ));
+  }
+
+  /// More → Film Studio (also "open the film studio" in chat).
+  Future<void> _openFilmStudio() async {
+    HapticFeedback.selectionClick();
+    await Navigator.of(context).push(MaterialPageRoute<void>(
+      builder: (_) => CheFilmStudioScreen(
+        client: CheFilmClient(baseUrl: cheAgentBaseUrl, headers: () => _authHeaders),
+        series: _filmSeriesPanel(),
+        tools: _filmTools(),
+        onSpeak: (text) => unawaited(speakText(text, record: false, readOnDemand: true)),
+        onListen: () => unawaited(toggleListening()),
+      ),
+    ));
+  }
+
+  /// More → Cloud Computer (also "open your cloud computer" in chat): environments, jobs, approvals and costs.
+  Future<void> _openCloudComputer() async {
+    HapticFeedback.selectionClick();
+    await Navigator.of(context).push(MaterialPageRoute<void>(
+      builder: (_) => CheCloudComputerRoom(
+        client: CheCloudComputerClient(baseUrl: cheAgentBaseUrl, headers: () => _authHeaders),
+        onSpeak: (text) => unawaited(speakText(text, record: false, readOnDemand: true)),
+        onListen: () => unawaited(toggleListening()),
+      ),
+    ));
+  }
+
+  /// More → Workflows (also "open the workflows page" in chat).
+  Future<void> _openWorkflows() async {
+    HapticFeedback.selectionClick();
+    await Navigator.of(context).push(MaterialPageRoute<void>(
+      builder: (_) => CheWorkflowsScreen(
+        client: CheWorkflowsClient(baseUrl: cheAgentBaseUrl, headers: () => _authHeaders),
+        onSpeak: (text) => unawaited(speakText(text, record: false, readOnDemand: true)),
+        onListen: () => unawaited(toggleListening()),
       ),
     ));
   }
@@ -867,7 +1055,7 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
       await _loadAgentState(silent: true);
     };
     CheEmbeddedAppAnnouncer.speak = (message) {
-      unawaited(speakText(message, record: false));
+      unawaited(speakText(message, record: false, show: true));
     };
   }
 
@@ -964,10 +1152,15 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
   Map<String, String>? _pendingAttachment;
   String? _streamMediaUrl;
   String? _streamMediaType;
+  // The saved media ID, thumbnail and library list of the reply (che_chat_media.dart), shown as tiles under it.
+  Map<String, String> _streamMediaExtra = {};
   // How CHE read a held or multi-step turn (issue #345), shown quietly under the reply.
   String? _streamUnderstoodAs;
   // The reply's Soul and engine provenance (Response Details → Personality), from its done event.
   Map<String, dynamic>? _streamResponseDetails;
+
+  /// The Brain records the streamed reply rests on (`record_ids`), shown as links under it.
+  List<String> _streamRecordIds = const [];
   final ImagePicker _imagePicker = ImagePicker();
 
   List<String> savedMemories = [];
@@ -1256,9 +1449,12 @@ OWNER AGENCY
   void initState() {
     super.initState();
     CheSoulClient.configure(baseUrl: () => cheAgentBaseUrl, headers: () => _authHeaders);
+    // Rithmic forward recorder: market data only (trades, bid/offer, closed 1-minute candles), never credentials.
+    CheRithmicRecorder.instance.configure(baseUrl: () => cheAgentBaseUrl, headers: () => _authHeaders);
     _screenToken = CheScreenAwareness.register(context, _shellScreenReport);
     unawaited(CheNotifications.requestPermission());
     unawaited(_syncUiVoicePrefs());
+    unawaited(ChePrivateVoice.load());
     CheUiPreferences.instance.addListener(_onUiPrefsChanged);
     WidgetsBinding.instance.addObserver(this);
     // No wake listening at launch: the mic opens only from the mic button,
@@ -1270,8 +1466,11 @@ OWNER AGENCY
     _wireBrowser();
     initializeVoice();
     _loadSecuritySession();
+    _deepLinkSub = CheDeepLinks.listen(_onDeepLink);
+    // The Rithmic session the owner left on comes back by itself (login from the on-device vault; off after Disconnect).
+    if (!kIsWeb) unawaited(cheRithmicResume());
     _jobPollTimer = Timer.periodic(const Duration(seconds: 15), (_) {
-      if (_appForeground) unawaited(_loadAgentState(silent: true));
+      if (_appForeground && _statePollDue()) unawaited(_loadAgentState(silent: true));
     });
     unawaited(_loadTypingPref());
     Future<void>.delayed(const Duration(seconds: 3), () => _refreshMailboxBadge(announce: false));
@@ -1334,6 +1533,12 @@ OWNER AGENCY
     if (kIsWeb || !mounted) return;
 
     _appForeground = state == AppLifecycleState.resumed;
+    // The Rithmic feed lives on this phone and pauses while CHE is off screen; the chart marks that stretch as a gap.
+    if (state == AppLifecycleState.resumed || state == AppLifecycleState.paused || state == AppLifecycleState.hidden) {
+      CheRithmicLive.instance.appLifecycle(foreground: state == AppLifecycleState.resumed);
+      // iOS may have dropped the socket while CHE was away: reconnect the session the owner left on.
+      if (state == AppLifecycleState.resumed && !CheRithmicLive.instance.attached) unawaited(cheRithmicResume());
+    }
     if (state == AppLifecycleState.resumed) {
       _updateHomeState(() { _priorityBannerVersion++; });
       unawaited(_loadAgentState(silent: true));
@@ -1391,6 +1596,7 @@ OWNER AGENCY
 
   @override
   void dispose() {
+    unawaited(_deepLinkSub?.cancel());
     CheScreenAwareness.unregister(_screenToken);
     CheUiPreferences.instance.removeListener(_onUiPrefsChanged);
     WidgetsBinding.instance.removeObserver(this);
@@ -1461,13 +1667,24 @@ OWNER AGENCY
         ),
       3 => CheScreenReport(page: 'CHE World', tab: 'CHE World', tabs: tabs, controls: const ['the CHE World rooms', 'the bottom tabs']),
       4 => CheScreenReport(page: 'More', tab: 'More', tabs: tabs,
-          controls: const ['Talk to CHE', 'Trading Room', 'Conversations', 'Flagstaff', 'Voice IDs', 'Keys', 'UI Controls', 'Connections', 'Change CHE’s voice', 'Voice replies', 'Projects and Businesses', 'Language and translate', 'the bottom tabs']),
+          controls: const ['Talk to CHE', 'Security', 'Film Studio', 'Cloud Computer', 'Workflows', 'Trading Room', 'Conversations', 'Flagstaff', 'Voice IDs', 'Keys', 'UI Controls', 'Connections', 'Change CHE’s voice', 'Voice replies', 'Projects and Businesses', 'Language and translate', 'the bottom tabs']),
       _ => CheScreenReport(page: 'Home', tab: 'Home', tabs: tabs,
           detail: '${_officeRuntime.agents.length} agents, ${_officeRuntime.working} working',
           controls: const ['Talk to CHE', 'Type to CHE', 'Voice on or off', 'The Office', 'Brain', 'Trading', 'Create',
-            'CHE World', 'Read status', 'the bottom tabs']),
+            'CHE World', 'Security', 'Read status', 'the bottom tabs']),
     };
   }
+
+  // Tabs the owner has opened at least once (see build). Index 3 is CHE World, which opens its own screen.
+  final Set<int> _builtTabs = {};
+
+  Widget _buildTab(int i, List<CheAgent> agents) => switch (i) {
+        0 => _buildHomeTab(agents),
+        1 => _buildChatTab(agents),
+        2 => _buildOfficeTab(),
+        4 => _buildMoreTab(),
+        _ => const SizedBox.shrink(),
+      };
 
   void _goShellTab(int i) {
     if (i < 0 || i > 4) return;
@@ -1478,7 +1695,10 @@ OWNER AGENCY
     }
     if (i == _shellTab) return;
     HapticFeedback.selectionClick();
+    final mark = CheLatency.begin(CheLatency.navigation);
     setState(() => _shellTab = i);
+    // Measured to the frame that draws the new tab, which is when the owner can see it.
+    WidgetsBinding.instance.addPostFrameCallback((_) => mark.end());
   }
 
   Future<void> _speakOfficeStatus() async {
@@ -1493,13 +1713,18 @@ OWNER AGENCY
       for (final p in r.agents.take(6))
         '${p.agent.name}: ${p.agent.task?.isNotEmpty == true ? p.agent.task : p.agent.status.label}.',
     ];
-    await speakText(parts.join(' '), record: false);
+    await speakText(parts.join(' '), record: false, show: true);
   }
 
   Widget _shellStatusChrome() {
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
+        // Private voice: one quiet line while it is on (never spoken by itself).
+        ChePrivateVoiceBanner(onTurnOff: () {
+          controller.text = 'turn off private voice';
+          unawaited(sendMessage());
+        }),
         ChePatchBanner(onSpeak: (text) => speakText(text, record: false, readOnDemand: true)),
         CheJobActivityBanner(
           fetch: (path, body) => _postAgentJson(path, body),
@@ -1540,6 +1765,7 @@ OWNER AGENCY
             const CheHelpButton(color: Colors.white, dense: true),
           ]),
         ),
+        if (_performanceNote != null) ChePerformanceNote(note: _performanceNote!),
         if (_actionApprovals.isNotEmpty)
           ConstrainedBox(
             constraints: const BoxConstraints(maxHeight: 150),
@@ -1581,11 +1807,15 @@ OWNER AGENCY
       onOpenOffice: () => _goShellTab(2),
       onOpenBrain: _openMemoryBrain,
       onOpenTrading: () => _openAssistantHub(tab: 1),
+      onConnectRithmic: () => unawaited(_openRithmic()),
       onOpenCreate: () => _openAssistantHub(tab: 5),
       onOpenWorld: () => _goShellTab(3),
+      onOpenRecordingStudio: () => unawaited(_openRecordingStudio()),
+      onOpenSecurity: () => unawaited(_openSecurity()),
       onOfficeStatus: () => unawaited(_speakOfficeStatus()),
       onTapAgent: (agent) => _openOfficeFloor(agentName: agent.name),
       unread: _mailboxUnread,
+      flagstaffLatest: _mailboxLatest,
       onOpenFlagstaff: () => unawaited(_openMailbox()),
       latencyMs: _stateLatencyMs,
       handsFree: CheUiPreferences.instance.handsFreeWake,
@@ -1734,6 +1964,7 @@ OWNER AGENCY
     await speakText(
       "Reply language set to ${cheLanguageByCode(selected).name}.",
       record: false,
+      show: true,
     );
   }
 
@@ -1774,7 +2005,7 @@ OWNER AGENCY
     final target = to ?? _translateTarget;
     final clean = text.trim();
     if (clean.isEmpty) {
-      await speakText('Nothing to translate.', record: false);
+      await speakText('Nothing to translate.', record: false, show: true);
       return;
     }
     if (!await _ensurePaired()) return;
@@ -1786,7 +2017,7 @@ OWNER AGENCY
       final translation = result?['translation']?.toString() ?? '';
       final name = result?['target_name']?.toString() ?? cheLanguageByCode(target).name;
       if (translation.isEmpty) {
-        await speakText('Translation returned empty.', record: false);
+        await speakText('Translation returned empty.', record: false, show: true);
         return;
       }
       if (!mounted) return;
@@ -1800,7 +2031,7 @@ OWNER AGENCY
       _scrollToBottom();
       await speakText(translation, record: false);
     } catch (e) {
-      await speakText('Translation failed: $e', record: false);
+      await speakText('Translation failed: $e', record: false, show: true);
     }
   }
 
@@ -1821,7 +2052,7 @@ OWNER AGENCY
         _officePane = 1;
       });
     } catch (e) {
-      await speakText('ML job failed: $e', record: false);
+      await speakText('ML job failed: $e', record: false, show: true);
     }
   }
 
@@ -1896,27 +2127,8 @@ OWNER AGENCY
                         headers: () => _authHeaders,
                       ),
                     )),
-            map: CheMemoryBrainRoom(
-              dots: cheBuildMemoryDots(
-                savedMemories: savedMemories,
-                memoryNotes: memoryNotes,
-                learnedPersonality: learnedPersonality,
-                learnedKnowledge: learnedKnowledge,
-                brainLinks: brainLinks,
-                suggestions: suggestions,
-                conversationMemories: conversationMemories,
-                brainRecords: _brainReplicaRecords(),
-              ),
-              brainLinks: brainLinks,
-              roster: team,
-              loading: _brainSyncing,
-              offline: _brainReplica.lastReceipt?.unreachable == true,
-              error: _brainReplica.lastReceipt?.syncNotice,
-              pendingSync: _brainReplica.pendingOps,
-              onReadAloud: (t) => speakText(t, record: false, readOnDemand: true),
-              onRefresh: () => _loadAgentState(silent: true),
-              onOpenAgent: (name) => _openOfficeFloor(agentName: name),
-            ),
+            map: _brainOverview(true),
+            chipsBottomInset: cheBrainOverviewChipsInset,
             ),
             offline: const CheOfflineBrainPanel(compact: true),
             onOpenAtlas: _openKnowledgeAtlas,
@@ -1973,6 +2185,7 @@ OWNER AGENCY
                 enabled: _officePane == 0,
                 child: CheOfficeFloorScreen(
                 client: _agentRuntime,
+                runtime: _officeRuntime,
                 embedded: true,
                 onSpeak: (text) => speakText(text, record: false, readOnDemand: true),
                 onTalkToChe: () => _goShellTab(1),
@@ -2077,6 +2290,11 @@ OWNER AGENCY
               }());
             }
           },
+          onPrivateVoiceChanged: (on) {
+            if (!mounted) return;
+            controller.text = on ? 'turn on private voice' : 'turn off private voice';
+            unawaited(sendMessage());
+          },
           onVoiceVolumeChanged: (_) {
             unawaited(flutterTts.setVolume(CheUiPreferences.instance.voiceVolume));
           },
@@ -2096,13 +2314,32 @@ OWNER AGENCY
     await Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => const CheRithmicScreen()));
   }
 
-  Future<void> _openConnections({String autoConnect = ''}) async {
+  // che://broker/tradovate: back from Tradovate's sign-in. An open Connections page re-checks and
+  // reports; otherwise Connections opens and does. Other links are ignored.
+  void _onDeepLink(Uri uri) {
+    final back = CheBrokerReturn.parse(uri);
+    if (back == null) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final open = CheConnectionsVoice.brokerReturn;
+      if (open != null) {
+        unawaited(open(back.result));
+      } else {
+        unawaited(_openConnections(brokerReturn: back.result));
+      }
+    });
+  }
+
+  Future<void> _openConnections({String autoConnect = '', String brokerReturn = ''}) async {
     await Navigator.of(context).push(MaterialPageRoute<void>(
       builder: (_) => CheConnectionsScreen(
         baseUrl: cheAgentBaseUrl,
         headers: () => _authHeaders,
         autoConnect: autoConnect,
+        brokerReturn: brokerReturn,
         onSpeak: (line) => unawaited(speakText(line, record: false, readOnDemand: true)),
+        onCloudComputer: _openCreationEngine,
+        onColabGpu: () => unawaited(_showGpuBrowser()),
         onVoiceSettings: _openVoiceSelector,
         onKeys: () {
           Navigator.of(context).pop();
@@ -2163,6 +2400,62 @@ OWNER AGENCY
           subtitle: 'What CHE can make, and what still needs setup',
           onTap: _openShowroom,
           hue: kit.CheColors.apps,
+        ),
+        CheMoreItem(
+          icon: Icons.view_in_ar_rounded,
+          title: 'Cloud Computer',
+          subtitle: 'Workers for 3D creation · free cloud CPU · your Colab GPU · Pair Colab · GPU jobs',
+          onTap: _openCreationEngine,
+          hue: kit.CheColors.accent,
+        ),
+        CheMoreItem(
+          icon: Icons.security_rounded,
+          title: 'Security',
+          subtitle: 'Protection status · Cyber World · incidents · access · lockdown preview',
+          onTap: () => unawaited(_openSecurity()),
+          hue: kit.CheColors.accent,
+        ),
+        CheMoreItem(
+          icon: Icons.psychology_rounded,
+          title: 'Brain Ledger',
+          subtitle: 'What entered CHE\'s brain, when, and whether it is usable yet',
+          onTap: () => unawaited(_openBrainLedger()),
+          hue: kit.CheColors.accent,
+        ),
+        CheMoreItem(
+          icon: Icons.fact_check_rounded,
+          title: 'Truth & Verification',
+          subtitle: 'What CHE verified, labelled inference or removed, from real audit records',
+          onTap: () => unawaited(_openBrainTruth()),
+          hue: kit.CheColors.accent,
+        ),
+        CheMoreItem(
+          icon: Icons.tune_rounded,
+          title: 'Owner Improvements',
+          subtitle: 'What you asked CHE to change, where it stands, and undo',
+          onTap: () => unawaited(_openOwnerImprovements()),
+          hue: kit.CheColors.accent,
+        ),
+        CheMoreItem(
+          icon: Icons.movie_rounded,
+          title: 'Film Studio',
+          subtitle: 'Films from one sentence on free compute, with real progress',
+          onTap: () => unawaited(_openFilmStudio()),
+          hue: kit.CheColors.apps,
+        ),
+        CheMoreItem(
+          icon: Icons.cloud_rounded,
+          title: 'Cloud Computer',
+          subtitle: 'Where CHE\'s jobs run, what each environment has, approvals and costs',
+          onTap: () => unawaited(_openCloudComputer()),
+          hue: kit.CheColors.apps,
+        ),
+        CheMoreItem(
+          icon: Icons.account_tree_rounded,
+          title: 'Workflows',
+          subtitle: 'What CHE reuses, what it saves, and what she learned',
+          onTap: () => unawaited(_openWorkflows()),
+          hue: kit.CheColors.accent,
         ),
         CheMoreItem(
           icon: Icons.apps_rounded,
@@ -2372,6 +2665,9 @@ OWNER AGENCY
   @override
   Widget build(BuildContext context) {
     _ensureOfficeRuntime();
+    // A tab is built the first time the owner opens it, not on launch: the Office, Chat and More trees were all
+    // built and reconciled on every app-wide rebuild, even when the owner never opened them.
+    _builtTabs.add(_shellTab);
     final agents = [for (final p in _officeRuntime.agents) p.agent];
     final content = SafeArea(
       top: _shellTab != 1,
@@ -2387,14 +2683,10 @@ OWNER AGENCY
               // running, so the Office crew, CHE's orb and glowing cards animated off screen and slowed every tap.
               // Each tab also repaints on its own layer.
               children: [
-                for (final (i, tab) in [
-                  _buildHomeTab(agents),
-                  _buildChatTab(agents),
-                  _buildOfficeTab(),
-                  const SizedBox.shrink(),
-                  _buildMoreTab(),
-                ].indexed)
-                  TickerMode(enabled: i == _shellTab, child: RepaintBoundary(child: tab)),
+                for (var i = 0; i < 5; i++)
+                  _builtTabs.contains(i)
+                      ? TickerMode(enabled: i == _shellTab, child: RepaintBoundary(child: _buildTab(i, agents)))
+                      : const SizedBox.shrink(),
               ],
             ),
           ),

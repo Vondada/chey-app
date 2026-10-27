@@ -117,4 +117,23 @@ void main() {
     expect(find.text('Emergency Stop is on: no new entries anywhere.'), findsOneWidget);
     expect(find.bySemanticsLabel('Allow new entries'), findsOneWidget);
   });
+
+  // Owner audit (2026-10-24): a strategy that is switched on but has no fresh data says "waiting for data" and why,
+  // and a running one names its delayed data, never "live".
+  testWidgets('a switched-on strategy without data reads waiting for data; running names its delayed data', (tester) async {
+    tester.view.physicalSize = const Size(900, 9000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final w = FakeWorker();
+    final rows = [for (final r in (w.view['strategies'] as List)) (r as Map).cast<String, dynamic>()];
+    rows[0] = {...rows[0], 'state': 'waiting for data', 'evaluating': false, 'state_reason': 'The newest bar from Yahoo MNQ=F closed 180 minutes ago (market closed or the feed stopped). No signal is being evaluated until new bars arrive.', 'data_label': ''};
+    rows[1] = {...rows[1], 'state': 'running', 'evaluating': true, 'state_reason': '', 'data_label': 'DELAYED: Yahoo MNQ=F, about 10 minutes behind. Research and forward paper testing only, not live data.'};
+    w.view = {...w.view, 'strategies': rows};
+    await tester.pumpWidget(host(w, <String>[]));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('waiting for data'), findsWidgets);
+    expect(find.textContaining('No signal is being evaluated until new bars arrive.'), findsOneWidget);
+    expect(find.text('DELAYED: Yahoo MNQ=F, about 10 minutes behind. Research and forward paper testing only, not live data.'), findsOneWidget);
+    expect(find.bySemanticsLabel(RegExp('^${RegExp.escape('${rows[0]['name']}')}.*waiting for data\\..*No signal is being evaluated')), findsOneWidget);
+  });
 }

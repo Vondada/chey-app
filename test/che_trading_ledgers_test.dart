@@ -23,6 +23,8 @@ Map<String, dynamic> view({bool simUnreadable = false}) => {
           'best': {'name': 'Breakout over the 20-bar high', 'trades': 40, 'win_rate': 55, 'out_of_sample_expectancy_r': 0.2, 'label': 'not proven yet'},
           'feeds': [{'symbol': 'BTCUSDT', 'status': 'LIVE', 'last_bar': '2026-10-20T04:40:00Z'}, {'symbol': 'MNQ', 'status': 'waiting for the first tick'}],
           'by_strategy': [{'name': 'Breakout over the 20-bar high', 'trades': 40, 'win_rate': 55, 'expectancy_r': 0.2, 'label': 'not proven yet'}],
+          'equity_basis': 'The curve is the running sum of net R over every closed simulated trade, across all strategies and instruments.',
+          'by_instrument': [{'symbol': 'BTCUSDT', 'trades': 120, 'win_rate': 41.7, 'net_r': -180.5, 'expectancy_r': -1.5}, {'symbol': 'MNQ', 'trades': 52, 'win_rate': 50, 'net_r': 4.25, 'expectancy_r': 0.08}],
           'equity': {'unit': 'R', 'points': [{'t': '2026-10-19T14:10:00Z', 'v': 0.6}, {'t': '2026-10-19T14:11:00Z', 'v': 1.2}, {'t': '2026-10-19T14:12:00Z', 'v': 0.2}], 'trades': 3},
         }),
         ledger('forward_paper_journal', 'forward paper journal', trades: 81, extra: {
@@ -66,11 +68,16 @@ void main() {
     expect(find.textContaining('Leading, not proven: Breakout over the 20-bar high'), findsOneWidget);
     expect(find.textContaining('Best: Fair value gap retest'), findsOneWidget);
     expect(find.textContaining('read it from Alpaca'), findsOneWidget);
+    // The curve's total is explained and split per instrument (owner, 2026-10-24: "what is −226.98 R?").
+    expect(find.byKey(const Key('ledger_equity_basis')), findsOneWidget);
+    expect(find.byKey(const Key('ledger_instrument_BTCUSDT')), findsOneWidget);
+    expect(find.byKey(const Key('ledger_instrument_MNQ')), findsOneWidget);
     expect(asked, isEmpty, reason: 'opening the room is silent');
     await tester.tap(find.text('Read aloud'));
     expect(asked, [kReadLedgersAloud]);
     // VoiceOver hears each set as one labelled card, with its count and status.
     expect(find.bySemanticsLabel(RegExp(r'Strategy simulation\. .*172 closed trades, status running')), findsOneWidget);
+    expect(find.bySemanticsLabel(RegExp(r'Strategy simulation\. .*across all strategies and instruments\. BTCUSDT: 120 trades, net ')), findsOneWidget);
     expect(find.bySemanticsLabel(RegExp(r'Forward paper journal\. .*81 closed trades.*Net \$1250\.50')), findsOneWidget);
     semantics.dispose();
   });

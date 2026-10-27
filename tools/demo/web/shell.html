@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Create Room demo frame</title>
+<!-- The frame every demo segment is captured in (tools/demo/capture.mjs), 1280x720. The 3D views are CHE's real Live
+     Studio page (assets/characters/app/studio.html) in iframes, unmodified, or the demo's office stage; cards are
+     drawn here. On top: the honesty label(s), the spoken line as large text (AGENTS.md: every spoken reply is shown),
+     and an evidence box with what the files really contain. -->
+<style>
+:root{--bg:#050608;--card:#0e1114;--hi:#161b1f;--stroke:rgba(201,209,214,.18);--silver:#c9d1d6;--text:#f4f6f7;--dim:#9aa4aa;--teal:#2fd6c8;
+  --real:#1fae5b;--proto:#e3a21a;--nzero:#e0463c}
+*{box-sizing:border-box}
+html,body{margin:0;width:1280px;height:720px;overflow:hidden;background:var(--bg);color:var(--text);font:16px/1.35 "DejaVu Sans",system-ui,sans-serif}
+#view{position:absolute;inset:0}
+#view iframe{position:absolute;border:0;background:#050608}
+#labels{position:absolute;left:18px;top:16px;display:flex;flex-direction:column;gap:6px;max-width:760px;z-index:5}
+.lab{display:inline-flex;align-items:center;gap:9px;padding:6px 12px 6px 8px;border-radius:8px;font-weight:700;font-size:15px;color:#fff;
+  background:rgba(5,6,8,.82);border:2px solid currentColor;width:fit-content}
+.lab b{padding:2px 8px;border-radius:5px;color:#071008;font-size:14px;letter-spacing:.5px}
+.lab span{color:var(--text);font-weight:600}
+.lab.real{color:var(--real)} .lab.real b{background:var(--real)}
+.lab.proto{color:var(--proto)} .lab.proto b{background:var(--proto)}
+.lab.nzero{color:var(--nzero)} .lab.nzero b{background:var(--nzero);color:#fff}
+#info{position:absolute;right:18px;top:16px;max-width:430px;padding:10px 14px;border-radius:10px;background:rgba(14,17,20,.86);
+  border:1px solid var(--stroke);font:13px/1.45 "DejaVu Sans Mono",monospace;color:var(--silver);z-index:5}
+#info:empty{display:none}
+#info h4{margin:0 0 4px;font:700 13px "DejaVu Sans",sans-serif;color:var(--teal);letter-spacing:1px;text-transform:uppercase}
+#caption{position:absolute;left:50%;transform:translateX(-50%);bottom:26px;max-width:1120px;padding:10px 20px;border-radius:12px;
+  background:rgba(5,6,8,.84);border:1px solid var(--stroke);font-size:29px;line-height:1.25;font-weight:600;text-align:center;z-index:6}
+#caption:empty{display:none}
+#caption .who{display:block;font-size:14px;letter-spacing:2px;text-transform:uppercase;color:var(--teal);font-weight:700;margin-bottom:2px}
+#caption .who.owner{color:#f2c46d}
+#seg{position:absolute;right:16px;bottom:8px;font-size:12px;color:var(--dim);z-index:6}
+/* cards */
+.card{position:absolute;inset:0;padding:70px 60px 120px}
+h1{font-size:54px;margin:0 0 8px;letter-spacing:1px} h2{font-size:26px;margin:0 0 18px;color:var(--silver);font-weight:500}
+.muted{color:var(--dim)}
+.legend{display:flex;flex-direction:column;gap:14px;margin-top:34px}
+.legend .lab{font-size:20px}
+.phone{position:absolute;left:60px;top:118px;width:430px;height:470px;border-radius:26px;background:var(--card);border:1px solid var(--stroke);padding:22px}
+.phone h3{margin:0 0 4px;font-size:22px} .field{margin:14px 0;padding:12px;border-radius:12px;background:var(--hi);border:1px solid var(--stroke);min-height:132px;font-size:17px}
+.chips{display:flex;gap:8px;flex-wrap:wrap} .chip{padding:7px 12px;border-radius:18px;border:1px solid var(--teal);color:var(--teal);font-size:15px}
+.chip.on{background:var(--teal);color:#04201d;font-weight:700}
+.btn{margin-top:18px;padding:14px;border-radius:14px;text-align:center;font-size:20px;font-weight:700;background:var(--tealDeep,#0e5f59);border:2px solid var(--teal)}
+.btn.pressed{background:var(--teal);color:#04201d}
+.log{position:absolute;left:530px;top:118px;right:60px;height:440px;border-radius:14px;background:#000;border:1px solid var(--stroke);padding:14px 16px;
+  font:14px/1.5 "DejaVu Sans Mono",monospace;color:#b9f5c9;overflow:hidden}
+.log .t{color:var(--dim)}
+.styles{position:absolute;left:40px;right:40px;top:150px;display:flex;gap:22px;justify-content:center}
+.sty{width:384px;background:var(--card);border:2px solid var(--stroke);border-radius:16px;padding:10px;text-align:center;transition:none}
+.sty.hl{border-color:var(--teal);box-shadow:0 0 0 3px rgba(47,214,200,.35)}
+.sty .imgs{display:flex;gap:6px} .sty img{display:block;border-radius:10px;background:#222}
+.sty .n{font-size:22px;font-weight:800;margin-top:6px} .sty .s{font-size:13px;color:var(--dim)}
+table{border-collapse:collapse;font-size:15px;width:100%} td,th{padding:6px 10px;border-bottom:1px solid var(--stroke);text-align:left;vertical-align:top}
+th{color:var(--dim);font-weight:600}
+.k{font-weight:800;font-size:13px;padding:2px 7px;border-radius:5px;white-space:nowrap}
+.k.real{background:var(--real);color:#071008} .k.proto{background:var(--proto);color:#1a1200} .k.nzero{background:var(--nzero);color:#fff}
+.sheet{position:absolute;left:340px;top:110px;width:600px;border-radius:22px;background:var(--card);border:1px solid var(--stroke);padding:22px}
+.row{display:flex;gap:14px;align-items:center;padding:12px;border-radius:14px;background:var(--hi);margin-top:12px;border:2px solid transparent}
+.row.hl{border-color:var(--teal)} .row img{width:72px;height:96px;object-fit:cover;border-radius:8px;background:#222}
+</style>
+</head>
+<body>
+<div id="view"></div>
+<div id="labels"></div>
+<div id="info"></div>
+<div id="caption"></div>
+<div id="seg"></div>
+<script>
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s).replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+const KIND = { real: 'REAL', proto: 'PROTOTYPE', nzero: 'NOT AT $0' };
+window.SH = {
+  labels(list) { $('labels').innerHTML = list.map(([k, t]) => `<div class="lab ${k}"><b>${KIND[k]}</b><span>${esc(t)}</span></div>`).join(''); },
+  caption(who, text) {
+    const names = { che: 'CHE', owner: 'Owner (re-enacted voice)', ava: 'Ava · voice 3', ava2: 'Ava · voice 7' };
+    $('caption').innerHTML = text ? `<span class="who ${who}">${esc(names[who] || who)}</span>${esc(text)}` : '';
+  },
+  info(html) { $('info').innerHTML = html || ''; },
+  seg(t) { $('seg').textContent = t; },
+  view(html) { $('view').innerHTML = html; },
+  frames(rects) {   // studio iframes: [{id, x, y, w, h}]
+    $('view').innerHTML = rects.map((r) => `<iframe id="${r.id}" src="../../../assets/characters/app/studio.html" style="left:${r.x}px;top:${r.y}px;width:${r.w}px;height:${r.h}px"></iframe>`).join('');
+  },
+};
+</script>
+</body>
+</html>

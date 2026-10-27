@@ -5,7 +5,7 @@
 // when it is due (worker.js tradingTick), next to the hourly learning tick (trading_lab.js).
 //
 // Minute bars, per symbol (MINUTE_FEEDS). Only these have real minute bars:
-//   BTCUSDT, ETHUSDT  Binance public 1-minute candles (trading_lab.js loadCandles, interval 1m). Live.
+//   BTC-USD, ETH-USD  Coinbase Exchange public 1-minute candles (market_universe.js, Kraken fallback). Live.
 //   MNQ               Yahoo Finance 1-minute bars of the continuous front month (market_feed.js
 //                     loadIntraday, MNQ=F). Delayed CME data: research and paper evidence only.
 //                     NQ is the same front month, so it is not simulated again: one feed per underlying.
@@ -20,8 +20,9 @@
 // The rules are trading_lab.js rules (entry, prepare, the skill builder, stats) with fixed
 // parameters, listed in SIM_STRATEGIES. Nothing is fitted here. The out-of-sample window is the
 // newest share of the time watched, cut once per symbol at its first pass and never moved after.
-import { loadCandles, prepare, prepareSession, stats, strategyById } from './trading_lab.js';
+import { prepare, prepareSession, stats, strategyById } from './trading_lab.js';
 import { loadIntraday } from './market_feed.js';
+import { cryptoSpotCandles } from './market_universe.js';
 import { wilsonInterval } from './trading_evidence.js';
 import { ENVIRONMENTS } from './trading_environments.js';
 
@@ -44,14 +45,19 @@ export const HEARTBEAT_MS = 15 * 60_000;
 // Costs are assumptions, stated here and in every output. Change them in code, not in a model.
 // One feed per underlying: MNQ stands for the Nasdaq-100 front month. NQ (the same front month) is not a
 // second feed, so the same bars can never count twice.
+// Crypto moved from Binance to Coinbase Exchange (owner, 2026-10-24): Binance's public API refuses the
+// Worker's region (the feeds showed UNAVAILABLE), while Coinbase and Kraken serve public candles
+// without an account or deposit. BTC-USD on Coinbase is a different market from BTCUSDT on Binance,
+// so the symbol changed too; the older BTCUSDT/ETHUSDT trades keep their own symbol in the records.
+// Fee: Coinbase Exchange's lowest published taker tier, 0.60% per side (a fill at the next open is a taker fill).
 export const MINUTE_FEEDS = Object.freeze({
-  BTCUSDT: {
-    label: 'BTC/USD', kind: 'binance', session: 'utc', feed: 'Binance public 1-minute candles (live)',
-    fee: { rate: 0.001 }, slip: { rate: 0.0002 },
+  'BTC-USD': {
+    label: 'BTC/USD (Coinbase Exchange spot)', kind: 'coinbase', base: 'BTC', session: 'utc', feed: 'Coinbase Exchange public 1-minute candles (live; Kraken as fallback)',
+    fee: { rate: 0.006 }, slip: { rate: 0.0002 },
   },
-  ETHUSDT: {
-    label: 'ETH/USD', kind: 'binance', session: 'utc', feed: 'Binance public 1-minute candles (live)',
-    fee: { rate: 0.001 }, slip: { rate: 0.0002 },
+  'ETH-USD': {
+    label: 'ETH/USD (Coinbase Exchange spot)', kind: 'coinbase', base: 'ETH', session: 'utc', feed: 'Coinbase Exchange public 1-minute candles (live; Kraken as fallback)',
+    fee: { rate: 0.006 }, slip: { rate: 0.0002 },
   },
   MNQ: {
     label: 'Micro E-mini Nasdaq-100 (MNQ)', kind: 'yahoo', root: 'MNQ', session: 'et', tick: 0.25, pointValue: 2,
@@ -63,6 +69,7 @@ export const MINUTE_FEEDS = Object.freeze({
 export const NOT_SIMULATED = Object.freeze([
   { symbols: ['NQ'], why: 'NQ is the same Nasdaq-100 front month as MNQ (Yahoo NQ=F and MNQ=F). It is simulated once, as MNQ, so identical bars never count twice.' },
   { symbols: ['ES', 'MES'], why: 'No minute bars in CHE. The stock and futures path (Stooq) is daily only, so these are not simulated.' },
+  { symbols: ['BTCUSDT', 'ETHUSDT'], why: 'Binance\'s public API refuses the Worker\'s region, so these Binance markets are no longer simulated. Their earlier trades stay in the records under their own symbol. BTC and ETH now run on Coinbase Exchange spot (BTC-USD, ETH-USD), a different market with its own fees.' },
 ]);
 
 // Ten strategies. Each id is a trading_lab rule: "signal|trend filter|target in R". The rule
@@ -91,13 +98,14 @@ const iso = (ms) => new Date(ms).toISOString();
 const dayOf = (ms) => new Date(ms).toISOString().slice(0, 10);
 const pct = (x) => `${Math.round(x * 10000) / 100}%`;
 const isFeed = (symbol) => Object.prototype.hasOwnProperty.call(MINUTE_FEEDS, symbol);
+export const RETIRED_FEEDS = new Set(['BTCUSDT', 'ETHUSDT']);
 
 export function minuteFeedFor(symbol) {
   return isFeed(symbol) ? { symbol, ...MINUTE_FEEDS[symbol] } : null;
 }
 
 export function costText(feed) {
-  if (feed.kind === 'binance') return `${pct(feed.fee.rate)} commission per side and ${pct(feed.slip.rate)} slippage per fill (assumed)`;
+  if (feed.fee.rate) return `${pct(feed.fee.rate)} commission per side and ${pct(feed.slip.rate)} slippage per fill (assumed)`;
   return `$${feed.fee.perSideUsd.toFixed(2)} commission per side and one tick (${feed.slip.ticks * feed.tick} point) slippage per fill (assumed)`;
 }
 
@@ -120,6 +128,15 @@ export function sessionOf(kind, time) {
 const slipPrice = (feed, price) => (feed.slip.rate ? price * feed.slip.rate : feed.slip.ticks * feed.tick);
 const feePoints = (feed, price) => (feed.fee.rate ? price * feed.fee.rate : feed.fee.perSideUsd / feed.pointValue);
 
+// Cost gate (trading audit, owner 2026-10-24): 1-minute stops can be far smaller than the round-trip costs. A Coinbase
+// taker fill costs 0.6% a side, so a 0.1% stop loses about 12 R in costs before the price moves at all.
+// A signal whose round-trip costs (two commissions, two slippage units) exceed this share of its risk is not taken
+// and is counted as too_costly. It uses only the fill bar's open, like the fill itself. Stored trades are unchanged.
+export const MAX_COST_R = 0.25;
+export function roundTripCost(feed, price) {
+  return 2 * feePoints(feed, price) + 2 * slipPrice(feed, price);
+}
+
 // Only closed bars count. A bar is closed once its minute has ended (open time + 1 minute <= now).
 export function closedBars(candles, now) {
   const byTime = new Map();
@@ -135,10 +152,10 @@ export function closedBars(candles, now) {
 // Reads one feed through the existing public market paths. Failure is reported, never filled in.
 async function loadMinuteBars(symbol, { fetcher, now }) {
   const feed = MINUTE_FEEDS[symbol];
-  if (feed.kind === 'binance') {
-    const data = await loadCandles(symbol, { interval: '1m', fetcher });
+  if (feed.kind === 'coinbase') {
+    const data = await cryptoSpotCandles(feed.base, '1m', { fetcher, now });
     if (data.error) return { error: data.error };
-    return { candles: data.candles, status: 'LIVE', source: feed.feed };
+    return { candles: data.candles, status: data.status, source: data.source };
   }
   const data = await loadIntraday(feed.root, { fetcher, now, range: '1d', interval: '1m' });
   if (data.status === 'UNAVAILABLE' || !Array.isArray(data.candles)) return { error: data.error || 'feed unavailable' };
@@ -148,13 +165,14 @@ async function loadMinuteBars(symbol, { fetcher, now }) {
 // ─── Orders and exits (one open position per strategy and symbol) ─────────
 
 // A pending signal fills at the open of the next minute bar, or it expires.
-function fillOrder(pend, bar, feed) {
+function fillOrder(pend, bar, feed, maxCostR = MAX_COST_R) {
   if (Date.parse(bar.t) - Date.parse(pend.signal_t) !== TICK_MS) return { expired: true, trade: null };
   const entryRaw = bar.o;
   const entry = entryRaw + slipPrice(feed, entryRaw);
   const risk = entryRaw - pend.stop;
   // Opened beyond the stop or the target: no fill, so no trade.
   if (!(risk > 0) || !(entry < pend.target)) return { expired: false, trade: null };
+  if (roundTripCost(feed, entryRaw) > maxCostR * risk) return { expired: false, trade: null, too_costly: true };
   return {
     expired: false,
     trade: {
@@ -190,7 +208,7 @@ function frozenCut(bars) {
 
 // Runs every strategy over the bars not yet processed for one symbol. Returns the closed trades.
 // isPaused is checked before each bar and before every open, so a pause stops new trades at once.
-function runBars(state, symbol, bars, ctx, feed, status, isPaused = () => false) {
+function runBars(state, symbol, bars, ctx, feed, status, isPaused = () => false, maxCostR = MAX_COST_R) {
   const closed = [];
   let opened = 0;
   const sym = state.symbols[symbol];
@@ -211,8 +229,9 @@ function runBars(state, symbol, bars, ctx, feed, status, isPaused = () => false)
       const pend = state.pending[key];
       if (pend && !pos) {
         delete state.pending[key];
-        const fill = fillOrder(pend, bar, feed);
+        const fill = fillOrder(pend, bar, feed, maxCostR);
         if (fill.expired) state.counts.expired += 1;
+        else if (fill.too_costly) state.counts.too_costly += 1;
         else if (!fill.trade) state.counts.not_filled += 1;
         else { pos = fill.trade; state.open[key] = pos; opened += 1; }
       }
@@ -246,7 +265,7 @@ function freshState() {
   return {
     version: 1, paused: false, paused_at: null, resumed_at: null, last_tick: null, saved_at: null, ticks: 0, last_paused_marker: null,
     symbols: {}, open: {}, pending: {},
-    counts: { bars: 0, not_filled: 0, expired: 0, errors: 0 },
+    counts: { bars: 0, not_filled: 0, expired: 0, too_costly: 0, errors: 0 },
     trades: { first: 0, last: -1, tail: 0, stored: 0, dropped: 0 },
     spend: { ceiling_usd: 0, day: null, spent_usd: 0 },
   };
@@ -272,6 +291,9 @@ export async function readSimState(storage) {
   live.set(storage, state);
   return state;
 }
+
+// True when this state object is no longer the live run: a reset replaced it while a pass still held it.
+const replacedRun = (storage, state) => live.has(storage) && live.get(storage) !== state;
 
 // The one place the state is saved on its own. A pass saves through commitSim, which writes the trades with it.
 async function saveSimState(storage, state, now = Date.now()) {
@@ -314,7 +336,10 @@ async function tradeWrites(storage, meta, trades, { cap = TRADE_CAP, chunk = TRA
 // One storage write for a pass: the closed trades' chunks and the state, together and atomically. Chunks that
 // the cap drops are deleted after that write. Without force, a pass with nothing to save writes nothing.
 async function commitSim(storage, state, closed, now, { cap = TRADE_CAP, chunk = TRADE_CHUNK, force = false } = {}) {
+  // A pass of a run the owner reset meanwhile writes nothing: the fresh run (and its archive) stays as it is.
+  if (replacedRun(storage, state)) return false;
   const { puts, deletes } = await tradeWrites(storage, state.trades, closed, { cap, chunk });
+  if (replacedRun(storage, state)) return false;
   if (!force) return false;
   state.saved_at = iso(now);
   await storage.put({ ...puts, [STATE_KEY]: state });
@@ -370,7 +395,7 @@ function assertPaperOnly() {
 }
 
 /** One minute pass, from the alarm. Does nothing when not due, paused, or over the spend ceiling. */
-export async function strategySimTick(storage, { fetcher = fetch, now = Date.now(), force = false, loaders = {}, cap = TRADE_CAP, chunk = TRADE_CHUNK } = {}) {
+export async function strategySimTick(storage, { fetcher = fetch, now = Date.now(), force = false, loaders = {}, cap = TRADE_CAP, chunk = TRADE_CHUNK, maxCostR = MAX_COST_R } = {}) {
   const state = await readSimState(storage);
   if (!force && state.last_tick && now - Date.parse(state.last_tick) < TICK_MS - DUE_SLACK_MS) {
     return { ran: false, skipped: 'not due', next_at: iso(Date.parse(state.last_tick) + TICK_MS) };
@@ -395,7 +420,8 @@ export async function strategySimTick(storage, { fetcher = fetch, now = Date.now
   assertPaperOnly();
   state.last_tick = iso(now);
   state.ticks += 1;
-  const halted = () => state.paused;
+  // Paused by the owner, or reset (a new run replaced this one): either way nothing more from this pass is used.
+  const halted = () => state.paused || replacedRun(storage, state);
   const report = {};
   const closed = [];
   let opened = 0;
@@ -422,11 +448,12 @@ export async function strategySimTick(storage, { fetcher = fetch, now = Date.now
     if (!bars.length) { report[symbol] = { new_bars: 0, status: data.status }; continue; }
     const ctx = { ...prepare(bars), ...prepareSession(bars, (t) => sessionOf(feed.session, t)) };
     const before = sym.bars;
-    const { closed: made, opened: filled } = runBars(state, symbol, bars, ctx, feed, data.status, halted);
+    const { closed: made, opened: filled } = runBars(state, symbol, bars, ctx, feed, data.status, halted, maxCostR);
     closed.push(...made);
     opened += filled;
     report[symbol] = { new_bars: sym.bars - before, status: data.status, closed: made.length, opened: filled };
   }
+  if (replacedRun(storage, state)) return { ran: false, replaced: true, closed: 0, opened: 0, at: iso(now) };
   if (halted()) {
     // Paused during this pass: what finished before the pause is saved, and nothing was opened after it.
     state.last_paused_marker = { at: iso(now), note: 'Paused by the owner during a pass: no bars used and no trade opened after the pause.' };
@@ -471,6 +498,54 @@ export async function setStrategySimPaused(storage, paused, now = Date.now()) {
   state.last_paused_marker = null;
   await saveSimState(storage, state, now);
   return { paused: state.paused, paused_at: state.paused_at, resumed_at: state.resumed_at };
+}
+
+/**
+ * Stop: pause, and cancel the signals still waiting for their fill. Open positions stay open as they are (closing them
+ * needs a real bar, and none is read while stopped); resuming manages them again. Returns what was cancelled and kept.
+ */
+export async function stopStrategySim(storage, now = Date.now()) {
+  const state = await readSimState(storage);
+  const cancelled = Object.keys(state.pending).length;
+  state.pending = {};
+  state.paused = true;
+  state.paused_at = iso(now);
+  state.last_paused_marker = { at: iso(now), note: `Stopped by the owner: ${cancelled} waiting signal${cancelled === 1 ? '' : 's'} cancelled, open positions kept.` };
+  await saveSimState(storage, state, now);
+  return { stopped: true, cancelled_signals: cancelled, open_positions: Object.values(state.open).map((p) => ({ strategy: p.strategy, symbol: p.symbol, entry_t: p.entry_t, entry: p.entry, stop: p.stop, target: p.target })) };
+}
+
+export const ARCHIVE_INDEX = 'strategy_sim_archives';
+const archiveKey = (id, part) => `strategy_sim_archive:${id}:${part}`;
+
+/**
+ * Reset: start a fresh simulation. Asks first (AGENTS.md: ask before removing anything): without confirm it changes
+ * nothing and says what would be archived. With confirm, the state and every stored trade chunk are copied to an
+ * archive first, the copy is read back and checked, and only then are the live keys replaced. Nothing is lost:
+ * the archive is listed in strategy_sim_archives with its trade count. The fresh simulation starts paused.
+ */
+export async function resetStrategySim(storage, { confirm = false, now = Date.now() } = {}) {
+  const state = await readSimState(storage);
+  const trades = await readStoredTrades(storage, state.trades);
+  const summary = { trades: trades.length, open_positions: Object.keys(state.open).length, pending: Object.keys(state.pending).length, dropped_earlier: state.trades.dropped };
+  if (!confirm) return { ok: false, needs_confirmation: true, would_archive: summary };
+  const id = iso(now).replace(/[:.]/g, '-');
+  const puts = { [archiveKey(id, 'state')]: state };
+  for (let c = 0; c * TRADE_CHUNK < trades.length; c++) puts[archiveKey(id, `trades:${c}`)] = trades.slice(c * TRADE_CHUNK, (c + 1) * TRADE_CHUNK);
+  const entries = Object.entries(puts);
+  for (let i = 0; i < entries.length; i += 100) await storage.put(Object.fromEntries(entries.slice(i, i + 100)));
+  let copied = 0;
+  for (const [key] of entries.slice(1)) copied += ((await storage.get(key)) || []).length;
+  if (copied !== trades.length || !(await storage.get(archiveKey(id, 'state')))) return { ok: false, error: `archive check failed: ${copied} of ${trades.length} trades read back; nothing was reset` };
+  const index = (await storage.get(ARCHIVE_INDEX)) || [];
+  await storage.put(ARCHIVE_INDEX, [...index, { id, at: iso(now), ...summary, chunks: entries.length - 1 }]);
+  const liveChunks = [];
+  for (let c = state.trades.first; c <= state.trades.last; c++) liveChunks.push(chunkKey(c));
+  const fresh = { ...freshState(), paused: true, paused_at: iso(now), spend: state.spend, last_paused_marker: { at: iso(now), note: `Reset by the owner; the previous run is archived as ${id}.` } };
+  live.set(storage, fresh);
+  await saveSimState(storage, fresh, now);
+  for (const key of liveChunks) await storage.delete(key);
+  return { ok: true, archive: id, archived: summary };
 }
 
 export async function setStrategySimCeiling(storage, usd, now = Date.now()) {
@@ -538,7 +613,8 @@ export function profitLabel(oos) {
 export function leaderboard(trades, symbols) {
   const cuts = oosCuts(symbols);
   // One feed per underlying: a trade on a symbol that is not a minute feed (NQ, the same front month as MNQ) never adds a sample.
-  const counted = trades.filter((t) => isFeed(t.symbol));
+  // A retired feed's trades (Binance BTCUSDT/ETHUSDT, before the move to Coinbase) are real results and stay counted.
+  const counted = trades.filter((t) => isFeed(t.symbol) || RETIRED_FEEDS.has(t.symbol));
   const rows = SIM_STRATEGIES.map((s) => {
     const mine = counted.filter((t) => t.strategy === s.id);
     const oosTrades = mine.filter((t) => isOos(t, cuts));
@@ -579,12 +655,19 @@ export async function strategySimView(storage, { now = Date.now() } = {}) {
     leaderboard: leaderboard(trades, state.symbols),
     trades: { stored: state.trades.stored, dropped: state.trades.dropped, cap: TRADE_CAP, bars: '1-minute bars', newest: trades.slice(-20).reverse() },
     counts: state.counts,
+    // Open positions, each marked when its feed no longer runs: those cannot close until bars for it return.
+    open_positions: Object.values(state.open).map((p) => ({ strategy: p.strategy, symbol: p.symbol, entry_t: p.entry_t, entry: p.entry, stop: p.stop, target: p.target,
+      feed_running: isFeed(p.symbol), hours_open: Math.round((now - Date.parse(p.entry_t)) / 36e5) })),
+    cost_gate: { max_cost_r: MAX_COST_R, skipped: state.counts.too_costly || 0 },
+    archives: (await storage.get(ARCHIVE_INDEX)) || [],
     spend: spendToday(state, now),
     notes: [
       'Paper only. No order, broker or model call. Real money needs your separate approval.',
       'Minute bars only where listed. Stooq daily data is never shown as minute data.',
       'Fills: the open of the next minute plus one slippage unit against us; commissions as listed. A signal with no next minute bar expires unfilled.',
       'The out-of-sample window starts at a frozen cut: 70% of the first window is in sample and every later trade is out of sample. Parameters are fixed, not fitted, in this step.',
+      `Cost gate: a signal is not taken when its round-trip costs exceed ${MAX_COST_R} R of its risk (${state.counts.too_costly || 0} skipped so far). Trades stored before the gate keep their recorded results.`,
+      'Controls: pause, resume, stop (pause and cancel waiting signals; open positions kept) and reset (asks first; the run is archived, never deleted).',
       'Profitable needs 30 out-of-sample trades, positive expectancy after costs, and a 95% Wilson lower bound above break-even. Otherwise: not proven yet.',
     ],
   };
@@ -600,10 +683,13 @@ export function strategySimIntent(message) {
   const text = String(message || '').replace(/[’']/g, "'").trim();
   if (!/\bsimulation\b/i.test(text)) return null;
   if (/\bsimulat(?:ion|ed)\s+(?:trading|account|accounts|mode)\b|\bbroker\s+simulation\b/i.test(text)) return null;
-  const command = /\bstrateg(?:y|ies)\s+simulation\s+(pause|resume|status)\s*$/i.exec(text);
+  const command = /\bstrateg(?:y|ies)\s+simulation\s+(pause|resume|stop|reset|status)\s*$/i.exec(text);
   if (command) return { kind: command[1].toLowerCase() };
+  // Reset archives the run and starts over, so it is asked first: only "yes, reset ..." or "confirm reset ..." does it.
+  if (/^\s*(?:(?:hey\s+)?che[,\s]+)?(?:yes[,!.\s]+|confirm\s+)(?:reset|clear|start\s+over)\s+(?:the\s+|my\s+)?(?:strateg(?:y|ies)\s+|paper\s+)?simulation\b/i.test(text)) return { kind: 'reset', confirm: true };
+  if (/^\s*(?:(?:hey\s+)?che[,\s]+)?(?:please\s+)?(?:reset|clear|start\s+over)\s+(?:the\s+|my\s+)?(?:strateg(?:y|ies)\s+|paper\s+)?simulation\b/i.test(text)) return { kind: 'reset', confirm: false };
   const imperative = /^\s*(?:(?:hey\s+)?che[,\s]+)?(?:please\s+)?(pause|stop|halt|freeze|resume|restart|unpause|start|continue)\s+(?:the\s+|my\s+)?(?:strateg(?:y|ies)\s+|paper\s+)?simulation\b/i.exec(text);
-  if (imperative) return { kind: /^(?:pause|stop|halt|freeze)$/i.test(imperative[1]) ? 'pause' : 'resume' };
+  if (imperative) return { kind: /^(?:stop|halt)$/i.test(imperative[1]) ? 'stop' : /^(?:pause|freeze)$/i.test(imperative[1]) ? 'pause' : 'resume' };
   if (/\bstrateg(?:y|ies)\s+simulation\b/i.test(text)) return { kind: 'status' };
   const status = /\bsimulation\s+(?:status|report|results|leaderboard)\b|\bstatus\s+of\s+(?:the|my)\s+simulation\b|\b(?:how(?:'s|\s+is)|what(?:'s|\s+is))\s+(?:the|my)\s+(?:paper\s+)?simulation\b/i;
   return status.test(text) ? { kind: 'status' } : null;

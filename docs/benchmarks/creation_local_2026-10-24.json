@@ -1,0 +1,549 @@
+{
+ "started_at": "2026-10-24T20:05:53Z",
+ "machine": {
+  "platform": "Linux-6.18.44-fc-v153-x86_64-with-glibc2.39",
+  "python": "3.11.15",
+  "cores": 4,
+  "cpu": "Intel(R) Xeon(R) Processor @ 2.10GHz",
+  "ram_gib": 15.7,
+  "blender": "Blender 5.0.1",
+  "github_runner": null
+ },
+ "scene": {
+  "views": "0,45,90",
+  "samples": 64,
+  "long_edge_px": 480,
+  "reference_samples": 512,
+  "glb_sha256": "49d562e0296f485ad38f1ed0bff537c340284f21f2ff4df3c9660e0b5df79ad4",
+  "glb_bytes": 1141472
+ },
+ "runs": {
+  "build": {
+   "exit_code": 0,
+   "ok": true,
+   "wall_seconds": 3.41,
+   "peak_rss_mib": 352.5,
+   "model": "MODEL /tmp/claude-0/-home-user-chey-app/e7bc87e3-82e7-5016-aa43-9dd940abd88e/scratchpad/render-bench/local-r4b/scene.glb 1141472 bytes 12759 vertices (full-body clothed character, 53-bone skeleton, skin weights, face shape keys, clips; hair: scalp-cap hair mesh in the preset colour (strand hair is n"
+  },
+  "legacy": {
+   "name": "legacy_r1",
+   "exit_code": 0,
+   "ok": true,
+   "wall_seconds": 35.02,
+   "peak_rss_mib": 485.9,
+   "load_before": 2.7,
+   "view_seconds": {
+    "0": 10.58,
+    "45": 9.59,
+    "90": 13.7
+   },
+   "device_line": "DEVICE CPU ['CPU'] 320x480",
+   "profile": {
+    "adaptive_threshold": 0.01,
+    "denoiser": "OPENIMAGEDENOISE",
+    "engine": "CYCLES",
+    "samples": 64
+   },
+   "materials": [],
+   "files": [
+    {
+     "file": "legacy/body_00.png",
+     "bytes": 166960,
+     "sha256": "7d4bc63720894b7b37224307cdaa4b24f91686d9352b84a8537f69a2f73b64bd"
+    },
+    {
+     "file": "legacy/body_45.png",
+     "bytes": 167701,
+     "sha256": "9014bc58f2d43bb481bca1ebb7922d61fe75d6abcc80f32452c504e66a8b1a11"
+    },
+    {
+     "file": "legacy/body_90.png",
+     "bytes": 163350,
+     "sha256": "d7e98fbc177805b281d688d3300604e6a1feacca8208a7140178829c07ff5f55"
+    }
+   ]
+  },
+  "final": {
+   "name": "final_r1",
+   "exit_code": 0,
+   "ok": true,
+   "wall_seconds": 42.81,
+   "peak_rss_mib": 491.8,
+   "load_before": 6.36,
+   "view_seconds": {
+    "0": 15.65,
+    "45": 12.3,
+    "90": 13.7
+   },
+   "device_line": "DEVICE CPU ['CPU'] 320x480",
+   "profile": {
+    "adaptive_min_samples": 16,
+    "adaptive_threshold": 0.02,
+    "caustics": false,
+    "denoise_on_gpu": false,
+    "denoiser": "OPENIMAGEDENOISE",
+    "diffuse_bounces": 3,
+    "engine": "CYCLES",
+    "glossy_bounces": 3,
+    "max_bounces": 6,
+    "persistent_data": true,
+    "sample_clamp_indirect": 6.0,
+    "samples": 64,
+    "transmission_bounces": 4,
+    "transparent_max_bounces": 8
+   },
+   "materials": [
+    "Eye: wet cornea coat",
+    "Hair: strand-direction micro-normal, sheen",
+    "Shoes: clear coat",
+    "Skin: subsurface scattering, pore micro-normal, thin oil coat",
+    "Top: cloth sheen, woven micro-normal",
+    "Trousers: cloth sheen, woven micro-normal"
+   ],
+   "files": [
+    {
+     "file": "final/body_00.png",
+     "bytes": 167666,
+     "sha256": "bef8e0b254f6d3b916a1caa0b99af280a691a62bfc5911dde485fe7fe372eb85"
+    },
+    {
+     "file": "final/body_45.png",
+     "bytes": 168575,
+     "sha256": "179524d63fd0831637090fcfe0ba61067261c7836a0b44605db18518116aa519"
+    },
+    {
+     "file": "final/body_90.png",
+     "bytes": 164287,
+     "sha256": "a433c77c394e7302d7108f294f9ba8922729c78bac2da86ec98a5a61466b5871"
+    }
+   ]
+  },
+  "preview_eevee": {
+   "name": "preview_eevee",
+   "exit_code": -6,
+   "ok": false,
+   "wall_seconds": 1.23,
+   "peak_rss_mib": 276.4,
+   "load_before": 11.71,
+   "view_seconds": {},
+   "device_line": "DEVICE CPU ['CPU'] 320x480",
+   "profile": {
+    "engine": "BLENDER_EEVEE",
+    "samples": 16,
+    "scale": 0.5
+   },
+   "materials": [],
+   "files": [],
+   "tail": [
+    "20:11:12 | INFO: Blender create Mesh node Eye_r",
+    "20:11:12 | INFO: Blender create Mesh node Hair",
+    "20:11:12 | INFO: Blender create Mesh node Shoes",
+    "20:11:12 | INFO: Blender create Mesh node Body",
+    "20:11:12 | INFO: glTF import finished in 0.19s",
+    "DEVICE CPU ['CPU'] 320x480",
+    "PROFILE preview BLENDER_EEVEE {\"engine\": \"BLENDER_EEVEE\", \"samples\": 16, \"scale\": 0.5}",
+    "Couldn't open libEGL.so.1: libEGL.so.1: cannot open shared object file: No such file or directory"
+   ]
+  },
+  "preview": {
+   "name": "preview",
+   "exit_code": 0,
+   "ok": true,
+   "wall_seconds": 7.24,
+   "peak_rss_mib": 391.4,
+   "load_before": 11.71,
+   "view_seconds": {
+    "0": 2.0,
+    "45": 1.43,
+    "90": 2.1
+   },
+   "device_line": "DEVICE CPU ['CPU'] 320x480",
+   "profile": {
+    "denoiser": "OPENIMAGEDENOISE",
+    "engine": "CYCLES",
+    "samples": 4,
+    "scale": 0.5
+   },
+   "materials": [],
+   "files": [
+    {
+     "file": "preview/preview_00.png",
+     "bytes": 46830,
+     "sha256": "aa4da8b87a28f3bcace6fd0ccedc51e66f30c82a574d82cfc17b14f8ed8fef62"
+    },
+    {
+     "file": "preview/preview_45.png",
+     "bytes": 46546,
+     "sha256": "adb12955e7a9d37ad23c8b084675ec845aecb2937f4b832ce70475b976c1b641"
+    },
+    {
+     "file": "preview/preview_90.png",
+     "bytes": 44832,
+     "sha256": "e3c4db1e6ff6e6a72eb72c88c725284f11893befe131e943904aacf4cd94a54c"
+    }
+   ]
+  },
+  "closeup_legacy": {
+   "name": "closeup_legacy",
+   "exit_code": 0,
+   "ok": true,
+   "wall_seconds": 30.84,
+   "peak_rss_mib": 471.4,
+   "load_before": 12.23,
+   "view_seconds": {
+    "0": 28.09
+   },
+   "device_line": "DEVICE CPU ['CPU'] 320x480",
+   "profile": {
+    "adaptive_threshold": 0.01,
+    "denoiser": "OPENIMAGEDENOISE",
+    "engine": "CYCLES",
+    "samples": 64
+   },
+   "materials": [],
+   "files": [
+    {
+     "file": "closeup_legacy/body_00.png",
+     "bytes": 171291,
+     "sha256": "a9b33c82ea317ae6d8208ade6bbed9405a78baac82f781a7255c04c88110fda9"
+    }
+   ]
+  },
+  "closeup_final": {
+   "name": "closeup_final",
+   "exit_code": 0,
+   "ok": true,
+   "wall_seconds": 19.33,
+   "peak_rss_mib": 473.2,
+   "load_before": 15.82,
+   "view_seconds": {
+    "0": 17.86
+   },
+   "device_line": "DEVICE CPU ['CPU'] 320x480",
+   "profile": {
+    "adaptive_min_samples": 16,
+    "adaptive_threshold": 0.02,
+    "caustics": false,
+    "denoise_on_gpu": false,
+    "denoiser": "OPENIMAGEDENOISE",
+    "diffuse_bounces": 3,
+    "engine": "CYCLES",
+    "glossy_bounces": 3,
+    "max_bounces": 6,
+    "persistent_data": true,
+    "sample_clamp_indirect": 6.0,
+    "samples": 64,
+    "transmission_bounces": 4,
+    "transparent_max_bounces": 8
+   },
+   "materials": [
+    "Eye: wet cornea coat",
+    "Hair: strand-direction micro-normal, sheen",
+    "Shoes: clear coat",
+    "Skin: subsurface scattering, pore micro-normal, thin oil coat",
+    "Top: cloth sheen, woven micro-normal",
+    "Trousers: cloth sheen, woven micro-normal"
+   ],
+   "files": [
+    {
+     "file": "closeup_final/body_00.png",
+     "bytes": 172928,
+     "sha256": "6eb3719489c9ead71c904e69bc7b3379493c254b86991491aeb1b3ae770adb6b"
+    }
+   ]
+  },
+  "ref_legacy": {
+   "name": "ref_legacy",
+   "exit_code": 0,
+   "ok": true,
+   "wall_seconds": 94.32,
+   "peak_rss_mib": 473.6,
+   "load_before": 14.65,
+   "view_seconds": {
+    "0": 93.15
+   },
+   "device_line": "DEVICE CPU ['CPU'] 320x480",
+   "profile": {
+    "adaptive_threshold": 0.01,
+    "denoiser": "OPENIMAGEDENOISE",
+    "engine": "CYCLES",
+    "samples": 512
+   },
+   "materials": [],
+   "files": [
+    {
+     "file": "ref_legacy/body_00.png",
+     "bytes": 166748,
+     "sha256": "876813a2fe3163784b4d1ddb475f101b405742c0b41c0c61c6c92fe17cedd5a4"
+    }
+   ]
+  },
+  "ref_final": {
+   "name": "ref_final",
+   "exit_code": 0,
+   "ok": true,
+   "wall_seconds": 167.49,
+   "peak_rss_mib": 472.9,
+   "load_before": 19.24,
+   "view_seconds": {
+    "0": 165.73
+   },
+   "device_line": "DEVICE CPU ['CPU'] 320x480",
+   "profile": {
+    "adaptive_min_samples": 16,
+    "adaptive_threshold": 0.005,
+    "caustics": false,
+    "denoise_on_gpu": false,
+    "denoiser": "OPENIMAGEDENOISE",
+    "diffuse_bounces": 3,
+    "engine": "CYCLES",
+    "glossy_bounces": 3,
+    "max_bounces": 6,
+    "persistent_data": true,
+    "sample_clamp_indirect": 6.0,
+    "samples": 512,
+    "transmission_bounces": 4,
+    "transparent_max_bounces": 8
+   },
+   "materials": [
+    "Eye: wet cornea coat",
+    "Hair: strand-direction micro-normal, sheen",
+    "Shoes: clear coat",
+    "Skin: subsurface scattering, pore micro-normal, thin oil coat",
+    "Top: cloth sheen, woven micro-normal",
+    "Trousers: cloth sheen, woven micro-normal"
+   ],
+   "files": [
+    {
+     "file": "ref_final/body_00.png",
+     "bytes": 167354,
+     "sha256": "c1d88ed55323153e8359bfb0bfd753da0e27131166f8c28dd53d07a3407e742b"
+    }
+   ]
+  }
+ },
+ "quality": {
+  "legacy": {
+   "noise_sigma": {
+    "legacy/body_00.png": 0.552,
+    "legacy/body_45.png": 0.554,
+    "legacy/body_90.png": 0.523
+   },
+   "vs_own_reference": {
+    "view": 0,
+    "ssim": 0.9981,
+    "psnr_db": 46.19
+   }
+  },
+  "final": {
+   "noise_sigma": {
+    "final/body_00.png": 0.535,
+    "final/body_45.png": 0.563,
+    "final/body_90.png": 0.523
+   },
+   "vs_own_reference": {
+    "view": 0,
+    "ssim": 0.9981,
+    "psnr_db": 46.45
+   }
+  },
+  "preview": {
+   "noise_sigma": {
+    "preview/preview_00.png": 0.569,
+    "preview/preview_45.png": 0.608,
+    "preview/preview_90.png": 0.534
+   }
+  },
+  "closeup_legacy": {
+   "noise_sigma": {
+    "closeup_legacy/body_00.png": 0.568
+   }
+  },
+  "closeup_final": {
+   "noise_sigma": {
+    "closeup_final/body_00.png": 0.548
+   }
+  },
+  "ref_legacy": {
+   "noise_sigma": {
+    "ref_legacy/body_00.png": 0.539
+   }
+  },
+  "ref_final": {
+   "noise_sigma": {
+    "ref_final/body_00.png": 0.547
+   }
+  }
+ },
+ "rounds": {
+  "legacy": [
+   {
+    "name": "legacy_r1",
+    "ok": true,
+    "wall_seconds": 35.02,
+    "peak_rss_mib": 485.9,
+    "load_before": 2.7,
+    "view_seconds": {
+     "0": 10.58,
+     "45": 9.59,
+     "90": 13.7
+    }
+   },
+   {
+    "name": "legacy_r2",
+    "ok": true,
+    "wall_seconds": 57.4,
+    "peak_rss_mib": 485.6,
+    "load_before": 11.0,
+    "view_seconds": {
+     "0": 16.45,
+     "45": 20.29,
+     "90": 19.41
+    }
+   },
+   {
+    "name": "legacy_r3",
+    "ok": true,
+    "wall_seconds": 36.82,
+    "peak_rss_mib": 486.6,
+    "load_before": 13.66,
+    "view_seconds": {
+     "0": 12.44,
+     "45": 11.84,
+     "90": 11.31
+    }
+   },
+   {
+    "name": "legacy_r4",
+    "ok": true,
+    "wall_seconds": 33.38,
+    "peak_rss_mib": 486.0,
+    "load_before": 11.48,
+    "view_seconds": {
+     "0": 9.99,
+     "45": 11.09,
+     "90": 11.13
+    }
+   }
+  ],
+  "final": [
+   {
+    "name": "final_r1",
+    "ok": true,
+    "wall_seconds": 42.81,
+    "peak_rss_mib": 491.8,
+    "load_before": 6.36,
+    "view_seconds": {
+     "0": 15.65,
+     "45": 12.3,
+     "90": 13.7
+    }
+   },
+   {
+    "name": "final_r2",
+    "ok": true,
+    "wall_seconds": 38.88,
+    "peak_rss_mib": 491.2,
+    "load_before": 9.57,
+    "view_seconds": {
+     "0": 13.25,
+     "45": 10.27,
+     "90": 14.16
+    }
+   },
+   {
+    "name": "final_r3",
+    "ok": true,
+    "wall_seconds": 39.47,
+    "peak_rss_mib": 490.0,
+    "load_before": 13.19,
+    "view_seconds": {
+     "0": 12.07,
+     "45": 15.58,
+     "90": 10.78
+    }
+   },
+   {
+    "name": "final_r4",
+    "ok": true,
+    "wall_seconds": 30.45,
+    "peak_rss_mib": 490.1,
+    "load_before": 12.36,
+    "view_seconds": {
+     "0": 7.64,
+     "45": 12.25,
+     "90": 9.49
+    }
+   }
+  ]
+ },
+ "comparison": {
+  "rounds": 4,
+  "render_seconds_each_round": {
+   "legacy": [
+    33.87,
+    56.15,
+    35.59,
+    32.21
+   ],
+   "final": [
+    41.65,
+    37.68,
+    38.43,
+    29.38
+   ]
+  },
+  "wall_seconds_each_round": {
+   "legacy": [
+    35.02,
+    57.4,
+    36.82,
+    33.38
+   ],
+   "final": [
+    42.81,
+    38.88,
+    39.47,
+    30.45
+   ]
+  },
+  "load_before_each_run": {
+   "legacy": [
+    2.7,
+    11.0,
+    13.66,
+    11.48
+   ],
+   "final": [
+    6.36,
+    9.57,
+    13.19,
+    12.36
+   ]
+  },
+  "legacy_wall_seconds": 35.92,
+  "upgraded_wall_seconds": 46.41,
+  "legacy_render_seconds_median": 34.73,
+  "final_render_seconds_median": 38.05,
+  "final_vs_legacy_render_speedup": 0.913,
+  "speedup_range": [
+   0.773,
+   1.911
+  ],
+  "legacy_first_picture_seconds_each_round": [
+   11.73,
+   17.7,
+   13.67,
+   11.16
+  ],
+  "legacy_first_picture_seconds_median": 12.7,
+  "upgraded_first_picture_seconds": 3.71,
+  "peak_rss_mib": {
+   "legacy": 486.6,
+   "final": 491.8,
+   "preview": 391.4
+  },
+  "preview_engine": "CYCLES"
+ },
+ "finished_at": "2026-10-24T20:16:42Z"
+}

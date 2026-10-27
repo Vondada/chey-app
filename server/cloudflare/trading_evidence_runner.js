@@ -3,7 +3,7 @@
 // fetches candles, keeps the isolated portfolios and the run log, and writes the answer.
 // Nothing here calls a model. Trading_lab's own paper book is left as it was.
 
-import { loadCandles } from './trading_lab.js';
+import { closedCandles, loadCandles } from './trading_lab.js';
 import { chicagoDayKey } from './chicago_time.js';
 import { paperJournalWinRate } from './atlas_trading.js';
 import {
@@ -49,23 +49,28 @@ export async function evidenceTick(storage, { fetcher = fetch, now = Date.now(),
   const run = { at: new Date(now).toISOString(), symbol: EVIDENCE_SYMBOL, price_series: PRICE_SERIES, ok: false };
   try {
     const data = await load(EVIDENCE_SYMBOL, { fetcher });
+    // Only closed daily bars: a partial row for today would be consumed (last_bar_time moves past it)
+    // and its final prices never read.
+    const candles = data.error ? [] : closedCandles(data.candles, '1d', now);
     if (data.error) {
       run.error = data.error;
+    } else if (!candles.length) {
+      run.error = 'no closed bar yet';
     } else {
-      const problems = candleProblems(data.candles);
+      const problems = candleProblems(candles);
       if (problems.length) {
         run.error = `data refused: ${problems.join('; ')}`;
       } else {
-        const ctx = causalContext(data.candles);
+        const ctx = causalContext(candles);
         const portfolios = await readPortfolios(storage);
         // A portfolio that has never seen a bar starts at the newest one. Replaying the whole history
         // would journal old simulated trades as paper evidence; only bars after this point count.
-        const newest = data.candles[data.candles.length - 1].t;
+        const newest = candles[candles.length - 1].t;
         for (const pf of portfolios) {
           if (pf.last_bar_time == null) Object.assign(pf, { last_bar_time: newest, started_from: newest });
         }
         const closed = [];
-        for (const pf of portfolios) closed.push(...stepPortfolio(pf, data.candles, ctx));
+        for (const pf of portfolios) closed.push(...stepPortfolio(pf, candles, ctx));
         // Each trade is checked on its own. A refused trade is logged with its reason, and it never
         // blocks the rest or stops the portfolio state from saving (which would repeat the same failure).
         const valid = [];
@@ -79,8 +84,8 @@ export async function evidenceTick(storage, { fetcher = fetch, now = Date.now(),
         await savePortfolios(storage, portfolios);
         Object.assign(run, {
           ok: true,
-          bars: data.candles.length,
-          last_bar: data.candles[data.candles.length - 1].t,
+          bars: candles.length,
+          last_bar: candles[candles.length - 1].t,
           closed: closed.length,
           journal,
           rejected: rejected.length,

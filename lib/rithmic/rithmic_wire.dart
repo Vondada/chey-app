@@ -1,13 +1,40 @@
-// Rithmic R | Protocol API, the messages CHE needs for read-only market data: login, heartbeat, logout, the
-// market-data subscription, and the last-trade and best-bid/offer updates it receives. Built from the
-// protocol files in Rithmic's R | Protocol API kit (version 0.90.0.0). Each WebSocket frame is one protobuf
-// message, with no length prefix. Fields are written in ascending field-number order, the same order the
+// Rithmic R | Protocol API, the messages CHE needs for read-only market data: system and gateway discovery, login,
+// heartbeat, logout, the market-data subscription, and the last-trade and best-bid/offer updates it receives. Built from the
+// protocol files in Rithmic's R | Protocol API kit (version 0.90.0.0). Encoders below produce protobuf payloads;
+// the WebSocket transport wraps each in a four-byte big-endian length header. Fields are written in ascending field-number order, the same order the
 // official client produces. There is deliberately no order-entry message here: CHE's Rithmic connection
 // reads market data only.
 import 'dart:convert';
 import 'dart:typed_data';
 
+/// R | Protocol login template version; independent of CHE's application version.
+const kRithmicTemplateVersion = '3.9';
+
+/// R | Protocol's envelope, inside the WebSocket binary message (not its own frame header).
+Uint8List encodeRithmicPacket(Uint8List payload) {
+  if (payload.isEmpty || payload.length > 0x7fffffff) {
+    throw const FormatException('Invalid Rithmic message length.');
+  }
+  final packet = Uint8List(payload.length + 4);
+  ByteData.sublistView(packet).setUint32(0, payload.length, Endian.big);
+  packet.setRange(4, packet.length, payload);
+  return packet;
+}
+
+Uint8List decodeRithmicPacket(Uint8List packet) {
+  if (packet.length < 5 || ByteData.sublistView(packet).getUint32(0, Endian.big) != packet.length - 4) {
+    throw const FormatException('Rithmic message length header does not match its payload.');
+  }
+  return Uint8List.sublistView(packet, 4);
+}
+
 class RithmicTemplate {
+  // Discovery, sent to the bootstrap endpoint before any login (request_rithmic_system_info.proto,
+  // request_rithmic_system_gateway_info.proto in the kit).
+  static const systemInfo = 16;
+  static const systemInfoResponse = 17;
+  static const gatewayInfo = 20;
+  static const gatewayInfoResponse = 21;
   static const login = 10;
   static const loginResponse = 11;
   static const logout = 12;
@@ -89,9 +116,12 @@ Uint8List encodeLogin({
   required String systemName,
   required String appName,
   required String appVersion,
-  String templateVersion = '',
+  String templateVersion = kRithmicTemplateVersion,
   int infraType = RithmicInfra.ticker,
 }) {
+  if (!RegExp(r'^\d+\.\d+$').hasMatch(templateVersion)) {
+    throw ArgumentError('A non-empty Rithmic protocol template version is required.');
+  }
   final m = _Message()
     ..put(130002, (w) => w.string(130002, appName))
     ..put(130004, (w) => w.string(130004, password))
@@ -100,13 +130,76 @@ Uint8List encodeLogin({
     ..put(153621, (w) => w.int32(153621, infraType))
     ..put(153628, (w) => w.string(153628, systemName))
     ..put(_templateField, (w) => w.int32(_templateField, RithmicTemplate.login));
-  if (templateVersion.isNotEmpty) m.put(153634, (w) => w.string(153634, templateVersion));
+  m.put(153634, (w) => w.string(153634, templateVersion));
   return m.encode();
 }
 
 Uint8List encodeHeartbeat() => (_Message()..put(_templateField, (w) => w.int32(_templateField, RithmicTemplate.heartbeat))).encode();
 
 Uint8List encodeLogout() => (_Message()..put(_templateField, (w) => w.int32(_templateField, RithmicTemplate.logout))).encode();
+
+/// Asks the bootstrap endpoint which Rithmic systems exist (for example "Rithmic Paper Trading"). No login needed.
+Uint8List encodeSystemInfoRequest({String userMsg = 'CHE'}) => (_Message()
+      ..put(132760, (w) => w.string(132760, userMsg))
+      ..put(_templateField, (w) => w.int32(_templateField, RithmicTemplate.systemInfo)))
+    .encode();
+
+/// Asks the bootstrap endpoint for the gateways (name and wss address) of one system. No login needed.
+Uint8List encodeGatewayInfoRequest({required String systemName, String userMsg = 'CHE'}) => (_Message()
+      ..put(132760, (w) => w.string(132760, userMsg))
+      ..put(153628, (w) => w.string(153628, systemName))
+      ..put(_templateField, (w) => w.int32(_templateField, RithmicTemplate.gatewayInfo)))
+    .encode();
+
+/// The answers the bootstrap endpoint sends, built the same way. Used by tests to play the server's part.
+Uint8List encodeSystemInfoResponse({required List<String> systems, List<String> rpCodes = const ['0']}) {
+  final w = _Writer();
+  for (final c in rpCodes) {
+    w.string(132766, c);
+  }
+  for (final name in systems) {
+    w.string(153628, name);
+  }
+  w.int32(_templateField, RithmicTemplate.systemInfoResponse);
+  return w.take();
+}
+
+Uint8List encodeGatewayInfoResponse({required String systemName, required List<String> names, required List<String> uris, List<String> rpCodes = const ['0']}) {
+  final w = _Writer();
+  for (final c in rpCodes) {
+    w.string(132766, c);
+  }
+  w.string(153628, systemName);
+  for (final n in names) {
+    w.string(153640, n);
+  }
+  for (final u in uris) {
+    w.string(153641, u);
+  }
+  w.int32(_templateField, RithmicTemplate.gatewayInfoResponse);
+  return w.take();
+}
+
+Uint8List encodeMarketDataResponse({List<String> rpCodes = const ['0']}) {
+  final w = _Writer();
+  for (final c in rpCodes) {
+    w.string(132766, c);
+  }
+  w.int32(_templateField, RithmicTemplate.marketDataUpdateResponse);
+  return w.take();
+}
+
+Uint8List encodeLoginResponse({List<String> rpCodes = const ['0'], double heartbeatInterval = 30}) {
+  final w = _Writer();
+  final hb = ByteData(8)..setFloat64(0, heartbeatInterval, Endian.little);
+  w._tag(153633, 1);
+  w._out.add(hb.buffer.asUint8List());
+  for (final c in rpCodes) {
+    w.string(132766, c);
+  }
+  w.int32(_templateField, RithmicTemplate.loginResponse);
+  return w.take();
+}
 
 /// Subscribes to market data for one contract. [updateBits] picks the updates wanted (see [RithmicUpdateBits]).
 Uint8List encodeMarketDataSubscribe({
@@ -207,21 +300,40 @@ class RithmicFrame {
         ibId: _string(154014) ?? '',
       );
 
+  RithmicSystemInfo toSystemInfo() => RithmicSystemInfo(rpCodes: _strings(132766), systems: _strings(153628));
+
+  RithmicGatewayInfo toGatewayInfo() => RithmicGatewayInfo(
+        rpCodes: _strings(132766),
+        systemName: _string(153628) ?? '',
+        names: _strings(153640),
+        uris: _strings(153641),
+      );
+
+  /// The answer to a market-data subscription: accepted, or the reason (for example a missing market-data permission).
+  RithmicReply toReply() => RithmicReply(_strings(132766));
+
   RithmicLastTrade toLastTrade() => RithmicLastTrade(
         symbol: _string(110100) ?? '',
         exchange: _string(110101) ?? '',
         price: _double(100006),
-        size: _int(159008),
+        // trade_size is 100178 in the public LastTrade schema; 159008 (64-bit size) is kept as a fallback.
+        size: _int(100178) ?? _int(159008),
         ssboe: _int(150100),
+        usecs: _int(150101),
+        sourceSsboe: _int(150400),
+        sourceUsecs: _int(150401),
+        aggressor: _int(112003),
+        isSnapshot: (_int(110121) ?? 0) != 0,
+        presenceBits: _int(149138),
       );
 
   RithmicBestBidOffer toBestBidOffer() => RithmicBestBidOffer(
         symbol: _string(110100) ?? '',
         exchange: _string(110101) ?? '',
         bidPrice: _double(100022),
-        bidSize: _int(159000),
+        bidSize: _int(100030) ?? _int(159000),
         askPrice: _double(100025),
-        askSize: _int(159002),
+        askSize: _int(100031) ?? _int(159002),
         ssboe: _int(150100),
       );
 }
@@ -233,17 +345,73 @@ class RithmicLoginResponse {
   final String fcmId;
   final String ibId;
 
-  /// True only when the server accepted the login: no response code was returned.
-  bool get accepted => rpCodes.isEmpty;
+  /// True only when the server accepted the login. Rithmic answers success with response code "0"; no code at all is
+  /// also success. Any other code is the reason it was refused.
+  bool get accepted => rithmicAccepted(rpCodes);
+}
+
+/// Rithmic's success convention for every response: no code, or a first code of "0".
+bool rithmicAccepted(List<String> rpCodes) => rpCodes.isEmpty || rpCodes.first.trim() == '0';
+
+class RithmicReply {
+  const RithmicReply(this.rpCodes);
+  final List<String> rpCodes;
+  bool get accepted => rithmicAccepted(rpCodes);
+}
+
+class RithmicSystemInfo {
+  const RithmicSystemInfo({required this.rpCodes, required this.systems});
+  final List<String> rpCodes;
+  final List<String> systems;
+  bool get accepted => rithmicAccepted(rpCodes);
+}
+
+class RithmicGatewayInfo {
+  const RithmicGatewayInfo({required this.rpCodes, required this.systemName, required this.names, required this.uris});
+  final List<String> rpCodes;
+  final String systemName;
+  final List<String> names;
+  final List<String> uris;
+  bool get accepted => rithmicAccepted(rpCodes);
 }
 
 class RithmicLastTrade {
-  const RithmicLastTrade({required this.symbol, required this.exchange, required this.price, required this.size, required this.ssboe});
+  const RithmicLastTrade({
+    required this.symbol,
+    required this.exchange,
+    required this.price,
+    required this.size,
+    required this.ssboe,
+    this.usecs,
+    this.sourceSsboe,
+    this.sourceUsecs,
+    this.aggressor,
+    this.isSnapshot = false,
+    this.presenceBits,
+  });
   final String symbol;
   final String exchange;
   final double? price;
   final int? size;
   final int? ssboe;
+
+  /// Microseconds past [ssboe] (field 150101), when Rithmic sent them.
+  final int? usecs;
+
+  /// The exchange's own time for the trade (fields 150400/150401), when sent; preferred over [ssboe].
+  final int? sourceSsboe, sourceUsecs;
+
+  /// Who hit: 1 buyer, 2 seller (field 112003), when sent.
+  final int? aggressor;
+
+  /// The last trade replayed when the subscription starts (field 110121), not a new trade.
+  final bool isSnapshot;
+
+  /// Which values this update carries (field 149138); bit 1 is a trade. Null when absent.
+  final int? presenceBits;
+
+  /// False for an update that only carries other values (volume, VWAP) and no trade.
+  bool get isTrade => presenceBits == null || presenceBits! & 1 == 1;
 }
 
 class RithmicBestBidOffer {

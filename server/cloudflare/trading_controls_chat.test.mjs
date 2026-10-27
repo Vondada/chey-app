@@ -153,3 +153,20 @@ test('/api/trading/controls: a raise without confirm changes nothing; with confi
   assert.equal(back.view.strategies.find((r) => r.id === 'ema-pullback-5m').qty, 1);
   assert.equal(done.view.audit[0].who, 'owner (iPhone)');
 });
+
+test('the strategy governor routes: view, owner pause with its log entry, why each setup was taken or skipped (paper only)', sqlite, async () => {
+  const che = await owner();
+  const view = await che.api('/api/trading/governor');
+  assert.equal(view.live_trading, 'disabled: the governor never enables broker orders');
+  assert.equal(view.settings.min_trades, 30);
+  assert.ok(Array.isArray(view.strategies) && Array.isArray(view.allocation) && view.allocation.length >= 10);
+  assert.match(view.spoken, /forward paper trades to judge yet/);
+  const paused = await che.api('/api/trading/governor', 'POST', { action: 'pause', strategy: 'vwap-revert-5m', reason: 'owner test' });
+  assert.equal(paused.ok, true);
+  const log = await che.api('/api/trading/governor/decisions');
+  assert.equal(log.decisions[0].action, 'pause');
+  assert.equal(log.decisions[0].by, 'owner');
+  assert.deepEqual((await che.api('/api/trading/governor/trades')).items, []);
+  const bad = await che.api('/api/trading/governor', 'POST', { action: 'launch' });
+  assert.equal(bad.ok, false);
+});

@@ -310,14 +310,15 @@ jobs:
             esac
             list=$(list_models "$prov" | grep -E "^$prov/" || true)
             case $prov in
-              openrouter) list=$(printf '%s\n' "$list" | grep -E ':free$' | grep -iE 'coder|qwen|deepseek|glm|kimi|gpt|llama' || true);;
+              openrouter) list=$(printf '%s\n' "$list" | grep -E ':free$' | grep -iE 'coder|qwen|deepseek|glm|kimi|gpt' || true);;
               google) list=$(printf '%s\n' "$list" | grep -iE 'flash' | grep -viE 'preview|exp|image|tts|live|lite' || true);;
               groq) list=$(printf '%s\n' "$list" | grep -iE 'gpt-oss|qwen' || true);;
-              cerebras) list=$(printf '%s\n' "$list" | grep -iE 'coder|qwen|gpt-oss|llama' || true);;
+              cerebras) list=$(printf '%s\n' "$list" | grep -iE 'coder|qwen|gpt-oss' || true);;
               mistral) list=$(printf '%s\n' "$list" | grep -iE 'codestral|devstral' || true);;
             esac
             [ -n "$list" ] || continue
-            ranked=$(printf '%s\n' "$list" | grep -viE 'guard|embed|audio|[-_.]8b' | sort -rV | head -2 || true)
+            # llama-3.3 was retired by its provider (404): never rank it, however the list is filtered.
+            ranked=$(printf '%s\n' "$list" | grep -viE 'guard|embed|audio|[-_.]8b|llama-3\.3' | sort -rV | head -2 || true)
             one=$(printf '%s\n' "$ranked" | sed -n '1p')
             two=$(printf '%s\n' "$ranked" | sed -n '2p')
             [ -z "$one" ] || first="$first $one"

@@ -370,6 +370,7 @@ export function speakRuntimeStatus(result = {}) {
   const counted = Number.isInteger(result.changed_files);
   const changed = files ? `changed ${files} file${files === 1 ? '' : 's'}${diff}` : counted ? 'changed no files' : 'recorded no change count';
   const changes = files ? `${files} file${files === 1 ? '' : 's'} changed${diff}` : counted ? 'no files changed yet' : 'no change count recorded';
+  const hasPr = Number(result.pr_number) > 0;
   const pr = Number(result.pr_number) > 0 ? `pull request ${Number(result.pr_number)}` : 'its pull request';
   const parts = [];
   // GitHub could not be asked whether the silent run is alive: say so rather
@@ -394,12 +395,17 @@ export function speakRuntimeStatus(result = {}) {
     }
     case 'resuming': parts.push('I am resuming the coding job from its verified checkpoint on my OpenCode runner now.'); break;
     case 'implemented': parts.push(`My coding runner ${changed}.`); break;
-    case 'pr_open': parts.push(`I ${changed} and opened ${pr === 'its pull request' ? 'a pull request' : pr}. Tests are running.`); break;
+    // A PR or a merge is claimed only with its number: the record is the receipt (AGENTS.md; reliability lane bug 1).
+    case 'pr_open': parts.push(hasPr
+      ? `I ${changed} and opened ${pr}. Tests are running.`
+      : `My runner reports a pull request, but the record has no pull request number, so I cannot confirm one was opened.`); break;
     case 'reviewing': parts.push(`Tests passed. My reviewer is checking ${pr}.`); break;
     case 'approved_waiting_owner': parts.push(`Tests and independent review passed for ${pr}. It is waiting for your approval, sir; I have not merged or deployed it.`); break;
-    case 'merged': parts.push(result.merged_by === 'owner'
-      ? `Done. I ${changed}, tests passed, my reviewer approved, and I merged ${pr} after your yes.`
-      : `Done. I ${changed}, tests passed, my reviewer approved, and I merged ${pr}.`); break;
+    case 'merged': parts.push(!hasPr
+      ? `My runner reports a merge, but the record has no pull request number, so I cannot confirm anything was merged.`
+      : result.merged_by === 'owner'
+        ? `Done. I ${changed}, tests passed, my reviewer approved, and I merged ${pr} after your yes.`
+        : `Done. I ${changed}, tests passed, my reviewer approved, and I merged ${pr}.`); break;
     case 'review_rejected': {
       const review = typeof result.review === 'string' ? result.review.trim().slice(0, 200) : '';
       parts.push(`Tests passed but my reviewer rejected it${review ? `: ${review}` : ''}. I did not merge.`);

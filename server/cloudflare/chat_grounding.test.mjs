@@ -85,7 +85,9 @@ test('1b: a stored food is quoted with the date it was stored, and where it came
   // and no invented value or date appears.
   assert.match(out.reply, /pizza/);
   assert.doesNotMatch(out.reply, /pasta|April 12/);
-  for (const date of out.reply.match(/[A-Z][a-z]+ \d{1,2}, \d{4}/g) || []) assert.equal(date, 'October 21, 2026');
+  // The only date allowed is the day the memory was stored: today (the test once pinned the day it was written).
+  const stored = spokenStoredDate({ created_at: new Date().toISOString() });
+  for (const date of out.reply.match(/[A-Z][a-z]+ \d{1,2}, \d{4}/g) || []) assert.equal(date, stored);
 });
 
 test('1c: the stored date is the only date in the reply, and it is a real one', () => {
@@ -120,9 +122,12 @@ test('3a: an Office task line in the history is never sent to the model as somet
   const che = await owner({ model: () => 'Understood, sir.' });
   che.seedTasks([{ id: 't1', task: TASK, partner_name: 'Knox', status: 'running' }]);
   const history = [{ role: 'user', content: 'Check the branch' }, { role: 'assistant', content: TASK }];
-  await che.say('What did we just discuss?', { history });
-  const turns = che.calls.inputs.at(-1).messages.filter((m) => m.role !== 'system');
-  assert.doesNotMatch(JSON.stringify(turns), /repository inspection report/);
+  const out = await che.say('What did we just discuss?', { history });
+  // The question is answered from the conversation itself (memory_provenance.js); the task line is dropped from it
+  // before any route reads it, so neither the reply nor any model input carries it.
+  assert.doesNotMatch(out.reply, /repository inspection report/);
+  const last = che.calls.inputs.at(-1);
+  if (last) assert.doesNotMatch(JSON.stringify(last.messages.filter((m) => m.role !== 'system')), /repository inspection report/);
 });
 
 test('3b: a reply that is an Office task is replaced, and the owner is pointed to the Office view', async () => {
@@ -215,7 +220,7 @@ test('K4c: a question naming Claude or another AI about coding work never reache
     const out = await che.say(message);
     assert.equal(out.meta.source, 'che_coding_history', message);
     assert.equal(out.modelCalls, 0, message);
-    assert.match(out.reply, /I can't see (?:Claude|another agent)'s work in my own records, sir/, message);
+    assert.match(out.reply, /I can't see (?:Claude|another agent)'s (?:work|live session) in my own records, sir/, message);
     assert.doesNotMatch(out.reply, /merged PR 412|finished the coding task/, message);
   }
 });

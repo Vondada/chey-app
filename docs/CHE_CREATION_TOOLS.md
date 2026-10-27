@@ -1,0 +1,270 @@
+# Creation Engine tools: research, choices and measured results
+
+Owner request (2026-10-24): "Upgrade CHE's Creation Engine for speed and photorealism. Keep Blender as CHE's main 3D
+engine… Benchmark the existing pipeline against the upgraded pipeline using the same scenes and hardware. Report real
+render times, memory usage, visual quality, and completed files. Do not invent speed improvements."
+
+Blender stays the engine. Nothing here is a second engine or queue: the upgrades live in the existing pipeline
+(`server/cloudflare/creation_profiles.js` → `gpu_queue.js` job settings → `scripts/che_gpu_worker.py` →
+`scripts/che_gpu_face_preview.py` → `tools/avatar_body/render_glb.py` with `render_profiles.py`, plus
+`roblox_export.py`).
+
+## What CHE now chooses automatically (creation_profiles.js)
+
+| Kind | Pipeline | Tools | Exports | GPU | Status |
+|---|---|---|---|---|---|
+| person | Blender full body | MPFB2 body, skeleton and weights; clothing, hair cap, face morphs; 5 clips; rig check; quick look; Cycles final | GLB | preferred | built |
+| roblox | the person pipeline + R15 export | `roblox_export.py`: 17 R15 joints, 15 `_Geo` parts in Roblox's triangle budget, ≤4 influences, FBX read back and validated | GLB, R15 FBX, walk FBX | not needed | built |
+| movie | Film Studio (`tools/che_film_render.py`) | characters come from the person pipeline as GLB | MP4 | preferred | separate pipeline |
+| object | parametric object generator (Create Object lane) | quick look, Cycles final | GLB | not needed | separate lane |
+| room | parametric room generator (Create Room lane) | quick look, Cycles final | GLB | preferred | separate lane |
+| invention | `invention_model` job on the same queue and runner as objects (`scripts/che_creation_job.py`) | the template's named parts from `invention_visuals.js`; `tools/avatar_body/inventions.py` bevels and subdivides each part, PBR metal and emissive materials; `verify_glb.py --static` measures it; Cycles views | GLB | not needed | built |
+
+### Inventions: placeholder first, refined model from the Creation Engine
+
+"Open it in 3D" works in two steps:
+1. The Worker builds an instant box-parts GLB, labelled "instant box-parts placeholder model, not the Blender build".
+2. It queues an `invention_model` job with the same parts and palette. CHE says it is queued.
+
+The refined GLB is served at `/api/inventions/<id>/model.glb?refined=1` once the job completes, and at
+`/api/gpu/jobs/<job>/model.glb`.
+
+Real local run on the inv-8a637dad Iron Man-style suit (30 parts, 3,565-character spec from the Worker's own code),
+CPU only:
+- Exit 0 in 21 s.
+- 30 meshes, 23,040 triangles, 4 materials, measured 0.79 × 1.87 × 0.41 m and verified against the parts.
+- 3 Cycles views at 32 samples, about 4–9 s each.
+
+What it shows: bevelled painted-red armour, gold machined-metal panels, dark joints, and emissive eyes, chest core and
+palm lights. It is still blocky, because the template's parts are boxes; the refinement is edges and materials, not
+new shapes.
+
+`kindFromText` picks the kind from the owner's words ("CHE, create a Roblox character" → roblox). In Creation Studio,
+"make it Roblox ready" turns the Roblox export on for a person; "no Roblox" turns it off.
+
+## Render profiles (render_profiles.py)
+
+- **legacy**: the pipeline as it was. Cycles at the quality preset's samples with Blender 5.0.1's defaults, which already
+  include adaptive sampling (threshold 0.01) and OpenImageDenoise (checked with `bpy` on 2026-10-24).
+- **preview** (quick look): rendered before the final views, in its own Blender process. EEVEE is tried first when
+  `PREVIEW_ENGINE` is auto. Where Blender has no OpenGL/EGL context, EEVEE aborts the process (measured here: exit -6,
+  "Couldn't open libEGL.so.1"), so the runner falls back to Cycles at 4 samples, OpenImageDenoise and half size. Quick looks
+  are stored apart (`quick_previews`) and never count as a finished view. The app shows them, labelled "quick look; the
+  final render is still in progress", until each final view arrives.
+- **final**: Cycles with
+  - an adaptive stop at threshold 0.02 after at least 16 samples, with the preset's samples as the ceiling;
+  - OpenImageDenoise with albedo and normal passes (on the GPU too, when a GPU renders);
+  - light paths capped (6 total, 3 diffuse, 3 glossy, no caustics, indirect clamp 6);
+  - persistent data across the views of one session.
+
+  Materials: skin subsurface scattering (radius 1.0/0.2/0.1, scale 0.008 m), a pore micro-normal and a thin coat; cloth
+  sheen tinted with the cloth's own colour, plus a woven micro-normal; a wet cornea coat on the eyes; strand-direction
+  micro-normal on the hair. All procedural nodes, no downloaded textures.
+- GPU: `render_device.py` already selects OptiX or CUDA on a Colab T4 and never falls back to the CPU silently. The final
+  profile runs the same way there. **No GPU benchmark has been run** (no GPU is connected).
+
+## Benchmark: how it runs
+
+`tools/creation_benchmark.py` builds CHE's full-body character once (`mpfb_body.py`, CC0 MPFB2 data at the pinned
+commit). Then, each in its own Blender process, measured with `os.wait4` (wall time and that process's own peak RSS),
+it renders:
+- legacy and final in `--repeat` alternating rounds;
+- the quick look;
+- the face close-up in both pipelines;
+- each pipeline's 512-sample converged reference.
+
+Quality is measured three ways:
+- SSIM and PSNR against the pipeline's own reference: is it converged?
+- An Immerkær noise estimate on every picture.
+- The pictures themselves.
+
+The materials differ between the pipelines on purpose.
+
+- **Reproducible run:** `.github/workflows/che-creation-benchmark.yml` runs it on a free GitHub-hosted runner with the
+  creation worker's exact Blender. It triggers on `workflow_dispatch` and on pull requests that change the benchmark or
+  render files, uploads the pictures and JSON, and writes the numbers to the job summary.
+- **Local run:** done 2026-10-24 on the cloud dev box. Results in `docs/benchmarks/creation_local_2026-10-24.json`.
+
+## Measured results so far (local dev box: CPU only, shared, contended)
+
+Machine: Intel Xeon @ 2.10 GHz, 4 cores, 15.7 GiB, Blender 5.0.1 as the `bpy` module. Other agents were running on it,
+and the 1-minute load before the timed runs was **2.7–13.7 on 4 cores**: every time below is inflated and noisy. Scene:
+CHE full body, 12,759 vertices, 1,141,472-byte GLB, three views (0°, 45°, 90°), 320×480, Standard preset (64 samples).
+File: `docs/benchmarks/creation_local_2026-10-24.json`, from the run with the corrected first-picture formula.
+
+| Measure | Legacy | Upgraded |
+|---|---|---|
+| Time to the first picture CHE can show | median 12.7 s over 4 rounds (11.2–17.7 s; the first final view) | **3.7 s** (one Cycles quick-look run; EEVEE could not start here) |
+| Render time, 3 views, median of 4 alternating rounds | 34.7 s | 38.1 s |
+| Final vs legacy, per-round range | | 0.77× to 1.91× (inconclusive: the box was contended) |
+| Peak memory (RSS, per process) | 487 MiB | 492 MiB final, 391 MiB quick look |
+| Convergence vs own 512-sample reference (front) | SSIM 0.9981, PSNR 46.2 dB | SSIM 0.9981, PSNR 46.5 dB |
+
+An earlier run under lighter load (2.7–8.2) showed the same pattern: quick look 1.4 s against a legacy first picture of
+5.6–10.9 s, and final at 0.85× of legacy at the median with a 0.37–2.18× spread. Its stored first-picture figure was
+wrong: a bug subtracted the median render time instead of the run's own. That bug is fixed and covered by a test, and
+the run was redone.
+
+What this shows, and what it does not:
+- **Proven on this machine:** the first real picture of the model appears several times sooner (3.7 s against a median
+  of 12.7 s here; 1.4 s against 5.6–10.9 s under lighter load). Both pipelines converge equally well at Standard.
+- **Not proven:** that the final renders are faster. On this contended box they were not faster at the median. The
+  GitHub-runner benchmark is the clean comparison; until it runs, CHE claims no speed-up for the final renders.
+- **Visual detail:** at 320×480 the final profile's skin and cloth changes are subtle. A full-body view hides them, and
+  the face close-up shows softer, slightly warmer skin, not visible pores. Two regressions found in the first pictures
+  were fixed before these numbers: untinted sheen made the dark hair grey and the trousers shiny. **The limiting factor for
+  "much finer detail" is the model, not the renderer.** The body has no skin, eye or cloth textures. The next real step is
+  CC0 MakeHuman skin and eye textures (MakeHuman system assets). Their download servers answered 403 from this sandbox,
+  but a GitHub runner can fetch them.
+
+## Roblox export: measured
+
+On CHE's real body GLB (2026-10-24, local):
+- 25,384 input triangles became 9,934 across the 15 `_Geo` parts (budget 10,742; Head 3,880 / 4,000).
+- 17 joints in Roblox's R15 hierarchy, at most 4 influences, nothing weighted to the Root.
+- `character_r15.fbx` is 624,092 bytes; `walk_r15.fbx` is 115,660 bytes.
+- Read back, the walk FBX moves the hips up to 52°, the knees 43° and the shoulders 35°.
+- Verdict: **Studio-import ready by the documented rules; not Marketplace-ready.** There are no `_OuterCage` meshes, no
+  `_Att` attachments, and the parts are not capped watertight.
+- Face morphs are not exported: Roblox Dynamic Heads use FACS poses.
+- Finger and spine bends are merged into the hand and torso.
+- **Not verified in Roblox Studio itself** (it doesn't run here).
+
+How to use it: in Roblox Studio, open the Avatar tab, choose Import 3D, pick `character_r15.fbx` and set the rig type to
+R15. Then import `walk_r15.fbx` in the Animation Editor. CHE serves both at `/api/gpu/jobs/<id>/fbx_r15.fbx` and
+`/api/gpu/jobs/<id>/fbx_r15_walk.fbx`.
+
+## Research verdicts (sources read 2026-10-24)
+
+| Tool | Licence / cost | Hardware | Free-tier fit | Verdict |
+|---|---|---|---|---|
+| Blender 5.0.1 Cycles (CPU) | GPL, free | GitHub runner CPU | yes, used now | keep; final profile |
+| Cycles OptiX/CUDA | free | NVIDIA GPU (Colab T4) | only while the owner's Colab session runs | supported by `render_device.py`; not benchmarked (no GPU connected) |
+| EEVEE | free | needs OpenGL/EGL; Blender falls back to headless EGL on Linux ([commit 3195a38](https://developer.blender.org/rB3195a38)) | unknown on runners (Mesa `libegl1` installed); aborted here without libEGL | tried first for quick looks, with an automatic Cycles fallback |
+| OpenImageDenoise | Apache-2.0 (bundled) | CPU or GPU | yes | used (albedo and normal passes) |
+| MPFB2 / MakeHuman assets | code GPL/AGPL; core assets CC0, some packs CC-BY ([licence](https://static.makehumancommunity.org/about/license.html), [asset packs](https://static.makehumancommunity.org/assets/assetpacks/index.html)) | any | yes | keep; next step is CC0 skin and eye textures (check each pack's licence) |
+| Human Generator Ultimate | paid, $51–$128 ([Superhive](https://superhivemarket.com/products/humgen3d)) | — | **no** (costs money) | not used |
+| Rigify | bundled with Blender (GPL) | any | yes | not needed for the game-engine skeleton; the R15 export maps MPFB's skeleton directly |
+| Rhubarb Lip Sync | MIT ([LICENSE](https://github.com/DanielSWolf/rhubarb-lip-sync/blob/master/LICENSE.md)) | CPU | yes | fits CHE's existing `mouth_open` morph and the Live Studio lip sync; not added in this change |
+| Mixamo | free for commercial and non-commercial projects; raw files may not be redistributed; no ML training ([Adobe FAQ via the community forum](https://community.adobe.com/questions-696/mixamo-faq-licensing-royalties-ownership-eula-and-tos-589400)) | — | needs the owner's Adobe account (manual) | not automated |
+| CMU Mocap | research use free; inclusion in commercial products allowed; no direct resale (CMU notice as quoted by [4TU](https://data.4tu.nl/datasets/0448aab2-3332-449f-a8e2-d208cb58c7df)); derivatives vary (one is CC BY-NC) | — | yes, with attribution | candidate source for more clips; not added |
+| Unreal Engine + MetaHuman | free under $1M revenue; since 5.6 (June 2025) MetaHumans may be used in other engines and DCC tools ([metahuman.com/license](https://www.metahuman.com/en-US/license), [CG Channel](https://www.cgchannel.com/2025/06/you-can-now-sell-metahumans-or-use-them-in-unity-or-godot/)); reported to bar AI/ML training (verify in the EULA) | Epic recommends 16 cores, 32 GB RAM, RTX 3070-class 8 GB GPU ([Epic](https://dev.epicgames.com/documentation/metahuman/metahuman-hardware-requirements-in-unreal-engine)) | **no** free cloud fits (runners have no GPU; the Colab T4 is not an Unreal workstation) | interop only: CHE's GLB and FBX import into Unreal. No MetaHuman render is claimed or attempted |
+| Roblox Studio import | free | — | yes | built (above). Rules from Roblox's own docs: [character body specs](https://github.com/Roblox/creator-docs/blob/main/content/en-us/avatar/character-bodies/specifications.md), [general specs](https://github.com/Roblox/creator-docs/blob/main/content/en-us/art/modeling/specifications.md) (20,000 triangles per mesh, 4 influences), [texture specs](https://github.com/Roblox/creator-docs/blob/main/content/en-us/art/modeling/texture-specifications.md) (1024 maps), [Blender export settings](https://github.com/Roblox/creator-docs/blob/main/content/en-us/art/modeling/export-requirements.md) |
+
+## Caching, checkpoints, batching, resume (existing, extended)
+
+- The model, rig and animation are checkpointed by sha256, and a resumed job reuses them (unchanged).
+- A finished view is reused while its PNG and receipt hash match (unchanged).
+- Quick looks are kept per view (`quick_<view>.png`, `receipt.quick_previews`) and are not rendered again.
+- The Roblox export is reused while the model's sha256 is unchanged.
+- All views of a run render in one Blender session, and the final profile keeps the scene data between views.
+
+## Creation gaps closed (2026-10-25, lane/creation-gaps)
+
+- **Worker name.** Every completion notice, status line and the deploy's creation_check notice name the real worker (`gpu_queue.js workerName`: "free GitHub cloud CPU runner gha-<run>-<n> (GitHub Actions run <run>)", "Colab GPU worker colab-… (Tesla T4)"). A finished job has no lease, so `rendered_on` is read; a worker that was never recorded is said as "unknown worker", never "?". Regression: `creation_probe.test.mjs`, `creation_gaps.test.mjs`.
+- **Create Object from a description** (`creation_freeform.js`, `objects.py custom`). Shape words (box, ball, cylinder, cone, pyramid, ring, disc, plank) with colours, sizes, "on top of" / "next to", and 21 recipes (snowman, tree, rocket, house, car, robot, …) compose exact primitives on the existing `object_model` queue; `verify_glb.py --static` measures the GLB against the parts' box. Anything else is refused with the list. Measured locally with bpy 4.5 (the Python module, not the worker's Blender 5.0.1): 10 described objects built and each GLB measured exactly its expected size (snowman 0.5 x 1.23 x 0.5 m, 8 meshes, 5,190 triangles; rocket 2.0 m tall; car, house, trophy, planet, ring, crate, pyramid, stack). Voice: "create an object: a snowman"; Create Object sheet item 8 "Describe your own".
+- **Suit refinement** (`mpfb_body.py refine_suit`). Each top and trousers face is split in four (weights, UVs and shape keys interpolated), then 4 Taubin passes (0.5 / −0.53) on inner garment vertices; garment edges stay put. Measured locally (bpy 4.5 + MPFB2 at the pinned commit, CHE's preset): garment vertices 3,682 → 14,599, faces 3,616 → 14,464, whole model 12,759 → 23,676 vertices, GLB 1,141,472 → 1,949,516 bytes; `verify_glb.py` rig check still passes (53 bones, 5 clips), suit morph deltas stay 0 (max 3.7e-9 m), Roblox R15 export still passes (10,303 triangles). The receipt carries the counts (`receipt.model.suit`) and the job notes them.
+- **CC0 textures at job time** (`tools/avatar_body/cc0_textures.py`). Source: Poly Haven's public API ([api.polyhaven.com](https://api.polyhaven.com), [Public-API README, swagger.yml and ToS.md](https://github.com/Poly-Haven/Public-API)); every asset is CC0 ([polyhaven.com/license](https://polyhaven.com/license)); the API terms (read 2026-10-25) allow any use including commercial, ask for a User-Agent naming the software (2.4) and a visible credit where its content is shown (2.5: the completion note says "from Poly Haven … (CC0 1.0)"). 1k JPG Diffuse and nor_gl maps, checked by the API's md5 and size, cached by SHA-256 (`~/.cache/che-cc0-textures`, kept between runs by `che-creation-worker.yml`). Used for room floors (wood, tile, concrete, fabric) and described-object parts that ask for wood, stone, brick, metal, fabric or concrete. A failed fetch is recorded with its reason and the part stays plain colour. Not verified live: this sandbox's proxy refuses api.polyhaven.com, so the fetch was tested against a fake API and the Blender side with stand-in images.
+- **Stop.** Code Studio lists the Creation Engine's waiting and running builds with a Stop each and a "Stop the job" button; voice "stop the job" stops the one active job or reads a numbered list. It uses the queue's existing cancel; a running build's worker gets `stop` at its next heartbeat (≤ 30 s) and ends Blender, and that heartbeat is recorded (`stop_confirmed_at`), so Refresh reports the real outcome. A running coding job still cannot be cancelled (existing rule), and Code Studio says so.
+- **CI.** Roblox and benchmark workflows were already green (runs 40135088487, 40134296546). Added: the benchmark now also runs when `mpfb_body.py` changes; `flutter-check.yml` now runs the worker scripts' Python tests (`test_che_creation_job`, `test_che_gpu_worker`, `test_che_gpu_face_preview`, `test_che_gpu_push_results`, `test_avatar_body_verify`) and `test_cc0_textures`, which no workflow ran before.
+
+## Reference photo, body shape and hair (2026-10-25, lane/char-photo)
+
+Contract: `docs/CHE_CHARACTER_REALISM_CHECKLIST.md` (job setting `REFERENCE`, receipt `reference_fit` and
+`device_summary`). Everything below is free and local: Blender, CC0 MakeHuman/MPFB2 data, an Apache-2.0 landmark model,
+the CPU. No account, key or paid service.
+
+- **Landmarks: MediaPipe Face Landmarker.** pip `mediapipe==1.1.1` (Apache-2.0, github.com/google-ai-edge/mediapipe)
+  and `face_landmarker.task` float16 v1 from
+  `storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task`
+  (3,758,596 bytes, SHA-256 `64184e22…bc9ff`, pinned in `tools/avatar_face/photo_fit.py`, checked on every use). Licence
+  read from the three model cards the task file bundles (Face Mesh V2, Blendshape V2, BlazeFace short range): each says
+  "LICENSED UNDER Apache License, Version 2.0". 478 landmarks and the head pose per face, on the CPU, about 0.3 s.
+  The native library needs `libEGL.so.1` (`libegl1`, already installed by the worker).
+- **Refusals** (exit 2 for the job, receipt `status: reference_refused` with the reason): no face; more than one face;
+  eyes closer than 28 px; head turned or tilted more than 20 degrees (pose matrix and a 2D nose-centring check); a photo
+  whose SHA-256 differs from `REFERENCE.sha256`; no consent (`self` or `fictional`).
+- **Shape fit, measured not assumed.** Landmarks in the eye frame (origin between the irises, unit = their distance).
+  A detector reports only part of a shape change, so mapping its points straight onto mesh vertices under-read every
+  slider (first attempt: errors up to 0.6 and wrong signs). Instead `photo_calibration.npz` records how the detector's
+  468 landmarks move per slider on 28 synthetic renders (base, each frontal slider at +-0.6, three colour renders;
+  `make_photo_fixtures.py --calibrate`), and the sliders are fitted by coordinate descent against that response, with a
+  pull to the average and a +-0.8 bound. Fitted: `head_w, chin_h, mouth_w, mouth_up, lip_lower, nose_h` (the sliders a
+  frontal photo moves by at least 0.018 eye gaps per unit). Not fitted, left at the average and listed in the receipt as
+  `not_measured`: `nose_w`, `nose_flare`, `chin_w`, `cheek_bones`, `lip_upper` (the detector barely sees them; fitting
+  `nose_w` gave the wrong sign on 3 of 4 fixtures), `nose_up` (trades against `nose_h` in a frontal view) and every depth
+  slider. A render-in-the-loop refinement (re-render the fit, re-detect, Gauss-Newton with re-measured responses) was
+  tried and dropped: 5 minutes per photo on this CPU and no better sliders.
+- **Measured on synthetic fixtures** (`tools/fixtures/photo_fit`, `test/fixtures/character/synthetic_face.png`;
+  renders of the CC0 base with known values, never a real person): mean absolute slider error over the fitted sliders
+  0.081 (wide), 0.156 (long), 0.090 (narrow_nose), 0.143 (synthetic_face); worst single slider 0.36 (`nose_h` on
+  synthetic_face). Colours (max sRGB channel difference): skin 3-16, hair 5-20, iris 18-46. These are renders under the
+  calibration light; a real photo's lens, light and expression add error the fixtures cannot measure, so the receipt
+  always calls the result an approximate likeness.
+- **In the person job** (`che_gpu_face_preview.py`, STAGE reference): the worker fetches the photo from
+  `/api/gpu/worker/reference` with its own credential, checks the SHA-256 and passes a private temporary file
+  (`che_gpu_worker.py reference_photo`, deleted after the job). The fit is cached in the job folder by SHA-256
+  (`reference_fit_<sha16>.json`); the job id hashes the SHA-256, never the URL; the photo is never copied into the job
+  folder. The fitted sliders replace CHE's built-in face features (`FIT`, `FIT_W=1`, `FACE` cleared unless the job set
+  it); the photo's colours apply unless the job set that colour itself.
+- **Body macros** (`mpfb_base.macro_from_settings`): `BODY_GENDER, BODY_AGE, BODY_HEIGHT, BODY_WEIGHT, BODY_MUSCLE,
+  BODY_PROPORTIONS` (0..1; `BODY_PROPORTIONS` 0.5 is today's half-way-to-ideal look). With none set the body is
+  byte-for-byte the previous `macro_woman` body (test). Measured on saved GLBs: height 1.305 m (`BODY_HEIGHT 0`),
+  1.672 m (default), 2.395 m (`BODY_HEIGHT 1`); waist width 0.156 m (weight and muscle 0) vs 0.199 m (both 1); the rig
+  check (`verify_glb.py`) passes at every extreme.
+- **Hair as meshes** (`mpfb_body.py hair_style`): every style in `identity.HAIR_BUILT` (`long_wavy, wavy_medium,
+  bun_high, bun_low, curly_short, afro, beanie, close_crop`) is a mesh in the GLB, rigid to the head bone, in
+  `HAIR_SRGB`. Measured hair vertices: close_crop 283, buns 893, long/medium 1,018, curly/afro/beanie 1,201. The bust
+  preview (`mpfb_dress.py`) still has strands only for long_wavy and shows other styles close-cropped.
+- **`OUTFIT_TOP=t_shirt`** builds short sleeves; the other tops (hoodie, sweater, shirt, coat, blazer, jacket) are recorded
+  in the GLB (`asset.extras.che_character.outfit_top`) and built as the long-sleeved top (`outfit_top_built`).
+- **What built the GLB** is written into it: `asset.extras.che_character` (face sliders, FACE targets, body macros,
+  hair style, reference SHA-256, outfit). `tools/avatar_body/glb_inspect.py` reads it and measures the file without
+  Blender: height, chest/waist/hip widths, face widths, hair meshes and vertices, garment materials, joints, clips.
+- **Realism pass:** the eye was one orange blot (a 32x16 sphere with its pole pointing up smeared the iris vertex
+  colours); now a 48x40 sphere looks forward with a round pupil, iris, limbal ring and an off-white sclera. The
+  hairline was a saw-tooth (the cap's edge stepped from 3 mm to full thickness at one ring of quads); it now thins over
+  three rings and its edge loop is smoothed. Both change the default GLB's bytes (the eye adds 2,784 vertices).
+
+## Looks, brows, lashes and calibrated skin (2026-10-25, lane/char-photo)
+The Create Room demo close-ups showed "warm brown skin, a woman in her thirties" as a pale, childlike face under a
+helmet-like cap, with no brows or lashes, and three looks that barely differed. Causes found and fixed (all measured
+on local builds with the PyPI `bpy` 5.0.1 module and MPFB2 at the CI's pinned commit; the CI CPU worker has not run
+this code yet):
+- Pale skin: the studio light at Blender's default exposure under AgX doubled skin luminance and halved its saturation.
+  `render_glb.py` now renders at exposure -0.6 EV with the AgX Punchy look. Cheek of albedo 110,66,44: 181,131,108
+  (luma 140, HSV saturation 0.40) before, 128,81,57 (luma 89, saturation 0.56) after.
+- Settings: the demo's `characters.json` was hand-written (no hair style, MATURE 0.05 = 27 years, an outfit colour the
+  parser did not know). Its base is now generated by `tools/demo/describe_settings.mjs` through `describePerson`, the
+  path the Create button uses; `creation_demo_settings.test.mjs` fails when they drift. Parser fixes: clothing colours
+  (terracotta, charcoal, olive, burgundy, khaki ...; an unknown colour used to take the next palette colour silently),
+  green-brown/brown-green eyes, "round face", and a trousers colour sent as TROUSERS_SRGB.
+- Brows and lashes: meshes in the GLB (`mpfb_body.py brows_and_lashes`). Brows follow an arched, tapering curve above
+  each eye projected onto the face; lashes are MakeHuman's own lash helper geometry. Both get the face morphs by
+  nearest-vertex transfer and are keyed in the idle, wave and talk clips (lash blink 8.1 mm, brows_up 4.7 mm).
+- Hair: hair cards over the cap, swept back from a parting point; the cap is thinner with a 0.8 mm edge (crown
+  12.4 mm above the scalp for medium wavy hair, 10.9 mm for a close crop including strands; 16.9 mm before).
+- Looks (`character_style.py`, written to the GLB as `che_character.style_spec`):
+
+| | hyperrealistic | game-like | stylized |
+|---|---|---|---|
+| head scale (eye spacing / height) | 1.00 (0.0350) | 1.07 (0.0371) | 1.18 (0.0403) |
+| skin roughness / specular | 0.50 / 0.35 | 0.64 / 0.22 | 0.88 / 0.06 |
+| colour saturation (sRGB) / emissive share | 1.0 / 0 | 1.1 / 0.04 | 1.2 / 0.14 |
+| brows (GLB vertices) | strands (2128) | tufts (1064) | solid ribbon (144) |
+| hair cards (vertices) | fine (9610) | clumps (3790) | chunks (682) |
+| render shading | subsurface skin | game PBR, no subsurface | toon (2 bands) |
+
+  Mean absolute pixel difference between the looks' face close-ups: 12.7 (photoreal-hybrid), 19.1 (hybrid-stylized),
+  23.5 (photoreal-stylized) out of 255; before: 0.2, 3.3, 3.5.
+- Limits: hair is still a shaped cap plus cards and a flat curtain, not strand hair; brows and lashes are opaque cards
+  (no alpha textures); the toon look is a Cycles render-time shader, while glTF viewers only see the stylized
+  materials (matte, saturated, emissive) and proportions. Build time on 4 local CPU threads: 9-11 s per look.
+
+## Next steps (not done)
+
+1. Run the GitHub-runner benchmark (automatic on the PR) and replace the local numbers above with its clean ones.
+2. CC0 skin and eye textures from the MakeHuman system assets: the real path to finer visual detail.
+3. A Colab T4 benchmark when the owner's GPU session is online (final profile on OptiX).
+4. Roblox: outer cages and attachments for Marketplace bodies, and FACS poses for Dynamic Heads.
+5. Rhubarb visemes driving the existing `mouth_open` morph from real speech audio.

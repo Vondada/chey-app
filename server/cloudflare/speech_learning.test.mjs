@@ -13,6 +13,18 @@ test('detects the ways the owner corrects a mishearing', () => {
   assert.equal(detectCorrection('Good afternoon', prev), null);
 });
 
+test('rejecting an answer is not a word correction, and a word the previous turn never contained is not re-run', () => {
+  // Subject-loss audit (2026-10-24): these were learned as heard→meant pairs and replayed the previous request unchanged.
+  assert.equal(detectCorrection("That's not what I meant", 'Analyze the NQ chart'), null);
+  assert.equal(detectCorrection('No, not that one', 'Coding status'), null);
+  assert.equal(detectCorrection('not that, this', 'Open the chart'), null);
+  // A real correction of a word the previous turn does not contain corrects nothing there.
+  assert.equal(detectCorrection('Grok, not rock', 'Analyze the NQ chart'), null);
+  assert.equal(detectCorrection('strawberry Sprite, not Sprite', "What's my favorite drink?"), null);
+  // The same words with the misheard word present still correct it.
+  assert.deepEqual(detectCorrection('Grok, not rock', 'Ask rock how to code'), { heard: 'rock', meant: 'Grok' });
+});
+
 test('learned corrections apply in matching context only', async () => {
   const s = store();
   const prev = 'Ask ChatGPT rock and Claude how to code yourself into fix';

@@ -419,6 +419,20 @@ const CODE_SUBJECT = new RegExp([
 const CODING = /\b(?:coding|opencode|self[- ]development)\b/i;
 const RECENT_RECORD = /\b(?:most\s+recent|latest|last|newest|current)\s+(?:coding|opencode|self[- ]development)\s+(?:jobs?|runs?|sessions?)\b/i;
 const RECORD_ID_ASK = /\b(?:job|run)\s+ids?\b/i;
+// Words that ask about a record's own facts (state, engine, run, result), never an action on it.
+const RECORD_FACET_WORDS = new Set(['its', 'their', 'the', 'a', 'an', 'and', 'or', 'also', 'with', 'of', 'for', 'on', 'what', 'which', 'is', 'was', 'did', 'has', 'any',
+  'current', 'latest', 'last', 'assigned', 'engine', 'model', 'models', 'execution', 'event', 'events', 'github', 'workflow', 'run', 'runs', 'status', 'state', 'result', 'results',
+  'progress', 'pass', 'passed', 'fail', 'failed', 'failure', 'log', 'logs', 'pr', 'pull', 'request', 'files', 'changed', 'step', 'steps', 'error', 'errors', 'job', 'id', 'time', 'long', 'done']);
+function RECORD_FACETS_ONLY(body) {
+  const words = String(body || '').toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter(Boolean);
+  return words.length > 0 && words.length <= 16 && words.every((w) => RECORD_FACET_WORDS.has(w) || /^[0-9a-f]{8}$/.test(w));
+}
+const NAMED_VERB = /^(?:show|retrieve|check|get|tell|read|give|pull|fetch|find|look\s+up|open)\b/i;
+
+// One named job by its short ID ("coding job f1a27d86"): a particular record, so it is definite.
+const NAMED_JOB = /\b(?:(?:coding|opencode)\s+)?(?:jobs?|runs?)\s+(?:id\s+|number\s+|#\s*)?[0-9a-f]{8}\b/i;
+// A yes/no or pass/fail question about one named record: "did coding job f1a27d86 pass or fail?".
+const NAMED_OUTCOME = /\b(?:pass|passed|fail|failed|succeed|succeeded|finish|finished|complete|completed|done|status)\b/i;
 const RUNTIME_PLACE = /\b(?:coding|opencode)\s+(?:runtime|runner|pipeline)\b/gi;
 // A coding run, job or session: the record a history question is about.
 const WORK = '(?:coding|opencode|self[- ]development)\\s+(?:jobs?|runs?|sessions?|attempts?|executions?|tasks?|work)';
@@ -527,6 +541,8 @@ function questionEnd(clause, { coding, text }) {
   ];
   if (coding) {
     anchors.push(
+      // "the status of coding job f1a27d86": one named record, asked about in any words (owner, 2026-10-25).
+      new RegExp(NAMED_JOB.source, 'gi'),
       /\bhow\s+far\s+(?:did|has|have)\s+(?:che|chey|chay|shay|she|it|the\s+(?:job|run|session))\b[\s\S]{0,20}\b(?:get|gotten|got|come)\b/gi,
       /\bhow\s+far\s+(?:along\s+(?:is|are)\s+)?(?:the|my|that|your|ur)\s+(?:coding|opencode)\s+(?:job|run|session)\b(?:\s+(?:got|has\s+gotten|has\s+come|came))?/gi,
       /\b(?:latest|last|most\s+recent|recent|newest|previous|current)\s+(?:coding|opencode|self[- ]development)\s+(?:execution\s+|run\s+|job\s+|session\s+|attempt\s+)?(?:history|runs?|jobs?|sessions?|attempts?|logs?|results?|status|executions?|state)\b(?:['’]s)?(?:\s+(?:execution\s+)?(?:history|status|state|results?|logs?|outcome|progress))?/gi,
@@ -550,6 +566,9 @@ function questionEnd(clause, { coding, text }) {
       new RegExp(`\\bwhat(?:['’]?s|\\s+is)\\s+(?:going\\s+on|blocking|wrong|happening|new|the\\s+latest|the\\s+hold-?up)\\s+(?:with|on)\\s+${ofRun}\\b`, 'gi'),
       new RegExp(`\\bis\\s+${ofRun}\\s+(?:still\\s+)?(?:retrying|recovering|blocked|failing|passing|green|red|ok|okay|alright|healthy)\\b`, 'gi'),
       new RegExp(`\\bhow\\s+did\\s+${ofRun}\\s+(?:go|do|turn\\s+out|end(?:\\s+up)?)\\b`, 'gi'),
+      // Spoken status questions (voice routing audit, 2026-10-25): "what is the coding job doing", "where is my coding job
+      // at" reached the model, which has no record of the job.
+      new RegExp(`\\bwhat(?:['’]?s|\\s+is)\\s+${ofRun}\\s+(?:doing|working\\s+on|up\\s+to)(?:\\s+(?:right\\s+)?now)?\\b|\\bwhere\\s+(?:is|are)\\s+${ofRun}(?:\\s+at)?(?:\\s+(?:right\\s+)?now)?\\b`, 'gi'),
       // "Inspect that coding job": the job's record, not the code that runs it.
       /\b(?:inspect|check|look\s+at|review|show\s+me|examine)\s+(?:that|the|my|this|your|the\s+last|the\s+latest)\s+(?:coding|opencode)\s+(?:jobs?|runs?|sessions?|attempts?)\b/gi,
     );
@@ -582,7 +601,9 @@ const HEAD_WORDS = new Set(('the an my your ur its me us to about on of for with
   + 'tell show give check read explain describe summarize summarise report inspect look review examine list walk through fill '
   + 'bring speed pull that this also quick question real honest brief short detailed full complete current latest last recent '
   + 'newest previous most own whole entire exact precise regarding concerning what which why how when where happened going doing '
-  + 'went wrong far long many sir che chay chey shay').split(' '));
+  + 'went wrong far long many sir che chay chey shay '
+  // Record-status words only (owner, 2026-10-25: "retrieve the status of coding job …, its assigned engine and GitHub workflow run").
+  + 'retrieve fetch status state progress assigned engine workflow github').split(' '));
 function okHead(head, body) {
   // The opening phrase ("can you check", "I want to know") is one unit, even when the question's
   // anchor begins inside it; after it, only the head words may stand before the question.
@@ -593,7 +614,10 @@ function okHead(head, body) {
   return rest.split(/[\s,;:"]+/).filter(Boolean).every((token) => HEAD_WORDS.has(token) || /^(?:che|chey|chay)'s$/.test(token));
 }
 
-export function codingHistoryIntent(message) {
+// `history` (optional): the recent turns. A short follow-up that names no record ("Is it done yet?",
+// "How long will that take?", "What about the other one?") is about the coding job only while that job
+// is the conversation's subject: CHE's recent reply accepted or reported one (latestWorkSubject).
+export function codingHistoryIntent(message, history = []) {
   const raw = String(message || '').trim();
   const text = withoutQuotedText(raw);
   if (!text || ownerBuildAuthorization(text)) return false;
@@ -605,6 +629,8 @@ export function codingHistoryIntent(message) {
     .filter((part) => !NEGATION_CLAUSE.test(part.replace(OPENING_ASIDE, '').trim()))
     .join('. ');
   if (CHANGE_INSTRUCTION.test(active) || trailingAction(active)) return false;
+  if (NAMED_JOB.test(text) && NAMED_OUTCOME.test(text)) return true;
+  if (codingFollowupKind(text) && latestWorkSubject(history) === 'coding') return true;
   // "Your last completed coding task, and the GitHub proof" is CHE's own record, whatever words the proof uses.
   if (PROOF_ASK.test(text)) return true;
   if (OTHER_SUBJECT.test(text) || PEER_TALK.test(text)) return false;
@@ -616,16 +642,20 @@ export function codingHistoryIntent(message) {
   if (CODE_SUBJECT.test(text)) return false;
   const coding = CODING.test(text);
   // One particular record, not coding jobs in general.
-  if (coding && !DEFINITE.test(text)) return false;
+  if (coding && !DEFINITE.test(text) && !NAMED_JOB.test(text)) return false;
   // Every clause must be the question, a "don't change anything" aside, or a follow-up about the
   // same record; anything else in the turn is another request, and its own route takes the whole turn.
   let asked = false;
+  const namedRecord = NAMED_JOB.test(text);
   for (const part of text.split(CLAUSE_BREAK)) {
     const body = part.replace(OPENING_ASIDE, '').trim();
     if (!body || FILLER.test(body) || NEGATION_CLAUSE.test(body)) continue;
+    // With one named job, a clause made only of record facets ("its assigned engine, last execution event
+    // and GitHub workflow run") is a further question about that same record. Any other word refuses it.
+    if (namedRecord && RECORD_FACETS_ONLY(body)) { asked = true; continue; }
     const { start, end } = questionEnd(body, { coding, text });
     if (end >= 0) {
-      if (!QUESTION_OPENING.test(body) && !NOUN_OPENING.test(body)) return false;
+      if (!QUESTION_OPENING.test(body) && !NOUN_OPENING.test(body) && !(namedRecord && NAMED_VERB.test(body))) return false;
       if (!okHead(body.slice(0, start), body)) return false;
       const tail = body.slice(end);
       if (!okTail(tail) && !followUp(tail.trim()) && !NEGATION_CLAUSE.test(tail.trim())) return false;
@@ -635,6 +665,85 @@ export function codingHistoryIntent(message) {
     }
   }
   return asked;
+}
+
+// ─── The conversation's current work subject (subject-loss audit, 2026-10-24) ───
+// Read from CHE's own recent replies, newest first: a coding job she accepted or reported, or an REA
+// investigation she named. A short follow-up ("is it done yet?") belongs to the newer of the two, so
+// the coding and REA routes never take each other's turn. The owner's own recent question about a
+// coding record counts too ("coding status" asked a turn ago). Only the last `turns` replies are read.
+const CODING_REPLY = /\bcoding job [0-9a-f]{8}\b|\bNo coding job has started\b|\bThe latest coding job\b|\bBuilt-in job: [0-9a-f]|\bLatest coding run: /i;
+const REA_REPLY = /\brea-[0-9a-f]{8}\b|\bREA investigation\b/i;
+export function latestWorkSubject(history, { turns = 3 } = {}) {
+  const list = Array.isArray(history) ? history : [];
+  let seen = 0;
+  for (let i = list.length - 1; i >= 0 && seen < turns; i -= 1) {
+    const role = String(list[i]?.role || '');
+    const content = String(list[i]?.content || list[i]?.text || '');
+    if (role === 'assistant') {
+      seen += 1;
+      if (REA_REPLY.test(content)) return 'rea';
+      if (CODING_REPLY.test(content)) return 'coding';
+    } else if (role === 'user' && content.length <= 300 && codingHistoryIntent(content)) {
+      return 'coding';
+    }
+  }
+  return '';
+}
+
+// A short follow-up that names no record: what it asks about the job under discussion.
+// 'status': is it done, did it finish, any progress, what about the other one.
+// 'duration': how long will it take, how much longer, when will it be done.
+// '' for anything else, including any sentence with a subject of its own.
+const FOLLOWUP_HEAD = /^(?:(?:hey|hi|ok|okay)[,\s]+)?(?:che|chay|chey|shay)\b[,:]?\s*|^(?:and|so|but|also|then)[,\s]+/i;
+const FOLLOWUP_TAIL = /[\s,]+(?:please|sir|now|che|chay|chey|shay|for me)\s*([?.!]*)$/i;
+const DURATION_ASK = /^(?:how long(?: (?:will|would|does|is|should|did) (?:that|it|this|the job|the coding job|the run) (?:take|be|run|going to take|need))?|how much longer(?: (?:will|does|is) (?:it|that) (?:take|run|need|going to take))?|when will (?:it|that|this) (?:be )?(?:done|finish(?:ed)?|complete|ready)|(?:what(?:'s| is) )?(?:your |the )?(?:eta|estimate)(?: (?:on|for) (?:that|it))?|how far along is (?:it|that)|how long has (?:it|that) been (?:running|going|queued|waiting))[\s?.!]*$/i;
+const STATUS_ASK = /^(?:(?:is|was) (?:it|that|this|that one|the job|the coding job) (?:(?:still|already|actually|even) )?(?:done|finished|complete|completed|ready|running|working|queued|stuck|going|in progress)(?: yet| now)?|(?:is it )?done yet|did (?:it|that) (?:finish|complete|work|pass|fail|run|start|go through)(?: yet)?|has (?:it|that) (?:finished|started|run|completed)(?: yet)?|how(?:'s| is) (?:it|that) (?:going|doing|coming along|looking)|any (?:progress|update|news|luck)(?: (?:on|with) (?:that|it))?|(?:what(?:'s| is) )?(?:the )?(?:status|progress)(?: (?:on|of) (?:that|it|this))?|what about (?:the other one|that one|it|that)|the other one|where (?:are we|is it) (?:on|with|at)(?: (?:that|it))?|what happened(?: (?:to|with) (?:it|that))?)[\s?.!]*$/i;
+export function codingFollowupKind(message) {
+  let t = String(message || '').trim().replace(/[’]/g, "'").replace(/\s+/g, ' ');
+  for (let i = 0; i < 2; i += 1) t = t.replace(FOLLOWUP_HEAD, '');
+  t = t.replace(FOLLOWUP_TAIL, '$1').trim();
+  if (!t || t.length > 80) return '';
+  if (DURATION_ASK.test(t)) return 'duration';
+  if (STATUS_ASK.test(t)) return 'status';
+  return '';
+}
+
+// "How long will that take?" answered from the record's own timestamps. No estimate is invented: a
+// record that holds none is said to hold none. `subject` is the same shape the coding history route
+// builds ({ kind: 'job' | 'runtime' | 'none', job, sessionId, status }), plus `acceptedAt` for a run.
+const stamp = (value) => String(value || '').replace('T', ' ').slice(0, 16) + ' UTC';
+function spokenSpan(ms) {
+  if (!Number.isFinite(ms) || ms < 0) return '';
+  const minutes = Math.round(ms / 60_000);
+  if (minutes < 1) return 'under a minute';
+  if (minutes < 120) return `${minutes} minute${minutes === 1 ? '' : 's'}`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 48) return `${hours} hours`;
+  return `${Math.round(hours / 24)} days`;
+}
+export function codingTimingNote({ kind = 'none', job = null, sessionId = '', acceptedAt = '', status = null, now = Date.now() } = {}) {
+  if (kind === 'job' && job) {
+    const id = String(job.id || '').slice(0, 8) || 'with no id';
+    const since = Date.parse(job.created_at || '');
+    const ago = Number.isFinite(since) ? spokenSpan(now - since) : '';
+    const state = String(job.status || 'unknown').replace(/_/g, ' ');
+    if (['queued', 'running'].includes(job.status)) {
+      const accepted = Number.isFinite(since) ? `at ${stamp(job.created_at)}${ago ? `, ${ago} ago` : ''}` : 'at a time its record does not hold';
+      return `I don't know how long coding job ${id} will take, sir: its record holds no estimate. It was accepted ${accepted}, and it is ${state} now.`;
+    }
+    const ended = Date.parse(job.updated_at || '');
+    const took = Number.isFinite(since) && Number.isFinite(ended) ? spokenSpan(ended - since) : '';
+    return `Coding job ${id} is not waiting any more, sir: its record reads ${state}${Number.isFinite(ended) ? ` as of ${stamp(job.updated_at)}` : ''}${took ? `, ${took} after it was accepted` : ''}.`;
+  }
+  if (kind === 'runtime' && sessionId) {
+    const state = typeof status?.state === 'string' ? status.state.replace(/_/g, ' ') : 'not readable';
+    const since = Date.parse(acceptedAt || '');
+    const accepted = Number.isFinite(since) ? ` It was accepted at ${stamp(acceptedAt)}, ${spokenSpan(now - since)} ago.` : '';
+    return `I don't know how long coding run ${sessionId} will take, sir: its record holds no estimate.${accepted} Its state reads ${state}.`;
+  }
+  // No job: the receipt's own "No coding job has started yet" is the whole answer.
+  return '';
 }
 
 // A question that asks for reasoning about the code ("explain", "why", "weaknesses", "recommend a repair").

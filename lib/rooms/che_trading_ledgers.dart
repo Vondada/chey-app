@@ -13,6 +13,7 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import '../che_ui/che_theme.dart';
 import 'che_trading_hud.dart';
+import '../trading/che_sim_controls.dart';
 
 const _up = Color(0xFF3DDC97);
 const _down = Color(0xFFFF5C7A);
@@ -132,7 +133,12 @@ class _CheTradingLedgersPanelState extends State<CheTradingLedgersPanel> {
           child: OutlinedButton.icon(onPressed: _load, icon: const Icon(Icons.refresh), label: const Text('Refresh'))),
       ]),
       const SizedBox(height: 12),
-      for (final l in ledgers) Padding(padding: const EdgeInsets.only(bottom: 12), child: _LedgerCard(ledger: l)),
+      for (final l in ledgers) Padding(padding: const EdgeInsets.only(bottom: 12), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        _LedgerCard(ledger: l),
+        // The simulation's own controls, through CHE's route, so each action is reported aloud with its real result.
+        if (l['id'] == 'strategy_simulation' && l['unavailable'] != true)
+          Padding(padding: const EdgeInsets.only(top: 8), child: CheSimControls(onAsk: widget.onAsk, paused: '${l['status']}' == 'paused')),
+      ])),
     ]);
   }
 }
@@ -160,6 +166,9 @@ class _LedgerCard extends StatelessWidget {
     final equity = ledger['equity'] is Map ? Map<String, dynamic>.from(ledger['equity'] as Map) : null;
     final points = ((equity?['points'] as List?) ?? const []).whereType<Map>().map((p) => _num(p['v']) ?? 0).toList();
     final unit = '${equity?['unit'] ?? 'R'}';
+    // Per-instrument totals and what the equity curve adds up (owner, 2026-10-24: "what is −226.98 R?").
+    final byInstrument = ((ledger['by_instrument'] as List?) ?? const []).whereType<Map>().map((m) => Map<String, dynamic>.from(m)).toList();
+    final basis = '${ledger['equity_basis'] ?? ''}';
     final broker = id == 'broker_alpaca_paper';
     final statusColor = unavailable ? _down : (status == 'paused' || status == 'off' || status == 'not run yet') ? _gold : _up;
 
@@ -174,6 +183,10 @@ class _LedgerCard extends StatelessWidget {
       if (ledger['net_pnl'] != null) summary.write('Net ${_money(ledger['net_pnl'])}. ');
       if (best != null) summary.write('Leading strategy ${best['name']}, ${best['trades']} trades. ');
       if (points.isNotEmpty) summary.write('Equity curve ends at ${unit == r'$' ? _money(points.last) : _r(points.last)}. ');
+      if (basis.isNotEmpty) summary.write('$basis ');
+      for (final i in byInstrument) {
+        summary.write('${i['symbol']}: ${i['trades']} trades, net ${_r(i['net_r'])}. ');
+      }
       for (final f in feeds) {
         summary.write('Feed ${f['symbol']} ${f['status']}. ');
       }
@@ -250,6 +263,29 @@ class _LedgerCard extends StatelessWidget {
               padding: EdgeInsets.only(top: 8),
               child: ExcludeSemantics(child: Text('No closed trade yet, so there is no equity curve.', style: TextStyle(color: _dim, fontSize: 13))),
             ),
+            if (basis.isNotEmpty && points.length >= 2)
+              Padding(
+                padding: const EdgeInsets.only(top: 4),
+                child: ExcludeSemantics(child: Text(basis, key: const Key('ledger_equity_basis'), style: TextStyle(color: _dim, fontSize: 12))),
+              ),
+            if (byInstrument.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              ExcludeSemantics(child: Text('BY INSTRUMENT', style: TextStyle(color: _dim, fontSize: 11, fontWeight: FontWeight.w800, letterSpacing: 1.1))),
+              for (final i in byInstrument)
+                ExcludeSemantics(
+                  child: Padding(
+                    key: Key('ledger_instrument_${i['symbol']}'),
+                    padding: const EdgeInsets.symmetric(vertical: 2),
+                    child: Row(children: [
+                      Expanded(child: Text('${i['symbol']}', style: const TextStyle(color: Colors.white, fontSize: 13))),
+                      Text(
+                        '${i['trades']} tr${i['win_rate'] != null ? ' · ${i['win_rate']}%' : ''} · net ${_r(i['net_r'])}${i['expectancy_r'] != null ? ' · ${_r(i['expectancy_r'])}/trade' : ''}',
+                        style: TextStyle(color: (_num(i['net_r']) ?? 0) >= 0 ? _up : _down, fontSize: 13, fontFeatures: const [FontFeature.tabularFigures()]),
+                      ),
+                    ]),
+                  ),
+                ),
+            ],
             if (rows.isNotEmpty) ...[
               const SizedBox(height: 8),
               for (final s in rows.take(5))

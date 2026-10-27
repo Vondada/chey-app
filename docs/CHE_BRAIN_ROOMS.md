@@ -233,3 +233,41 @@ reply guards (`truth_layer.js`) → receipts and room events → the Brain → t
   iPhone to prove the broadcast, the App Group under SideStore, and frame selection.
 - Semantic relationships (embeddings through `vector_memory.js`, status `inferred`).
 - The Brain Room UI: show `source.room`, status and `source.relations` (basis, status) on a record card.
+
+## The Brain Room as the owner approved it (2026-10-24)
+
+The owner's original Brain Room reference: the glowing neural brain as the main attraction inside CHE's dark
+starry room, a clean sidebar, glowing dashboard cards, Real-Time Learning, Live Activity, Search and Memory Details.
+`lib/brain/che_brain_overview.dart` frames the existing neural Brain (`CheMemoryBrainRoom`, unchanged) and reads only
+real data; `lib/brain/che_brain_regions.dart` holds the pure rules.
+
+| Part | Reads |
+|---|---|
+| Brain colours | ten regions from each record's own region, kind and status: blue memories, cyan conversations, purple knowledge, pink creative, orange trading, green coding, yellow agents, light-blue media, white core for verified, red for failed or disputed |
+| Links | strong = a recorded relationship between two verified records; developing = recorded, one side unverified; weak = shared words only |
+| Region labels, dashboard cards | counts of the records on the phone (replica + Worker lists); cards show the verified share |
+| Real-Time Learning | `/api/brain/ledger` (the Population Ledger) every 30 s while the room is on screen; "Learning now" only when an event entered in the last 10 minutes, else "Idle — waiting for work"; an event that is new since the last look lights its region in the brain |
+| Live Activity | dated records, newest first; a picture only when the record names an image URL |
+| Search | every word must appear (the Brain list's rule); counts per scope are real |
+| Memory Details | the record's own source, type, folder, confidence (only if recorded), evidence and connections |
+
+The sixteen sidebar sections and the eight cards open views inside the Brain Room, never Home or Chat. Voice:
+"search my brain for …", "show live activity", "what is CHE learning", "open <section>", "show the sidebar".
+Nothing here speaks on its own. Screenshots: `CHE_SHOTS_DIR=… flutter test test/che_brain_overview_shots_test.dart`.
+
+### Glowing brain, eleven regions, connections (lane brain-visual, 2026-10-25)
+
+Built on the approved layout above; no second brain screen. The owner's reference image was not available to
+this lane, so nothing claims to match it.
+
+| Piece | Where | What is real |
+|---|---|---|
+| Luminous brain | `CheBrainPainter._paintBody`, `_paintRegions` (`che_brain_space.dart`) | The brain's four volumes drawn as layered blurred light (fixed paints made once, no shaders), a glow under the cortex dust, and one soft halo per region at the mean place of its records. Economy mode drops the extra layers; at most 1,400 orbs are drawn per frame (700 in economy), nearest first. |
+| Eleven regions | `CheBrainRegion` (`che_brain_regions.dart`) | The owner's ten plus Research (the graph's own Research lobe, which used to fall into Knowledge). Nine domains partition the records; Verified counts across them; each label shows its real count. |
+| 3D navigation | `flyToRegion`, `rotateBrain`, `stepRegion`, `regionAt` | Drag, pinch and pan as before; tapping an empty spot inside a region's glow flies there. Voice or typing: "go to the memory region", "fly to region 3", "list the brain regions", "open the trading region", "rotate the brain left", "zoom out". VoiceOver: the canvas has Next region, Previous region, List the regions, Open the region records, Turn left or right, and Zoom in or out. |
+| Region pages | `CheBrainRegionDetails` | Every region label is one VoiceOver button ("Trading region: 2 records. Opens its records.", with a Fly to action, or long-press). It opens that region's records, newest first, each opening Memory Details. An empty region says so. |
+| Connected screens | `cheBrainSourceLinksOf`, `CheBrainRecordDetails` → `_openBrainSource` (`hub_rooms.dart`) | Memory Details lists the screens the record names, using routes the app already has: the trade replay (trade id), the project editor (a project in `projects`), the agent's Office desk, and the conversations list (there is no route to a single thread). With none: "No screen in CHE holds this record's source." A route that fails is said aloud as a failure. |
+| Connections in Live Activity | `CheBrainConnectionEvent`, the Connections filter, `CheBrainConnectionDetails` | `CONNECTION_CREATED` events from `/api/brain/ledger` (`connections`); see `CHE_BRAIN_LEDGER.md`. The three newest sit at the top of All, and the Connections filter shows all of them. Each one opens both records (or says a record is not on this phone yet), the reason, the status and the time. |
+
+Not verified: frame rate on a real iPhone (the painter is only measured in tests).
+

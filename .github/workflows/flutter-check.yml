@@ -1,4 +1,8 @@
 name: Check CHE Flutter client
+# The Cloud Computer (server/cloudflare/cloud_computer.js TESTS_RUN_TITLE_PREFIX) finds the run its own dispatch
+# created by this title. Without che_dispatch_id (push, pull_request, a manual run) the expression is empty, so
+# GitHub keeps its usual title. An expression in run-name is display text only: it never reaches a shell.
+run-name: ${{ inputs.che_dispatch_id && format('CHE cloud tests {0}', inputs.che_dispatch_id) || '' }}
 
 on:
   push:
@@ -6,6 +10,12 @@ on:
   pull_request:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      che_dispatch_id:
+        description: Correlation id the Cloud Computer sets so it can find this run (optional)
+        required: false
+        default: ''
+        type: string
 
 permissions:
   contents: read
@@ -64,20 +74,54 @@ jobs:
         run: python3 -m unittest discover -s tool -p 'test_mobile_version.py'
       - name: iPhone audio session regression tests
         run: python3 -m unittest discover -s tool -p 'test_ios_audio_session.py'
+      - name: Workflow trigger regression tests (mailbox wake, autopilot)
+        run: python3 -m unittest discover -s tool -p 'test_workflow_triggers.py'
       - name: Validate bundled offline 3D characters
         run: node --test tools/character_pipeline/assets.test.mjs
 
+  visual-studio-renders:
+    # Own job so a slow ffmpeg install never eats the Worker job's budget.
+    name: Visual Studio renders
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install ffmpeg (man-db trigger off; it stalls apt on hosted runners)
+        timeout-minutes: 10
+        run: |
+          if ! command -v ffmpeg >/dev/null || ! command -v ffprobe >/dev/null; then
+            # A static build from GitHub releases (one ~100 MB download); apt mirrors have taken over 10 minutes.
+            url=https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux64-gpl.tar.xz
+            if curl -fsSL --retry 3 --max-time 240 "$url" -o /tmp/ffmpeg.tar.xz && tar -xJf /tmp/ffmpeg.tar.xz -C /tmp; then
+              sudo install -m 755 /tmp/ffmpeg-master-latest-linux64-gpl/bin/ffmpeg /tmp/ffmpeg-master-latest-linux64-gpl/bin/ffprobe /usr/local/bin/
+            else
+              echo 'set man-db/auto-update false' | sudo debconf-communicate >/dev/null || true
+              sudo rm -f /var/lib/man-db/auto-update
+              sudo apt-get update
+              sudo apt-get install -y --no-install-recommends ffmpeg
+            fi
+          fi
+          ffmpeg -hide_banner -version | head -1
+          python3 -m pip install --quiet pillow
+      - name: Visual Studio renders (real ffmpeg; verified MP4 and PNG)
+        timeout-minutes: 6
+        env:
+          PYTHONUNBUFFERED: '1'
+        run: python3 -m unittest discover -s tools -p 'test_che_edit_render.py' -v
   worker-unit:
     name: Worker syntax and unit tests
     runs-on: ubuntu-latest
-    timeout-minutes: 12
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 22
       - name: Check Worker syntax
-        run: for f in server/cloudflare/*.js; do node --check "$f" || exit 1; done
+        run: for f in server/cloudflare/*.js server/cloudflare/security_core/*.js; do node --check "$f" || exit 1; done
       - name: Run Worker unit tests
         run: node --test server/cloudflare/*.test.mjs
       # The unit run above skips the website observer's browser tests; this installs the
@@ -91,6 +135,31 @@ jobs:
           node --test server/cloudflare/rea_web_workflow.test.mjs
       - name: Video narration tests (Fish Drama 3, cache, Piper fallback)
         run: python3 -m unittest discover -s tools -p 'test_che_video_render.py'
+      - name: Creation Engine render profiles, benchmark measures and Roblox R15 rules
+        run: |
+          python3 -c "import numpy" 2>/dev/null || python3 -m pip install --quiet numpy
+          python3 -m unittest discover -s tools -p 'test_creation_benchmark.py'
+          python3 -m unittest discover -s tools -p 'test_roblox_rig.py'
+          python3 -m unittest discover -s tools -p 'test_creation_params.py'
+          python3 -m unittest discover -s tools -p 'test_cc0_textures.py'
+          # The creation worker's own scripts (job runner, worker loop, receipts, GLB verifier) had no CI step.
+          python3 -m unittest discover -s tools -p 'test_che_creation_job.py'
+          python3 -m unittest discover -s tools -p 'test_che_gpu_worker.py'
+          python3 -m unittest discover -s tools -p 'test_che_gpu_face_preview.py'
+          python3 -m unittest discover -s tools -p 'test_che_gpu_push_results.py'
+          # CHE's Modal app: allowlisted arguments, idempotency and pins (no Modal SDK needed).
+          python3 -m unittest discover -s tools -p 'test_che_modal_app.py'
+          python3 -m unittest discover -s tools -p 'test_avatar_body_verify.py'
+          # Reference photo fit on synthetic fixtures (mediapipe Apache-2.0; the model is pinned by SHA-256 in photo_fit.py),
+          # the person job's reference stage, GLB measurements and body macros.
+          sudo apt-get -qq install -y libegl1 libgles2 > /dev/null   # mediapipe's native library links libEGL
+          python3 -m pip install --quiet mediapipe==1.1.1 pillow
+          python3 -m unittest discover -s tools -p 'test_photo_fit.py' -v
+          python3 -m unittest discover -s tools -p 'test_photo_reference_job.py'
+          python3 -m unittest discover -s tools -p 'test_worker_reference.py'
+          python3 -m unittest discover -s tools -p 'test_glb_inspect.py'
+          python3 -m unittest discover -s tools -p 'test_body_macros.py'
+          python3 -m unittest discover -s tools -p 'test_character_style.py'
       - name: Claude Code project skills (.claude/skills) tests
         run: node --test .claude/skills/tests/*.test.mjs
       - name: CHE free-first coding and paid cap regression tests

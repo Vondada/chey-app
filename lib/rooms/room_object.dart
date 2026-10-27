@@ -113,6 +113,7 @@ class _ZoomableDocumentState extends State<ZoomableDocument> {
       appBar: AppBar(title: Text(widget.title), actions: [
         if (widget.onSave != null)
           IconButton(
+            tooltip: _editing ? 'Save changes' : 'Edit',
             icon: Icon(_editing ? Icons.check : Icons.edit),
             onPressed: () async {
               if (_editing) await widget.onSave!(_c.text);

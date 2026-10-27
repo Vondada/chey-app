@@ -34,10 +34,18 @@ function model(input) {
 }
 
 const saved = new Map();
+// The same call forms as Durable Object storage: get/delete take a key or an array of keys, and put takes a key and a
+// value or one object of entries (strategy_sim.js writes in batches). A batch put once landed as a single object key,
+// and every later list() failed with "k.startsWith is not a function", so the research queue never ran here.
 const storage = {
-  get: async (key) => (saved.has(key) ? structuredClone(saved.get(key)) : undefined),
-  put: async (key, value) => saved.set(key, structuredClone(value)),
-  delete: async (key) => saved.delete(key),
+  get: async (key) => (Array.isArray(key)
+    ? new Map(key.filter((k) => saved.has(k)).map((k) => [k, structuredClone(saved.get(k))]))
+    : (saved.has(key) ? structuredClone(saved.get(key)) : undefined)),
+  put: async (key, value) => {
+    if (key && typeof key === 'object') for (const [k, v] of Object.entries(key)) saved.set(k, structuredClone(v));
+    else saved.set(key, structuredClone(value));
+  },
+  delete: async (key) => (Array.isArray(key) ? key.filter((k) => saved.delete(k)).length : saved.delete(key)),
   list: async ({ prefix = '' } = {}) => new Map([...saved.entries()].filter(([k]) => k.startsWith(prefix))),
   setAlarm: async () => {},
   deleteAlarm: async () => {},

@@ -1449,7 +1449,7 @@ const CRAFT = [
       explain: 'Both gating checks passed and the failing one is non-gating, so the verdict is GREEN; with no checks at all it is NONE, not green. Three failures in a row of a 10% flake happen by luck 0.001 of the time, 1 in 1,000, so treat it as a real failure.',
       code: lines(
         '// The verdict rule of CHE\'s release status: one known check never gates.',
-        "const NON_GATING = new Set(['Workers Builds: chey-app']);",
+        "const NON_GATING = new Set(['Workers Builds: chey-app', 'screens', 'simulator']);",
         'function verdict(runs) {',
         '  const gating = runs.filter((r) => !NON_GATING.has(r.name));',
         "  if (!gating.length) return 'NONE';",
@@ -1476,7 +1476,7 @@ const CRAFT = [
       {
         id: 'c-ci-validation.1', kind: 'choice', topics: ['ci validation', 'required checks', 'gating checks', 'ci checks'], language: 'javascript',
         prompt: 'On a pull request, analyze passed, Worker syntax and unit tests passed, and Workers Builds: chey-app failed. What verdict does CHE\'s release status give?',
-        solution: { language: 'javascript', code: "const NON_GATING = new Set(['Workers Builds: chey-app']); const verdict = (runs) => { const gating = runs.filter((r) => !NON_GATING.has(r.name)); if (!gating.length) return 'NONE'; if (gating.some((r) => r.status !== 'completed')) return 'PENDING'; return gating.every((r) => ['success', 'skipped', 'neutral'].includes(r.conclusion)) ? 'GREEN' : 'RED'; };", entry: 'verdict' },
+        solution: { language: 'javascript', code: "const NON_GATING = new Set(['Workers Builds: chey-app', 'screens', 'simulator']); const verdict = (runs) => { const gating = runs.filter((r) => !NON_GATING.has(r.name)); if (!gating.length) return 'NONE'; if (gating.some((r) => r.status !== 'completed')) return 'PENDING'; return gating.every((r) => ['success', 'skipped', 'neutral'].includes(r.conclusion)) ? 'GREEN' : 'RED'; };", entry: 'verdict' },
         cases: [
           { args: [[{ name: 'analyze', status: 'completed', conclusion: 'success' }, { name: 'Worker syntax and unit tests', status: 'completed', conclusion: 'success' }, { name: 'Workers Builds: chey-app', status: 'completed', conclusion: 'failure' }]], expected: 'GREEN' },
           { args: [[{ name: 'analyze', status: 'in_progress', conclusion: null }, { name: 'Workers Builds: chey-app', status: 'completed', conclusion: 'failure' }]], expected: 'PENDING' },
@@ -1533,7 +1533,7 @@ const CRAFT = [
     ],
     repo_examples: [
       at('server/cloudflare/self_update.js', 'mergeSelfUpdatePr', 'merges only after the checks on the head it checked passed; no check reported yet is CI not started, never a pass', 'server/cloudflare/autonomy_failure_injection.test.mjs', 'merge requires CI, a CHE branch, no conflict, and pins the checked head; Worker merges trigger deploy'),
-      at('.claude/skills/che-release/scripts/release_status.mjs', 'NON_GATING', 'the one check that fails on every pull-request branch by design is reported but never decides the verdict; every other check gates', '.claude/skills/tests/skills.test.mjs', 'che-release status: a merged, deployed PR is reported with what the deploy verified'),
+      at('.claude/skills/che-release/scripts/release_status.mjs', 'NON_GATING', 'the checks that never decide the verdict (the Cloudflare dashboard build that fails on every branch, and the informational iOS simulator jobs) are reported; every other check gates', '.claude/skills/tests/skills.test.mjs', 'che-release status: a merged, deployed PR is reported with what the deploy verified'),
       at('.claude/skills/che-debug/scripts/summarize_tap.mjs', 'summarizeTap', 'a passing suite is one line, a failure keeps its diagnostic, and a run with no totals is unfinished, never a pass', '.claude/skills/tests/skills.test.mjs', 'run_checks summaries: a passing suite is one line, a failure keeps its diagnostic, a cut-off run is not a pass'),
       at('server/cloudflare/truth_layer.js', 'guardOwnerReply', '"Tests passed" or "it is deployed" is removed from a reply unless a CI or deploy receipt proves it', 'server/cloudflare/truth_layer.test.mjs', '15: PR, ready-for-PR, merge, deploy and tests claims need GitHub/deploy receipts'),
     ],

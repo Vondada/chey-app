@@ -10,6 +10,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import 'che_chrome_status.dart';
 import 'che_hud.dart';
 import 'che_theme.dart';
 
@@ -262,7 +263,8 @@ class PillToggle extends StatelessWidget {
     required this.options,
     required this.index,
     required this.onChanged,
-    this.height = 38,
+    // 52 leaves each choice a 44-point touch target inside the 1-point border and 3-point rim (iOS minimum).
+    this.height = 52,
   });
   final List<String> options;
   final int index;
@@ -529,7 +531,8 @@ class CheHeader extends StatelessWidget {
             mainAxisSize: MainAxisSize.min,
             children: [
               ShaderMask(
-                shaderCallback: (r) => CheColors.accentGradient.createShader(r),
+                // HUD: the Home greeting's chrome; other palettes keep their accent.
+                shaderCallback: (r) => (cheHudActive ? CheHud.chrome : CheColors.accentGradient).createShader(r),
                 child: Text(title,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
@@ -707,12 +710,12 @@ class StepLine extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final Widget icon = switch (status) {
-      StepStatus.done => const Icon(Icons.check_rounded, size: 15, color: CheColors.success),
-      StepStatus.error => const Icon(Icons.error_outline_rounded, size: 15, color: CheColors.danger),
+      StepStatus.done => Icon(Icons.check_rounded, size: 15, color: CheStatusPalette.success.base),
+      StepStatus.error => Icon(Icons.error_outline_rounded, size: 15, color: CheStatusPalette.failure.base),
       StepStatus.running => SizedBox(
           width: 12,
           height: 12,
-          child: CircularProgressIndicator(strokeWidth: 1.6, color: CheColors.accent),
+          child: CircularProgressIndicator(strokeWidth: 1.6, color: CheStatusPalette.active.base),
         ),
     };
     return TweenAnimationBuilder<double>(
@@ -730,7 +733,7 @@ class StepLine extends StatelessWidget {
           const SizedBox(width: 8),
           Expanded(
             child: status == StepStatus.running
-                ? ThinkingShimmer(text: label, style: CheType.bodyDim.copyWith(fontSize: 13.5))
+                ? CheThinkingIndicator(label: label, style: CheType.bodyDim.copyWith(fontSize: 13.5))
                 : Text(label,
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
@@ -1055,6 +1058,7 @@ class CodeCard extends StatelessWidget {
                   maxLines: 1, overflow: TextOverflow.ellipsis, style: CheType.mono.copyWith(color: CheColors.textDim)),
             ),
             IconButton(
+              tooltip: 'Copy code',
               visualDensity: VisualDensity.compact,
               icon: Icon(Icons.copy_rounded, size: 16, color: CheColors.textDim),
               onPressed: () {
