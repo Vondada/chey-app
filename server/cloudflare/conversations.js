@@ -59,7 +59,8 @@ export function conversationThreads(data = {}, crewThreads = []) {
     if (!t?.partner_id) continue;
     const name = clip(t.partner_name || 'Agent', 40);
     const list = byAgent.get(t.partner_id) || { name, messages: [] };
-    list.messages.push({ from: 'CHE', to: name, kind: 'task', text: clip(t.task, 3000), at: t.created_at || '' });
+    // What the agent was really sent: CHE's note (stored at assignment; older tasks have none) and the exact task.
+    list.messages.push({ from: 'CHE', to: name, kind: 'task', text: clip(t.che_note ? `${t.che_note}\n\n${t.task}` : t.task, 3200), at: t.created_at || '' });
     for (const st of Array.isArray(t.steering) ? t.steering : []) list.messages.push({ from: 'CHE', to: name, kind: 'steering', text: clip(st.text, 3000), at: st.at || '' });
     if (t.result) list.messages.push({ from: name, to: 'CHE', kind: 'result', text: clip(t.result, 3000), at: t.updated_at || '' });
     if (t.review_feedback) list.messages.push({ from: 'CHE', to: name, kind: 'review', text: clip(t.review_feedback, 3000), at: t.updated_at || '' });
