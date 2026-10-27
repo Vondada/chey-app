@@ -142,7 +142,7 @@ import { CHE_SELF_BRIEF, starredFocus, studyLesson } from './che_self_knowledge.
 import { connectServiceIntent, onboardingChatReply, onboardingIntent, onboardingRoute } from './service_onboarding.js';
 import { privateChatGate, privateTurn } from './private_voice.js';
 import { KEY_PROVIDERS, MEMORY_DB, hasStoredMemoryDatabase, memorySetupIntent, memorySetupSteps, removeMemoryDatabase, saveMemoryDatabase, removeKey, storedKeys, withStoredKeys, cachedAnswer, checkAllKeys, fileLetter, fileTech, forgetAnswer, isLockedDown, listLetters, looksLikeAttack, markLetter, nextLetter, rememberAnswer, resilienceIntent, runScout, saveKey, setLockdown, setupSteps, speakKeyHealth, speakMailboxSummary, speakTech, techItems } from './resilience.js';
-import { modalKeyRowFor } from './modal_gpu.js';
+import { modalKeyRowFor, modalProbe } from './modal_gpu.js';
 import { applyCorrections, correctedPrevious, correctionsContext, detectCorrection, learnCorrection, loadCorrections } from './speech_learning.js';
 import { applyModelReading, asksAboutScreen, clipKeepingLimits, interpretOwnerTurn, interpretWithModel } from './speech_intent.js';
 import { intentFrame, understoodAs } from './intent_frame.js';
@@ -4150,6 +4150,8 @@ export class CheState extends DurableObject {
   }
 
   // Summary for the deploy check: feed, counts, positions and the newest trades, from records.
+  async modalProbe() { return modalProbe(this.keyEnv || this.env, this.ctx.storage); }
+
   async tradingProbe() {
     const ensured = await this.ensureLivePaper();
     const run = ensured.enabled ? await this.runForwardPaper({ force: true }) : { skipped: 'paper trading is off' };
@@ -16276,6 +16278,8 @@ async function routeRequest(request, env, ctx) {
   // The deploy check. The route exists only for the per-deploy random token.
   // The deploy's trading check: arms and runs one forward-paper pass on the owner's CHE and
   // prints what the records hold (paper only). Exists only for the per-deploy random token.
+  // The deploy's Modal check: the authenticated /health with the owner's real MODAL_TOKEN (modal_gpu.js modalProbe).
+  if (path === '/api/probe/modal' && request.method === 'POST') return voiceProbeAuthorized(request, env) ? json(await env.CHE_STATE.getByName('owner').modalProbe()) : json({ detail: 'Not found.' }, 404);
   if (path === '/api/trading/probe' && request.method === 'POST') {
     if (!voiceProbeAuthorized(request, env)) return json({ detail: 'Not found.' }, 404);
     return json(await env.CHE_STATE.getByName('owner').tradingProbe());
