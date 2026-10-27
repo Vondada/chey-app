@@ -35,7 +35,7 @@ Source: live `main` at `fe18860bb60e15d5313d9cede2766d338c8ff7a0`, `AGENTS.md`, 
 
 ## Release gates
 
-Worker unit/security tests, Flutter analysis/tests, code review, Worker deployment with live commit verification, SideStore-compatible IPA, actual iPhone voice test and live connection consent where applicable. **Any unmet gate remains an explicit blocker; do not claim this is a fully deployed JARVIS-style assistant until they pass.**
+Worker unit/security tests, Flutter analysis/tests, code review, the pre-merge live test on the staging Worker (`live (staging)`, since 2026-10-27; the iOS simulator is manual and not a gate), Worker deployment with live commit verification, SideStore-compatible IPA, actual iPhone voice test and live connection consent where applicable. **Any unmet gate remains an explicit blocker; do not claim this is a fully deployed JARVIS-style assistant until they pass.**
 
 ## Speech continuity and one voice per reply (2026-10-18)
 

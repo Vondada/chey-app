@@ -39,6 +39,10 @@ export const TASK_FINISHED = new Set(['complete', 'failed', 'cancelled', 'reject
 // Work an agent still holds: not finished and not blocked on a permission or credential.
 export const TASK_OPEN = new Set(['queued', 'running', 'reviewing', 'review_pending', 'needs_review']);
 export const MAX_REPAIR_PASSES = 2;
+// A coding-job mirror (atlas_coding_tasks.js) only reflects a data.jobs coding job. The Office cannot steer,
+// hand off, review or cancel it: none of that would reach the job, so it is refused instead of reported done.
+export const CODING_JOB_MIRROR_ERROR = 'That is a CHE coding job shown on the Office desk. The Office cannot steer, hand off, review or cancel it; it follows the coding job itself. Ask "coding status" for that job.';
+const isCodingMirror = (task) => task?.source === 'coding_job';
 export const MAX_REVIEW_ATTEMPTS = 3;
 export const MAX_WORK_RETRIES = 8;
 export const MAX_STALE_RECOVERIES = 3;
@@ -743,6 +747,7 @@ function matchedOfficeSkills(data, task, max = 3, agent = null) {
 export function steerAgentTask(data, taskId, instruction) {
   const task = data.team_tasks.find((item) => item.id === taskId);
   if (!task) return { error: 'Office task not found.' };
+  if (isCodingMirror(task)) return { error: CODING_JOB_MIRROR_ERROR, coding_job: true };
   if (TASK_FINISHED.has(task.status)) return { error: 'That task is already finished.' };
   const text = clip(instruction, 1200);
   if (!text) return { error: 'Steering instruction required.' };
@@ -781,7 +786,10 @@ export function cancelAgentTasks(data, agentName, reason = 'Owner stopped it.') 
   const name = String(agentName || '').toLowerCase();
   const agent = (data.team || []).find((a) => String(a.name || '').toLowerCase() === name && !a.retired);
   if (!agent) return { agent: null, cancelled: [] };
-  const cancelled = (data.team_tasks || []).filter((t) => t.partner_id === agent.id && TASK_OPEN.has(t.status));
+  const open = (data.team_tasks || []).filter((t) => t.partner_id === agent.id && TASK_OPEN.has(t.status));
+  // Coding-job mirrors are not cancelled here: that would not stop the real job (CODING_JOB_MIRROR_ERROR).
+  const kept = open.filter(isCodingMirror);
+  const cancelled = open.filter((t) => !isCodingMirror(t));
   const at = now();
   for (const task of cancelled) {
     task.status = 'cancelled';
@@ -789,13 +797,13 @@ export function cancelAgentTasks(data, agentName, reason = 'Owner stopped it.') 
     task.retry_at = null;
     task.updated_at = at;
   }
-  if (cancelled.length) {
+  if (cancelled.length && !kept.length) {
     agent.runtime_status = 'idle';
     agent.runtime_task = null;
     agent.runtime_updated_at = at;
     agent.status = 'available';
   }
-  return { agent, cancelled };
+  return { agent, cancelled, kept };
 }
 
 // "Review it again": a result CHE could not review goes back to CHE's review as is; the agent's
@@ -803,6 +811,7 @@ export function cancelAgentTasks(data, agentName, reason = 'Owner stopped it.') 
 export function requeueAgentReview(data, taskId) {
   const task = data.team_tasks.find((item) => item.id === taskId);
   if (!task) return { error: 'Office task not found.' };
+  if (isCodingMirror(task)) return { error: CODING_JOB_MIRROR_ERROR, coding_job: true };
   if (!['needs_review', 'review_pending'].includes(task.status) || !task.result) return { error: 'That task has no result waiting for review.' };
   task.status = 'review_pending';
   task.review_attempts = 0;
@@ -815,6 +824,7 @@ export function requeueAgentReview(data, taskId) {
 export function handoffAgentTask(data, taskId, targetAgentId, note = '') {
   const task = data.team_tasks.find((item) => item.id === taskId);
   if (!task) return { error: 'Office task not found.' };
+  if (isCodingMirror(task)) return { error: CODING_JOB_MIRROR_ERROR, coding_job: true };
   if (TASK_FINISHED.has(task.status)) return { error: 'That task is already finished.' };
   const target = data.team.find((item) => item.id === targetAgentId && !item.retired);
   if (!target) return { error: 'Target agent not found.' };
@@ -1142,9 +1152,10 @@ async function runOneTask(ctx) {
   if (data.autonomy === false) return false;
   const due = (item) => !item.retry_at || item.retry_at <= Date.now();
   const oldestFirst = [...data.team_tasks].reverse();
-  const pendingReview = oldestFirst.find((item) => item.status === 'review_pending' && due(item));
+  const pendingReview = oldestFirst.find((item) => item.status === 'review_pending' && due(item) && !isCodingMirror(item));
   if (pendingReview) return reviewDelegatedResult(ctx, pendingReview.id);
-  const task = oldestFirst.find((item) => item.status === 'queued' && due(item));
+  // A coding-job mirror (atlas_coding_tasks.js) only reflects data.jobs; the Office never runs it.
+  const task = oldestFirst.find((item) => item.status === 'queued' && due(item) && item.source !== 'coding_job');
   if (!task) return false;
   const agent = data.team.find((item) => item.id === task.partner_id);
   if (!agent) {
@@ -1356,7 +1367,8 @@ async function reviewDelegatedResult(ctx, taskId, { saved = false } = {}) {
   const { env, load, save, notify, models } = ctx;
   let data = await load();
   const t0 = data.team_tasks.find((item) => item.id === taskId);
-  if (!t0) return true;
+  // A coding-job mirror is complete only on merge proof (atlas_coding_tasks.js), never on a model's approval.
+  if (!t0 || isCodingMirror(t0)) return true;
   const agent = data.team.find((item) => item.id === t0.partner_id) || { name: t0.partner_name || 'Office agent' };
   const result = t0.result || '';
   const task = { task: t0.task };
@@ -1693,7 +1705,7 @@ export async function processAgentWork(ctx, budget = 6) {
     if (!did) return false;
   }
   const data = await ctx.load();
-  return data.team_tasks.some((item) => ['queued', 'review_pending'].includes(item.status)) ||
+  return data.team_tasks.some((item) => ['queued', 'review_pending'].includes(item.status) && item.source !== 'coding_job') ||
     (data.meetings || []).some((item) => ['drafting', 'cross_check', 'synthesizing'].includes(item.status));
 }
 
@@ -1707,7 +1719,7 @@ export function recoverStaleWork(data, maxAgeMs = 5 * 60_000) {
   let changed = false;
   const cutoff = Date.now() - maxAgeMs;
   for (const task of data.team_tasks) {
-    if (!['running', 'reviewing'].includes(task.status) || !(Date.parse(task.updated_at) < cutoff)) continue;
+    if (!['running', 'reviewing'].includes(task.status) || !(Date.parse(task.updated_at) < cutoff) || task.source === 'coding_job') continue;
     task.stale_recoveries = Number(task.stale_recoveries || 0) + 1;
     task.updated_at = now();
     changed = true;
