@@ -30,7 +30,8 @@ const MONEY_VERB = String.raw`(?:bought|buy(?:s|ing)?|purchas(?:e|es|ed|ing)|pay
 const SALE_VERB = String.raw`sell(?:s|ing)?\b(?=\s+[\w$'’])(?!\s*-)(?!\s+things?\b)(?!\s+me\s+on\b)(?!\s+(?:(?:the|this|that|a|an|my|your|our|these|those|some|any|all)\s+)?(?:ideas?|concepts?|arguments?|pitch(?:es)?|points?|team|people|signals?)\b)`;
 const SALE_RE = new RegExp(`\\b${SALE_VERB}`, 'i');
 const MONEY_ORDER = String.raw`order(?:s|ed|ing)?\s+(?:me\s+|us\s+)?(?:a|an|another|more|some|\d|\$|[a-z]+)`;
-const MONEY_TRANSFER = String.raw`(?:transfer(?:s|red|ring)?|wire(?:s|d|ing)?)\s+(?:\$|\d|money|funds|dollars?|to\s)|send(?:s|ing)?\s+(?:(?:the|my|a|an|this|that|some|\d+)\s+)?(?:payouts?|payments?|transfers?|wires?)\b`;
+const MONEY_TRANSFER = String.raw`(?:transfer(?:s|red|ring)?|wire(?:s|d|ing)?)\s+(?:\$|\d|money|funds|dollars?|to\s)|send(?:s|ing)?\s+(?:(?:the|my|a|an|this|that|some|\d+)\s+)?(?:payouts?|payments?|transfers?|wires?)\b(?![\s-]+(?:links?|reminders?|requests?|receipts?|confirmations?|details|info|instructions|summar(?:y|ies)|reports?|status|emails?|notices?|invoices?|updates?|forms?|pages?|history|records?|totals?)\b)`;
+// "Send the payout" moves money; "send the payment link" or "send a payment reminder" is a message (standing permission).
 // Paid promotion spends money too (review of #353). Clause-anchored here: "run an ad on TikTok",
 // "launch a paid campaign", "let's do a paid promotion". An ad CHE writes, an ads report, a sponsored
 // post draft, or ads shown on the owner's own site or channel to earn money spends nothing.
@@ -222,8 +223,6 @@ export function classifyOwnerActions(text) {
   if (((hasVerb(MONEY_RE, t) || hasVerb(MONEY_RE, asked)) && !onlyOwnPlanMoney(t)) || paidPromotion(asked)) kinds.push('money');
   if (hasVerb(DELETE_RE, t) || hasVerb(DELETE_RE, asked)) kinds.push('delete');
   if ([SIGNUP_RE, SIGNUP_NAMED_RE, PAYMENT_SERVICE_SIGNUP_RE].some((re) => hasVerb(re, t) || hasVerb(re, asked))) kinds.push('signup');
-  // One message to everyone is a broadcast: held for the owner's yes, unlike a message to one person (the standing rule).
-  if (hasVerb(MESSAGE_ALL_RE, t) || hasVerb(MESSAGE_ALL_RE, asked)) kinds.push('broadcast');
   return kinds;
 }
 
@@ -247,9 +246,6 @@ export function deskOwnedMoney(text) {
   return !classifyOwnerActions(rest).includes('money');
 }
 
-const MESSAGE_ALL = String.raw`(?:send|text|message|email|blast|post)(?:s|ing)?\s+(?:it|this|that|them|the\s+(?:update|news|message|email|post|link|file|video))?\s*(?:to|for)\s+(?:everyone|everybody|all|the\s+(?:whole\s+)?(?:team|list|group|crew|mailing\s+list|customers|subscribers|followers|contacts)|my\s+(?:list|contacts|customers|subscribers|followers|mailing\s+list))\b`;
-const MESSAGE_ALL_RE = new RegExp(`${LEAD}${MESSAGE_ALL}`, 'i');
-
 export function gateOwnerAction(text, grant = {}) {
   const kinds = classifyOwnerActions(text);
   if (!kinds.length) return { allowed: true, kind: '', kinds: [] };
@@ -259,7 +255,6 @@ export function gateOwnerAction(text, grant = {}) {
   if (missing.includes('money')) parts.push(SALE_RE.test(text) ? 'spend, buy or sell anything' : 'spend or buy anything');
   if (missing.includes('delete')) parts.push('delete or remove anything');
   if (missing.includes('signup')) parts.push('sign you up for anything');
-  if (missing.includes('broadcast')) parts.push('message more than one person');
   return {
     allowed: false,
     kind: missing[0],
@@ -303,7 +298,9 @@ const APPS_RE = [...new Set(KNOWN_APPS)].sort((a, b) => b.length - a.length)
 // "Set up my account on the phone" names no service and is not held.
 const SERVICE_NAME = String.raw`(?:${APPS_RE})\b`;
 const PAYMENT_SERVICE = String.raw`(?:stripe|gumroad|paypal|square|payhip|lemon\s+squeezy|ko-?fi|fiverr|upwork|shopify|venmo|cash\s+app)`;
-const PAYMENT_SERVICE_SIGNUP_RE = new RegExp(`${LEAD}(?:set\\s+up|open|create|make|join|register\\s+(?:me\\s+)?(?:for|on|with))\\s+(?:me\\s+|us\\s+|my\\s+|our\\s+)?(?:an?\\s+|a\\s+new\\s+|new\\s+)?${PAYMENT_SERVICE}(?:\\s+(?:account|store|shop|profile))?\\b`, 'i');
+// Registration only (review of #696): "open PayPal", "open my PayPal account" or "set up Stripe webhooks" is not a sign-up.
+const PAYMENT_ACCOUNT = String.raw`${PAYMENT_SERVICE}\s+(?:seller\s+|merchant\s+|business\s+)?(?:account|store|shop|profile)\b`;
+const PAYMENT_SERVICE_SIGNUP_RE = new RegExp(`${LEAD}(?:(?:set\\s+up|create|make)\\s+(?:me\\s+|us\\s+|my\\s+|our\\s+)?(?:an?\\s+|a\\s+new\\s+|new\\s+)?${PAYMENT_ACCOUNT}|open\\s+(?:me\\s+|us\\s+)?(?:an?\\s+|a\\s+new\\s+|new\\s+)${PAYMENT_ACCOUNT}|(?:join|sign\\s+up\\s+(?:for|on|with|at)|register\\s+(?:me\\s+|us\\s+)?(?:for|on|with|at))\\s+${PAYMENT_SERVICE}\\b)`, 'i');
 const SIGNUP_NAMED_RE = new RegExp(`${LEAD}(?:set\\s+up\\s+(?:me\\s+|us\\s+|my\\s+|our\\s+)?(?:an?\\s+|a\\s+new\\s+)?(?:new\\s+)?${SERVICE_NAME}\\s+account\\b|set\\s+up\\s+(?:me\\s+|us\\s+|my\\s+|our\\s+)?(?:an?\\s+|a\\s+new\\s+)?(?:new\\s+)?account\\s+(?:with|on|at)\\s+${SERVICE_NAME})`, 'i');
 
 // "open X" as the owner says it: the verb names the app outright, with a
