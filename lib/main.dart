@@ -38,6 +38,7 @@ import 'security/che_session_store.dart';
 import 'brain/che_brain_ledger_screen.dart';
 import 'brain/che_brain_overview.dart';
 import 'brain/che_brain_regions.dart' show CheBrainNav, CheBrainSourceKind, CheBrainSourceLink;
+import 'brain/che_brain_reliability_screen.dart';
 import 'brain/che_brain_truth_screen.dart';
 import 'rooms/che_cloud_computer_room.dart';
 import 'brain/che_brain_list.dart' show CheBrainRecordLinks;
@@ -45,6 +46,7 @@ import 'brain/che_brain_sections.dart' show CheBrainEvidence, CheEvidenceKind, c
 import 'che_ui/che_owner_improvements.dart';
 import 'workflows/che_workflows_screen.dart';
 import 'film/che_film_studio_screen.dart';
+import 'mailbox/che_fact_check.dart';
 import 'music/che_beat_producer.dart';
 import 'music/che_recording_studio.dart';
 import 'world/che_meeting_room.dart';
@@ -108,6 +110,8 @@ import 'create/che_gpu_browser.dart';
 import 'create/che_gpu_connect.dart';
 import 'create/che_live_studio.dart';
 import 'agents/che_agent_runtime.dart';
+import 'agents/che_office_conversation.dart';
+import 'agents/che_office_conversation_screen.dart';
 import 'agents/che_office_floor_screen.dart';
 import 'home/che_activity_feed.dart';
 import 'home/che_ui_controls_screen.dart';
@@ -717,6 +721,19 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
     await Navigator.of(context).push(MaterialPageRoute<void>(
       builder: (_) => CheBrainTruthScreen(
         client: CheBrainTruthClient(baseUrl: cheAgentBaseUrl, headers: () => _authHeaders),
+        onSpeak: (text) => unawaited(speakText(text, record: false, readOnDemand: true)),
+        onListen: () => unawaited(toggleListening()),
+      ),
+    ));
+  }
+
+  /// More → Reliability Registry: every recorded test of CHE, by session and question, with grades and evidence
+  /// (also asked in chat: "what take are we on?", "open the test registry").
+  Future<void> _openBrainReliability() async {
+    HapticFeedback.selectionClick();
+    await Navigator.of(context).push(MaterialPageRoute<void>(
+      builder: (_) => CheBrainReliabilityScreen(
+        client: CheReliabilityClient(baseUrl: cheAgentBaseUrl, headers: () => _authHeaders),
         onSpeak: (text) => unawaited(speakText(text, record: false, readOnDemand: true)),
         onListen: () => unawaited(toggleListening()),
       ),
@@ -2428,6 +2445,13 @@ OWNER AGENCY
           title: 'Truth & Verification',
           subtitle: 'What CHE verified, labelled inference or removed, from real audit records',
           onTap: () => unawaited(_openBrainTruth()),
+          hue: kit.CheColors.accent,
+        ),
+        CheMoreItem(
+          icon: Icons.fact_check_rounded,
+          title: 'Reliability Registry',
+          subtitle: 'Every test of CHE: sessions, questions, her replies and grades',
+          onTap: () => unawaited(_openBrainReliability()),
           hue: kit.CheColors.accent,
         ),
         CheMoreItem(
