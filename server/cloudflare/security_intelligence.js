@@ -246,7 +246,7 @@ export async function restoreTrustedState(storage, data) {
 // runs through the Cloudflare binding, not fetch, so CHE keeps an answer engine inside its own runtime.
 export const EGRESS_KEY = 'che:egress_policy';
 export const OWNER_COMPUTE_HOSTS = Object.freeze(['api.github.com', 'github.com', 'raw.githubusercontent.com', 'objects.githubusercontent.com', 'codeload.github.com', 'api.cloudflare.com']);
-const EGRESS = { internalOnly: false, selfHosts: new Set(), ownerHosts: new Set(), ownerRepo: '', blocked: 0, holds: 0 };
+const EGRESS = { internalOnly: false, selfHosts: new Set(), ownerHosts: new Set(), ownerRepo: '', blocked: 0, holds: 0, privateHolds: 0 };
 
 /** The owner's own compute from the Worker env: his repository (only it, on api.github.com) and his model/compute servers. */
 export function setEgressOwner(env = {}) {
@@ -272,6 +272,17 @@ export function ownerHost(url) {
 /** A request for a project the owner said must stay inside CHE holds the guard closed while it runs (capability_engine.js). */
 export function holdEgress(delta) { EGRESS.holds = Math.max(0, EGRESS.holds + Number(delta || 0)); return EGRESS.holds; }
 
+/** A Private voice request (private_voice.js) holds the guard closed and keeps the model router on Workers AI only. */
+export function holdPrivateEgress(delta) {
+  const d = Number(delta || 0);
+  EGRESS.privateHolds = Math.max(0, EGRESS.privateHolds + d);
+  holdEgress(d);
+  return EGRESS.privateHolds;
+}
+
+/** True while any Private voice request (or background work it started) is running. */
+export function privateEgressHeld() { return EGRESS.privateHolds > 0; }
+
 export function setEgressPolicy(policy, selfUrl = '') {
   EGRESS.internalOnly = policy?.internal_only === true;
   try { if (selfUrl) EGRESS.selfHosts.add(new URL(selfUrl).hostname); } catch (_) {}
@@ -289,7 +300,7 @@ export function installEgressGuard() {
       try { host = new URL(String(input?.url || input)).hostname; } catch (_) { host = ''; }
       if (!ownerHost(String(input?.url || input))) {
         EGRESS.blocked++;
-        return Promise.reject(new TypeError(EGRESS.internalOnly ? `Internal-only mode is on, so ${host || 'that service'} was not called.` : `This project stays inside CHE, so ${host || 'that service'} was not called.`));
+        return Promise.reject(new TypeError(EGRESS.internalOnly ? `Internal-only mode is on, so ${host || 'that service'} was not called.` : EGRESS.privateHolds > 0 ? `Private voice is on, so ${host || 'that service'} was not called.` : `This project stays inside CHE, so ${host || 'that service'} was not called.`));
       }
     }
     return original(input, init);

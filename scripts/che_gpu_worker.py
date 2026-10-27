@@ -36,6 +36,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import signal
 import socket
 import subprocess
@@ -211,6 +212,8 @@ def run_job(che, job, a, log):
     if a.worker_class == 'github_cpu': cmd += ['--device', 'cpu']
     resume = resume_model(che, job, a)
     if resume: cmd += ['--resume-model', resume[0], '--resume-sha', resume[1]]
+    ref = reference_photo(che, job)
+    if ref: cmd += ['--reference-file', ref]
     # Its own process group, so stopping the job stops Blender too (Blender is the runner's child, not ours).
     p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, start_new_session=True)
     stop = threading.Event(); state = {'stopped': False, 'done': [], 'sent': set(), 'model_sent': False, 'quick': set(), 'exports': set()}
@@ -252,6 +255,7 @@ def run_job(che, job, a, log):
         elif line.startswith('GPU '):
             che.call('progress', {'job_id': job['id'], 'views_done': state['done'], 'message': f'Rendering on {line[4:].strip()}'[:200]})
     code = p.wait(); stop.set(); os.unlink(settings)
+    if ref: shutil.rmtree(os.path.dirname(ref), ignore_errors=True)   # the photo is not kept on the worker
     receipt = None
     if folder and os.path.exists(os.path.join(folder, 'receipt.json')):
         with open(os.path.join(folder, 'receipt.json')) as f: receipt = json.load(f)
@@ -271,6 +275,28 @@ def resume_model(che, job, a):
     with open(path, 'wb') as f: f.write(data)
     print(f"RESUME {job['id']}: reusing the verified model ({len(data)} bytes).", flush=True)
     return path, sha
+
+
+def reference_photo(che, job):
+    """A person job's reference photo (settings REFERENCE, gpu_queue.js): fetched from CHE's worker route with this
+    worker's own credential, checked against its SHA-256 and written to a private temporary file whose path the runner
+    gets. Returns the path, or None (no reference, or it could not be fetched or did not match: the runner then
+    reports the missing photo in the receipt instead of building a face without it). Nothing about it is printed but
+    the job id and the outcome."""
+    raw = (job.get('settings') or {}).get('REFERENCE')
+    if not raw or job.get('kind') != 'person_model': return None
+    try: ref = json.loads(raw) if isinstance(raw, str) else dict(raw)
+    except (ValueError, TypeError): return None
+    sha = str(ref.get('sha256') or '').lower()
+    if not re.fullmatch(r'[0-9a-f]{64}', sha): return None
+    data = che.fetch('reference', f"?worker={che.worker_id}&job={job['id']}")
+    if not data or hashlib.sha256(data).hexdigest() != sha:
+        print(f"REFERENCE {job['id']}: the photo could not be fetched or did not match its SHA-256.", flush=True); return None
+    d = tempfile.mkdtemp(prefix='che-ref-'); os.chmod(d, 0o700)
+    path = os.path.join(d, 'reference')
+    with open(path, 'wb') as f: f.write(data)
+    print(f"REFERENCE {job['id']}: photo fetched and verified ({len(data)} bytes).", flush=True)
+    return path
 
 
 def upload_previews(che, job, folder, receipt, streamed=None):

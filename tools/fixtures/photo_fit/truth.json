@@ -1,0 +1,128 @@
+{
+ "base": {
+  "colors": {
+   "eyes": "94,62,40",
+   "hair": "28,18,16",
+   "skin": "80,46,32"
+  },
+  "env": {},
+  "eyes_px": [
+   [
+    150.9,
+    132.2
+   ],
+   [
+    105.1,
+    132.2
+   ]
+  ],
+  "note": "render of the CC0 MakeHuman/MPFB2 base by tools/avatar_face/photo_fixture.py; not a real person",
+  "sliders": {},
+  "synthetic": true
+ },
+ "long": {
+  "colors": {
+   "eyes": "50,70,110",
+   "hair": "120,80,40",
+   "skin": "200,150,120"
+  },
+  "env": {},
+  "eyes_px": [
+   [
+    149.1,
+    132.2
+   ],
+   [
+    106.9,
+    132.2
+   ]
+  ],
+  "note": "render of the CC0 MakeHuman/MPFB2 base by tools/avatar_face/photo_fixture.py; not a real person",
+  "sliders": {
+   "cheek_bones": 0.4,
+   "chin_h": 0.5,
+   "head_w": -0.4,
+   "lip_lower": 0.5,
+   "mouth_w": 0.4,
+   "nose_h": 0.5
+  },
+  "synthetic": true
+ },
+ "narrow_nose": {
+  "colors": {
+   "eyes": "80,50,30",
+   "hair": "22,16,13",
+   "skin": "105,62,44"
+  },
+  "env": {},
+  "eyes_px": [
+   [
+    150.9,
+    132.2
+   ],
+   [
+    105.1,
+    132.2
+   ]
+  ],
+  "note": "render of the CC0 MakeHuman/MPFB2 base by tools/avatar_face/photo_fixture.py; not a real person",
+  "sliders": {
+   "chin_w": -0.5,
+   "lip_upper": 0.5,
+   "nose_flare": -0.5,
+   "nose_up": -0.4,
+   "nose_w": -0.5
+  },
+  "synthetic": true
+ },
+ "turned": {
+  "colors": {
+   "eyes": "94,62,40",
+   "hair": "28,18,16",
+   "skin": "80,46,32"
+  },
+  "env": {
+   "YAW": "38"
+  },
+  "eyes_px": [
+   [
+    196.4,
+    133.3
+   ],
+   [
+    163.0,
+    132.3
+   ]
+  ],
+  "note": "render of the CC0 MakeHuman/MPFB2 base by tools/avatar_face/photo_fixture.py; not a real person",
+  "sliders": {},
+  "synthetic": true
+ },
+ "wide": {
+  "colors": {
+   "eyes": "60,82,50",
+   "hair": "70,40,22",
+   "skin": "150,100,75"
+  },
+  "env": {},
+  "eyes_px": [
+   [
+    153.2,
+    132.2
+   ],
+   [
+    102.8,
+    132.2
+   ]
+  ],
+  "note": "render of the CC0 MakeHuman/MPFB2 base by tools/avatar_face/photo_fixture.py; not a real person",
+  "sliders": {
+   "chin_w": 0.4,
+   "head_w": 0.5,
+   "mouth_up": 0.3,
+   "mouth_w": -0.4,
+   "nose_w": 0.6
+  },
+  "synthetic": true
+ }
+}

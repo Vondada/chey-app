@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Create Room demo office stage</title>
+<!-- PROTOTYPE staging for the Create Room demo (tools/demo/capture.mjs, segment s09_office). The room reuses CHE's
+     Office geometry (assets/office3d/index.html: tile floor, walls, windows, plants, the desk with monitor, keyboard and
+     mug; the desk here stands on the floor instead of on its coloured stage) at the same metre scale. The character
+     is the real GLB from the person_model job with its own walk, idle and wave clips. What is staged by this page,
+     not built by the pipeline: the walk path (the root moves at the walk clip's declared 1.0 m/s, so the in-place
+     cycle does not slide), the turn (root rotation), the chair and the sitting pose (legs aimed by the page). -->
+<style>html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#f7ecd9}canvas{display:block}</style>
+</head>
+<body>
+<script src="../../../assets/characters/app/characters-vendor.js"></script>
+<script>
+const THREE = window.THREE;
+const C = { cream: 0xF7ECD9, terra: 0xC96C4A, teal: 0x2FAFA6, wood: 0xC78B61, ink2: 0x73534A, white: 0xFFFDF8, chrome: 0xBFD5D3,
+  blackGlass: 0x172327, leaf: 0x4D865D, leaf2: 0x78A66A, coral: 0xF47C6C, mustard: 0xE4AE43 };
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.outputColorSpace = THREE.SRGBColorSpace; renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 1.0;
+renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+document.body.appendChild(renderer.domElement);
+const scene = new THREE.Scene(); scene.background = new THREE.Color(C.cream);
+const camera = new THREE.PerspectiveCamera(38, window.innerWidth / window.innerHeight, 0.05, 60);
+camera.position.set(3.3, 2.1, 2.4); camera.lookAt(-0.4, 0.85, -1.3);
+scene.add(new THREE.HemisphereLight(0xFFF3DB, 0x846253, 1.6));
+const sun = new THREE.DirectionalLight(0xFFF0D0, 2.6); sun.position.set(-4, 8, 5); sun.castShadow = true;
+sun.shadow.mapSize.set(1024, 1024); Object.assign(sun.shadow.camera, { left: -6, right: 6, top: 6, bottom: -6 }); scene.add(sun);
+const fillL = new THREE.DirectionalLight(0xffffff, 1.0); fillL.position.set(4, 3, 4); scene.add(fillL);
+const mat = (color, roughness = 0.77, metalness = 0.02, extra = {}) => new THREE.MeshStandardMaterial({ color, roughness, metalness, ...extra });
+const fin = (m) => { m.castShadow = true; m.receiveShadow = true; return m; };
+const box = (w, h, d, m) => fin(new THREE.Mesh(new THREE.BoxGeometry(w, h, d), m));
+const cyl = (rt, rb, h, m, s = 24) => fin(new THREE.Mesh(new THREE.CylinderGeometry(rt, rb, h, s), m));
+const sph = (r, m, sx = 1, sy = 1, sz = 1) => { const x = fin(new THREE.Mesh(new THREE.SphereGeometry(r, 20, 14), m)); x.scale.set(sx, sy, sz); return x; };
+
+// Architecture (assets/office3d/index.html: tiles, walls, windows), cropped to a 10 x 8 m corner.
+const tileColors = [0xF5E4CE, 0xF5D8C5, 0xDCE8DA, 0xF3E1AE, 0xD8E8E5], ts = 1.42;
+for (let x = 0; x < 8; x++) for (let z = 0; z < 6; z++) {
+  const t = box(ts - 0.035, 0.045, ts - 0.035, mat(tileColors[(x * 2 + z * 3) % 5], 0.92)); t.position.set(-4.6 + x * ts, -0.025, -3.4 + z * ts); scene.add(t);
+}
+const back = box(12, 4, 0.3, mat(0xF2D4BF)); back.position.set(0, 2, -4.25); scene.add(back);
+const side = box(0.3, 4, 10, mat(0xE9D9BD)); side.position.set(-5.4, 2, 0); scene.add(side);
+function addWindow(x) {
+  const g = new THREE.Group();
+  const glass = box(2.65, 2.1, 0.045, new THREE.MeshStandardMaterial({ color: 0xAEEBE7, emissive: 0x5DC8C3, emissiveIntensity: 0.13, roughness: 0.15, metalness: 0.08, transparent: true, opacity: 0.72 }));
+  glass.position.y = 2.2; const fm = mat(C.ink2, 0.42, 0.14);
+  const top = box(2.92, 0.13, 0.12, fm), bot = top.clone(), l = box(0.13, 2.35, 0.12, fm), r = l.clone();
+  top.position.y = 3.34; bot.position.y = 1.05; l.position.set(-1.4, 2.2, 0); r.position.set(1.4, 2.2, 0);
+  g.add(glass, top, bot, l, r); g.position.set(x, 0, -4.08); scene.add(g);
+}
+addWindow(-2.6); addWindow(2.4);
+function plant(s = 1) {
+  const g = new THREE.Group(); const pot = cyl(0.52 * s, 0.40 * s, 0.75 * s, mat(C.terra)); pot.position.y = 0.38 * s; g.add(pot);
+  for (let i = 0; i < 7; i++) {
+    const a = i / 7 * Math.PI * 2; const st = cyl(0.025 * s, 0.035 * s, 0.95 * s, mat(C.leaf), 10);
+    st.position.set(Math.cos(a) * 0.13 * s, 1.15 * s, Math.sin(a) * 0.13 * s); st.rotation.z = Math.cos(a) * 0.28;
+    const lf = sph(0.28 * s, mat(i % 2 ? C.leaf : C.leaf2), 1.7, 0.43, 0.82); lf.position.set(Math.cos(a) * 0.47 * s, (1.44 + (i % 3) * 0.16) * s, Math.sin(a) * 0.47 * s); lf.rotation.y = -a;
+    g.add(st, lf);
+  }
+  return g;
+}
+[[-4.6, -3.5, 0.8], [3.6, -3.4, 0.7]].forEach(([x, z, s]) => { const p = plant(s); p.position.set(x, 0, z); scene.add(p); });
+// The desk (office3d deskStage parts, minus the 0.28 m stage), at (0.6, -2.2), facing +z.
+const DESK = new THREE.Vector3(0.6, 0, -2.2), dy = -0.28;
+{
+  const g = new THREE.Group();
+  const top = box(2.2, 0.06, 0.72, mat(C.wood)); top.position.set(0, 1.02 + dy + 0.07, -0.2);
+  const l1 = box(0.08, 0.72, 0.08, mat(C.ink2)); l1.position.set(-1.0, 0.36, -0.2); const l2 = l1.clone(); l2.position.x = 1.0;
+  const monitor = box(1.02, 0.68, 0.095, mat(C.blackGlass)); monitor.position.set(0, 1.55 + dy, -0.37);
+  const screen = box(0.92, 0.56, 0.02, new THREE.MeshStandardMaterial({ color: 0x8AEDE5, emissive: 0x2FAFA6, emissiveIntensity: 0.5, roughness: 0.25 })); screen.position.set(0, 1.55 + dy, -0.315);
+  const stand = box(0.10, 0.28, 0.10, mat(C.chrome)); stand.position.set(0, 1.18 + dy, -0.4);
+  const kb = box(0.72, 0.03, 0.22, mat(C.white)); kb.position.set(0, 1.11 + dy, 0.0);
+  const mug = cyl(0.05, 0.05, 0.11, mat(C.coral), 18); mug.position.set(0.75, 1.17 + dy, -0.05);
+  g.add(top, l1, l2, monitor, screen, stand, kb, mug); g.position.copy(DESK); scene.add(g);
+}
+// Chair (staging), pulled back from the desk: seat top at 0.47 m, centre z = -1.0.
+const SEAT = new THREE.Vector3(0.6, 0.47, -1.0);
+{
+  const g = new THREE.Group(); const m = mat(C.teal, 0.7);
+  const seat = box(0.5, 0.07, 0.48, m); seat.position.set(0, 0.435, 0);
+  const backr = box(0.5, 0.5, 0.06, m); backr.position.set(0, 0.78, 0.25);
+  const post = cyl(0.03, 0.03, 0.38, mat(C.chrome), 12); post.position.y = 0.2;
+  const foot = cyl(0.26, 0.26, 0.04, mat(C.chrome), 20); foot.position.y = 0.02;
+  g.add(seat, backr, post, foot); g.position.set(SEAT.x, 0, SEAT.z); scene.add(g);
+}
+
+let model = null, mixer = null, actions = {}, bones = {}, cur = null, lastT = 0;
+const START = new THREE.Vector3(-3.1, 0, -1.48), STOP = new THREE.Vector3(0.6, 0, -1.48);
+const T = { walk0: 4.4, turn0: 8.1, turn1: 8.8, sit0: 8.9, sit1: 9.9, wave0: 10.2 };
+const ease = (x) => (x <= 0 ? 0 : x >= 1 ? 1 : x * x * (3 - 2 * x));
+function play(name) {
+  if (cur === name) return; for (const [n, a] of Object.entries(actions)) if (n !== name) a.fadeOut(0.3);
+  actions[name].reset().fadeIn(0.3).play(); cur = name;
+}
+const V = (x, y, z) => new THREE.Vector3(x, y, z);
+function aim(b, child, dir, s) {
+  const a = b.getWorldPosition(V()), c = child.getWorldPosition(V());
+  const dq = new THREE.Quaternion().setFromUnitVectors(c.sub(a).normalize(), dir.clone().normalize());
+  const qs = new THREE.Quaternion().slerp(dq, s);
+  const bq = b.getWorldQuaternion(new THREE.Quaternion()), pq = b.parent.getWorldQuaternion(new THREE.Quaternion());
+  b.quaternion.copy(pq.invert().multiply(qs.multiply(bq))); b.updateMatrixWorld(true);
+}
+function sitPose(s) {
+  const F = V(0, 0, -1), D = V(0, -1, 0);
+  for (const side of ['l', 'r']) {
+    aim(bones['thigh_' + side], bones['calf_' + side], F.clone().multiplyScalar(0.97).add(D.clone().multiplyScalar(0.2)), s);
+    aim(bones['calf_' + side], bones['foot_' + side], D.clone().add(F.clone().multiplyScalar(0.12)), s);
+    aim(bones['foot_' + side], bones['ball_' + side], F.clone().multiplyScalar(0.85).add(D.clone().multiplyScalar(0.5)), s);
+  }
+}
+function hip() { return bones.thigh_l.getWorldPosition(V()).add(bones.thigh_r.getWorldPosition(V())).multiplyScalar(0.5); }
+
+window.OFFICE = {
+  ready: true, loaded: false,
+  load(b64) {
+    const bin = atob(b64), u = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i);
+    new THREE.GLTFLoader().parse(u.buffer, '', (g) => {
+      model = g.scene; model.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.frustumCulled = false; } if (o.isBone) bones[o.name] = o; });
+      scene.add(model); mixer = new THREE.AnimationMixer(model);
+      for (const c of g.animations) actions[c.name] = mixer.clipAction(c);
+      model.position.copy(START); model.rotation.y = Math.PI / 2; play('idle'); mixer.update(0);
+      renderer.render(scene, camera); window.OFFICE.loaded = true;
+    });
+  },
+  /** Advance to time t (seconds, in order) and draw. Returns what is happening, for the evidence box. */
+  at(t) {
+    const dt = Math.max(0, t - lastT); lastT = t;
+    let note;
+    if (t < T.walk0) { play('idle'); note = 'idle clip (REAL)'; }
+    else if (t < T.turn1) { play('walk'); note = t < T.turn0 ? 'walk clip (REAL) · root moves 1.0 m/s (staged path)' : 'turning to the desk (staged root rotation)'; }
+    else if (t < T.wave0) { play('idle'); note = 'sitting down (staged pose, no sit clip)'; }
+    else { play('wave'); note = 'seated (staged legs) · wave clip (REAL) toward the screen'; }
+    mixer.update(dt);
+    const wk = Math.min(1, Math.max(0, (t - T.walk0) / (T.turn0 - T.walk0)));
+    const p = START.clone().lerp(STOP, wk * 0 + Math.min(1, Math.max(0, (t - T.walk0) * 1.0 / START.distanceTo(STOP))));
+    model.position.copy(p);
+    model.rotation.y = Math.PI / 2 + Math.PI / 2 * ease((t - T.turn0) / (T.turn1 - T.turn0));
+    model.updateMatrixWorld(true);
+    const s = ease((t - T.sit0) / (T.sit1 - T.sit0));
+    if (s > 0) {
+      const keep = Object.values(bones).map((b) => b.quaternion.clone());
+      sitPose(1); model.updateMatrixWorld(true);
+      const h = hip(), want = V(SEAT.x, SEAT.y + 0.1, SEAT.z - 0.02), d = want.sub(h);
+      Object.values(bones).forEach((b, i) => b.quaternion.copy(keep[i])); model.updateMatrixWorld(true);
+      sitPose(s); model.position.add(d.multiplyScalar(s)); model.updateMatrixWorld(true);
+    }
+    renderer.render(scene, camera);
+    return note;
+  },
+};
+</script>
+</body>
+</html>

@@ -29,7 +29,7 @@ const { default: worker, CheState } = mod;
 const MISSION_IDS = {
   // 'learn' is the Knowledge Atlas (issue #346), one entry over knowledge_atlas.js.
   // 'che-cancel-job' cancels a queued coding job by voice or typing (owner, 2026-10-19).
-  intelligence: ['che', 'che-explore', 'che-plan', 'che-build', 'che-research', 'che-verify', 'che-memory', 'che-brain-record', 'che-memory-inspect', 'che-brain-review', 'che-performance', 'che-flagstaff-import', 'che-outside-mail', 'che-recover', 'che-improve', 'che-cancel-job', 'che-status', 'learn', 'security-access', 'security-chief', 'security-findings'],
+  intelligence: ['che', 'che-explore', 'che-plan', 'che-build', 'che-research', 'che-verify', 'che-memory', 'che-brain-record', 'che-memory-inspect', 'che-brain-review', 'che-reliability', 'che-performance', 'che-flagstaff-import', 'che-outside-mail', 'che-recover', 'che-improve', 'che-cancel-job', 'che-status', 'learn', 'manifest', 'security-access', 'security-chief', 'security-findings'],
   youtube: ['yt-ideas', 'yt-research', 'yt-script', 'yt-video', 'yt-voice', 'yt-thumbnail', 'yt-seo', 'yt-publish', 'yt-batch', 'yt-analytics', 'yt-grow'],
   // trade-connections reads the owner-only connections of #348 (issue #350).
   // trade-setups opens the Signal Mode Setup Progress Board (owner, 2026-10-23).
@@ -38,7 +38,7 @@ const MISSION_IDS = {
   money: ['money-dashboard', 'cashflow', 'budget', 'expenses', 'invoices', 'money-forecast', 'pricing', 'profit-report'],
   clients: ['lead-scout', 'lead-audit', 'lead-score', 'lead-match', 'lead-proposal', 'lead-outreach', 'lead-crm', 'lead-followup', 'client-deliver'],
   marketing: ['brand-build', 'marketing-plan', 'social-content', 'ads-plan', 'seo-growth', 'sales-funnel', 'business-launch'],
-  office: ['office-status', 'office-delegate', 'office-org', 'office-calendar', 'office-coordinate', 'office-jobs', 'warroom', 'automate', 'skill-learn', 'connect', 'voice-test', 'create-3d', 'cloud-open', 'cloud-gpu', 'cloud-blender', 'cloud-render', 'cloud-tests', 'cloud-prs', 'cloud-install', 'cloud-agents', 'cloud-control'],
+  office: ['office-status', 'office-delegate', 'office-org', 'office-calendar', 'office-coordinate', 'office-jobs', 'warroom', 'automate', 'skill-learn', 'connect', 'connect-service', 'voice-test', 'create-3d', 'cloud-open', 'cloud-gpu', 'world-population', 'cloud-blender', 'cloud-render', 'cloud-tests', 'cloud-prs', 'cloud-install', 'cloud-agents', 'cloud-control', 'master-profile'],
   // Creator Studio (owner issue #347).
   studio: ['studio-bible', 'studio-pilot', 'studio-render', 'studio-export', 'studio-post', 'studio-growth', 'film-make', 'music-studio', 'film-status'],
 };
@@ -112,8 +112,8 @@ async function owner({ saved = new Map(), model = () => 'Here is the answer, sir
 // ─── 1. Catalog identities ────────────────────────────────────────────────
 
 test('1. the owner\'s 71 commands exist exactly as listed, plus ten REA, six Creator Studio, two Strategy Control Center, two strategy learning commands, the historical study, the timeframe matrix, the CHE paper account and the two calendars, in 9 categories, each fully described', () => {
-  assert.equal(COMMANDS.length, 131);
-  assert.equal(new Set(COMMANDS.map((c) => c.id)).size, 131, 'ids are unique');
+  assert.equal(COMMANDS.length, 136);
+  assert.equal(new Set(COMMANDS.map((c) => c.id)).size, 136, 'ids are unique');
   assert.deepEqual(CATEGORIES.map((c) => c.id), Object.keys(MISSION_IDS));
   for (const [category, ids] of Object.entries(MISSION_IDS)) {
     assert.deepEqual(COMMANDS.filter((c) => c.category === category).map((c) => c.id), ids, category);
@@ -164,7 +164,7 @@ test('2. availability comes from real configuration: ready, needs setup, unsuppo
   const expired = connectorStatus({ CHE_TRADOVATE_OAUTH_CLIENT_ID: 'x', CHE_TRADOVATE_OAUTH_CLIENT_SECRET: 'y' }, { broker: { expired: true } });
   assert.equal(expired.broker.state, 'needs_reconnect');
   const view = catalogView(bare);
-  assert.equal(view.commands.length, 131);
+  assert.equal(view.commands.length, 136);
   assert.ok(view.commands.every((c) => ['available', 'setup_required', 'unsupported', 'temporarily_unavailable'].includes(c.status)));
 });
 
@@ -191,6 +191,38 @@ test('every available command reaches the existing handler it names (no fake rou
   assert.deepEqual(unavailable.sort(), ['trade-execute', 'yt-analytics', 'yt-publish']);
 });
 
+// The compute pool (compute_pool.js) by voice: one existing entry, /cloud-gpu, answers with input "pool".
+test('"which computers can build characters" and "why is my character waiting" reach /cloud-gpu (pool) with no model', async () => {
+  const che = await owner({ env: READY_ENV });
+  assert.equal(commandById('cloud-gpu').route, 'che_cloud_computer');
+  for (const said of ['Which computers can build characters?', 'Why is my character waiting?', 'show me the compute pool', '/cloud-gpu pool']) {
+    const out = await che.say(said);
+    assert.equal(out.route, 'che_cloud_computer', said);
+    assert.equal(out.modelCalls, 0, said);
+    assert.match(out.reply, /can build characters right now|No computer can build a character right now/, said);
+    assert.match(out.reply, /Cannot run Blender: Hugging Face ZeroGPU Space, Cloudflare Workers AI/, said);
+    assert.match(out.reply, /Spending limit: zero dollars/, said);
+    assert.doesNotMatch(out.reply, /ghp_test_only/, 'no secret is spoken');
+  }
+  assert.match((await che.say('What are my GPU jobs?')).reply, /^GPU jobs:/, 'the plain GPU question keeps its answer');
+});
+
+// Connect GPU (lib/create/che_gpu_connect.dart): the same /cloud-gpu entry with input "connect". The Worker never
+// claims a connection without a fresh GPU heartbeat; it tells the app to open its Connect GPU flow.
+test('"Connect GPU", "connect the GPU" and "start my GPU" reach /cloud-gpu (connect) with no model and open the flow', async () => {
+  const che = await owner({ env: READY_ENV });
+  for (const said of ['Connect GPU', 'CHE, connect the GPU', 'start my GPU', '/cloud-gpu connect']) {
+    const out = await che.say(said);
+    assert.equal(out.route, 'che_cloud_computer', said);
+    assert.equal(out.modelCalls, 0, said);
+    assert.equal(out.done.command, 'cloud-gpu', said);
+    assert.equal(out.done.open_screen, 'gpu_connect', said);
+    assert.match(out.reply, /^GPU not connected yet: no Colab GPU worker has checked in/, said);
+    assert.doesNotMatch(out.reply, /^GPU connected/, 'never connected without a heartbeat');
+  }
+  assert.doesNotMatch((await che.say('Can you connect the GPU?')).done.open_screen || '', /gpu_connect/, 'a question does not open it');
+});
+
 // ─── 3. Slash commands and natural-language equivalents ───────────────────
 
 test('3. a slash command and its plain-English request reach the same handler', async () => {
@@ -207,6 +239,14 @@ test('3. a slash command and its plain-English request reach the same handler', 
   assert.equal(review.modelCalls, 0);
   assert.match(review.reply, /no Brain review yet/i);
   assert.equal((await che.say('/che-brain-review')).route, 'che_brain_review');
+  // The Reliability Registry (owner, 2026-10-27): the command and the owner's own words reach one handler, no model.
+  const take = await che.say('What take are we on?');
+  assert.equal(take.route, 'che_reliability_registry');
+  assert.equal(take.modelCalls, 0);
+  assert.match(take.reply, /at least \d+ sessions?: \d+ individual questions?/);
+  assert.match(take.reply, /lower bounds/);
+  assert.equal((await che.say('/che-reliability')).route, 'che_reliability_registry');
+  assert.equal((await che.say('How many times have I tested you?')).route, 'che_reliability_registry');
   // A question about what the owner himself said is his memory question, even when it names the review.
   assert.equal((await che.say('What have I told you about my brain review?')).route, 'che_memory_provenance');
   assert.notEqual((await che.say('Did I ask you for a brain review yesterday?')).route, 'che_brain_review');
@@ -229,6 +269,43 @@ test('3. a slash command and its plain-English request reach the same handler', 
   assert.match((await che.say('/che-flagstaff-import')).reply, /needs setup[\s\S]*GitHub/, 'without GitHub the command says what it needs');
   assert.deepEqual(parseSlashCommand('/Trade-Chart  NQ please'), { name: 'trade-chart', command: commandById('trade-chart'), input: 'NQ please' });
   assert.equal(parseSlashCommand('Analyze the NQ chart'), null);
+});
+
+test('/world-population and "how many characters live in CHE World" read the population counts with no model call', async () => {
+  const c = commandById('world-population');
+  assert.equal(c.route, 'che_world_population');
+  assert.equal(c.local, 'world_population');
+  assert.equal(commandStatus(c, connectorStatus({ AI: {} })).status, 'available');
+  const che = await owner();
+  for (const said of ['/world-population', 'How many characters live in CHE World?', 'CHE, how many people are in CHE World?']) {
+    const out = await che.say(said);
+    assert.equal(out.route, 'che_world_population', said);
+    assert.equal(out.modelCalls, 0, said);
+    assert.match(out.reply, /100,000 character records: seeded descriptions, not built models\. 0 of 288 shared base models are generated/, said);
+    assert.equal(out.done.counts.active, null, 'the Worker never claims active characters');
+  }
+});
+
+test('/master-profile routes to the on-device form filler: the Worker answers where to do it, calls no model, fills nothing and stores nothing', async () => {
+  const c = commandById('master-profile');
+  assert.equal(c.route, 'che_master_profile');
+  assert.equal(c.local, 'master_profile');
+  assert.equal(c.confirm, '', 'filling never costs money; submitting is a separate command');
+  const che = await owner();
+  const before = JSON.stringify([...che.saved.entries()]);
+  for (const said of ['/master-profile', '/master-profile business everything']) {
+    const out = await che.say(said);
+    assert.equal(out.route, 'che_master_profile', said);
+    assert.equal(out.modelCalls, 0, said);
+    assert.equal(out.done.ok, false, 'nothing was filled from the Worker');
+    assert.equal(out.done.on_device_only, true);
+    assert.match(out.reply, /only on your iPhone[\s\S]*nothing was filled from here/);
+  }
+  // No profile store or form answers appear in the Worker's state.
+  // (The route name may appear in ordinary command receipts; the on-device stores' keys never do.)
+  const after = JSON.stringify([...che.saved.entries()]);
+  assert.ok(before.length <= after.length);
+  assert.ok(!/che_master_profiles_v1|che_form_answers_v1|che_profile_site_choice_v1/.test(after), 'no profile data stored by the Worker');
 });
 
 test('/che-cancel-job and its spoken forms reach the coding-job cancel route with no model, no approval and no delete hold', async () => {
@@ -755,7 +832,7 @@ test('the Flutter catalog fixture matches what the Worker serves (regenerate: no
   const { fixtureCatalog } = await import('../../tool/dump_command_catalog.mjs');
   const fixture = JSON.parse(readFileSync(new URL('../../test/fixtures/command_catalog.json', import.meta.url), 'utf8'));
   assert.deepEqual(fixture, JSON.parse(JSON.stringify(fixtureCatalog())));
-  assert.equal(fixture.commands.length, 131);
+  assert.equal(fixture.commands.length, 136);
   assert.ok(fixture.templates.length >= 4);
 });
 
@@ -874,7 +951,7 @@ test('the owner\'s six spoken phrases are answered from the catalog with no mode
   for (const words of variants('CHE, open your Commands page.')) {
     const out = await che.say(words);
     assert.equal(out.route, 'che_command_center', words);
-    assert.match(out.reply, /131 commands in 9 groups[\s\S]*2\. YouTube, 11[\s\S]*9\. Creator Studio, 9[\s\S]*Nothing was run/, words);
+    assert.match(out.reply, /136 commands in 9 groups[\s\S]*2\. YouTube, 11[\s\S]*9\. Creator Studio, 9[\s\S]*Nothing was run/, words);
   }
   for (const words of variants('CHE, search for YouTube.')) {
     const out = await che.say(words);
@@ -1224,4 +1301,38 @@ test('Signal Mode: /trade-setups and plain questions open the Setup Progress Boa
     assert.equal(out.done.order_sent, undefined, said);
   }
   assert.notEqual((await che.say('Find setups on MNQ')).done?.chart?.section, 'setups', 'the learned-strategy analysis keeps its own command');
+});
+
+// Manifestation Engine (owner, 2026-10-27): one catalog entry, /manifest, over manifest_api.js. No model call.
+test('/manifest and its spoken forms reach the Manifestation Engine with no model and save a real project', async () => {
+  const che = await owner();
+  assert.equal(commandById('manifest').route, 'che_manifest');
+  const slash = await che.say('/manifest a drone that carries 1 kg for 25 minutes');
+  assert.equal(slash.route, 'che_manifest');
+  assert.equal(slash.modelCalls, 0);
+  assert.equal(slash.done.status, 'PLAN');
+  assert.match(slash.reply, /Battery-electric multirotor hover/);
+  assert.match(slash.reply, /simulated results, not measurements/);
+  const plain = await che.say('CHE, manifest a flying car for 2 people that flies for 1 hour');
+  assert.equal(plain.route, 'che_manifest');
+  assert.equal(plain.modelCalls, 0);
+  assert.match(plain.reply, /theoretically plausible but unproven/);
+  assert.match(plain.reply, /Wh\/kg/);
+  const status = await che.say('Manifestation status');
+  assert.equal(status.route, 'che_manifest');
+  assert.match(status.reply, /1\. a flying car for 2 people/i);
+  const stored = await che.get(`/api/manifest/projects/${slash.done.project_id}`);
+  assert.equal(stored.project.status, 'PLAN');
+  assert.equal(stored.project.plan.steps.find((s) => s.consequential === 'money').status, 'todo', 'nothing is bought');
+  assert.equal((await che.say('What is the meaning of manifestation in psychology?')).route === 'che_manifest', false, 'a question about the word is not a project');
+  // Briefing, pause, resume and stop ride the same catalog entry.
+  const brief = await che.say('/manifest briefing 2');
+  assert.equal(brief.route, 'che_manifest');
+  assert.match(brief.reply, /Stage: PLAN\.[\s\S]*Options: 1\./);
+  const pause = await che.say('Pause manifestation project 2');
+  assert.equal(pause.route, 'che_manifest');
+  assert.equal(pause.done.status, 'BLOCKED');
+  assert.equal((await che.say('/manifest resume 2')).done.status, 'PLAN');
+  assert.equal((await che.say('Manifestation weekly review')).route, 'che_manifest');
+  assert.equal((await che.say('Pause the music')).route === 'che_manifest', false);
 });

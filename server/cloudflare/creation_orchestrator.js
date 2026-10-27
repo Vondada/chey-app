@@ -14,6 +14,10 @@ import { CREATION_REPO, CREATION_WORKFLOW } from './gpu_oidc.js';
 import {
   ENGINE_KEY, GpuQueue, ONLINE_MS, compatible, engineRecord, engineSettingsOf, isGpuName,
 } from './gpu_queue.js';
+// Compute pool (compute_pool.js): held or reserved jobs are not dispatched, a cooling provider is not started, a
+// rate-limited dispatch cools GitHub down, and a Kaggle character session starts when it is the best allowed choice.
+import { modalCreditGate, modalStateOf } from './modal_gpu.js';
+import { applyPending, cooling, dispatchable, heldReason, isQuotaAnswer, loadPool, coolDown, poolSchedule, savePool, workerUsable } from './compute_pool.js';
 
 export const DISPATCHES_KEY = 'gpu:dispatches';
 export const DISPATCH_WINDOW_MS = 8 * 60_000;     // a dispatch counts as a worker on its way for 8 minutes
@@ -73,7 +77,12 @@ export async function ensureCapacity(env = {}, { storage, now, fetcher = fetch, 
   const jobs = await q.jobs(); const workers = await q.workers(); const t = tnow();
   const rec = await engineRecord(storage);
   const settings = engineSettingsOf(rec);
-  const cap = capacityOf(jobs, workers, t, settings);
+  let poolJobsChanged = await applyPending(storage, jobs, t);
+  const pool = await loadPool(storage);
+  const usable = Object.fromEntries(Object.entries(workers).filter(([, w]) => workerUsable(pool, w, t)));
+  const cap = capacityOf(jobs, usable, t, settings);
+  cap.cpu_runnable = cap.cpu_runnable.filter((j) => dispatchable(pool, j, t));
+  const ghCool = cooling(pool, 'github_actions_cpu', t);
   let recChanged = false; let reason = ''; let dispatched = 0; let cloudState = null;
   const log = await dispatchLog(storage);
   const recent = log.filter((d) => t - Date.parse(d.at) < DISPATCH_WINDOW_MS);
@@ -90,6 +99,7 @@ export async function ensureCapacity(env = {}, { storage, now, fetcher = fetch, 
     if (!settings.auto_cloud) reason = 'Automatic cloud workers are off (Settings, Creation Engine), so this waits for a worker you start.';
     else if (settings.spend_limit_usd !== 0) reason = 'The spending limit is not $0, which CHE never accepts; nothing was started.';
     else if (!repo.ok) reason = repo.reason;
+    else if (ghCool) reason = `The free GitHub cloud worker is cooling down until ${ghCool.until.slice(11, 16)} UTC (${ghCool.kind.replace('_', ' ')}${ghCool.reason ? `: ${ghCool.reason}` : ''}); CHE starts it again then. Finished stages are kept.`;
     else {
       const vis = await visibility(env, rec, t, fetcher);
       if (vis.changed) { rec.visibility = vis.v; recChanged = true; }
@@ -104,6 +114,7 @@ export async function ensureCapacity(env = {}, { storage, now, fetcher = fetch, 
           const entry = { at: iso(t), ok: Boolean(sent.ok), status: sent.status, reason: why };
           if (!sent.ok) entry.error = String(sent.data?.message || 'GitHub refused the dispatch').slice(0, 160);
           log.push(entry); recent.push(entry);
+          if (!sent.ok && isQuotaAnswer(sent.status, entry.error)) { coolDown(pool, 'github_actions_cpu', { kind: 'quota', reason: `GitHub answered ${sent.status}` }, t); await savePool(storage, pool); }
           if (!sent.ok) break;
           dispatched += 1;
         }
@@ -120,19 +131,44 @@ export async function ensureCapacity(env = {}, { storage, now, fetcher = fetch, 
   // Waiting jobs carry what they wait for (display_state / status_line); written only when it changed.
   let jobsChanged = false;
   const cpuIds = new Set(cap.cpu_runnable.map((j) => j.id));
+  // A GPU-only job the owner allowed onto Modal's included credit but whose credit check stops it waits for HIS approval,
+  // with the reason (modal_gpu.js); it is not dispatched.
+  const mGate = modalStateOf(pool).opt_in ? modalCreditGate(pool, t) : null;
+  const modalWait = mGate && !mGate.ok && mGate.kind !== 'off' ? mGate.reason : '';
   for (const j of jobs) {
     if ((j.state !== 'queued' && j.state !== 'paused') || j.owner_paused) continue;
-    const next = cpuIds.has(j.id) ? (cloudState ? { state: cloudState, reason: '', at: recent.filter((d) => d.ok).at(-1)?.at || iso(t) } : reason ? { state: 'waiting', reason, at: iso(t) } : null)
+    const held = heldReason(pool, j, t);
+    const next = held ? { state: 'waiting', reason: held, at: iso(t) } : cpuIds.has(j.id) ? (cloudState ? { state: cloudState, reason: '', at: recent.filter((d) => d.ok).at(-1)?.at || iso(t) } : reason ? { state: 'waiting', reason, at: iso(t) } : null)
       : j.requires?.gpu === 'preferred' && cap.gpu_online ? { state: 'waiting', reason: 'A GPU worker is online and takes it next.', at: iso(t) }
+        : (j.requires?.gpu || 'required') === 'required' && !cap.gpu_online && modalWait
+          ? { state: 'waiting_approval', reason: modalWait, at: iso(t) }
         : (j.requires?.gpu || 'required') === 'required' && !cap.gpu_online
           ? { state: 'waiting_gpu', reason: 'This needs a GPU, and none is online. It resumes from its saved stages when your Colab GPU checks in.', at: iso(t) } : null;
     const same = JSON.stringify({ ...(j.cloud || {}), at: 0 }) === JSON.stringify({ ...(next || {}), at: 0 }) && Boolean(j.cloud) === Boolean(next);
     if (!same) { j.cloud = next; jobsChanged = true; }
   }
-  if (jobsChanged) await q.save(jobs);
+  // The pool may start a Kaggle character session (only with a token the owner already saved; see compute_pool.js).
+  const sched = await poolSchedule(env, { storage, now: () => t, fetcher, jobs, workers, pool, base: (await storage.get('film:base')) || '' }).catch(() => null);
+  if (sched?.started || sched?.jobs_changed) poolJobsChanged = true;
+  if (jobsChanged || poolJobsChanged) await q.save(jobs);
   if ((rec.waiting_reason || '') !== reason) { rec.waiting_reason = reason; rec.waiting_at = iso(t); recChanged = true; }
   if (recChanged) await storage.put(ENGINE_KEY, rec);
-  return { ok: true, dispatched, waiting_reason: reason, runnable: cap.cpu_runnable.length, have: have + dispatched, want };
+  // Recovery belongs to the backend, including when every phone/browser is closed.
+  // Preserve the shared Durable Object alarm if another room needs an earlier wake.
+  if (jobs.some((j) => !j.owner_paused && ['queued', 'paused', 'rendering'].includes(j.state)
+      && (j.state === 'rendering' || j.queued_by !== 'Claude (PR #517)'))) {
+    const wake = t + 60_000;
+    await storage.put('gpu:wake_at', wake);
+    const alarm = await storage.getAlarm?.();
+    if (!alarm || alarm > wake) await storage.setAlarm?.(wake);
+  } else await storage.delete('gpu:wake_at');
+  return { ok: true, dispatched, waiting_reason: reason, runnable: cap.cpu_runnable.length, have: have + dispatched, want, pool_started: sched?.started || null };
+}
+
+/** Alarm entry: only owner-submitted active work arms recovery; ordinary room alarms do not start creations. */
+export async function recoverCreations(env, ctx) {
+  if (await ctx.storage.get('gpu:wake_at')) return ensureCapacity(env, ctx);
+  return null;
 }
 
 /** Whether the GitHub path is usable right now (for the app's engine banner): settings, token, verified public. */
@@ -156,7 +192,7 @@ export const CREATION_PROVIDERS = Object.freeze([
     capabilities: ['blender', 'gpu'], cost: '$0: your own free Colab session.', billing: 'owner_free_session', needs_approval: false,
     manual_step: 'Open the CHE GPU notebook in Colab and run all cells; free Colab cannot be started remotely and stops when idle.',
     device: 'NVIDIA T4 GPU.', evidence: ['notebooks/CHE_GPU_Face_Preview.ipynb', 'scripts/che_gpu_worker.py'],
-    limits: 'Runs only while you have the notebook open; Google stops idle free sessions.' },
+    limits: 'Google controls runtime lifetime and may disconnect or terminate it; CHE cannot guarantee background availability.' },
 ]);
 
 const PROVIDERS = (rec, workers) => CREATION_PROVIDERS.map((p) => ({

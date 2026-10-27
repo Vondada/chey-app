@@ -12,9 +12,11 @@ test('computer control requires approval for irreversible actions', async () => 
   const denied = await computerControl({ action: 'delete', target: 'foo' });
   assert.equal(denied.ok, false);
   assert.equal(denied.status, 'needs_approval');
-  const ok = await computerControl({ action: 'screenshot', target: 'https://example.com', approve: true });
-  assert.equal(ok.ok, true);
-  assert.ok(ok.receipt_id);
+  const unavailable = await computerControl({ action: 'screenshot', target: 'https://example.com', approve: true });
+  assert.equal(unavailable.ok, false);
+  assert.equal(unavailable.status, 'unavailable');
+  assert.equal(unavailable.executed, false);
+  assert.equal(unavailable.receipt_id, undefined);
 });
 
 test('simple website scaffold returns preview-ready files', () => {

@@ -16,26 +16,21 @@ export function validateCodingEvidence(evidence = {}) {
 
 /**
  * Owner-authorized computer-control PoC.
- * Supports: screenshot (via existing browser provider), list files, and a simple website scaffold.
- * All actions return structured results suitable for existing receipt wrapping.
+ * Reserves screenshot, list-files and scaffold actions for existing trusted adapters.
+ * Until those adapters are connected, it explicitly reports unavailable without a receipt.
  * No CAPTCHA bypass, no credential exposure.
  */
 export async function computerControl({ action, target, approve = false } = {}) {
   if (!approve && ['delete', 'deploy', 'pay', 'send'].includes(action)) {
     return { ok: false, status: 'needs_approval', detail: `Action "${action}" requires explicit owner approval.` };
   }
-  const started = Date.now();
-  let result;
-  if (action === 'screenshot') {
-    result = { provider: 'browser_isolated', target, note: 'Screenshot request queued to existing isolated browser (public pages only). No sign-in performed.' };
-  } else if (action === 'scaffold_website') {
-    result = { files: ['index.html', 'style.css', 'script.js'], preview: 'local', note: 'Minimal static site scaffolded. No deployment without approval.' };
-  } else if (action === 'list_files') {
-    result = { files: [], note: 'File listing delegated to authorized workspace only.' };
-  } else {
-    return { ok: false, status: 'unsupported', detail: `Action "${action}" is not in the Phase 2 PoC allowlist.` };
+  if (!['screenshot', 'scaffold_website', 'list_files'].includes(action)) {
+    return { ok: false, status: 'unsupported', executed: false, detail: `Action "${action}" is not in the Phase 2 PoC allowlist.` };
   }
-  return { ok: true, status: 'completed', result, receipt_id: 'poc-' + started, elapsed_ms: Date.now() - started };
+  // An allowlist is permission, not execution. This PoC has no connected adapters.
+  // The existing browser/workspace paths must supply their real results before a receipt can exist.
+  return { ok: false, status: 'unavailable', executed: false, action,
+    detail: `No execution adapter is connected for "${action}". Nothing was queued, captured, listed or written; no completion receipt exists.` };
 }
 
 /** Simple website build demo used by the Phase 6 continuous-verification requirement. */

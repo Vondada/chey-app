@@ -24,6 +24,8 @@ const STATE_KEY = 'tradovate_oauth_state';
 const BASE = { sim: 'https://demo.tradovateapi.com/v1', live: 'https://live.tradovateapi.com/v1' };
 const DEFAULT_TOKEN_URL = 'https://live.tradovateapi.com/auth/oauthtoken';
 export const CALLBACK_PATH = '/broker/tradovate/callback';
+// The iOS app's registered URL scheme (tool/bootstrap.sh): the callback page links here so the owner returns to CHE.
+export const CHE_RETURN_URL = 'che://broker/tradovate';
 
 export function tradovateConfigured(env) {
   return Boolean(env?.CHE_TRADOVATE_OAUTH_CLIENT_ID && env?.CHE_TRADOVATE_OAUTH_CLIENT_SECRET);
@@ -68,16 +70,24 @@ export async function handleCallback(storage, env, requestUrl, fetcher = fetch, 
     if (!response.ok || !token) return { ok: false, message: `Tradovate did not accept the sign-in (${body.error_description || body.errorText || response.status}).` };
     const seconds = Number(body.expires_in) || 80 * 60;
     await storage.put(AUTH_KEY, { access_token: token, md_access_token: body.mdAccessToken || body.md_access_token || null, market_data_allowed: typeof body.hasMarketData === 'boolean' ? body.hasMarketData : null, expires_at: Date.parse(body.expirationTime) || now + seconds * 1000, connected_at: new Date(now).toISOString() });
-    return { ok: true, message: 'NinjaTrader is connected to CHE. You can close this page and go back to CHE.' };
+    return { ok: true, message: 'NinjaTrader is connected to CHE. You can close this page and go back to CHE.', return_url: CHE_RETURN_URL };
   } catch (error) {
     return { ok: false, message: `Tradovate could not be reached: ${String(error?.message || error).slice(0, 120)}` };
   }
 }
 
+/** The page the owner sees after Tradovate sends him back: the result, and a link into the CHE app. */
+export function callbackPage(done) {
+  const safe = done.message.replace(/[<>&]/g, '');
+  const result = done.ok ? 'connected' : 'failed';
+  return new Response(`<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>CHE and NinjaTrader</title><body style="font:20px system-ui;padding:24px"><h1 role="status">${safe}</h1><p><a href="${CHE_RETURN_URL}?result=${result}">Return to CHE</a></p></body>`, { status: done.ok ? 200 : 400, headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' } });
+}
+
 export async function connection(storage, now = Date.now()) {
   const auth = await storage.get(AUTH_KEY);
-  if (!auth?.access_token) return { connected: false };
-  return { connected: now < auth.expires_at, expired: now >= auth.expires_at, expires_at: auth.expires_at };
+  if (!auth?.access_token) return { connected: false, market_data_allowed: null };
+  // Market data is what Tradovate said at sign-in (hasMarketData); null when it did not say.
+  return { connected: now < auth.expires_at, expired: now >= auth.expires_at, expires_at: auth.expires_at, market_data_allowed: auth.market_data_allowed };
 }
 
 /** Keeps the token alive (Tradovate tokens last about 80-90 minutes). */

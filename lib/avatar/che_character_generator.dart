@@ -14,6 +14,7 @@ import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 
 import '../che_gpu_jobs.dart';
+import '../world/che_world_population_panel.dart';
 
 /// Plain names for the face sliders, in the order the owner sees them.
 const cheFaceSliderNames = <String, String>{
@@ -155,6 +156,10 @@ class CheCharacterGeneratorState extends State<CheCharacterGenerator> {
     if (RegExp(r"^(?:read(?: aloud| it| this| the screen)?|what(?:'s| is) on (?:the |this )?screen|describe (?:the |this )?screen)$").hasMatch(t)) {
       return spokenSummary;
     }
+    if (RegExp(r'^(?:open |show )?(?:the )?(?:che world |world )population$').hasMatch(t)) {
+      openWorldPopulation();
+      return 'Opening CHE World population.';
+    }
     final n = RegExp(r'^(?:option |number |button )?([1-4])$').firstMatch(t)?.group(1);
     if (n == '1' || RegExp(r'^generate(?: a)?(?: new)?(?: variant| variation| one)?$').hasMatch(t)) { await generate(); return done(null); }
     if (n == '2' || RegExp(r'^(?:preview|render|queue(?: the)? preview|preview (?:it|this|on the gpu))$').hasMatch(t)) { await preview(); return done(null); }
@@ -263,6 +268,12 @@ class CheCharacterGeneratorState extends State<CheCharacterGenerator> {
     preset = chosen.isEmpty ? const {} : _deepCopy(chosen);
     dirty = false;
     jobs = const [];
+  }
+
+  /// CHE World population (lib/world/che_world_population_panel.dart). Opening it speaks nothing.
+  void openWorldPopulation() {
+    HapticFeedback.selectionClick();
+    unawaited(Navigator.of(context).push(CheWorldPopulationPanel.route(baseUrl: widget.baseUrl, headers: widget.headers, onRead: widget.onRead)));
   }
 
   void _report(bool ok, String text) {
@@ -432,6 +443,17 @@ class CheCharacterGeneratorState extends State<CheCharacterGenerator> {
               tooltip: 'Read the Character Generator aloud',
               icon: const Icon(Icons.volume_up_rounded),
               onPressed: widget.onRead == null || preset.isEmpty ? null : () => widget.onRead!(spokenSummary),
+            ),
+          ),
+          Semantics(
+            button: true,
+            label: 'Open CHE World population: character records, generated models and active residents',
+            excludeSemantics: true,
+            child: IconButton(
+              key: const ValueKey('generator-world-population'),
+              tooltip: 'CHE World population',
+              icon: const Icon(Icons.groups_rounded),
+              onPressed: openWorldPopulation,
             ),
           ),
           Semantics(
