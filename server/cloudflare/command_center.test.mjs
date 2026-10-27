@@ -29,7 +29,7 @@ const { default: worker, CheState } = mod;
 const MISSION_IDS = {
   // 'learn' is the Knowledge Atlas (issue #346), one entry over knowledge_atlas.js.
   // 'che-cancel-job' cancels a queued coding job by voice or typing (owner, 2026-10-19).
-  intelligence: ['che', 'che-explore', 'che-plan', 'che-build', 'che-research', 'che-verify', 'che-memory', 'che-brain-record', 'che-memory-inspect', 'che-brain-review', 'che-reliability', 'che-performance', 'che-flagstaff-import', 'che-outside-mail', 'che-recover', 'che-improve', 'che-cancel-job', 'che-status', 'learn', 'security-access', 'security-chief', 'security-findings'],
+  intelligence: ['che', 'che-explore', 'che-plan', 'che-build', 'che-research', 'che-verify', 'che-memory', 'che-brain-record', 'che-memory-inspect', 'che-brain-review', 'che-reliability', 'che-performance', 'che-flagstaff-import', 'che-outside-mail', 'che-recover', 'che-improve', 'che-cancel-job', 'che-status', 'learn', 'manifest', 'security-access', 'security-chief', 'security-findings'],
   youtube: ['yt-ideas', 'yt-research', 'yt-script', 'yt-video', 'yt-voice', 'yt-thumbnail', 'yt-seo', 'yt-publish', 'yt-batch', 'yt-analytics', 'yt-grow'],
   // trade-connections reads the owner-only connections of #348 (issue #350).
   // trade-setups opens the Signal Mode Setup Progress Board (owner, 2026-10-23).
@@ -1301,4 +1301,38 @@ test('Signal Mode: /trade-setups and plain questions open the Setup Progress Boa
     assert.equal(out.done.order_sent, undefined, said);
   }
   assert.notEqual((await che.say('Find setups on MNQ')).done?.chart?.section, 'setups', 'the learned-strategy analysis keeps its own command');
+});
+
+// Manifestation Engine (owner, 2026-10-27): one catalog entry, /manifest, over manifest_api.js. No model call.
+test('/manifest and its spoken forms reach the Manifestation Engine with no model and save a real project', async () => {
+  const che = await owner();
+  assert.equal(commandById('manifest').route, 'che_manifest');
+  const slash = await che.say('/manifest a drone that carries 1 kg for 25 minutes');
+  assert.equal(slash.route, 'che_manifest');
+  assert.equal(slash.modelCalls, 0);
+  assert.equal(slash.done.status, 'PLAN');
+  assert.match(slash.reply, /Battery-electric multirotor hover/);
+  assert.match(slash.reply, /simulated results, not measurements/);
+  const plain = await che.say('CHE, manifest a flying car for 2 people that flies for 1 hour');
+  assert.equal(plain.route, 'che_manifest');
+  assert.equal(plain.modelCalls, 0);
+  assert.match(plain.reply, /theoretically plausible but unproven/);
+  assert.match(plain.reply, /Wh\/kg/);
+  const status = await che.say('Manifestation status');
+  assert.equal(status.route, 'che_manifest');
+  assert.match(status.reply, /1\. a flying car for 2 people/i);
+  const stored = await che.get(`/api/manifest/projects/${slash.done.project_id}`);
+  assert.equal(stored.project.status, 'PLAN');
+  assert.equal(stored.project.plan.steps.find((s) => s.consequential === 'money').status, 'todo', 'nothing is bought');
+  assert.equal((await che.say('What is the meaning of manifestation in psychology?')).route === 'che_manifest', false, 'a question about the word is not a project');
+  // Briefing, pause, resume and stop ride the same catalog entry.
+  const brief = await che.say('/manifest briefing 2');
+  assert.equal(brief.route, 'che_manifest');
+  assert.match(brief.reply, /Stage: PLAN\.[\s\S]*Options: 1\./);
+  const pause = await che.say('Pause manifestation project 2');
+  assert.equal(pause.route, 'che_manifest');
+  assert.equal(pause.done.status, 'BLOCKED');
+  assert.equal((await che.say('/manifest resume 2')).done.status, 'PLAN');
+  assert.equal((await che.say('Manifestation weekly review')).route, 'che_manifest');
+  assert.equal((await che.say('Pause the music')).route === 'che_manifest', false);
 });
