@@ -196,10 +196,11 @@ export function buildSpec(request, { overrides = {}, now = new Date().toISOStrin
   return spec;
 }
 
-function fmtNum(n) {
+/** A number as CHE reads it aloud: whole numbers from 100 up, three significant digits below. */
+export function fmtNum(n) {
   if (n === Infinity) return 'unlimited';
   if (!Number.isFinite(n)) return String(n);
-  return Math.abs(n) >= 100 ? Math.round(n).toLocaleString('en-US') : String(round(n, 3));
+  return Math.abs(n) >= 100 ? Math.round(n).toLocaleString('en-US') : String(Number(n.toPrecision(3)));
 }
 
 // ── Simulation, sweeps, sensitivity ────────────────────────────────────────────────────────────

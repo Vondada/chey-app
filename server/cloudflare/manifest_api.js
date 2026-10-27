@@ -5,7 +5,7 @@
 import { LA_AGENCIA_ROLES } from './office_company.js';
 import {
   DEFAULT_SAMPLES, FEASIBILITY, MANIFEST_SOURCE, MODELS, ManifestStore, STATUSES,
-  advanceToPlan, buildRealizationPlan, buildSpec, recordOutcome, replayRun, sensitivity, simulate,
+  advanceToPlan, buildRealizationPlan, buildSpec, fmtNum, recordOutcome, replayRun, sensitivity, simulate,
   simulateAll, speakProject, startProject, sweep, transition, validateEvidence,
 } from './manifest_engine.js';
 import { round } from './manifest_stats.js';
@@ -45,7 +45,7 @@ export function manifestScene(project) {
       limiting_constraint: f.limiting_constraint || null, violated: f.violated || [],
       field: { x: row.primary && Number.isFinite(row.primary.p50) ? round(norm(row.primary.p50), 4) : null, y: row.success_probability ?? 0, spread: width == null ? null : round(Math.min(1, width), 4) },
       provenance: row.run_id ? 'simulated' : 'prediction', source: { store: 'manifest_runs', id: row.run_id || '' },
-      spoken: `${c.name}: ${FEASIBILITY[f.class || 'unknown']}.${row.primary ? ` ${row.primary.id.replace(/_/g, ' ')} median ${row.primary.p50}${row.primary.unit === '1' ? '' : ` ${row.primary.unit}`}, between ${row.primary.p10} and ${row.primary.p90}.` : ''}${row.success_probability != null ? ` Met its goals in ${Math.round(row.success_probability * 100)}% of runs.` : ''}${f.reasons?.[0] ? ` ${f.reasons[0]}` : ''}`,
+      spoken: `${c.name}: ${FEASIBILITY[f.class || 'unknown']}.${row.primary ? ` ${row.primary.id.replace(/_/g, ' ')} median ${fmtNum(row.primary.p50)}${row.primary.unit === '1' ? '' : ` ${row.primary.unit}`}, between ${fmtNum(row.primary.p10)} and ${fmtNum(row.primary.p90)}.` : ''}${row.success_probability != null ? ` Met its goals in ${Math.round(row.success_probability * 100)}% of runs.` : ''}${f.class !== 'feasible_now' && f.reasons?.[0] ? ` ${f.reasons[0]}` : ''}`,
     };
   });
   const alternatives = (project.candidates[0]?.feasibility?.alternatives || []).map((a) => ({ id: `alternative:${a.id}`, kind: 'alternative', label: a.name, class: a.class, class_label: FEASIBILITY[a.class], numbers: a.numbers || null, provenance: a.numbers ? 'prediction' : 'not modelled', spoken: `${a.name}: ${a.text}` }));
