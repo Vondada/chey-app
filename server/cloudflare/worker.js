@@ -195,6 +195,7 @@ import {
 } from './google_services.js';
 import { FYE_STATUS, fundyouredgeDraft, fundyouredgeDraftReply, fundyouredgeIntent, fundyouredgeReply } from './fundyouredge.js';
 import { CheCodingRuntime, codingRuntimeEnabled, ownerRequiresMergeApproval, recoverableRuntimeFailure, runtimeState, runtimeStateClass, speakRuntimeStatus } from './coding_runtime.js';
+import { aiModelStatus } from './model_status.js';
 import { newMissionAction, RESUME_LIMIT, resumeAction, resumeDecision } from './coding_failover.mjs';
 import { handoffIntent, hasGitHubMailbox, readLiveHandoff, latestHandoff, unseenReplies, relayText, listThreads, mailboxHead, mailboxIntent, readAllMail, readThread, sendMail, speakThreads } from './mailbox.js';
 import { officeToday, ownerDayKey, ownerTimeZone } from './office_board.js';
@@ -8640,6 +8641,7 @@ export class CheState extends DurableObject {
             { id: 'fish', name: 'Fish Audio (backup voice)', page: 'https://fish.audio', status: fish.status, last4: fish.last4, detail: fishUsage ? `${fish.detail} Today ${fishUsage}.` : fish.detail, readonly: true },
           ],
           memory: { name: MEMORY_DB.name, page: MEMORY_DB.page, status: memoryStored ? (health.memory?.status || 'connected') : (memoryOn ? 'connected (server secret)' : 'not set up'), last4: memoryStored ? (health.memory?.last4 || '') : '', stored: memoryStored },
+          ai_model_status: await aiModelStatus(this.keyEnv || this.env, this.ctx.storage).catch(() => null),
         });
       }
       if (path === '/api/keys/memory' && request.method === 'POST') {

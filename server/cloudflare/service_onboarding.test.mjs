@@ -385,3 +385,18 @@ test('/connect-service is one Command Center entry that reaches the onboarding r
   assert.equal(unknown.route, 'che_onboarding');
   assert.match(unknown.reply, /I can connect Hugging Face automatically/);
 });
+
+test('the Keys route carries the AI Model Status: $0 authorized, paid fallback off, nothing claimed without the ledger', async () => {
+  const che = await owner({ env: { OPENROUTER_API_KEY: 'sk-or-v1-routevaluerouteval' } });
+  const { status, body } = await che.get('/api/keys');
+  assert.equal(status, 200);
+  const ai = body.ai_model_status;
+  assert.equal(ai.authorized_spend_usd, 0);
+  assert.equal(ai.paid_fallback, 'disabled');
+  assert.equal(ai.ledger_source, 'unavailable', 'no GitHub access here, so the ledger is not invented');
+  assert.ok(ai.providers.length >= 10);
+  assert.ok(ai.providers.every((p) => p.connected !== 'verified' && p.usage === 'blocked'));
+  assert.equal(ai.providers.find((p) => p.id === 'openrouter').worker_key_present, true);
+  assert.match(ai.spoken, /^Authorized AI spend is zero dollars/);
+  assert.ok(!JSON.stringify(body).includes('routevalue'), 'no key value in the Keys response');
+});
