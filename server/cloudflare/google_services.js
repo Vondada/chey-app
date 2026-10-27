@@ -30,6 +30,17 @@ function developerToken(env = {}) {
 // not modify or delete; Drive sees only files CHE creates or the owner opens
 // with it; Calendar works on events only.
 export const GOOGLE_SERVICES = Object.freeze({
+  office: {
+    label: 'CHE Office',
+    scopes: ['openid', 'email'],
+    async verify(token, fetcher) {
+      const r = await googleCall(fetcher, 'GET', 'https://openidconnect.googleapis.com/v1/userinfo', token);
+      if (!r.ok || !r.json.sub || r.json.email_verified !== true || !EMAIL.test(String(r.json.email || ''))) {
+        throw new Error('CHE Office requires a verified Google email. Choose your Office account and try again.');
+      }
+      return String(r.json.email).slice(0, 200);
+    },
+  },
   gmail: {
     label: 'Gmail',
     scopes: ['https://www.googleapis.com/auth/gmail.readonly', 'https://www.googleapis.com/auth/gmail.send'],
@@ -169,7 +180,7 @@ export async function finishGoogleConnect(env, data, params, fetcher = fetch, or
     await revokeGrant(fetcher, token.json.access_token);
     return { ok: false, service: pending.service, error: `Google did not give CHE a long-term ${spec.label} permission. Remove CHE from your Google permissions and connect again.` };
   }
-  const granted = String(token.json.scope || '').split(' ');
+  const granted = String(token.json.scope || '').split(' ').map((s) => s === 'https://www.googleapis.com/auth/userinfo.email' ? 'email' : s);
   const missing = spec.scopes.filter((scope) => !granted.includes(scope));
   if (missing.length) {
     await revokeGrant(fetcher, token.json.refresh_token);
@@ -318,14 +329,16 @@ export async function googleConnectorStates(env, data) {
   const states = await googleStates(env, data);
   const out = {};
   for (const [id, st] of Object.entries(states)) {
+    // `office` is already the Office crew connector; Google identity must not overwrite its readiness.
+    const connector = id === 'office' ? 'office_google' : id;
     if (st.connected) {
-      out[id] = { state: 'ready', detail: st.account || `${st.label} connected` };
+      out[connector] = { state: 'ready', detail: st.account || `${st.label} connected` };
     } else if (st.status === 'needs_access') {
-      out[id] = { state: 'not_connected', detail: st.access_status_detail || `${st.label}: Needs Setup. Google has not confirmed CHE's access yet.` };
+      out[connector] = { state: 'not_connected', detail: st.access_status_detail || `${st.label}: Needs Setup. Google has not confirmed CHE's access yet.` };
     } else if (st.status === 'needs_reconnect') {
-      out[id] = { state: 'needs_reconnect', detail: `Reconnect ${st.label}.` };
+      out[connector] = { state: 'needs_reconnect', detail: `Reconnect ${st.label}.` };
     } else {
-      out[id] = { state: 'not_connected', detail: `${st.label} is not connected.` };
+      out[connector] = { state: 'not_connected', detail: `${st.label} is not connected.` };
     }
   }
   return out;

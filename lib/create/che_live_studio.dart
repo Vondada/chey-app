@@ -1456,7 +1456,7 @@ class CheLiveStudioState extends State<CheLiveStudio> with WidgetsBindingObserve
           ),
           onPressed: busy || project.isEmpty ? null : () => unawaited(generate()),
           icon: const Icon(Icons.view_in_ar_rounded),
-          label: Text(jobActive ? 'Model in progress' : 'Generate 3D model'),
+          label: Text(jobActive ? 'Rendering' : 'Render'),
         ),
       ),
       if (kind == 'person') ...[

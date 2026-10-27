@@ -402,6 +402,8 @@ class CheBrowserScreen extends StatefulWidget {
     this.title,
     this.appMode = true,
     this.sessionKey,
+    this.historyOnlyBack = false,
+    this.onClose,
     this.googleSignInInPage = false,
   });
   final String initialUrl;
@@ -410,6 +412,8 @@ class CheBrowserScreen extends StatefulWidget {
   final bool googleSignInInPage;
   final String? title;
   final String? sessionKey;
+  final bool historyOnlyBack;
+  final Future<void> Function()? onClose;
 
   /// App cards open in app mode: CHE header only, no address bar or browser nav.
   final bool appMode;
@@ -702,7 +706,7 @@ if(!best)return '';var label=(best.getAttribute('aria-label')||best.innerText||'
       return 'Playing.';
     }
     if (RegExp(r'^(close|exit|leave)( the)?( browser| app| this)?$').hasMatch(w)) {
-      Navigator.of(context).maybePop();
+      _closeApp();
       return 'Closed.';
     }
     if (RegExp(r'^(show|open)( the)? browser controls$').hasMatch(w)) {
@@ -1213,12 +1217,16 @@ if(!best)return '';var label=(best.getAttribute('aria-label')||best.innerText||'
       unawaited(_refreshHistory());
       return;
     }
-    _closeApp();
+    if (!widget.historyOnlyBack) _closeApp();
   }
 
   void _closeApp() {
     FocusManager.instance.primaryFocus?.unfocus();
-    if (mounted) Navigator.of(context).maybePop();
+    if (widget.onClose != null) {
+      unawaited(widget.onClose!());
+    } else if (mounted) {
+      Navigator.of(context).maybePop();
+    }
   }
 
   Future<void> _onMore(String v) async {

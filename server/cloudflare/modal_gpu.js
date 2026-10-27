@@ -31,7 +31,9 @@ import { PAID_GPU_PRICES } from './compute_budget.js';
 
 export const MODAL_APP_VERSION = 'che-modal-1';          // tools/modal/che_modal_app.py APP_VERSION
 export const MODAL_ENV = 'MODAL_TOKEN';                  // the key-store slot "CHE, connect Modal" saves into
-export const MODAL_HOST_RE = /^[a-z0-9][a-z0-9-]{0,62}--che-gpu(?:-[a-z0-9-]{1,30})?\.modal\.run$/;
+// Modal serves endpoints at <workspace>--che-gpu.modal.run or with one region label (…--che-gpu.us-east.modal.run, which
+// the deploy workflow wrote on 2026-10-25); nothing else, so the token can only ever go to CHE's own app.
+export const MODAL_HOST_RE = /^[a-z0-9][a-z0-9-]{0,62}--che-gpu(?:-[a-z0-9-]{1,30})?(?:\.[a-z0-9-]{1,30})?\.modal\.run$/;
 export const MODAL_GPU = 'T4';
 export const MODAL_USD_HR = PAID_GPU_PRICES.modal.gpus.find((g) => g.id === MODAL_GPU).usd_hr;
 export const MODAL_PRICE_SOURCE = PAID_GPU_PRICES.modal.source;
@@ -105,7 +107,9 @@ export async function modalCall(cred, method, path, body = null, fetcher = fetch
     const r = await fetcher(`${cred.base}${path}`, { method, headers: { ...(cred.bearer ? { Authorization: `Bearer ${cred.bearer}` } : { 'Modal-Key': cred.id, 'Modal-Secret': cred.secret }), Accept: 'application/json', ...(body ? { 'Content-Type': 'application/json' } : {}) },
       ...(body ? { body: JSON.stringify(body) } : {}), signal: AbortSignal.timeout(timeout) });
     const data = await r.json().catch(() => null);
-    return { ok: r.ok, status: r.status, data };
+    // Modal's own call ID, when its proxy sends one, so a failure can be found in Modal's logs. Never a secret.
+    const upstream = short(r.headers?.get?.('modal-function-call-id') || '', 64).replace(/[^A-Za-z0-9_-]/g, '');
+    return { ok: r.ok, status: r.status, data, ...(upstream ? { upstream_id: upstream } : {}) };
   } catch (e) {
     return { ok: false, status: 0, data: null, error: short(e?.message || e, 80) };
   }
@@ -113,11 +117,18 @@ export async function modalCall(cred, method, path, body = null, fetcher = fetch
 
 /**
  * The verification probe: an authenticated GET /health that must answer the expected app and version. Only this makes
- * Modal "Connected". { ok, auth: ok|invalid|not_deployed|version_mismatch|rate_limited|network|refused, detail }.
+ * Modal "Connected". { ok, auth: ok|invalid|not_deployed|version_mismatch|rate_limited|network|refused|credential_unreadable,
+ * detail, upstream_id? }.
  */
 export async function modalHealth(cred, fetcher = fetch) {
-  if (!cred) return { ok: false, auth: 'missing_info', detail: MODAL_FORMAT_HELP };
+  if (!cred) return { ok: false, auth: 'credential_unreadable', detail: `CHE has a saved Modal connection, but it is not a che-gpu *.modal.run endpoint with a bearer token CHE can read, so nothing was sent. Run the "CHE Modal deploy" workflow again to rewrite it` };
   const r = await modalCall(cred, 'GET', '/health', null, fetcher, 30000);
+  const up = r.upstream_id ? { upstream_id: r.upstream_id } : {};
+  const h = modalHealthAnswer(cred, r);
+  return { ...h, http_status: r.status || null, ...up };
+}
+
+function modalHealthAnswer(cred, r) {
   if (r.status === 401 || r.status === 403) return { ok: false, auth: 'invalid', detail: `CHE's Modal app rejected the access token (HTTP ${r.status}); token rejected. Run the "CHE Modal deploy" workflow again to issue a new one, then connect again` };
   if (r.status === 404) return { ok: false, auth: 'not_deployed', detail: `Nothing answers at ${cred.host} (HTTP 404): CHE's Modal app is not deployed there. Run the "CHE Modal deploy" GitHub workflow first (it needs the MODAL_TOKEN_ID and MODAL_TOKEN_SECRET repository secrets), then connect again` };
   if (r.status === 429) return { ok: false, auth: 'rate_limited', detail: 'Modal answered 429 (rate limit); try again in a minute' };
@@ -128,6 +139,22 @@ export async function modalHealth(cred, fetcher = fetch) {
   }
   return { ok: true, auth: 'ok', version: r.data.version, gpu: short(r.data.gpu || MODAL_GPU, 20),
     detail: `CHE's Modal app accepted the access token and answered at ${cred.host} (che-gpu ${MODAL_APP_VERSION}, ${short(r.data.gpu || MODAL_GPU, 20)} GPU, scales to zero). The check ran one short CPU call, a fraction of a cent of Modal time` };
+}
+
+/**
+ * The deploy's Modal check (owner, 2026-10-27): the Worker's POST /api/probe/modal, which exists only for that deploy's
+ * random probe token, asks the owner's object to run the same authenticated GET /health as Check Connection with the
+ * real MODAL_TOKEN. The answer holds the category, a check ID, the time, the HTTP status, whether the credential is
+ * readable, the host, and on success the app version and GPU. Read-only: no onboarding state changes, no GPU starts,
+ * no secret or reason text in the reply.
+ */
+export async function modalProbe(env, storage, fetcher = fetch, now = Date.now()) {
+  const base = { request_id: `chk_${crypto.randomUUID().replace(/-/g, '').slice(0, 12)}`, at: new Date(now).toISOString() };
+  const c = await modalCredential(env, storage);
+  if (!c.exists) return { ok: false, category: 'missing_credential', ...base, http_status: null, credential: 'absent' };
+  const h = await modalHealth(c.cred, fetcher);
+  return { ok: h.ok, category: h.auth === 'invalid' ? 'unauthorized' : h.auth, ...base, http_status: h.http_status ?? null, credential: c.cred ? 'readable' : 'unreadable',
+    host: c.cred?.host || null, ...(h.ok ? { version: h.version, gpu: h.gpu } : {}), ...(h.upstream_id ? { upstream_id: h.upstream_id } : {}) };
 }
 
 // ─── The owner's included-credit policy (USER-ENTERED, with time and exact words) ────────────────────────────────
