@@ -63,7 +63,7 @@ import {
 } from './youtube_connection.js';
 import { activityFeed, creations, findCreations, greeting, suggestions, stalledTasks, decisionsNeeded, nextActions } from './activity.js';
 import { accountSnapshot as marketAccountSnapshot, candles as marketCandles, chartPage as marketChartPage, quote as marketQuote, snapshot as marketSnapshot } from './markets.js';
-import { CALLBACK_PATH as TRADOVATE_CALLBACK, accountBalance, connectLink, listAccounts, connection as brokerConnection, handleCallback as tradovateCallback, renewToken, tradovateConfigured, marketDataAccess } from './broker_tradovate.js';
+import { CALLBACK_PATH as TRADOVATE_CALLBACK, accountBalance, connectLink, listAccounts, connection as brokerConnection, handleCallback as tradovateCallback, callbackPage as tradovateCallbackPage, renewToken, tradovateConfigured, marketDataAccess } from './broker_tradovate.js';
 import { MODE_NAME, STOCK_ACCOUNT, speakPlaceNeedsYes, chooseAccount, clearStockOrder, confirmLive, confirmStockOrder, deskIntent, dropStockOrder, pendingStockOrder, speakStaleStockOrder, rememberListed, deskTick, pendingAlert, readDesk, requestLive, requestStockOrder, setMode, setRiskLimits, setSize, skipTrade, speakAlert, speakDeskStatus, speakStockOrder, speakStockReceipt, speakTakeNeedsYes, takeAnnouncement, takeTrade } from './trading_desk.js';
 import { liveOrdersStatus } from './trading_environments.js';
 import { externalGrounding } from './external_grounding.js';
@@ -6830,9 +6830,7 @@ export class CheState extends DurableObject {
       // NinjaTrader (Tradovate) sign-in returns here. Public, but it only
       // accepts the one-time state CHE created for the owner's own request.
       if (path === TRADOVATE_CALLBACK && request.method === 'GET') {
-        const done = await tradovateCallback(this.ctx.storage, this.keyEnv || this.env, request.url);
-        const safe = done.message.replace(/[<>&]/g, '');
-        return new Response(`<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>CHE and NinjaTrader</title><body style="font:20px system-ui;padding:24px"><h1 role="status">${safe}</h1></body>`, { status: done.ok ? 200 : 400, headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' } });
+        return tradovateCallbackPage(await tradovateCallback(this.ctx.storage, this.keyEnv || this.env, request.url));
       }
       // Sites CHE built: public, sandboxed pages at /site/<id>.
       const site = await serveSite(request, this.ctx.storage);
