@@ -41,9 +41,15 @@ void main() {
     // server, so the app's own Office would show its empty state and there would be nothing to swipe.
     if (defaultTargetPlatform == TargetPlatform.iOS) await binding.convertFlutterSurfaceToImage();
     await tester.pumpWidget(MaterialApp(home: Scaffold(body: CheOfficeFloorScreen(client: fixtureOfficeClient()))));
-    for (var i = 0; i < 60 && find.byType(PageView).evaluate().isEmpty; i++) {
+    // Wait for the roster (its first member appears on the floor plan), then scroll the Office's list down to the crew:
+    // the crew pager sits below the floor plan in a lazy ListView and is not built until it scrolls near the screen.
+    for (var i = 0; i < 60 && find.text('Nova').evaluate().isEmpty; i++) {
       await tester.pump(const Duration(milliseconds: 100));
     }
+    final officeList = find.descendant(of: find.byType(ListView), matching: find.byType(Scrollable)).first;
+    await tester.scrollUntilVisible(find.byType(PageView), 200, scrollable: officeList);
+    await tester.ensureVisible(find.byType(PageView).first);
+    await tester.pumpAndSettle(const Duration(milliseconds: 100), EnginePhase.sendSemanticsUpdate, const Duration(seconds: 5));
     final pager = find.byType(PageView);
     expect(pager, findsOneWidget, reason: 'The Office has no section pager to swipe');
     expect(find.text('Nova'), findsWidgets, reason: 'The first crew member is not on screen');

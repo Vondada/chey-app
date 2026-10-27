@@ -30,11 +30,15 @@ void main() {
   });
 }
 
-/// The Office loads its roster after the first frame, so wait for the screen to show what the test checks (up to 3 seconds).
+/// The Office loads its roster after the first frame, and the crew section sits below the floor plan in a lazy ListView,
+/// so it is not built until it scrolls near the screen (an 800x600 test surface shows only the floor plan). Let the
+/// roster arrive, then scroll the Office's list until what the test checks is built, and bring it fully on screen.
 Future<void> _pumpUntilFound(WidgetTester tester, Finder finder) async {
-  for (var i = 0; i < 30 && finder.evaluate().isEmpty; i++) {
+  for (var i = 0; i < 10; i++) {
     await tester.pump(const Duration(milliseconds: 100));
   }
-  // When the screen never shows what the test checks, print its real widget tree into the CI log so the cause is visible.
-  if (finder.evaluate().isEmpty) debugDumpApp();
+  final officeList = find.descendant(of: find.byType(ListView), matching: find.byType(Scrollable)).first;
+  await tester.scrollUntilVisible(finder, 200, scrollable: officeList);
+  await tester.ensureVisible(finder.first);
+  await tester.pumpAndSettle();
 }
