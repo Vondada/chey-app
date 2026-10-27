@@ -171,6 +171,8 @@ import { auditLedger, knowVsGuessQuestion, knowVsGuessReply, MEMORY_CLAIM_MS, me
 import { verifyReply } from './truth_pipeline.js';
 import { auditReply } from './hallucination_auditor.js';
 import { memoryTruthProbe } from './memory_probe.js';
+import { probeObjectName, isMemoryProbeObject } from './probe_identity.js';
+import { commandCenterProbe } from './command_probe.js';
 import { asksForCurrentOwnerLocation, executeWithReceipt, guardExecutionClaims, guardRetrievalClaims, changeHistoryIntent, guardClaimedOwnerActions, guardClaimedResearchActions, guardGroundedFacts, guardLocationWeatherReply, guardOwnerReply, loadChangeHistory, loadReceipts, OWNER_LOCATION_NOT_VERIFIED, recordReceipt, requestedCodeNames, speakChangeHistory, vagueResearchRequest, verifiedState, verifiedStatusText } from './truth_layer.js';
 import { ENGINEERING_PLAYBOOK_SPOKEN, playbookIntent } from './engineering_playbook.js';
 import { describeSkillsReport, reusableLicense, selectFilesForAgent, skillFromMarkdown, skillImportIntent, skillsReportIntent } from './skill_import.js';
@@ -563,89 +565,11 @@ function isMemoryProbeRequest(request, env) {
   return voiceProbeAuthorized(new Request('https://che.internal/', { headers: { Authorization: `Bearer ${token}` } }), env);
 }
 
-const MEMORY_PROBE_OBJECT = 'memory-truth-probe';
+
 
 // The deploy's Command Center check. Live steps run against the same
 // isolated test CHE as the memory check (never the owner's); readiness is
 // the owner's real connector states (ready or not, never a secret value).
-async function commandCenterProbe(env, token) {
-  const probe = env.CHE_STATE.getByName(MEMORY_PROBE_OBJECT);
-  const call = (path, body, device = '') => probe.fetch(new Request(`https://che.internal${path}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'X-CHE-Memory-Probe': token, ...(device ? { Authorization: `Bearer ${device}` } : {}) },
-    body: JSON.stringify(body),
-  }));
-  const paired = await (await call('/api/pair', { code: String(env.CHE_PAIR_CODE || ''), device_name: 'CHE command center check' })).json().catch(() => ({}));
-  const device = paired.device_token;
-  if (!device) return { ok: false, error: 'The check could not pair with its test CHE.', steps: [] };
-  const steps = [];
-  const step = async (name, message, check, { optional = false } = {}) => {
-    const started = Date.now();
-    const res = await call('/api/chat', { message, history: [] }, device);
-    const raw = await res.text();
-    let held = null;
-    try { held = JSON.parse(raw); } catch (_) { held = null; }
-    const events = raw.split('\n').filter(Boolean).map((line) => { try { return JSON.parse(line); } catch (_) { return null; } }).filter(Boolean);
-    const done = events.find((e) => e.type === 'done') || {};
-    const reply = held?.message || events.filter((e) => e.type === 'delta').map((e) => e.delta).join('').trim();
-    const pass = res.status === 200 && check({ reply, done, held, events });
-    steps.push({ name, pass, optional, ms: Date.now() - started, route: held?.held_for_owner ? 'held' : done.source || '', model_calls: done.model_calls ?? null, reply: reply.slice(0, 300) });
-  };
-  try {
-    const catalog = await (await call('/api/commands', {}, device)).json().catch(() => ({}));
-    steps.push({ name: `catalog: ${COMMANDS.length} commands in ${CATEGORIES.length} categories`, pass: catalog.commands?.length === COMMANDS.length && catalog.categories?.length === CATEGORIES.length, ms: 0, route: 'catalog', model_calls: 0, reply: `${catalog.commands?.length} commands` });
-    await step('unknown command answered honestly, nothing run', '/lead-scot barbers',
-      ({ done, reply }) => done.source === 'che_command' && done.ok === false && done.model_calls === 0 && /Nothing was run/.test(reply));
-    await step('slash command reaches its existing handler', '/trade-journal',
-      ({ done }) => done.source === 'che_trading' && Number(done.model_calls || 0) === 0);
-    // This isolated CHE has no broker sign-in, so the money command must say
-    // what is missing and run nothing (its approval hold is unit-tested).
-    await step('a command needing setup says what is missing, nothing run', '/trade-execute',
-      ({ done, reply }) => done.source === 'che_command' && done.ok === false && done.model_calls === 0
-        && ['setup_required', 'unsupported'].includes(done.command_status) && /Nothing was run/.test(reply));
-    await step('a suggestion card follows a matching question', 'How can I make some money building websites?',
-      ({ events }) => events.some((e) => e.type === 'command_suggestions' && e.suggestions?.[0]?.id === 'website-clients'), { optional: true });
-  } finally {
-    await call('/api/security/revoke_self', {}, device).catch(() => null);
-  }
-  // Production CHE_STATE returns a Durable Object stub (fetch only), not a
-  // CheState instance. Ask the owner's object for the read-only count through
-  // a probe-token-gated endpoint; never pretend an unknown count is zero.
-  let readiness;
-  try {
-    const owner = env.CHE_STATE.getByName('owner');
-    if (typeof owner.commandReadiness === 'function') {
-      // Asked of the owner's object directly, as the voice probe asks it. There is no token to
-      // hand over, so a stored env cannot refuse this deploy's check.
-      readiness = await owner.commandReadiness();
-    } else {
-      // A stub that exposes only fetch(): hand this deploy's token over first, then ask the route.
-      // Without that, the object keeps the env it was created with and refuses the token (HTTP 404).
-      if (typeof owner.setVoiceSecrets === 'function') {
-        await owner.setVoiceSecrets({ ...voiceSecretsFrom(env), CHE_VOICE_PROBE_TOKEN: String(env.CHE_VOICE_PROBE_TOKEN || '') });
-      }
-      const response = await owner.fetch(new Request('https://che.internal/api/commands/readiness', {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body: '{}',
-      }));
-      if (!response.ok) throw new Error(`Readiness request returned HTTP ${response.status}`);
-      readiness = await response.json();
-    }
-    if (!Number.isInteger(readiness?.available) || !Array.isArray(readiness?.setup_required)) {
-      throw new Error('Readiness count was not returned');
-    }
-  } catch (error) {
-    readiness = { error: String(error?.message || error).slice(0, 160) };
-  }
-  return {
-    ok: steps.every((s) => s.pass || s.optional) && !readiness.error,
-    passed: steps.filter((s) => s.pass).length,
-    total: steps.length,
-    steps,
-    readiness,
-  };
-}
 
 // Emergency warning signs about a person (the speaker or someone with them): the action and its source, no model.
 function emergencyReply(message) {
@@ -5439,7 +5363,7 @@ export class CheState extends DurableObject {
     if (request.method === 'POST' && new URL(request.url).pathname === '/api/memory-probe/reset') {
       // Only an object positively named as the test CHE is ever cleared: an unknown name refuses,
       // so the owner's CHE can never be reached by this route.
-      if (!isMemoryProbeRequest(request, this.env) || this.ctx.id?.name !== MEMORY_PROBE_OBJECT) return json({ detail: 'Not found.' }, 404);
+      if (!isMemoryProbeRequest(request, this.env) || !isMemoryProbeObject(this.ctx.id?.name)) return json({ detail: 'Not found.' }, 404);
       await this.ctx.storage.deleteAll();
       forgetBrainSchema(this.ctx.storage);
       return json({ ok: true, reset: true });
@@ -16277,14 +16201,14 @@ async function routeRequest(request, env, ctx) {
   if (path === '/api/commands/probe' && request.method === 'POST') {
     if (!voiceProbeAuthorized(request, env)) return json({ detail: 'Not found.' }, 404);
     const token = /^Bearer (\S+)$/.exec(request.headers.get('Authorization') || '')?.[1] || '';
-    return json(await commandCenterProbe(env, token));
+    return json(await commandCenterProbe(env, token, { commands: COMMANDS, categories: CATEGORIES, voiceSecrets: voiceSecretsFrom(env) }));
   }
-  if (path === '/api/coding-audit/probe' && request.method === 'POST') return voiceProbeAuthorized(request, env) ? json(await codingAuditProbe(env, request, MEMORY_PROBE_OBJECT)) : json({ detail: 'Not found.' }, 404);
+  if (path === '/api/coding-audit/probe' && request.method === 'POST') return voiceProbeAuthorized(request, env) ? json(await codingAuditProbe(env, request, await probeObjectName(String(env.CHE_VOICE_PROBE_TOKEN || '')))) : json({ detail: 'Not found.' }, 404);
   // The deploy's Knowledge Atlas check, on the same isolated test CHE (#346).
   if (path === '/api/atlas/probe' && request.method === 'POST') {
     if (!voiceProbeAuthorized(request, env)) return json({ detail: 'Not found.' }, 404);
     const token = /^Bearer (\S+)$/.exec(request.headers.get('Authorization') || '')?.[1] || '';
-    return json(await atlasProbe(env, token, MEMORY_PROBE_OBJECT));
+    return json(await atlasProbe(env, token, await probeObjectName(token)));
   }
   // The opt-in deploy video check (deploy run with video_check): same
   // per-deploy token; without it the route does not exist.
@@ -16306,7 +16230,7 @@ async function routeRequest(request, env, ctx) {
   if (path === '/api/memory/probe' && request.method === 'POST') {
     if (!voiceProbeAuthorized(request, env)) return json({ detail: 'Not found.' }, 404);
     const token = /^Bearer (\S+)$/.exec(request.headers.get('Authorization') || '')?.[1] || '';
-    return json(await memoryTruthProbe(env, token, MEMORY_PROBE_OBJECT));
+    return json(await memoryTruthProbe(env, token, await probeObjectName(token)));
   }
   // The live voice settings reach the Durable Object before each voice or key
   // request, so a secret change is seen without restarting the object.
