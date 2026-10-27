@@ -78,12 +78,115 @@ export function redactSecrets(text) {
   return out;
 }
 
-export function attemptReceipt({ model = '', exitCode = 0, text = '', seconds = 0, capSeconds = 0, progress = 'none' } = {}) {
+// ─── Router error taxonomy (owner, 2026-10-27) ───
+// Every failed model attempt gets exactly one of these classes. The class decides what the
+// router does next (failoverDecision) and how the circuit breaker reacts (breakerAfter).
+//   provider_unavailable  the provider or OpenCode's own server failed (5xx, "Unexpected server error")
+//   auth_failure          the key is missing, invalid or not allowed (401/403)
+//   rate_limited          a short-window limit (429, requests or tokens per minute)
+//   credit_exhausted      a free allowance or credit balance is used up (quota, free-models-per-day)
+//   billing_risk          the request would cost money (402, payment required, a non-zero cost seen)
+//   unsupported_model     this model cannot serve this request (404, no tools, context too small)
+//   task_failure          the model ran but did not finish the task (timeout, non-zero exit, no cause)
+export const ERROR_CLASSES = Object.freeze([
+  'provider_unavailable', 'auth_failure', 'rate_limited', 'credit_exhausted', 'billing_risk', 'unsupported_model', 'task_failure',
+]);
+
+// A status code only counts when the text says it is one (statusCode, status, HTTP), so token
+// counts or timestamps such as "Limit 500" or "...1792941401..." never classify an error.
+const STATUS_IN_TEXT = /(?:status(?:_?code)?|statusCode|HTTP(?:\/\d(?:\.\d)?)?|code)"?\s*[:= ]\s*"?(\d{3})\b/i;
+
+// Ordered: the first matching rule wins. Billing first, so a 402 is never mistaken for a quota;
+// a quota before a rate limit, because providers send both with HTTP 429.
+const CLASS_RULES = [
+  ['billing_risk', /payment required|insufficient (?:credits|balance|funds)|requires? (?:a )?(?:payment|billing|paid (?:plan|tier|account))|add (?:a )?payment method|negative (?:credit )?balance|billing (?:account )?(?:is )?(?:not )?(?:enabled|required)|non-zero cost|would be charged/i, [402]],
+  ['credit_exhausted', /exceeded your current quota|insufficient_quota|RESOURCE_EXHAUSTED|quota (?:exceeded|exhausted)|free-models-per-day|out of credits|credits? (?:are |is )?(?:exhausted|used up|depleted)|(?:monthly|daily) (?:credits?|quota|limit) (?:reached|exceeded|used)|exceeded (?:your )?(?:monthly|daily) (?:included )?(?:credits?|quota)/i, []],
+  ['unsupported_model', /does not exist or you do not have access|model[_ ]?not[_ ]?found|ProviderModelNotFoundError|ModelNotFound|no endpoints found|not a valid model|unknown model|model .{0,40}(?:decommissioned|deprecated|retired)|does not support tool|tool(?:s| use| calling) (?:is |are )?not supported|ContextOverflowError|context (?:length|window)|request too large|maximum context|too many tokens/i, [404]],
+  ['auth_failure', /invalid[_ ]?api[_ ]?key|api key not valid|incorrect api key|unauthori[sz]ed|forbidden|no auth credentials|authentication (?:failed|required|error)|missing api key|permission denied|key (?:is )?(?:revoked|disabled)/i, [401, 403]],
+  ['rate_limited', /rate.?limit|too many requests|tokens per (?:minute|day)|requests per (?:minute|day)|\bTPM\b|\bRPM\b|slow down/i, [429]],
+  ['provider_unavailable', /Unexpected server error|UnknownError|internal server error|service unavailable|bad gateway|gateway time-?out|overloaded|upstream (?:error|connect)|ECONNRESET|ECONNREFUSED|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|socket hang up|fetch failed|network error|provider returned error/i, [500, 502, 503, 504, 520, 522, 524, 529]],
+];
+
+// One class for a failed attempt. `status` is the HTTP status when the caller has it; otherwise
+// a status written in the error text is used. A clean exit is never classified.
+export function classifyRouterError({ text = '', status = 0, exitCode = 1 } = {}) {
+  const message = String(text || '');
+  const fromText = Number((message.match(STATUS_IN_TEXT) || [])[1]) || 0;
+  const code = Number(status) || fromText;
+  for (const [cls, pattern] of CLASS_RULES) if (pattern.test(message)) return cls;
+  for (const [cls, , codes] of CLASS_RULES) if (codes.includes(code)) return cls;
+  if (code >= 500 && code < 600) return 'provider_unavailable';
+  return 'task_failure';
+}
+
+// What the router does after one failed attempt. `scope: provider` skips every model of that
+// provider for the rest of the run; `scope: model` skips only that model. Progress made by the
+// failed attempt is always kept as the verified checkpoint for the next model (the runner's job).
+// `resumable`: a later run of the same session may succeed once the limit clears.
+const DECISIONS = Object.freeze({
+  provider_unavailable: { scope: 'model', next: 'next_model', resumable: true, cooldown_ms: 10 * 60_000, open_after: 2 },
+  auth_failure: { scope: 'provider', next: 'next_provider', resumable: false, cooldown_ms: 6 * 60 * 60_000, open_after: 1 },
+  rate_limited: { scope: 'model', next: 'next_model', resumable: true, cooldown_ms: 5 * 60_000, open_after: 1 },
+  credit_exhausted: { scope: 'provider', next: 'next_provider', resumable: true, cooldown_ms: 60 * 60_000, open_after: 1 },
+  billing_risk: { scope: 'provider', next: 'next_provider', resumable: false, cooldown_ms: 7 * 24 * 60 * 60_000, open_after: 1, alert: true },
+  unsupported_model: { scope: 'model', next: 'next_model', resumable: false, cooldown_ms: 24 * 60 * 60_000, open_after: 1 },
+  task_failure: { scope: 'model', next: 'next_model_with_checkpoint', resumable: false, cooldown_ms: 30 * 60_000, open_after: 3 },
+});
+
+// An allowance can belong to one model (Gemini and Groq free quotas are per model) or to the whole
+// account (OpenRouter's free requests per day, a credit balance). Only the account-wide kind stops
+// every model of the provider; a per-model quota moves on to the provider's next model.
+const ACCOUNT_WIDE_ALLOWANCE = /free-models-per-day|credits?\b|balance|account (?:limit|quota)|monthly (?:included )?(?:usage|credits?)/i;
+
+export function failoverDecision(errorClass, { text = '' } = {}) {
+  const decision = DECISIONS[errorClass] || DECISIONS.task_failure;
+  const cls = DECISIONS[errorClass] ? errorClass : 'task_failure';
+  const scope = cls === 'credit_exhausted' && !ACCOUNT_WIDE_ALLOWANCE.test(String(text || '')) ? 'model' : decision.scope;
+  return { error_class: cls, ...decision, scope, next: scope === 'model' && decision.next === 'next_provider' ? 'next_model' : decision.next };
+}
+
+// ─── Circuit breaker ───
+// One record per provider ("openrouter") or per model ("openrouter/x:free"). Closed: used.
+// Open: skipped until `until`. Half-open: the cooldown passed, so exactly one trial is allowed;
+// its success closes the breaker, its failure re-opens it with twice the cooldown (max 7 days).
+const MAX_COOLDOWN_MS = 7 * 24 * 60 * 60_000;
+
+export function breakerState(record, now = Date.now()) {
+  if (!record || record.state === 'closed' || !record.state) return 'closed';
+  if (record.state === 'open' && Number.isFinite(Date.parse(record.until)) && Date.parse(record.until) <= now) return 'half_open';
+  return record.state === 'half_open' ? 'half_open' : 'open';
+}
+
+export function breakerAllows(record, now = Date.now()) {
+  return breakerState(record, now) !== 'open';
+}
+
+export function breakerAfter(record, { ok = false, errorClass = 'task_failure', now = Date.now() } = {}) {
+  const prior = record && typeof record === 'object' ? record : {};
+  const at = new Date(now).toISOString();
+  if (ok) return { state: 'closed', failures: 0, last_ok_at: at, last_error_class: prior.last_error_class || null, cooldown_ms: 0 };
+  const decision = failoverDecision(errorClass);
+  const wasTrial = breakerState(prior, now) === 'half_open';
+  const failures = Number(prior.failures || 0) + 1;
+  const open = wasTrial || failures >= decision.open_after;
+  if (!open) return { ...prior, state: 'closed', failures, last_error_class: decision.error_class, last_error_at: at };
+  const cooldown = Math.min(MAX_COOLDOWN_MS, wasTrial ? Math.max(decision.cooldown_ms, Number(prior.cooldown_ms || 0) * 2) : decision.cooldown_ms);
+  return {
+    state: 'open', failures, last_error_class: decision.error_class, last_error_at: at,
+    opened_at: at, cooldown_ms: cooldown, until: new Date(now + cooldown).toISOString(),
+  };
+}
+
+export function attemptReceipt({ model = '', exitCode = 0, text = '', seconds = 0, capSeconds = 0, progress = 'none', coverage = '', startedAt = '' } = {}) {
   const code = Number(exitCode) || 0;
   const verdict = code === 0 ? { kind: 'success', resumable: false } : classifyModelFailure({ text, exitCode: code });
   const excerpt = code === 0 ? '' : redactSecrets(text).replace(/\s+/g, ' ').trim().slice(0, 300);
+  const name = String(model || '').slice(0, 120);
+  // Exit 124 is the time budget; 75 is the runner stopping a model at its first fatal error.
+  const errorClass = code === 0 ? null : classifyRouterError({ text: code === 124 && !String(text || '').trim() ? 'timed out' : text, exitCode: code });
+  const decision = errorClass ? failoverDecision(errorClass, { text }) : null;
   return {
-    model: String(model || '').slice(0, 120),
+    model: name,
     exit_code: code,
     kind: verdict.kind,
     resumable: Boolean(verdict.resumable),
@@ -91,6 +194,14 @@ export function attemptReceipt({ model = '', exitCode = 0, text = '', seconds = 
     cap_seconds: Math.max(0, Math.round(Number(capSeconds) || 0)),
     progress: RECEIPT_PROGRESS.includes(progress) ? progress : 'none',
     error: excerpt,
+    // Router fields (2026-10-27). `kind` above stays for older readers.
+    provider: name.includes('/') ? name.split('/')[0] : '',
+    error_class: errorClass,
+    decision: decision ? decision.next : 'completed',
+    scope: decision ? decision.scope : null,
+    outcome: code === 0 ? 'success' : 'failed',
+    coverage: ['free', 'credit_covered'].includes(coverage) ? coverage : null,
+    ...(startedAt ? { started_at: String(startedAt).slice(0, 30) } : {}),
   };
 }
 
@@ -126,8 +237,14 @@ export function unsafeCodingPaths(files = []) {
 
 // The prompt for the next model: the original request plus what is already
 // verified, so it continues instead of redoing or reverting the change.
-export function progressPrompt({ basePrompt = '', files = [], additions = 0, deletions = 0, attempt = 1 } = {}) {
+// `history` is the earlier attempts' receipts (model, error_class, progress), so the next model
+// knows what already failed and why. `checked` lists files whose syntax check passed. Neither
+// carries error text: only classes and names, so no provider output reaches the next prompt.
+export function progressPrompt({ basePrompt = '', files = [], additions = 0, deletions = 0, attempt = 1, history = [], checked = [] } = {}) {
   const list = (Array.isArray(files) ? files : []).map(String).slice(0, 20);
+  const verified = (Array.isArray(checked) ? checked : []).map(String).slice(0, 20);
+  const earlier = (Array.isArray(history) ? history : []).filter((row) => row && row.model).slice(-8)
+    .map((row) => `${String(row.model).slice(0, 80)} (${String(row.error_class || row.kind || 'failed')}${row.progress && row.progress !== 'none' ? `, ${row.progress}` : ''})`);
   const lines = [
     String(basePrompt || '').trimEnd(),
     '',
@@ -136,6 +253,9 @@ export function progressPrompt({ basePrompt = '', files = [], additions = 0, del
       ? `Changed files so far: ${list.join(', ')} (+${Number(additions) || 0}/-${Number(deletions) || 0}).`
       : 'No files are changed yet.',
     'The working tree already holds this change and it passed syntax checks.',
+    ...(verified.length ? [`Checks already passed: syntax of ${verified.join(', ')}. Tests have not been run by the runner yet.`] : []),
+    ...(earlier.length ? [`Earlier attempts in this job: ${earlier.join('; ')}.`] : []),
+    'Outstanding: whatever the owner request still needs beyond the changed files above.',
     'Read only the files you need, then finish the remaining work and keep the change small.',
   ];
   return lines.join('\n');

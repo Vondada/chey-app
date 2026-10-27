@@ -99,6 +99,8 @@ test('each model attempt keeps its own receipt: kind, resumability, time against
   assert.deepEqual(quota, {
     model: 'google/gemini-2.5-pro', exit_code: 75, kind: 'quota', resumable: true,
     seconds: 3, cap_seconds: 120, progress: 'none', error: 'You exceeded your current quota',
+    // Router fields (2026-10-27): a per-model quota moves to the provider's next model.
+    provider: 'google', error_class: 'credit_exhausted', decision: 'next_model', scope: 'model', outcome: 'failed', coverage: null,
   });
   const tooLarge = attemptReceipt({ model: 'groq/qwen/qwen3.8-27b', exitCode: 1, text: 'ContextOverflowError: Request too large for model', seconds: 9, capSeconds: 120, progress: 'reverted' });
   assert.equal(tooLarge.kind, 'too_large');

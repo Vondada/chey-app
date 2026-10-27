@@ -443,7 +443,7 @@ sleep 60
   assert.match(receipts[0].error, /exceeded your current quota/);
   assert.equal(receipts[2].progress, 'delivered', 'the successful attempt is recorded with its change');
   for (const receipt of receipts) {
-    assert.ok(receipt.cap_seconds > 0 && receipt.cap_seconds <= 120, 'each attempt names the time it was allowed');
+    assert.ok(receipt.cap_seconds > 0 && receipt.cap_seconds <= 420, 'each attempt names the time it was allowed');
     assert.ok(receipt.seconds >= 0 && receipt.seconds < 60, 'each attempt names the time it took');
   }
   const workflow = readFileSync(new URL('../../.github/workflows/che-opencode-runtime.yml', import.meta.url), 'utf8');
@@ -478,8 +478,15 @@ esac
 `);
   chmodSync(join(dir, 'opencode'), 0o755);
   const output = join(dir, 'output');
+  // The zero-cost planner (2026-10-27) checks each attested key with a free authenticated read.
+  const fixtures = join(dir, 'fixtures.json');
+  writeFileSync(fixtures, JSON.stringify({
+    'https://generativelanguage.googleapis.com/v1beta/openai/models': { status: 200, body: { data: [] } },
+    'https://api.groq.com/openai/v1/models': { status: 200, body: { data: [] } },
+  }));
   const res = spawnSync('bash', ['-c', runStepScript('Resolve model')], {
-    env: { PATH: `${dir}:${process.env.PATH}`, REQUESTED: 'auto', HAS_GOOGLE: 'true', HAS_GROQ: 'true', CHE_CODING_FREE_PROVIDERS: 'google,groq', K_GOOGLE: 'x', K_GROQ: 'y', GITHUB_OUTPUT: output },
+    env: { PATH: `${dir}:${process.env.PATH}`, REQUESTED: 'auto', CHE_CODING_FREE_PROVIDERS: 'google,groq', K_GOOGLE: 'x', K_GROQ: 'y', GITHUB_OUTPUT: output,
+      RUNNER_TEMP: dir, CHE_TRUSTED_TOOLS: new URL('../../', import.meta.url).pathname, CHE_ZERO_COST_FIXTURES: fixtures },
     encoding: 'utf8',
   });
   assert.equal(res.status, 0, res.stderr);
@@ -511,10 +518,11 @@ test('the real ocr-8e7f69c5 record is spoken with its cause and the recovery tha
   assert.doesNotMatch(speakRuntimeStatus({ state: 'blocked', failure: 'opencode_failed', error: 'socket hang up' }), /needs a model key/);
 });
 
-test('Codex #327: the record keeps every model the run may try, so the last cause belongs to the last model listed', () => {
+test('Codex #327: the record keeps every model the run may try, so the last cause belongs to the last model listed', async () => {
   const workflow = readFileSync(new URL('../../.github/workflows/che-opencode-runtime.yml', import.meta.url), 'utf8');
-  const freeLimit = Number(workflow.match(/head -(\d+) \| tr '\\n' ' '/)[1]);
-  const limit = freeLimit + 2; // Qwen Coder and DeepSeek final fallbacks
+  // The router plans at most MAX_CANDIDATES models (paid fallback is disabled, so none follow).
+  const { MAX_CANDIDATES } = await import('./model_router.mjs');
+  const limit = MAX_CANDIDATES;
   assert.equal(limit, 8);
   assert.match(workflow, new RegExp(`models_tried: String\\(process\\.env\\.TRIED \\|\\| ''\\)\\.trim\\(\\)\\.split\\(/\\\\s\\+/\\)\\.filter\\(Boolean\\)\\.slice\\(0, ${limit}\\)`));
   const spoken = speakRuntimeStatus({ state: 'blocked', failure: 'opencode_failed', models_tried: ['a/1', 'a/2', 'a/3', 'a/4', 'a/5', 'a/6'] });

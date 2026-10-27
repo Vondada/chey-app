@@ -160,6 +160,10 @@ jobs:
           mkdir -p "$trust/tools" "$trust/server/cloudflare"
           cp tools/che_coding_paid_gate.mjs tools/che_coding_checkpoint.mjs "$trust/tools/"
           cp server/cloudflare/coding_failover.mjs "$trust/server/cloudflare/"
+          # The zero-cost router (owner, 2026-10-27: $0 authorized AI spend) decides which models may run.
+          # A base from before it existed runs no model at all rather than an unchecked one.
+          cp tools/che_coding_zero_cost.mjs "$trust/tools/" && cp server/cloudflare/model_router.mjs "$trust/server/cloudflare/" \
+            || echo "::warning::This base has no zero-cost router, so no model will run."
           echo "CHE_TRUSTED_TOOLS=$trust" >> "$GITHUB_ENV"
 
       - name: Decode and guard task
@@ -238,114 +242,58 @@ jobs:
         if: hashFiles('.github/actions/che-code-context/action.yml') != ''
         uses: ./.github/actions/che-code-context
         continue-on-error: true
+      - name: Fetch the model ledger (circuit breakers and past outcomes)
+        continue-on-error: true
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ github.token }}
+          script: |
+            const fs = require('fs');
+            try {
+              const found = await github.rest.repos.getContent({ ...context.repo, path: 'mailbox/runtime/model-ledger.json', ref: 'che-mailbox' });
+              fs.writeFileSync(`${process.env.RUNNER_TEMP}/che-model-ledger.json`, Buffer.from(String(found.data.content || '').replace(/\s+/g, ''), 'base64'));
+            } catch (error) {
+              if (error.status !== 404) core.warning(`Model ledger unreadable (${error.status || 'network'}); every breaker starts closed.`);
+            }
       - name: Resolve model
         id: model
         shell: bash
         env:
           REQUESTED: ${{ inputs.model }}
-          # NEVER use paid unless the owner enables this AFTER creating a capped key.
+          # Read only to be reported as ignored. The owner authorized $0 of AI spend (2026-10-27):
+          # a capped paid key is a ceiling, not an approval, so no paid model is ever planned.
           CHE_CODING_PAID_FALLBACK: ${{ vars.CHE_CODING_PAID_FALLBACK }}
-          # Only providers whose account is confirmed to be a FREE plan belong here.
+          # Providers the owner confirmed are on a plan where the provider itself blocks billing
+          # (no payment method on file). Only providers whose terms say so are accepted.
           CHE_CODING_FREE_PROVIDERS: ${{ vars.CHE_CODING_FREE_PROVIDERS }}
-          HAS_GOOGLE: ${{ secrets.GEMINI_API_KEY != '' }}
-          HAS_OPENROUTER: ${{ secrets.OPENROUTER_API_KEY != '' }}
-          HAS_GROQ: ${{ secrets.GROQ_API_KEY != '' }}
-          HAS_OPENAI: ${{ secrets.OPENAI_API_KEY != '' }}
-          HAS_ANTHROPIC: ${{ secrets.ANTHROPIC_API_KEY != '' }}
-          HAS_MISTRAL: ${{ secrets.MISTRAL_API_KEY != '' }}
-          HAS_CEREBRAS: ${{ secrets.CEREBRAS_API_KEY != '' }}
           K_GOOGLE: ${{ secrets.GEMINI_API_KEY }}
-          K_ANTHROPIC: ${{ secrets.ANTHROPIC_API_KEY }}
-          K_OPENAI: ${{ secrets.OPENAI_API_KEY }}
           K_OPENROUTER: ${{ secrets.OPENROUTER_API_KEY }}
           K_GROQ: ${{ secrets.GROQ_API_KEY }}
           K_MISTRAL: ${{ secrets.MISTRAL_API_KEY }}
           K_CEREBRAS: ${{ secrets.CEREBRAS_API_KEY }}
-          K_PAID_OPENROUTER: ${{ secrets.CHE_CODING_OPENROUTER_PAID_KEY }}
         run: |
+          route="$RUNNER_TEMP/che-route"; mkdir -p "$route"
+          zc="$CHE_TRUSTED_TOOLS/tools/che_coding_zero_cost.mjs"
           # OpenCode lists a provider's models only when that provider's key is
           # visible, so expose exactly one key for exactly one listing call.
           list_models() {
             local p=$1 var key
-            case $p in google) var=GEMINI_API_KEY; key=$K_GOOGLE;; anthropic) var=ANTHROPIC_API_KEY; key=$K_ANTHROPIC;; openai) var=OPENAI_API_KEY; key=$K_OPENAI;; openrouter) var=OPENROUTER_API_KEY; key=$K_OPENROUTER;; groq) var=GROQ_API_KEY; key=$K_GROQ;; mistral) var=MISTRAL_API_KEY; key=$K_MISTRAL;; cerebras) var=CEREBRAS_API_KEY; key=$K_CEREBRAS;; *) return 0;; esac
+            case $p in google) var=GEMINI_API_KEY; key=$K_GOOGLE;; groq) var=GROQ_API_KEY; key=$K_GROQ;; mistral) var=MISTRAL_API_KEY; key=$K_MISTRAL;; cerebras) var=CEREBRAS_API_KEY; key=$K_CEREBRAS;; *) return 0;; esac
             if [ "$p" = google ]; then env -u K_GOOGLE "$var=$key" "GOOGLE_GENERATIVE_AI_API_KEY=$key" opencode models "$p" 2>/dev/null || true
             else env "$var=$key" opencode models "$p" 2>/dev/null || true; fi
           }
           keyed=""
-          for p in GOOGLE ANTHROPIC OPENAI OPENROUTER GROQ MISTRAL CEREBRAS; do v=K_$p; [ -n "${!v}" ] && keyed="$keyed ${p,,}"; done
+          for p in GOOGLE OPENROUTER GROQ MISTRAL CEREBRAS; do v=K_$p; [ -n "${!v}" ] && keyed="$keyed ${p,,}"; done
           echo "Providers with a GitHub Actions key:${keyed:- none}"
-          # Free first. A paid OpenRouter key is only a FINAL fallback and
-          # is never included in free model discovery (or charged on a probe).
-          # Default to OpenRouter :free only: we cannot infer if other provider
-          # API keys are linked to a paid account. Add each confirmed-free
-          # provider to CHE_CODING_FREE_PROVIDERS explicitly.
-          free_providers="${CHE_CODING_FREE_PROVIDERS:-openrouter}"
-          enabled_free() {
-            case ",$free_providers," in *",$1,"*) return 0;; *) return 1;; esac
-          }
-          first=""; second=""; paid_candidates=""; paid_requested=""
-          if [ "$REQUESTED" != auto ]; then
-            prov=${REQUESTED%%/*}
-            if [ "$prov" = openrouter ] && [[ "$REQUESTED" != *:free ]]; then
-              case "$REQUESTED" in
-                openrouter/qwen/qwen3-coder|openrouter/deepseek/deepseek-chat) paid_requested="$REQUESTED";;
-                *) echo "::error::Paid model not on CHE's small-budget coding allowlist."; exit 1;;
-              esac
-            elif [ "$prov" = openrouter ] && [[ "$REQUESTED" == *:free ]]; then
-              first="$REQUESTED"
-            elif enabled_free "$prov" && [ "$prov" != openrouter ]; then
-              first="$REQUESTED"
-            else
-              echo "::error::Explicit model is not in a verified free provider or the capped paid allowlist."; exit 1
-            fi
+          if [ ! -f "$zc" ]; then
+            echo "::error::The zero-cost router is missing from this base, so no model runs and nothing is spent."
+            printf 'free_candidates=\npaid_candidates=\nmodel=\n' >> "$GITHUB_OUTPUT"
+            exit 0
           fi
-          for prov in openrouter google groq cerebras mistral; do
-            enabled_free "$prov" || continue
-            case $prov in
-              openrouter) [ "$HAS_OPENROUTER" = true ] || continue;;
-              google) [ "$HAS_GOOGLE" = true ] || continue;;
-              groq) [ "$HAS_GROQ" = true ] || continue;;
-              cerebras) [ "$HAS_CEREBRAS" = true ] || continue;;
-              mistral) [ "$HAS_MISTRAL" = true ] || continue;;
-            esac
-            list=$(list_models "$prov" | grep -E "^$prov/" || true)
-            case $prov in
-              openrouter) list=$(printf '%s\n' "$list" | grep -E ':free$' | grep -iE 'coder|qwen|deepseek|glm|kimi|gpt' || true);;
-              google) list=$(printf '%s\n' "$list" | grep -iE 'flash' | grep -viE 'preview|exp|image|tts|live|lite' || true);;
-              groq) list=$(printf '%s\n' "$list" | grep -iE 'gpt-oss|qwen' || true);;
-              cerebras) list=$(printf '%s\n' "$list" | grep -iE 'coder|qwen|gpt-oss' || true);;
-              mistral) list=$(printf '%s\n' "$list" | grep -iE 'codestral|devstral' || true);;
-            esac
-            [ -n "$list" ] || continue
-            # llama-3.3 was retired by its provider (404): never rank it, however the list is filtered.
-            ranked=$(printf '%s\n' "$list" | grep -viE 'guard|embed|audio|[-_.]8b|llama-3\.3' | sort -rV | head -2 || true)
-            one=$(printf '%s\n' "$ranked" | sed -n '1p')
-            two=$(printf '%s\n' "$ranked" | sed -n '2p')
-            [ -z "$one" ] || first="$first $one"
-            [ -z "$two" ] || second="$second $two"
-          done
-          free_candidates=$(printf '%s\n' $first $second | awk 'NF && !seen[$0]++' | head -6 | tr '\n' ' ')
-          if [ "$CHE_CODING_PAID_FALLBACK" = true ] && [ -n "$K_PAID_OPENROUTER" ]; then
-            # An isolated, owner-capped paid key; never reuse the free OpenRouter key.
-            paid_list=$(env OPENROUTER_API_KEY="$K_PAID_OPENROUTER" opencode models openrouter 2>/dev/null || true)
-            for candidate in $paid_requested openrouter/qwen/qwen3-coder openrouter/deepseek/deepseek-chat; do
-              [ -n "$candidate" ] || continue
-              if printf '%s\n' "$paid_list" | grep -Fxq "$candidate"; then
-                case " $paid_candidates " in *" $candidate "*) ;; *) paid_candidates="$paid_candidates $candidate";; esac
-              fi
-            done
-            paid_candidates=$(echo "$paid_candidates" | xargs)
-          fi
-          if [ -z "$free_candidates" ] && [ -z "$paid_candidates" ]; then
-            echo "::error::No eligible free models, and capped paid fallback is not configured/approved."
-            exit 1
-          fi
-          model=$(printf '%s\n' $free_candidates $paid_candidates | head -1)
-          echo "Free model candidates: $free_candidates"
-          echo "Paid fallback models: ${paid_candidates:-disabled}"
-          echo "free_candidates=$free_candidates" >> "$GITHUB_OUTPUT"
-          echo "paid_candidates=$paid_candidates" >> "$GITHUB_OUTPUT"
-          echo "model=$model" >> "$GITHUB_OUTPUT"
+          # OpenRouter is read live (key status and today's prices). Owner-attested providers use
+          # the model ids OpenCode lists for their key. No other provider is called.
+          for p in $(node "$zc" attested); do list_models "$p" > "$route/listing-$p.txt"; done
+          node "$zc" plan --out-dir "$route" --ledger "$RUNNER_TEMP/che-model-ledger.json" --request-file "$RUNNER_TEMP/che-runtime-prompt.txt"
 
       - name: Fetch the verified checkpoint of a resumed session
         if: fromJSON(needs.claim.outputs.resume_count || '0') > 0
@@ -417,12 +365,24 @@ jobs:
             fi
           fi
           attempt=1; failure_kind=""; failure_resumable=false
+          # The zero-cost plan (Resolve model): per-model coverage, OpenCode model metadata, why none.
+          route="$RUNNER_TEMP/che-route"; zc="$CHE_TRUSTED_TOOLS/tools/che_coding_zero_cost.mjs"
+          # Providers stopped for the rest of this run (auth failure, allowance used up, billing risk).
+          skip_providers=""
           # One receipt per model attempt (coding_failover.mjs attemptReceipt), read by the job record.
           attempts_file="$RUNNER_TEMP/che-attempts.jsonl"; : > "$attempts_file"
           record_attempt() { # model exit seconds cap progress failure-text-file
-            node "$CHE_TRUSTED_TOOLS/tools/che_coding_checkpoint.mjs" receipt --model "$1" --exit "$2" --seconds "$3" --cap "$4" --progress "$5" <"$6" >>"$attempts_file" \
+            local cov; cov=$(awk -F '\t' -v m="$1" '$1==m{print $2}' "$route/coverage.tsv" 2>/dev/null)
+            node "$CHE_TRUSTED_TOOLS/tools/che_coding_checkpoint.mjs" receipt --model "$1" --exit "$2" --seconds "$3" --cap "$4" --progress "$5" --coverage "$cov" --started "$attempt_started_at" <"$6" >>"$attempts_file" \
               || echo "::warning::Could not write the receipt for $1."
           }
+          last_receipt() { node "$CHE_TRUSTED_TOOLS/tools/che_coding_checkpoint.mjs" last --attempts "$attempts_file" --field "$1"; }
+          # Free requests leave the OpenRouter key's usage unchanged; it is read before and after.
+          [ -f "$zc" ] && node "$zc" usage --phase before --dir "$route" >/dev/null
+          if [ -z "${FREE_CANDIDATES// /}" ]; then
+            failure_kind=no_eligible_model
+            echo "::error::No zero-cost model can run: $(redact < "$route/summary.txt" 2>/dev/null)"
+          fi
           # OpenCode keeps retrying errors that cannot succeed (no quota, no access to the model,
           # a request too large for the key's token limit) until the time budget runs out. An
           # error event naming one of them stops that model at once, so the next one gets the
@@ -433,6 +393,7 @@ jobs:
           }
           for m in $FREE_CANDIDATES; do
             [ -z "$baseline_failed" ] || break
+            case " $skip_providers " in *" ${m%%/*} "*) echo "Skipping $m: ${m%%/*} was stopped earlier in this run."; continue;; esac
             # Leave time for a dedicated capped paid step only when enabled.
             remaining=$(( 840 - ($(date +%s) - start) ))
             if [ -n "$PAID_CANDIDATES" ]; then
@@ -442,7 +403,8 @@ jobs:
               left=$remaining
               [ "$left" -ge 60 ] || { echo "::warning::Free coding session time exhausted."; failure_kind=timeout; failure_resumable=true; break; }
             fi
-            [ "$left" -le 120 ] || left=120
+            # A real coding task needs minutes, not seconds; the next model gets what is left.
+            [ "$left" -le 420 ] || left=420
             case ${m%%/*} in
               google) kv=("GEMINI_API_KEY=$K_GOOGLE" "GOOGLE_GENERATIVE_AI_API_KEY=$K_GOOGLE");;
               groq) kv=("GROQ_API_KEY=$K_GROQ");;
@@ -454,10 +416,17 @@ jobs:
             used=$m; tried="$tried $m"
             echo "Trying $m"
             : >${RUNNER_TEMP}/opencode-events.jsonl; : >${RUNNER_TEMP}/opencode-stderr.log
-            attempt_started=$(date +%s)
-            env -u K_GOOGLE -u K_ANTHROPIC -u K_OPENAI -u K_OPENROUTER -u K_GROQ -u K_MISTRAL -u K_CEREBRAS -u K_HF -u K_PAID_OPENROUTER "${kv[@]}" \
+            attempt_started=$(date +%s); attempt_started_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+            # Main and small model pinned to $m, so OpenCode never picks another (possibly paid) model.
+            attempt_config="$OPENCODE_CONFIG"
+            if [ -f "$zc" ] && [ -f "$route/models.json" ] && node "$zc" config --base "$OPENCODE_CONFIG" --model "$m" --models "$route/models.json" --out "$RUNNER_TEMP/che-opencode-attempt.json"; then
+              attempt_config="$RUNNER_TEMP/che-opencode-attempt.json"
+            fi
+            # --print-logs puts OpenCode's own error log on stderr, which is redacted before it is kept:
+            # without it a failure reads only "Unexpected server error" (2026-10-26, ocr-49bea5b4).
+            env -u K_GOOGLE -u K_ANTHROPIC -u K_OPENAI -u K_OPENROUTER -u K_GROQ -u K_MISTRAL -u K_CEREBRAS -u K_HF -u K_PAID_OPENROUTER "OPENCODE_CONFIG=$attempt_config" "${kv[@]}" \
               timeout --signal=TERM --kill-after=15s "${left}s" \
-              opencode run --format json --auto --model "$m" "$prompt" \
+              opencode run --print-logs --log-level ERROR --format json --auto --model "$m" "$prompt" \
               >${RUNNER_TEMP}/opencode-events.jsonl 2>${RUNNER_TEMP}/opencode-stderr.log &
             pid=$!
             stopped=""
@@ -487,7 +456,7 @@ jobs:
             progress=none
             if [ -n "$(git status --porcelain)" ]; then
               attempt=$((attempt + 1))
-              if node "$CHE_TRUSTED_TOOLS/tools/che_coding_checkpoint.mjs" advance --dir "$ckpt" --base "$BASE_SHA" --prompt-file ${RUNNER_TEMP}/che-runtime-prompt.txt --attempt "$attempt" >${RUNNER_TEMP}/checkpoint-verdict.json; then
+              if node "$CHE_TRUSTED_TOOLS/tools/che_coding_checkpoint.mjs" advance --dir "$ckpt" --base "$BASE_SHA" --prompt-file ${RUNNER_TEMP}/che-runtime-prompt.txt --attempt "$attempt" --history-file "$attempts_file" >${RUNNER_TEMP}/checkpoint-verdict.json; then
                 prompt=$(cat "$ckpt/next-prompt.txt")
                 progress=verified
                 echo "::notice::$m left verified progress; the next model continues from it."
@@ -502,7 +471,19 @@ jobs:
               fi
             fi
             record_attempt "$m" "$code" "$seconds" "$left" "$progress" ${RUNNER_TEMP}/opencode-failure.txt
+            # The router's class decides the next move: a provider-wide failure skips that provider.
+            cls=$(last_receipt error_class)
+            if [ "$(last_receipt scope)" = provider ]; then
+              skip_providers="$skip_providers ${m%%/*}"
+              echo "::warning::${m%%/*} is stopped for the rest of this run (${cls})."
+            fi
+            [ "$cls" = billing_risk ] && echo "::error::$m signalled a possible charge (billing_risk). Its provider is stopped; no paid model runs."
+            [ "$(last_receipt resumable)" = true ] && failure_resumable=true || failure_resumable=false
           done
+          # A verified charge on the free key stops OpenRouter in the ledger and is reported, never hidden.
+          billing_alert=false
+          if [ -f "$zc" ]; then node "$zc" usage --phase after --dir "$route"; [ $? = 3 ] && billing_alert=true; fi
+          echo "billing_alert=$billing_alert" >> "$GITHUB_OUTPUT"
           # Short, key-free error for CHE's status record.
           err=$( { redact_raw < ${RUNNER_TEMP}/opencode-stderr.log | tail -c 4000; grep -iE 'error|quota|rate|denied|invalid|not found' ${RUNNER_TEMP}/opencode-events.jsonl | redact_raw | tail -2; } 2>/dev/null | redact)
           echo "failure_kind=${failure_kind:-unknown}" >> "$GITHUB_OUTPUT"
@@ -510,8 +491,12 @@ jobs:
           echo "exit_code=$code" >> "$GITHUB_OUTPUT"
           echo "model=$used" >> "$GITHUB_OUTPUT"
           echo "tried=$tried" >> "$GITHUB_OUTPUT"
+          [ -n "$err" ] || err=$(redact < "$route/summary.txt" 2>/dev/null)
           [ "$code" = 0 ] || echo "error=$err" >> "$GITHUB_OUTPUT"
 
+      # Disabled (owner, 2026-10-27): authorized AI spend is $0, and no cap is an approval. The step
+      # stays so its guards and tests stay visible; the plan never lists a paid model, the gate never
+      # opens, and the body below refuses before any model unless the code-level authorization is raised.
       - name: Run capped paid OpenRouter only after free attempts
         id: paid
         if: steps.guard.outcome == 'success' && steps.model.outcome == 'success' && steps.opencode.outcome == 'success' && steps.opencode.outputs.exit_code != '0' && vars.CHE_CODING_PAID_FALLBACK == 'true'
@@ -533,7 +518,11 @@ jobs:
           redact() { node "$CHE_TRUSTED_TOOLS/tools/che_coding_checkpoint.mjs" redact | tr '\n"' '  ' | cut -c1-350; }
           code=1; used=""; tried=""; failure_kind="${FREE_FAILURE_KIND:-unknown}"; failure_resumable="${FREE_RESUMABLE:-false}"; err=""
           paid_key="$K_PAID_OPENROUTER"; unset K_PAID_OPENROUTER
-          if [ -z "$PAID_CANDIDATES" ]; then
+          # Fails closed: only a trusted gate that itself says spend is authorized lets this step go on.
+          spend=$(node --input-type=module -e "const m = await import(process.argv[1]); process.stdout.write(Number(m.AUTHORIZED_CODING_SPEND_USD) > 0 ? 'authorized' : 'zero');" "$CHE_TRUSTED_TOOLS/tools/che_coding_paid_gate.mjs" 2>/dev/null)
+          if [ "$spend" != authorized ]; then
+            echo "::notice::Paid coding fallback is disabled: the owner authorized \$0 of AI spend. No paid model runs."
+          elif [ -z "$PAID_CANDIDATES" ]; then
             echo "::notice::No eligible capped paid coding model."
           elif ! CHE_CODING_OPENROUTER_PAID_KEY="$paid_key" node "$CHE_TRUSTED_TOOLS/tools/che_coding_paid_gate.mjs"; then
             echo "::warning::Paid coding withheld: $15 monthly cap could not be verified."
@@ -593,6 +582,7 @@ jobs:
           FAILURE_KIND: ${{ steps.paid.outputs.failure_kind || steps.opencode.outputs.failure_kind }}
           RESUMABLE: ${{ steps.paid.outputs.resumable || steps.opencode.outputs.resumable }}
           RESUME_COUNT: ${{ needs.claim.outputs.resume_count }}
+          BILLING_ALERT: ${{ steps.opencode.outputs.billing_alert }}
           RUN_ID: ${{ github.run_id }}
         run: |
           node <<'NODE'
@@ -628,6 +618,12 @@ jobs:
           const attempts = fs.existsSync(attemptsFile)
             ? fs.readFileSync(attemptsFile, 'utf8').split('\n').filter(Boolean).slice(0, 12).flatMap((line) => { try { return [JSON.parse(line)]; } catch (_) { return []; } })
             : [];
+          // The router's plan and the measured cost (tools/che_coding_zero_cost.mjs). No secrets: only
+          // verdicts, model ids, classes and numbers.
+          const readJson = (path) => { try { return JSON.parse(fs.readFileSync(path, 'utf8')); } catch (_) { return null; } };
+          const route = readJson(`${process.env.RUNNER_TEMP}/che-route/routing.json`);
+          const billing = readJson(`${process.env.RUNNER_TEMP}/che-route/billing.json`);
+          const winner = exitCode === 0 ? attempts.filter((a) => Number(a.exit_code) === 0).pop() : null;
           const result = {
             session_id: process.env.JOB_ID,
             runtime: 'opencode',
@@ -646,10 +642,23 @@ jobs:
             unsafe_files: unsafe.slice(0, 20),
             opencode_exit_code: exitCode,
             patch_artifact: patch ? artifactName : null,
-            failure: unsafe.length ? 'unsafe_files' : (process.env.PREFLIGHT_FAILURE || (exitCode !== 0 ? 'opencode_failed' : null)),
+            // no_eligible_model: nothing is verified at zero cost, so the job stops and says so (owner,
+            // 2026-10-27) instead of being handed to engines whose billing is not verified.
+            failure: unsafe.length ? 'unsafe_files' : (process.env.PREFLIGHT_FAILURE || (exitCode !== 0 ? (process.env.FAILURE_KIND === 'no_eligible_model' ? 'no_eligible_model' : 'opencode_failed') : null)),
             models_tried: String(process.env.TRIED || '').trim().split(/\s+/).filter(Boolean).slice(0, 8),
             attempts,
             error: exitCode !== 0 ? String(process.env.OPENCODE_ERROR || '').slice(0, 400) : null,
+            // The model that actually finished the job, and every class that came before it.
+            completed_by_model: winner ? winner.model : null,
+            completed_by_provider: winner ? (winner.provider || String(winner.model).split('/')[0]) : null,
+            error_history: attempts.filter((a) => a.error_class).map((a) => ({ model: a.model, error_class: a.error_class, decision: a.decision })),
+            routing: route ? {
+              authorized_spend_usd: route.authorized_spend_usd, paid_fallback: route.paid_fallback, task_kind: route.task_kind,
+              candidates: (route.candidates || []).slice(0, 8), excluded: (route.excluded || []).slice(0, 12),
+              verdicts: route.verdicts || {}, ignored_settings: route.ignored_settings || [], notes: route.notes || [],
+            } : null,
+            billing: billing || null,
+            billing_alert: process.env.BILLING_ALERT === 'true',
           };
           // Only a blocked session that kept a verified checkpoint can resume, and only for capacity failures.
           const resumable = state === 'blocked' && !unsafe.length && process.env.RESUMABLE === 'true';
@@ -746,6 +755,13 @@ jobs:
           else
             body="Automated change by CHE's OpenCode runner (session ${JOB_ID}). CI and an independent review run; it is NOT merged until the owner says yes (\"merge it\")."
           fi
+          # A PR already open for this branch is reused, so a re-delivery never opens a second one.
+          existing=$(gh pr list --head "$TARGET_BRANCH" --base main --state open --json number --jq '.[0].number' 2>/dev/null || true)
+          if [ -n "$existing" ]; then
+            echo "Branch ${TARGET_BRANCH} already has open PR #${existing}; updated it instead of opening another."
+            echo "pr_number=${existing}" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           if ! url=$(gh pr create --base main --head "$TARGET_BRANCH" --title "$title" --body "$body" --label che-auto 2>/tmp/pr-err.txt) \
              && ! url=$(gh pr create --base main --head "$TARGET_BRANCH" --title "$title" --body "$body" 2>/tmp/pr-err.txt); then
             echo "::error::Branch ${TARGET_BRANCH} was pushed but GitHub refused to open the PR: $(redact </tmp/pr-err.txt). CHE_GITHUB_TOKEN needs Pull requests: Read and write."
@@ -841,6 +857,7 @@ jobs:
               Object.assign(result, { state: 'blocked', failure: 'deliver_failed', error: 'Code change was made but the PR could not be opened. Check the CHE_GITHUB_TOKEN GitHub Actions secret (needs contents, pull requests and workflows write on this repo).' });
             }
             const content = JSON.stringify(result);
+            fs.writeFileSync('/tmp/che-runtime-result/final.json', content);
             let sha;
             try {
               const current = await github.rest.repos.getContent({ ...context.repo, path, ref: branch });
@@ -858,6 +875,54 @@ jobs:
             });
             core.setOutput('state', String(result.state || ''));
             core.setOutput('failure', String(result.failure || ''));
+
+      - name: Checkout the router policy from the session's base
+        id: router
+        continue-on-error: true
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.base_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+          sparse-checkout: |
+            server/cloudflare/model_router.mjs
+            server/cloudflare/coding_failover.mjs
+          sparse-checkout-cone-mode: false
+
+      # One ledger for the app's AI Model Status and the next run's circuit breakers: attempts
+      # completed and failed per model and provider, error classes, verdicts and measured cost.
+      - name: Update the model ledger
+        if: steps.router.outcome == 'success' && steps.post.outcome == 'success'
+        continue-on-error: true
+        uses: actions/github-script@v7
+        env:
+          JOB_ID: ${{ inputs.job_id }}
+        with:
+          github-token: ${{ github.token }}
+          script: |
+            const fs = require('fs');
+            const { mergeLedger } = await import(`${process.env.GITHUB_WORKSPACE}/server/cloudflare/model_router.mjs`);
+            const record = JSON.parse(fs.readFileSync('/tmp/che-runtime-result/final.json', 'utf8'));
+            const path = 'mailbox/runtime/model-ledger.json';
+            for (let attempt = 1; attempt <= 3; attempt += 1) {
+              let sha; let ledger = null;
+              try {
+                const found = await github.rest.repos.getContent({ ...context.repo, path, ref: 'che-mailbox' });
+                sha = found.data.sha;
+                ledger = JSON.parse(Buffer.from(String(found.data.content || '').replace(/\s+/g, ''), 'base64').toString('utf8'));
+              } catch (error) { if (error.status !== 404) throw error; }
+              try {
+                await github.rest.repos.createOrUpdateFileContents({
+                  ...context.repo, path, branch: 'che-mailbox',
+                  message: `model ledger: ${process.env.JOB_ID}`,
+                  content: Buffer.from(JSON.stringify(mergeLedger(ledger, record))).toString('base64'),
+                  ...(sha ? { sha } : {}),
+                });
+                return;
+              } catch (error) {
+                if (![409, 422].includes(error.status) || attempt === 3) throw error;
+              }
+            }
 
       # The run's own status says what the coding session did: a session that every model failed
       # (or that could not deliver) is a red run, never a green wrapper around a blocked job.
