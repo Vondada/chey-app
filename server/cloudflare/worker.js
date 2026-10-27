@@ -10448,7 +10448,11 @@ export class CheState extends DurableObject {
         // "Chill, I'm by my mama": the owner's words set or lift clean language (social_corrections.js).
         const social = ownerDevice ? await socialTurn(this.ctx.storage, rawMessage, body.history) : null;
         // A first-person medical emergency gets the fixed call-for-help line, with no model call (social_corrections.js).
-        if (ownerDevice && emergencyMoment(rawMessage)) return ndjsonReply(EMERGENCY_REPLY, { source: 'che_safety_route', model_calls: 0 });
+        if (ownerDevice && emergencyMoment(rawMessage)) {
+          // A held action (a payment, delete or app-access request) must not survive an emergency and be released by a later yes.
+          await this.dropHeldActions();
+          return ndjsonReply(EMERGENCY_REPLY, { source: 'che_safety_route', model_calls: 0 });
+        }
         // A broker key said or typed in chat is never kept or sent on to a model (review of #348):
         // the memory filters refuse it by its shape, and CHE says what to do instead.
         if (BROKER_KEY_RE.test(rawMessage)) {

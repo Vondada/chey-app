@@ -47,5 +47,10 @@ test('a first-person medical emergency gets the fixed call-for-help line, and an
   assert.equal(emergencyMoment("I can't breathe right now"), true);
   assert.equal(emergencyMoment('What are the signs of a heart attack?'), false);
   assert.equal(emergencyMoment('My chest feels fine after the run.'), false);
+  // Codex, PR #722: informational, negated and past mentions are not current symptoms.
+  assert.equal(emergencyMoment('What causes slurred speech?'), false);
+  assert.equal(emergencyMoment('I do not have slurred speech.'), false);
+  assert.equal(emergencyMoment('My chest pain went away last week; summarize my notes.'), false);
+  assert.equal(emergencyMoment('My chest feels tight and my left arm is numb. What should I do?'), true);
   assert.match(EMERGENCY_REPLY, /call 911/);
 });

@@ -134,7 +134,13 @@ const SERIOUS = /\b(?:chest (?:pain|hurts|feels tight)|can'?t breathe|heart atta
 export const seriousMoment = (message) => SERIOUS.test(String(message || ''));
 // A first-person medical emergency: answered by a fixed line that tells him to call emergency services, before any model.
 const EMERGENCY = /\b(?:my chest (?:feels |is |has )?(?:tight\w*|hurts?|pain\w*|pressure)|chest (?:pain|pressure|tightness) (?:right )?now|i can'?t breathe|can'?t breathe right now|my face (?:is )?drooping|slurred speech|i(?:'m| am) having a (?:stroke|heart attack))\b/i;
-export const emergencyMoment = (message) => EMERGENCY.test(String(message || ''));
+// Only a current report: an informational question, a negated or a past mention does not trigger the line.
+const QUESTION_START = /^\s*(?:what|how|why|when|where|who|is|are|can|could|should|do|does|did|will|would|tell|explain)\b/i;
+const NOT_CURRENT = /\b(?:not|no|never|don'?t|didn'?t|isn'?t|aren'?t|without|went away|gone|last|yesterday|ago|used to)\b/i;
+export const emergencyMoment = (message) => {
+  const text = String(message || '');
+  return EMERGENCY.test(text) && !QUESTION_START.test(text) && !NOT_CURRENT.test(text);
+};
 export const EMERGENCY_REPLY = 'Sir, if this is happening now, call 911 (or your local emergency number) right away. Do not drive yourself. If you can, unlock the door and sit down, and tell them exactly what you feel and when it started. I am not a doctor, so do not wait for my answer. Once you are safe, I will help with the next step.';
 
 // The model's language line for one turn. Clean: no profanity and no flirting, naturally, with no announcement and no
