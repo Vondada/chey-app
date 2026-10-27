@@ -4278,7 +4278,7 @@
     "kind": "code",
     "language": "javascript",
     "explain": "Both gating checks passed and the failing one is non-gating, so the verdict is GREEN; with no checks at all it is NONE, not green. Three failures in a row of a 10% flake happen by luck 0.001 of the time, 1 in 1,000, so treat it as a real failure.",
-    "code": "// The verdict rule of CHE's release status: one known check never gates.\nconst NON_GATING = new Set(['Workers Builds: chey-app']);\nfunction verdict(runs) {\n  const gating = runs.filter((r) => !NON_GATING.has(r.name));\n  if (!gating.length) return 'NONE';\n  if (gating.some((r) => r.status !== 'completed')) return 'PENDING';\n  return gating.every((r) => ['success', 'skipped', 'neutral'].includes(r.conclusion)) ? 'GREEN' : 'RED';\n}\nconst done = (name, conclusion) => ({ name, status: 'completed', conclusion });\nconst runs = [done('analyze', 'success'), done('Worker syntax and unit tests', 'success'), done('Workers Builds: chey-app', 'failure')];\n// A test that fails 10% of the time on correct code failed 3 runs in a row.\nconst byLuck = Math.round(0.1 ** 3 * 1000000) / 1000000;\nreturn { verdict: verdict(runs), noChecks: verdict([]), byLuck, treatAsReal: byLuck < 0.01 };",
+    "code": "// The verdict rule of CHE's release status: one known check never gates.\nconst NON_GATING = new Set(['Workers Builds: chey-app', 'screens', 'simulator']);\nfunction verdict(runs) {\n  const gating = runs.filter((r) => !NON_GATING.has(r.name));\n  if (!gating.length) return 'NONE';\n  if (gating.some((r) => r.status !== 'completed')) return 'PENDING';\n  return gating.every((r) => ['success', 'skipped', 'neutral'].includes(r.conclusion)) ? 'GREEN' : 'RED';\n}\nconst done = (name, conclusion) => ({ name, status: 'completed', conclusion });\nconst runs = [done('analyze', 'success'), done('Worker syntax and unit tests', 'success'), done('Workers Builds: chey-app', 'failure')];\n// A test that fails 10% of the time on correct code failed 3 runs in a row.\nconst byLuck = Math.round(0.1 ** 3 * 1000000) / 1000000;\nreturn { verdict: verdict(runs), noChecks: verdict([]), byLuck, treatAsReal: byLuck < 0.01 };",
     "expected": {
      "verdict": "GREEN",
      "noChecks": "NONE",
@@ -4349,7 +4349,7 @@
      "topic": "ci validation",
      "prompt": "On a pull request, analyze passed, Worker syntax and unit tests passed, and Workers Builds: chey-app failed. What verdict does CHE's release status give?",
      "language": "javascript",
-     "code": "const NON_GATING = new Set(['Workers Builds: chey-app']); const verdict = (runs) => { const gating = runs.filter((r) => !NON_GATING.has(r.name)); if (!gating.length) return 'NONE'; if (gating.some((r) => r.status !== 'completed')) return 'PENDING'; return gating.every((r) => ['success', 'skipped', 'neutral'].includes(r.conclusion)) ? 'GREEN' : 'RED'; };",
+     "code": "const NON_GATING = new Set(['Workers Builds: chey-app', 'screens', 'simulator']); const verdict = (runs) => { const gating = runs.filter((r) => !NON_GATING.has(r.name)); if (!gating.length) return 'NONE'; if (gating.some((r) => r.status !== 'completed')) return 'PENDING'; return gating.every((r) => ['success', 'skipped', 'neutral'].includes(r.conclusion)) ? 'GREEN' : 'RED'; };",
      "options": [
       "green",
       "red",
@@ -4392,7 +4392,7 @@
     {
      "path": ".claude/skills/che-release/scripts/release_status.mjs",
      "symbol": "NON_GATING",
-     "what": "the one check that fails on every pull-request branch by design is reported but never decides the verdict; every other check gates",
+     "what": "the checks that never decide the verdict (the Cloudflare dashboard build that fails on every branch, and the informational iOS simulator jobs) are reported; every other check gates",
      "test": ".claude/skills/tests/skills.test.mjs"
     },
     {
