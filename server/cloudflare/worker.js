@@ -10575,7 +10575,7 @@ export class CheState extends DurableObject {
             return ndjsonReply(started.spoken, { source: 'che_command_workflow', ok: started.ok, objective_id: started.objective?.id || null, model_calls: 0 });
           }
           // Workflow Engine: the owner's words about the library, then a promoted learned workflow this request matches.
-          const study = ownerDevice && !body.attachment && !body.workflow_step ? await studyChatTurn(this.ctx.storage, rawMessage) : null;
+          const study = ownerDevice && !body.attachment ? await studyChatTurn(this.ctx.storage, rawMessage) : null;
           if (study) { if (study.meta.wake) await this.ctx.storage.setAlarm(Date.now() + 1000); return ndjsonReply(study.text, study.meta); }
           const secAsk = ownerDevice && !body.attachment && !body.workflow_step ? (securityIntent(rawMessage) || securityChiefIntent(rawMessage)) : null;
           if (secAsk) return this.securityChat(data, secAsk, tokenHash);

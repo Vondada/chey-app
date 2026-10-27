@@ -31,7 +31,10 @@ const HUMOR_GOAL = /\b(?:funny|humou?r|comedy|comedic|jokes?|joking|timing|sarca
 
 /** "Go study the entire Martin series and The Fresh Prince of Bel-Air ... what makes them funny". Null otherwise. */
 export function studyIntent(message) {
-  const raw = String(message ?? '').replace(/[‘’]/g, "'").replace(/^(?:hey|yo|ok(?:ay)?)?[\s,]*(?:che|chey|chay|jay|shay)\b[\s,:.!-]*/i, '').trim();
+  const words = String(message ?? '').replace(/[‘’]/g, "'").replace(/^(?:hey|yo|ok(?:ay)?)?[\s,]*(?:che|chey|chay|jay|shay)\b[\s,:.!-]*/i, '').trim();
+  const catalog = /^comedy study:\s*/i.test(words);
+  const raw = words.replace(/^comedy study:\s*/i, '').trim();
+  if (catalog && !raw) return { action: 'status' };
   if (!raw || raw.length > 600) return null;
   const t = raw.toLowerCase().replace(/[.!?]+$/, '');
   if (/^(?:how(?:'s| is) (?:your |the )?stud(?:y|ying)(?: going)?|(?:what(?:'s| is) )?(?:your |the )?study (?:status|progress)|how far (?:are you|along)(?: with (?:the|your) stud(?:y|ying))?|which episodes have you (?:studied|done|covered))$/.test(t)) return { action: 'status' };
@@ -231,11 +234,14 @@ export async function studyPass(storage, { store = null, complete, fetcher = fet
         subject.episodes = episodes.map((e) => ({ season: e.season, number: e.number, overall: e.overall, title: e.title, aired: e.aired, has_summary: Boolean(e.summary), method: null }));
         summariesToSave.set(`${a.id}:summaries:${a.subjects.indexOf(subject)}`, episodes.map((e) => clip(e.summary, 600)));
         subject.notes = await showArticle(show.title, fetcher);
-        subject.status = episodes.length ? 'reading' : 'done';
+        subject.status = episodes.length ? 'reading' : 'pending';
         note(a, episodes.length
           ? `${base}: found ${episodes.length} episodes in Wikipedia's episode guide (${pages.join(', ')}).`
           : `${base}: no episode list I can read, so I studied the show's article only.`, now);
-        if (!episodes.length && subject.notes) await deriveLessons(a, subject, [], { store, storage, complete, now });
+        if (!episodes.length && subject.notes) {
+          await deriveLessons(a, subject, [], { store, storage, complete, now });
+          subject.status = 'done';
+        }
       }
     } else {
       const from = subject.cursor;

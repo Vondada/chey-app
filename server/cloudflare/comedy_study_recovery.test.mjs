@@ -89,3 +89,18 @@ test('missing article content cannot become completed article-only study', async
   assert.match(a.last_error.message,/no readable show article/);
   assert.deepEqual(a.subjects[0].list_pages,[],'missing page never becomes a cited episode guide');
 });
+
+test('article-only lesson failures retry instead of completing the assignment', async () => {
+  const storage=memory();
+  await studyTurn(storage,{...ask,subjects:['Martin']});
+  let calls=0;
+  const fetcher=async url=>new URL(url).searchParams.get('action')==='parse'?Response.json({error:{code:'missingtitle'}}):wiki(url);
+  const complete=async()=>{calls++;throw new Error('Workers AI unavailable');};
+  await studyPass(storage,{fetcher,complete});
+  await studyPass(storage,{fetcher,complete});
+  const [a]=await storage.get(STUDY_KEY);
+  assert.equal(calls,2);
+  assert.equal(a.subjects[0].status,'pending');
+  assert.notEqual(a.status,'done');
+  assert.match(a.last_error.message,/Workers AI unavailable/);
+});
