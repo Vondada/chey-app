@@ -336,3 +336,31 @@ test('the per-attempt OpenCode config pins main and small model to the same zero
   assert.deepEqual(config.provider.openrouter.models['qwen/qwen3-coder:free'], { name: 'Qwen3 Coder (free)', limit: { context: 262144, output: 65536 } });
   rmSync(dir, { recursive: true, force: true });
 });
+
+test('a requested model ranked below the first MAX_CANDIDATES is still used when it is eligible (Codex, PR #685)', () => {
+  const rows = Array.from({ length: MAX_CANDIDATES + 2 }, (_, i) => ({ id: `vendor/model-${i}:free`, name: `m${i}`, pricing: FREE, context_length: 131072, supported_parameters: ['tools'] }));
+  const fixtures = {
+    'https://openrouter.ai/api/v1/key': { status: 200, body: { data: { is_free_tier: true, usage: 0 } } },
+    'https://openrouter.ai/api/v1/models': { status: 200, body: { data: rows } },
+  };
+  const last = `openrouter/vendor/model-${MAX_CANDIDATES + 1}:free`;
+  const run = tool(['plan', '--out-dir', '$DIR/out'], { fixtures, env: { K_OPENROUTER: 'fake', REQUESTED: last } });
+  try {
+    assert.equal(run.status, 0, run.stderr);
+    const routing = JSON.parse(readFileSync(join(run.dir, 'out', 'routing.json'), 'utf8'));
+    assert.equal(routing.candidates[0].model, last);
+    assert.equal(routing.candidates.length, MAX_CANDIDATES);
+    assert.deepEqual(routing.notes, []);
+  } finally { run.cleanup(); }
+});
+
+test('a provider whose every run model is paused by its own quota is not shown as available (Codex, PR #685)', () => {
+  const flash = { ...RECORD, attempts: [{ model: 'google/gemini-2.5-flash', provider: 'google', outcome: 'failed', exit_code: 1, error_class: 'credit_exhausted', scope: 'model' }] };
+  const view = modelStatusView({ ledger: mergeLedger(emptyLedger(), flash, T0), now: T0 + 60_000 });
+  const google = view.providers.find((p) => p.id === 'google');
+  assert.equal(google.circuit, 'open');
+  assert.equal(google.circuit_reason, 'credit_exhausted');
+  const sibling = { ...RECORD, attempts: [{ model: 'google/gemini-2.5-pro', provider: 'google', outcome: 'completed', exit_code: 0 }] };
+  const healthy = modelStatusView({ ledger: mergeLedger(mergeLedger(emptyLedger(), flash, T0), sibling, T0), now: T0 + 60_000 });
+  assert.equal(healthy.providers.find((p) => p.id === 'google').circuit, 'closed', 'a healthy sibling model keeps the provider available');
+});

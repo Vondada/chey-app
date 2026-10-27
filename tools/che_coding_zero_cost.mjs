@@ -124,7 +124,8 @@ export async function plan({ env = process.env, outDir, ledgerPath = '', request
   const ledger = readJson(ledgerPath) || {};
   const request = requestFile && existsSync(requestFile) ? readFileSync(requestFile, 'utf8') : '';
   const kind = taskKind(request.split('OWNER REQUEST:').pop());
-  const planned = planCandidates({ models, verdicts, kind, ledger, now, limit: MAX_CANDIDATES });
+  // Rank every eligible model first, so a requested model outside the top few is still found.
+  const planned = planCandidates({ models, verdicts, kind, ledger, now, limit: Infinity });
   // An explicitly requested model goes first only when it is itself eligible.
   const requested = String(env.REQUESTED || 'auto').trim();
   const notes = [];
@@ -133,6 +134,7 @@ export async function plan({ env = process.env, outDir, ledgerPath = '', request
     if (hit) planned.candidates = [hit, ...planned.candidates.filter((c) => c !== hit)];
     else notes.push(`The requested model ${requested.slice(0, 80)} is not verified at zero cost, so it is not used.`);
   }
+  planned.candidates = planned.candidates.slice(0, MAX_CANDIDATES);
   const auth = spendAuthorization(env);
   const routing = {
     authorized_spend_usd: auth.authorized_usd,

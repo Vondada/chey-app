@@ -418,6 +418,9 @@ export function modelStatusView({ ledger = null, workerKeys = {}, now = Date.now
     const breaker = book.breakers?.[policy.id] || null;
     const models = Object.entries(book.models || {}).filter(([id]) => id.split('/')[0] === (policy.runner || policy.id));
     const lastOk = models.map(([id, row]) => ({ id, at: row.last_ok_at })).filter((m) => m.at).sort((a, b) => String(b.at).localeCompare(String(a.at)))[0];
+    // Every model this provider has run is paused by its own breaker: nothing on it is usable now.
+    const modelBreakers = models.map(([id]) => book.breakers?.[id]);
+    const modelPause = models.length && modelBreakers.every((b) => b && breakerState(b, now) === 'open') ? modelBreakers[0] : null;
     const verifiedAt = verdict?.at || null;
     const fresh = verifiedAt && now - Date.parse(verifiedAt) <= 7 * 24 * 60 * 60_000;
     const blocked = policy.paid_only || !verdict || verdict.coverage === 'blocked';
@@ -440,8 +443,8 @@ export function modelStatusView({ ledger = null, workerKeys = {}, now = Date.now
       failed_attempts: Number(usage?.failed || 0),
       last_error_class: usage?.last_error_class || null,
       billed_usd_verified: typeof usage?.billed_usd_verified === 'number' ? usage.billed_usd_verified : null,
-      circuit: breaker ? breakerState(breaker, now) : 'closed',
-      circuit_reason: breaker && breakerState(breaker, now) === 'open' ? breaker.last_error_class || null : null,
+      circuit: circuitOf(breaker, modelPause, now),
+      circuit_reason: breaker && breakerState(breaker, now) === 'open' ? breaker.last_error_class || null : modelPause?.last_error_class || null,
       reason: blocked ? (policy.paid_only ? 'paid_provider_spend_not_authorized' : verdict?.reason || 'not_checked_yet') : null,
       rule: policy.runtime_rule,
       remedy: blocked ? policy.remedy : null,
@@ -460,6 +463,12 @@ export function modelStatusView({ ledger = null, workerKeys = {}, now = Date.now
     last_session: last,
     providers,
   };
+}
+
+function circuitOf(breaker, modelPause, now) {
+  if (breaker && breakerState(breaker, now) === 'open') return 'open';
+  if (modelPause) return 'open';
+  return breaker ? breakerState(breaker, now) : 'closed';
 }
 
 // Spoken summary of the status, for Read Aloud. Short sentences, numbered providers.
