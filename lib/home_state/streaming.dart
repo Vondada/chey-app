@@ -508,6 +508,8 @@ extension _CheHomeStreaming on _CHEHomeState {
         }
         // "Open Truth and Verification": only the Worker's own truth handler opens the Brain Room section.
         if (data['open_screen'] == 'brain_truth' && data['source'] == 'che_brain_truth' && mounted) unawaited(_openBrainTruth());
+        // "Open the test registry": only the Worker's registry handler opens the Reliability Registry.
+        if (data['open_screen'] == 'brain_reliability' && data['source'] == 'che_reliability_registry' && mounted) unawaited(_openBrainReliability());
         // Owner Improvements: a setting CHE changed applies here at once, and the app reports what it now uses.
         if (data['source'] == 'che_owner_improvement') {
           if (data['open_screen'] == 'owner_improvements' && mounted) unawaited(_openOwnerImprovements());
