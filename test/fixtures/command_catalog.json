@@ -784,7 +784,7 @@
    "category": "intelligence",
    "title": "Manifestation Engine",
    "summary": "Turn a goal into a spec, simulations and a verified plan.",
-   "does": "Turns a goal into a structured spec, several candidate solutions, each classified (feasible now, expensive or impractical, plausible but unproven, unknown, or incompatible with physical constraints), real models with Monte Carlo ranges, a comparison under equal conditions and a Realization Plan. Models today: multirotor flight, business cash flow and job searches. Saves the project; steps count as done only with evidence. Spends nothing.",
+   "does": "Turns a goal into a structured spec, several candidate solutions, each classified (feasible now, expensive or impractical, plausible but unproven, unknown, or incompatible with physical constraints), real models with Monte Carlo ranges, a comparison under equal conditions and a Realization Plan. Models today: multirotor flight, business cash flow and job searches. Saves one record per idea with the source of every number; steps count as done only with evidence, and money, account, contract, deployment or device steps never start without your approval. Also: a spoken briefing, pause, resume or stop an idea, and a weekly review when you ask. Spends nothing.",
    "mode": "PLAN",
    "approval": {
     "required": false,
@@ -793,13 +793,16 @@
    "input": {
     "name": "goal",
     "required": true,
-    "hint": "Your goal, or \"status\""
+    "hint": "Your goal, or status, briefing, pause 1, resume 1, stop 1, weekly review"
    },
    "examples": [
     "Manifest a drone that carries 1 kg for 25 minutes",
     "Manifest a flying car for 2 people",
     "Manifest a new job as a data analyst within 4 months",
-    "Manifestation status"
+    "Manifestation status",
+    "Brief me on my manifestation projects",
+    "Pause manifestation project 2",
+    "Manifestation weekly review"
    ],
    "needs": [],
    "optional": [],

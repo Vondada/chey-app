@@ -127,6 +127,11 @@ function classify({ x, nominal, run, spec }) {
   const confidence = owned.length === 3 ? 'medium: your own tracked rates' : 'low: the conversion rates are planning assumptions until you track your own';
   const alternatives = alternativesFor(x);
   if (physics.length) return { class: 'incompatible', violated: physics.map(({ id, text }) => ({ id, text })), limiting_constraint: { id: physics[0].id, text: physics[0].text }, reasons: physics.map((c) => c.text), alternatives, confidence };
+  // No job-market data source is wired: without your own tracked rates the odds are not judged.
+  if (owned.length < 3) {
+    const missing = ['response_rate', 'interview_rate', 'offer_rate'].filter((k) => !owned.includes(k));
+    return { class: 'unknown', violated: [], limiting_constraint: { id: 'conversion_rates', text: 'Your own reply, interview and offer rates', missing }, reasons: [`No data source for job-market conversion rates; the figures shown use placeholder rates for ${missing.join(', ').replace(/_/g, ' ')}. Track your first applications and CHE recalibrates.`], alternatives, confidence };
+  }
   const p = run?.success_probability ?? 0;
   const practical = nominal.checks.filter((c) => c.kind === 'practical' && !c.ok);
   const sens = run?.sensitivity?.[0];
@@ -154,12 +159,19 @@ function planSteps({ candidate, nominal }) {
   return [
     { title: 'Name the target role and write the résumé', who: 'che', instructions: ['Tell CHE the job title, place and pay you want.', 'CHE drafts a résumé and a short pitch from what you tell her; you read and correct it.'], cost_usd: [0, 0], time: '2 to 3 hours', expected: 'A résumé you approve.', verification: 'artifact', consequential: null, safety: 'Every line must be true; CHE never invents experience.', fallback: 'Ask a contact in the field to review it.' },
     { title: 'Start a tracking sheet', who: 'che', instructions: ['One row per application: date, company, role, reply (yes or no), interview, offer.'], cost_usd: [0, 0], time: '15 minutes', expected: 'Your real rates, measured from week 1.', verification: 'artifact', consequential: null, safety: '', fallback: 'A note on the phone works too.' },
-    { title: `Apply: ${round(x.apps_per_week, 0)} applications a week for ${Math.round(x.search_weeks)} weeks`, who: 'owner', instructions: [`About ${round(o.hours_per_week, 1)} hours a week.`, 'CHE may prepare each application; sending one needs your yes for that application.'], cost_usd: [0, 0], time: `${Math.round(x.search_weeks)} weeks`, expected: `About ${round(o.responses_per_week, 1)} replies a week.`, verification: 'measurement', metric: 'response_rate', consequential: 'application', safety: '', fallback: 'After 4 weeks, CHE recalibrates the rates from your sheet.' },
-    { title: 'Week-4 check: compare real replies with the simulation', who: 'owner', instructions: ['Tell CHE how many applications went out and how many replied.'], cost_usd: [0, 0], time: '10 minutes', expected: `A reply rate between ${round(x.response_rate * 0.5 * 100, 0)}% and ${round(x.response_rate * 1.5 * 100, 0)}%.`, verification: 'measurement', metric: 'response_rate', consequential: null, safety: '', fallback: 'If replies are far below, change the résumé or the target before sending more.' },
+    { title: `Apply: ${round(x.apps_per_week, 0)} applications a week for ${Math.round(x.search_weeks)} weeks`, who: 'owner', instructions: [`About ${round(o.hours_per_week, 1)} hours a week.`, 'CHE may prepare each application; sending one needs your yes for that application.'], cost_usd: null, time: `${Math.round(x.search_weeks)} weeks`, expected: `About ${round(o.responses_per_week, 1)} replies a week.`, verification: 'measurement', metric: 'response_rate', consequential: 'application', safety: '', fallback: 'After 4 weeks, CHE recalibrates the rates from your sheet.' },
+    { title: 'Week-4 check: compare real replies with the simulation', who: 'owner', instructions: ['Tell CHE how many applications went out and how many replied.'], cost_usd: null, time: '10 minutes', expected: `A reply rate between ${round(x.response_rate * 0.5 * 100, 0)}% and ${round(x.response_rate * 1.5 * 100, 0)}%.`, verification: 'measurement', metric: 'response_rate', consequential: null, safety: '', fallback: 'If replies are far below, change the résumé or the target before sending more.' },
     { title: 'Prepare for interviews', who: 'che', instructions: ['CHE runs practice questions by voice for the role.'], cost_usd: [0, 0], time: '1 hour per interview', expected: `About ${round(o.interviews_per_week, 2)} interviews a week.`, verification: 'owner_report', consequential: null, safety: '', fallback: 'Ask for feedback after each one.' },
-    { title: 'Decide on an offer', who: 'owner', instructions: ['Compare pay, travel and terms. Accepting or signing is yours alone.'], cost_usd: [0, 0], time: '1 to 3 days', expected: `An even chance of an offer by week ${Number.isFinite(o.weeks_to_offer_p50) ? o.weeks_to_offer_p50 : 'beyond the horizon'}.`, verification: 'owner_report', metric: 'weeks_to_offer_p50', consequential: 'contract', safety: '', fallback: 'Keep applying until a contract is signed.' },
+    { title: 'Decide on an offer', who: 'owner', instructions: ['Compare pay, travel and terms. Accepting or signing is yours alone.'], cost_usd: null, time: '1 to 3 days', expected: `An even chance of an offer by week ${Number.isFinite(o.weeks_to_offer_p50) ? o.weeks_to_offer_p50 : 'beyond the horizon'}.`, verification: 'owner_report', metric: 'weeks_to_offer_p50', consequential: 'contract', safety: '', fallback: 'Keep applying until a contract is signed.' },
   ];
 }
+
+export const DATA_SOURCES = Object.freeze([
+  { id: 'owner_rates', what: 'Your reply, interview and offer rates', kind: 'owner', source: 'your tracking sheet, when you report it', url: '', as_of: null, stale_after_days: 30 },
+  { id: 'placeholder_rates', what: 'Placeholder conversion rates', kind: 'assumed', source: 'CHE placeholders (not market statistics)', url: '', as_of: '2026-10-27', stale_after_days: null },
+  { id: 'job_market', what: 'Job-market data (openings, pay, competition)', kind: 'none', source: 'no data source', url: '', as_of: null, stale_after_days: null },
+  { id: 'skills_gap', what: 'Skills gap against the target role', kind: 'none', source: 'no data source', url: '', as_of: null, stale_after_days: null },
+]);
 
 export const JOBSEARCH_MODEL = Object.freeze({
   id: 'job_search_funnel', version: 1, domain: 'employment',
@@ -172,6 +184,7 @@ export const JOBSEARCH_MODEL = Object.freeze({
     { id: 'by_week', text: 'P(t) = 1 − Π_{w=1}^{min(S,t)} (1 − p·F(t − w))^a', units: '1' },
     { id: 'workload', text: 'hours = a · h', units: 'h/week' },
   ],
+  data_sources: DATA_SOURCES,
   assumptions: ['Applications are independent and rates stay constant.', 'The conversion rates are planning assumptions, not measured statistics; track your own and CHE recalibrates.', 'Delay from application to offer is uniform between its shortest and longest value.'],
   references: [{ title: 'Conversion funnel', url: 'https://en.wikipedia.org/wiki/Conversion_funnel' }, { title: 'Geometric distribution', url: 'https://en.wikipedia.org/wiki/Geometric_distribution' }],
   inputs: INPUTS, outputs: OUTPUTS, primary: 'p_offer_by_target',

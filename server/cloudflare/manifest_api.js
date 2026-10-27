@@ -9,6 +9,7 @@ import {
   simulateAll, speakProject, startProject, sweep, transition, validateEvidence,
 } from './manifest_engine.js';
 import { round } from './manifest_stats.js';
+import { amendPreregistration, briefing, dataSourcesWithAge, judge, setStepStatus, weeklyReview, whyClaim } from './manifest_record.js';
 
 const json = (value, status = 200) => new Response(JSON.stringify(value), { status, headers: { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' } });
 const ndjson = (reply, meta) => new Response(`${JSON.stringify({ type: 'delta', delta: reply })}\n${JSON.stringify({ type: 'done', ...meta })}\n`, { headers: { 'Content-Type': 'application/x-ndjson; charset=utf-8', 'Cache-Control': 'no-store' } });
@@ -17,7 +18,7 @@ const fail = (detail, status = 400) => json({ detail }, status);
 
 /** A model as data (no functions), for GET /api/manifest/models. */
 export function modelCard(m) {
-  return { id: m.id, version: m.version, domain: m.domain, title: m.title, method: m.method, equations: m.equations, assumptions: m.assumptions, references: m.references, inputs: m.inputs, outputs: m.outputs, primary: m.primary, outcome_metrics: m.outcome_metrics };
+  return { id: m.id, version: m.version, domain: m.domain, title: m.title, method: m.method, equations: m.equations, assumptions: m.assumptions, references: m.references, inputs: m.inputs, outputs: m.outputs, primary: m.primary, outcome_metrics: m.outcome_metrics, data_sources: dataSourcesWithAge(m) };
 }
 
 // ── The Simulation Room scene ──────────────────────────────────────────────────────────────────
@@ -41,7 +42,6 @@ export function manifestScene(project) {
       id: `candidate:${c.id}`, kind: 'candidate', candidate_id: c.id, label: c.name, description: c.description,
       class: f.class || 'unknown', class_label: FEASIBILITY[f.class || 'unknown'], best: project.comparison?.best === c.id,
       success_probability: row.success_probability ?? null, primary: row.primary || null,
-      cost_usd: row.cost_high != null && Number.isFinite(row.cost_high) ? [round(row.cost_low, 0), round(row.cost_high, 0)] : null,
       limiting_constraint: f.limiting_constraint || null, violated: f.violated || [],
       field: { x: row.primary && Number.isFinite(row.primary.p50) ? round(norm(row.primary.p50), 4) : null, y: row.success_probability ?? 0, spread: width == null ? null : round(Math.min(1, width), 4) },
       provenance: row.run_id ? 'simulated' : 'prediction', source: { store: 'manifest_runs', id: row.run_id || '' },
@@ -58,24 +58,74 @@ export function manifestScene(project) {
     axes: { x: rows[0]?.primary ? `${rows[0].primary.id} (median, scaled across candidates)` : null, y: 'probability of meeting every goal (Monte Carlo)', spread: '(p90 − p10) / p50' },
     objects: [...objects, ...alternatives, ...steps],
     stations: dept ? [{ id: dept, agent: AGENT_BY_DEPARTMENT[dept] || null, assignment: 'suggested', task_id: null, note: 'No Office task has been queued for this project.' }] : [],
+    // Nothing in the room animates without real activity: no Office task runs for an idea yet.
+    activity: { working: false, agent: null, task_id: null, animate: false, reason: 'No Office task is running for this idea.' },
+    latest_result: latestResult(project, rows),
+    first_test: project.first_test || null,
+    preregistration: project.preregistration ? { ...project.preregistration.original, amendments: project.preregistration.amendments.length } : null,
+    briefing: briefing(project),
     spoken: speakProject(project), updated_at: project.updated_at,
   };
+}
+
+function latestResult(project, rows) {
+  const r = rows.find((x) => x.candidate_id === project.comparison?.best);
+  if (!r?.primary) return null;
+  return { candidate_id: r.candidate_id, run_id: r.run_id, forecast: { low: r.primary.p10, likely: r.primary.p50, high: r.primary.p90, unit: r.primary.unit }, success_probability: r.success_probability, at: project.runs.find((x) => x.id === r.run_id)?.created_at || null };
 }
 
 // ── Chat ────────────────────────────────────────────────────────────────────────────────────────
 const WAKE = /^(?:(?:hey\s+)?(?:che|chay|chey|shay)[,:]?\s+)?(?:please\s+|can\s+you\s+|could\s+you\s+)*/i;
 const STATUS = /^(?:(?:open|show|read)\s+(?:me\s+)?(?:my\s+|the\s+)?)?manifest(?:ation)?\s+(?:engine\s+)?(?:status|projects?|room)\s*$|^(?:open|show)\s+(?:me\s+)?(?:my\s+|the\s+)?manifestation\s+(?:engine|projects?|room)\s*$|^(?:what(?:'s|\s+is)\s+the\s+)?status\s+of\s+my\s+manifestation\s+projects?\s*$/i;
-const CREATE = /^(?:manifest|manifestation\s+(?:project|engine))\b[\s,:-]*(?:for\s+|this:?\s+)?(.+)$/i;
+const PREFIX = /^(?:manifest(?:ation)?(?:\s+(?:project|engine))?)\b[\s,:-]*/i;
+const CONTROL = /^(pause|resume|stop|kill)(?:\s+(?:the\s+|my\s+|this\s+)?(?:manifestation\s+)?(?:project|idea))?(?:\s+(?:number\s+)?(\d+))?$/i;
+const NATURAL_CONTROL = /^(pause|resume|stop|kill)\s+(?:my\s+|the\s+)?manifestation\s+(?:project|idea)(?:\s+(?:number\s+)?(\d+))?$/i;
+const BRIEF = /^(?:brief(?:ing)?|brief\s+me|read\s+(?:me\s+)?(?:the\s+)?briefing)(?:\s+(?:on\s+)?(?:project\s+|number\s+)?(\d+))?$/i;
+const NATURAL_BRIEF = /^(?:brief\s+me\s+on|give\s+me\s+(?:a\s+)?briefing\s+on|read\s+me\s+the\s+briefing\s+(?:on|for))\s+(?:my\s+|the\s+)?manifestation\s+projects?(?:\s+(?:number\s+)?(\d+))?$|^manifestation\s+briefing(?:\s+(?:number\s+)?(\d+))?$/i;
+const REVIEW = /^(?:(?:give|read)\s+me\s+)?(?:my\s+|the\s+)?(?:manifestation\s+)?weekly\s+review(?:\s+of\s+my\s+manifestation\s+projects)?$/i;
+const action = (word) => (word.toLowerCase() === 'kill' ? 'stop' : word.toLowerCase());
 
-/** { kind: 'status' } | { kind: 'create', goal } | null. Deterministic. */
+/**
+ * { kind: 'status' | 'create' | 'brief' | 'control' | 'review' | 'why', ... } or null. Deterministic.
+ * Every form names the engine ("manifest", "manifestation"), so ordinary sentences keep their routes.
+ */
 export function manifestIntent(message) {
   const body = String(message || '').replace(/[’]/g, "'").trim().replace(WAKE, '').replace(/[.?!]+$/, '').trim();
   if (!body || body.length > 1500) return null;
   if (STATUS.test(body)) return { kind: 'status' };
-  const m = CREATE.exec(body);
-  if (m && m[1].trim().split(/\s+/).length >= 2) return { kind: 'create', goal: m[1].trim() };
-  if (/^manifest(?:ation)?\s*$/i.test(body)) return { kind: 'status' };
-  return null;
+  if (/manifest/i.test(body) && REVIEW.test(body)) return { kind: 'review' };
+  const nb = NATURAL_BRIEF.exec(body);
+  if (nb) return { kind: 'brief', n: Number(nb[1] || nb[2] || 0) || null };
+  const nc = NATURAL_CONTROL.exec(body);
+  if (nc) return { kind: 'control', action: action(nc[1]), n: Number(nc[2] || 0) || null };
+  if (!PREFIX.test(body)) return null;
+  const rest = body.replace(PREFIX, '').trim();
+  if (!rest) return { kind: 'status' };
+  if (REVIEW.test(rest)) return { kind: 'review' };
+  const b = BRIEF.exec(rest);
+  if (b) return { kind: 'brief', n: Number(b[1] || 0) || null };
+  const c = CONTROL.exec(rest);
+  if (c) return { kind: 'control', action: action(c[1]), n: Number(c[2] || 0) || null };
+  const why = /^why\s+(.+)$/i.exec(rest);
+  if (why) return { kind: 'why', subject: why[1] };
+  const goal = rest.replace(/^(?:for\s+|this:?\s+)/i, '').trim();
+  return goal.split(/\s+/).length >= 2 ? { kind: 'create', goal } : null;
+}
+
+/** Pause (BLOCKED, resumable), resume (back where it was) or stop for good (FAILED; the record is kept). */
+export function controlProject(project, act, now = new Date().toISOString()) {
+  if (act === 'pause') {
+    if (project.status === 'BLOCKED') return { ok: false, error: 'It is already paused or blocked.' };
+    const r = transition(project, 'BLOCKED', { reason: 'Paused by the owner.', now });
+    if (r.ok) r.project.paused = true;
+    return r;
+  }
+  if (act === 'resume') {
+    if (project.status !== 'BLOCKED' || !project.paused) return { ok: false, error: 'It is not paused.' };
+    return transition(project, project.blocked_from, { reason: 'Resumed by the owner.', now });
+  }
+  if (act === 'stop') return transition(project, 'FAILED', { reason: 'Stopped by the owner. The record is kept.', now });
+  return { ok: false, error: `Unknown action ${act}.` };
 }
 
 /** The chat route: a Response, or null when the message is not for the engine. */
@@ -90,10 +140,29 @@ export async function manifestChat(message, storage, ownerDevice) {
     const lines = list.slice(0, 5).map((p, i) => `${i + 1}. ${p.title}: ${p.status}.`);
     return ndjson(`Your manifestation projects, newest first, sir. ${lines.join(' ')}`, { source: MANIFEST_SOURCE, ok: true, model_calls: 0, project_id: list[0].id, status: list[0].status });
   }
+  if (ask.kind !== 'create') return otherChat(store, ask);
   const started = await startProject(store, ask.goal, { newId });
   if (started.refused) return ndjson(`I won't take that on, sir. ${started.spec.safety.notes.join(' ')} Nothing was created.`, { source: MANIFEST_SOURCE, ok: false, model_calls: 0, project_id: '' });
   const p = started.project;
   return ndjson(speakProject(p), { source: MANIFEST_SOURCE, ok: p.status !== 'BLOCKED', model_calls: 0, project_id: p.id, status: p.status });
+}
+
+async function otherChat(store, ask) {
+  const list = await store.list();
+  if (ask.kind === 'review') {
+    const projects = (await Promise.all(list.map((x) => store.get(x.id)))).filter(Boolean);
+    return ndjson(weeklyReview(projects).spoken, { source: MANIFEST_SOURCE, ok: true, model_calls: 0 });
+  }
+  const entry = ask.n ? list[ask.n - 1] : list[0];
+  const project = entry ? await store.get(entry.id) : null;
+  if (!project) return ndjson(ask.n ? `There is no manifestation project number ${ask.n}, sir.` : 'There are no manifestation projects yet, sir.', { source: MANIFEST_SOURCE, ok: false, model_calls: 0, project_id: '' });
+  if (ask.kind === 'brief') return ndjson(briefing(project).spoken, { source: MANIFEST_SOURCE, ok: true, model_calls: 0, project_id: project.id, status: project.status });
+  if (ask.kind === 'why') return ndjson(whyClaim(project, ask.subject).spoken, { source: MANIFEST_SOURCE, ok: true, model_calls: 0, project_id: project.id });
+  const r = controlProject(project, ask.action);
+  if (!r.ok) return ndjson(`Nothing changed, sir: ${r.error}`, { source: MANIFEST_SOURCE, ok: false, model_calls: 0, project_id: project.id, status: project.status });
+  await store.put(r.project);
+  const said = { pause: 'Paused', resume: 'Resumed', stop: 'Stopped for good; the record is kept' }[ask.action];
+  return ndjson(`${said}: ${project.title}. It is now ${r.project.status}.`, { source: MANIFEST_SOURCE, ok: true, model_calls: 0, project_id: project.id, status: r.project.status });
 }
 
 // ── HTTP routes ─────────────────────────────────────────────────────────────────────────────────
@@ -126,6 +195,15 @@ export async function manifestRoute(request, path, storage, ownerDevice, parsedB
       return json({ spec: buildSpec(b.request, { overrides: b.variables || {} }) });
     }
     if (path === '/api/manifest/projects' && method === 'GET') return json({ projects: await store.list() });
+    if (path === '/api/manifest/review' && method === 'GET') {
+      const projects = (await Promise.all((await store.list()).map((x) => store.get(x.id)))).filter(Boolean);
+      return json(weeklyReview(projects));
+    }
+    if (path === '/api/manifest/track' && method === 'GET') {
+      const tracks = {};
+      for (const m of Object.values(MODELS)) tracks[m.id] = (await storage.get(`manifest_track:${m.id}@${m.version}`)) || null;
+      return json({ tracks });
+    }
     if (path === '/api/manifest/projects' && method === 'POST') {
       const b = await bodyOf(request, parsedBody);
       if (!String(b.request || '').trim()) return fail('Say the goal in "request".');
@@ -149,6 +227,9 @@ export async function manifestRoute(request, path, storage, ownerDevice, parsedB
     if (method === 'GET' && !action) return json({ project, spoken: speakProject(project) });
     if (method === 'GET' && action === 'scene') return json({ scene: manifestScene(project) });
     if (method === 'GET' && action === 'candidates') return json({ candidates: project.candidates, comparison: project.comparison });
+    if (method === 'GET' && action === 'claims') return json({ claims: project.claims || [] });
+    if (method === 'GET' && action === 'briefing') return json(briefing(project));
+    if (method === 'GET' && action === 'judgement') return json({ preregistration: project.preregistration, judgement: judge(project) });
     if (method !== 'POST') return fail('Method not allowed.', 405);
     const b = await bodyOf(request, parsedBody);
     const model = project.spec.model ? MODELS[project.spec.model.id] : null;
@@ -260,6 +341,26 @@ export async function manifestRoute(request, path, storage, ownerDevice, parsedB
         if (!model) return fail('This project has no model.', 409);
         const outcome = await recordOutcome(store, project, { metric: String(b.metric || ''), value: Number(b.value), unit: String(b.unit || ''), candidate_id: b.candidate_id, note: b.note || '' }, { newId });
         return json({ outcome });
+      }
+      case 'why':
+        return json(whyClaim(project, b.subject || ''));
+      case 'amend': {
+        amendPreregistration(project, b);
+        project.updated_at = new Date().toISOString();
+        await store.put(project);
+        return json({ preregistration: project.preregistration, judged_against: 'original' });
+      }
+      case 'step': {
+        const r = setStepStatus(project, String(b.step_id || ''), String(b.status || ''), { note: b.note || '' });
+        if (!r.ok) return json({ ok: false, detail: r.error, approval_required: !!r.approval_required }, 409);
+        await store.put(project);
+        return json({ ok: true, step: r.step });
+      }
+      case 'pause': case 'resume': case 'stop': {
+        const r = controlProject(project, action);
+        if (!r.ok) return json({ ok: false, detail: r.error }, 409);
+        await store.put(r.project);
+        return json({ ok: true, project: r.project });
       }
       default:
         return fail('No such Manifestation Engine route.', 404);

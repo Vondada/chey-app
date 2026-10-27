@@ -250,10 +250,10 @@ export const COMMANDS = Object.freeze([
   // Manifestation Engine (owner, 2026-10-27): docs/CHE_MANIFESTATION_ENGINE.md.
   C('manifest', 'intelligence', 'PLAN', 'Turn a goal into a spec, simulations and a verified plan.', {
     title: 'Manifestation Engine',
-    does: 'Turns a goal into a structured spec, several candidate solutions, each classified (feasible now, expensive or impractical, plausible but unproven, unknown, or incompatible with physical constraints), real models with Monte Carlo ranges, a comparison under equal conditions and a Realization Plan. Models today: multirotor flight, business cash flow and job searches. Saves the project; steps count as done only with evidence. Spends nothing.',
+    does: 'Turns a goal into a structured spec, several candidate solutions, each classified (feasible now, expensive or impractical, plausible but unproven, unknown, or incompatible with physical constraints), real models with Monte Carlo ranges, a comparison under equal conditions and a Realization Plan. Models today: multirotor flight, business cash flow and job searches. Saves one record per idea with the source of every number; steps count as done only with evidence, and money, account, contract, deployment or device steps never start without your approval. Also: a spoken briefing, pause, resume or stop an idea, and a weekly review when you ask. Spends nothing.',
     needs: [], route: 'che_manifest', handler: 'manifest_api.manifestChat → manifest_engine.startProject',
-    input: { name: 'goal', required: true, hint: 'Your goal, or "status"' },
-    examples: ['Manifest a drone that carries 1 kg for 25 minutes', 'Manifest a flying car for 2 people', 'Manifest a new job as a data analyst within 4 months', 'Manifestation status'],
+    input: { name: 'goal', required: true, hint: 'Your goal, or status, briefing, pause 1, resume 1, stop 1, weekly review' },
+    examples: ['Manifest a drone that carries 1 kg for 25 minutes', 'Manifest a flying car for 2 people', 'Manifest a new job as a data analyst within 4 months', 'Manifestation status', 'Brief me on my manifestation projects', 'Pause manifestation project 2', 'Manifestation weekly review'],
     prompt: 'Manifest {input}', produces: 'manifestation project',
     evidence: 'Every number from a named model run (seed, inputs, equations); simulated results are labelled, never called measurements; zero model calls.',
     cost: 'Free: no AI engine is used.', keywords: ['manifest', 'manifestation', 'goal', 'feasibility', 'simulate', 'realize', 'make it real', 'realization plan'],

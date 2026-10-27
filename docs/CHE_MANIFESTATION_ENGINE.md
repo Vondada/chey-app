@@ -23,6 +23,7 @@ It extends the existing Simulation Lab (`sim_lab.js`) and Concept-to-Plan (`proj
 | Business model: unit economics and cash flow | `server/cloudflare/manifest_business.js` | the "unit-economics model" that `sim_lab.js` lists under `MISSING.business` |
 | Employment model: job-search funnel | `server/cloudflare/manifest_jobsearch.js` | none |
 | Engine: spec, candidates, runs, comparison, plan, status machine, evidence, outcomes, storage | `server/cloudflare/manifest_engine.js` | `project_plan.js` `classifyProject` and `safetyCheck` (a refused goal creates nothing); `sim_lab.js` evidence levels |
+| Claims, pre-registration, cheapest test, track record, approval gates, briefing, weekly review, data-source ages | `server/cloudflare/manifest_record.js` | none |
 | HTTP routes, chat route, Simulation Room scene | `server/cloudflare/manifest_api.js` | `office_company.js` `LA_AGENCIA_ROLES`, to name the suggested department's agent |
 | Command Center entry | `command_catalog.js` → `/manifest`, route `che_manifest` | the one catalog |
 | Worker wiring | `worker.js`: one call before `/api/sims`, one chat call before the Simulation Lab's chat route | worker.js got smaller: `pcm16ToWav` moved unchanged to `audio_wav.js` |
@@ -81,7 +82,7 @@ The next stage adds `'simulation'` to `WORLD_ROOMS` and `agentLocation`, plus a 
 
 | Class | Meaning |
 |---|---|
-| `feasible_now` | Meets every goal in at least 50% of Monte Carlo runs and breaks no practical limit (budget, small-UAS mass, workload). |
+| `feasible_now` | Meets every goal in at least 50% of Monte Carlo runs and breaks no practical limit (budget where it can be checked, small-UAS mass, workload). Limits that cannot be checked are listed as "Cannot check". |
 | `feasible_expensive` | Works, but costs more than the budget, needs certification, takes more hours than you have, or succeeds in only 10–50% of runs. |
 | `unproven` | Theoretically plausible but unproven. It needs technology beyond today's range (the drone model solves for the energy density that would be needed) or numbers better than the ones given. |
 | `unknown` | Insufficient evidence. There is no model, or too few of your own figures (business: fewer than 3 of price, costs and volumes). |
@@ -139,7 +140,7 @@ span   = 2·1.1·D / (2·sin(π/n)) + D                      [m]
   - Class: `unproven`, limited by battery energy density.
   - Alternatives: today's best battery fraction (minutes given); twice the rotor diameter without the width limit (four times the disk area, so roughly twice the endurance; not road-legal); hybrid-electric; roadable aircraft or gyroplane; tethered hover. The last three are not modelled.
 - **"Hover forever"** is `incompatible`: conservation of energy. The alternative offered is tethered ground power.
-- **Cost**: a hobby-parts planning range under 25 kg only. Heavier aircraft have no cost model and say so.
+- **Cost**: none. No part-price data source is wired, so the model gives no cost figure. A budget check reports "cannot be checked" (`ok: null`) instead of guessing.
 - **References**:
   - Leishman, *Principles of Helicopter Aerodynamics*, ch. 2;
   - https://en.wikipedia.org/wiki/Momentum_theory;
@@ -164,6 +165,7 @@ C_k = −S + Σ π_j              [USD]          funding = −min(0, min C_k)
   - Conservation: C_H + S = Σπ, and revenue − variable − fixed = Σπ.
   - Elasticity of break-even to price = −p/(p − v).
 - **Classes**: a price at or below the variable cost is `incompatible`. With fewer than 3 of your own figures, the class is `unknown` and the missing inputs are listed.
+- **CAC and time to cash**: `cac` is marketing spend per first-month sale (an upper bound on acquisition cost); time to cash is `payback_month`. Market CAC benchmarks and demand data: no data source.
 - **References**:
   - https://en.wikipedia.org/wiki/Contribution_margin;
   - https://en.wikipedia.org/wiki/Break-even_(economics).
@@ -177,7 +179,7 @@ P(t) = 1 − Π_{w=1}^{min(S,t)} (1 − p·F(t − w))^a,   F = CDF of a uniform
 t50, t90 = first week with P ≥ 0.5, 0.9
 ```
 
-- **Rates**: the default rates are planning assumptions, not measured statistics, and every candidate says so (`confidence: low`). Say your own ("a 12% reply rate") or report them as outcomes, and CHE recalibrates.
+- **Rates**: no job-market data source is wired. Until you give all three of your own rates ("a 12% reply rate, 40% interview rate and 25% offer rate") or report them as outcomes, every candidate is classed `unknown`, with the missing rates listed. The figures it shows use placeholder rates labelled as such. Skills-gap data: no data source.
 - **Tests**:
   - With no delay, P(t) = 1 − (1 − p)^(a·t).
   - The exact formula matches a 20,000-trial Monte Carlo of individual applications.
@@ -186,6 +188,22 @@ t50, t90 = first week with P ≥ 0.5, 0.9
 - **References**:
   - https://en.wikipedia.org/wiki/Conversion_funnel;
   - https://en.wikipedia.org/wiki/Geometric_distribution.
+
+## The owner's ten additions (2026-10-27)
+
+| # | Requirement | State |
+|---|---|---|
+| 1 | One record per idea; every claim tagged sourced, calculated, simulated, assumed or verified_real; "why do you think that?" | **Implemented** (`manifest_record.js`). Each stage appends to `project.claims`. Your statements are `sourced` with your words; defaults are `assumed` with their source text; limiting constraints are `calculated` with the formula and inputs; forecasts are `simulated` with the model, version, run, seed and samples; outcomes are `verified_real`. `POST …/why { subject }` and "manifest why endurance" read the matching claims aloud. |
+| 2 | Pre-registered success test, failure test, stop rule; immutable; amendments appended; judged against the original | **Implemented.** Written once on entering FEASIBILITY (`preregistration.original`). `POST …/amend { field, text, reason }` appends only. COMPLETE needs the original success test met by a real outcome (`judge()`); a failure test that triggers is reported on the outcome. |
+| 3 | Ranges plus confidence plus the 1–2 assumptions the outcome depends on most | **Implemented.** Every run has `forecast { low: p10, likely: p50, high: p90, coverage: 0.8 }` and `drivers` (the top two one-at-a-time swings). |
+| 4 | Cheapest test first | **Implemented.** Before PLAN, `first_test` is the smallest experiment on the best candidate's top driver (for example, weigh the battery; a thrust-stand test; 20 applications). PLAN's gate requires it. Its cost is `null` (no price source). |
+| 5 | Calibration from real outcomes, per-model track record, shown as a correction | **Implemented.** Every outcome adds predicted vs actual to `manifest_track:<model>@<version>`. Later runs carry `bias_correction { factor, n, corrected { low, likely, high }, note }` beside the raw summary, which is never altered. `GET /api/manifest/track`. |
+| 6 | Approval gates in code for money, accounts, contracts, deployments, devices | **Implemented.** Plan steps carry `approval_required`. `setStepStatus` (`POST …/step { step_id, status: 'running' }`) refuses to start such a step without a recorded `POST …/authorize`, and evidence for it is refused too. Applications are treated the same way. |
+| 7 | Reuse the objective graph, the catalog, Office team_tasks, the Office conversation view | **Partly.** One catalog entry (`/manifest`, asserted in `command_center.test.mjs`); no second router or planner. **TODO:** queueing a plan step as an Office `team_task` (`queueAgentTask`) and showing it in the conversation view (PR #666, not merged) once a step is work an agent can actually do. Physical steps are the owner's. The objective graph is not used: its nodes are chat or command jobs, not physical work. |
+| 8 | Simulation Room live in Big J World with real stages, the agent and the latest result; nothing animates without activity | **API ready, UI TODO** (next agent). The scene has `ladder`, `objects`, `latest_result`, `first_test`, `preregistration`, `briefing`, `stations` and `activity { working: false, animate: false }` until a real Office task exists. |
+| 9 | Voice-first briefing; options as a numbered list; passive changes never speak | **Implemented.** `GET …/briefing` and "brief me on my manifestation projects" / "manifest briefing 2" give the stage, the 80% range, confidence, any blocker, the first pending approval with its cost ("unknown, no price data source" when there is none) and numbered options. Only replies to the owner's own words are spoken; GETs return text. |
+| 10 | Domain models cite a data source and date; stale data flagged; "no data source" instead of invented numbers | **Implemented for what exists.** Each model has `data_sources` (`GET /api/manifest/models` adds `age_days` and `stale`). Kinds: reference, sourced, assumed, owner and `none`. Drone part prices, materials tables, market CAC, demand, job-market data and the skills gap are `none`, so no number of that kind is produced. **TODO:** real feeds for any of them. |
+| Bonus | Pause or stop an idea by voice; a weekly review on request only | **Implemented.** "Pause manifestation project 2", "manifest resume 2", "kill my manifestation project" (stop: FAILED, the record is kept), "manifestation weekly review" (`GET /api/manifest/review`). Nothing is scheduled. |
 
 ## Runs are repeatable
 
@@ -256,6 +274,15 @@ All bodies are JSON. In JSON, `null` stands for an unlimited or never-reached va
 | `POST …/outcome` | `{ metric, value, unit, candidate_id?, note? }` | `{ outcome }` |
 | `GET /api/manifest/runs/:id` | | `{ run }` |
 | `POST /api/manifest/runs/:id/replay` | | `{ identical, reason }` |
+| `GET …/claims` | | `{ claims: [{ id, stage, subject, value, unit, provenance, basis, candidate_id, at }] }` |
+| `POST …/why` | `{ subject }` | `{ claims, spoken }` |
+| `GET …/briefing` | | `{ spoken, options: [...] }` |
+| `GET …/judgement` | | `{ preregistration: { recorded_at, original: { success_test, failure_test, stop_rule }, amendments }, judgement: { success, failure_triggered, against: 'original' } }` |
+| `POST …/amend` | `{ field: success_test \| failure_test \| stop_rule, text, reason }` | `{ preregistration, judged_against: 'original' }` |
+| `POST …/step` | `{ step_id, status: running \| failed \| todo, note? }` | `{ ok, step }`, or 409 `{ ok: false, detail, approval_required }` |
+| `POST …/pause`, `…/resume`, `…/stop` | | `{ ok, project }` or 409 |
+| `GET /api/manifest/review` | | `{ since, items, spoken }` (the last 7 days, on request) |
+| `GET /api/manifest/track` | | `{ tracks: { <model>: { by_metric: { <metric>: { n, sum_log, records } } } } }` |
 
 Example: `POST /api/manifest/projects { "request": "a drone that carries 1 kg for 25 minutes with a budget of $2,000" }`. These values are real output of the code on 2026-10-27, trimmed to a few fields. The ids and the seed differ per project, because the seed comes from the project id.
 
@@ -287,7 +314,7 @@ The scene (`GET …/scene`) for the same project, trimmed:
 { "scene": { "scene": "manifest", "room": { "id": "simulation", "host": "crew_world" }, "status": "PLAN",
   "ladder": [{ "status": "IDEA", "reached": true }],
   "objects": [{ "id": "candidate:quad-15in", "kind": "candidate", "class": "feasible_now", "best": true, "success_probability": 0.7625,
-                "primary": { "id": "endurance", "unit": "min", "p10": 23.257, "p50": 27.5423, "p90": 32.6529 }, "cost_usd": [518, 1622],
+                "primary": { "id": "endurance", "unit": "min", "p10": 23.257, "p50": 27.5423, "p90": 32.6529 },
                 "field": { "x": 1, "y": 0.7625, "spread": 0.3411 }, "provenance": "simulated",
                 "spoken": "Quadcopter, 15-inch (0.38 m) propellers: feasible now. endurance median 27.5 min, between 23.3 and 32.7. Met its goals in 76% of runs." }],
   "stations": [{ "id": "engineering", "agent": "Atlas", "assignment": "suggested", "task_id": null }] } }
@@ -297,6 +324,7 @@ The scene (`GET …/scene`) for the same project, trimmed:
 
 - "Manifest a drone that carries 1 kg for 25 minutes", "CHE, manifest a flying car for 2 people", `/manifest <goal>` (Command Center) → creates the project and reads back the summary: the classes, the best candidate under equal conditions with its p10/median/p90, and the plan's first step.
 - "Manifestation status", "open the manifestation projects" → the newest five, numbered.
+- "Brief me on my manifestation projects", "manifest briefing 2" → the briefing. "Pause manifestation project 2", "manifest resume 2", "kill my manifestation project" → pause, resume or stop. "Manifestation weekly review" → the last seven days. "Manifest why endurance" → the provenance of that number.
 - The chat reply is CHE's answer to the owner's own request, so it speaks normally. Opening or loading a project never speaks (AGENTS.md).
 - Questions about the word ("what does manifestation mean") keep their ordinary route.
 
@@ -307,7 +335,7 @@ The scene (`GET …/scene`) for the same project, trimmed:
 | Spec builder, three domain models, feasibility classes, seeded Monte Carlo, dimensional checks, sweeps, sensitivity, equal-condition comparison, Realization Plan, status machine, evidence rules, outcome calibration, replay, API, chat, `/manifest` | **Implemented and tested** (offline; `manifest_*.test.mjs`, `command_center.test.mjs`) |
 | Text parsing of goals | **Prototype.** It reads the common phrasings (payload, minutes, people, prices, costs, budget, timeline, rates); anything else uses labelled defaults that can be set through `variables`. |
 | Candidate generation | **Prototype.** Three or four fixed strategies per domain, sized by the model (the drone battery is solved for the target), not a design-space search. The Simulation Lab's search could be pointed at these models next. |
-| Cost figures | **Planning ranges**, not quotes. No supplier lookup. |
+| Cost figures | **Only where calculated from your own numbers** (business). Drone parts and other purchases say "no data source"; no supplier lookup is wired. |
 | Simulation Room in the crew world, Flutter screen | **Future.** The scene API is ready; nothing is drawn yet. |
 | Office tasks for plan steps | **Future.** Only a suggested department today; queue real tasks through `queueAgentTask` once a step is something an agent can actually do. |
 | Receipts and Brain records for accepted evidence and outcomes | **Future.** Use `truth_layer.recordReceipt` and a Brain `manifest_project` record. |

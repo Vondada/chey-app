@@ -153,6 +153,33 @@ test('fixture 3, employment: a job search whose real reply rate lowers the odds 
   assert.equal(project.outcomes.length, 1);
 });
 
+test('the record, briefing, approval gate, pause and review through the HTTP API and chat', async () => {
+  const che = await owner();
+  const p = (await che.post('/api/manifest/projects', { request: 'a drone that carries 1 kg for 25 minutes with a budget of $2,000' })).body.project;
+  const claims = (await che.get(P(p.id, '/claims'))).body.claims;
+  assert.ok(claims.some((c) => c.provenance === 'simulated') && claims.some((c) => c.provenance === 'assumed'));
+  assert.match((await che.post(P(p.id, '/why'), { subject: 'payload' })).body.spoken, /you said/);
+  const brief = (await che.get(P(p.id, '/briefing'))).body;
+  assert.match(brief.spoken, /^a drone that carries 1 kg/);
+  assert.ok(brief.options.length >= 3);
+  const amended = (await che.post(P(p.id, '/amend'), { field: 'stop_rule', text: 'Stop after two failed bench tests.', reason: 'Owner preference.' })).body;
+  assert.equal(amended.preregistration.amendments.length, 1);
+  assert.equal(amended.judged_against, 'original');
+  const buy = p.plan.steps.find((s) => s.consequential === 'money');
+  await che.post(P(p.id, '/status'), { to: 'EXECUTION', authorization: { statement: 'Go ahead' } });
+  const blocked = await che.post(P(p.id, '/step'), { step_id: buy.id, status: 'running' });
+  assert.equal(blocked.status, 409);
+  assert.equal(blocked.body.approval_required, true);
+  await che.post(P(p.id, '/authorize'), { step_id: buy.id, statement: 'Yes, buy them' });
+  assert.equal((await che.post(P(p.id, '/step'), { step_id: buy.id, status: 'running' })).body.step.status, 'running');
+  assert.equal((await che.post(P(p.id, '/pause'))).body.project.status, 'BLOCKED');
+  assert.equal((await che.post(P(p.id, '/resume'))).body.project.status, 'EXECUTION');
+  assert.ok(Array.isArray((await che.get('/api/manifest/review')).body.items));
+  assert.ok('multirotor_hover' in (await che.get('/api/manifest/track')).body.tracks);
+  assert.equal((await che.get(P(p.id, '/judgement'))).body.judgement.success, null, 'no real result yet');
+  assert.equal(che.models(), 0);
+});
+
 test('owner only, refusals and the model catalogue', async () => {
   const che = await owner();
   assert.ok([401, 403].includes((await che.anon('/api/manifest/projects')).status));

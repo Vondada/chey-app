@@ -16,6 +16,9 @@ import { bisect, rngFrom, round, seedOf, summarize, triangular } from './manifes
 import { DRONE_MODEL } from './manifest_drone.js';
 import { BUSINESS_MODEL } from './manifest_business.js';
 import { JOBSEARCH_MODEL } from './manifest_jobsearch.js';
+import {
+  APPROVAL_KINDS, appendClaims, biasCorrection, cheapestTest, feasibilityClaims, judge, loadTrackRecord, preregister, runClaims, specClaims, updateTrackRecord,
+} from './manifest_record.js';
 
 export const ENGINE_VERSION = 1;
 export const MANIFEST_SOURCE = 'che_manifest';
@@ -266,6 +269,10 @@ export function simulate(model, variables, { seed, samples = DEFAULT_SAMPLES, ra
     for (const o of model.outputs) values[o.id].push(r.outputs[o.id]);
   }
   const summary = Object.fromEntries(model.outputs.map((o) => [o.id, { unit: o.unit, ...summarize(values[o.id]) }]));
+  const prim = summary[model.primary];
+  // The one or two assumptions the forecast depends on most (one-at-a-time swing across each range).
+  const drivers = sensitivity(model, x, { output: model.primary, ranges: Object.fromEntries(uncertain.map((u) => [u.id, u.range])) }).rows
+    .filter((r) => Number.isFinite(r.swing) && r.swing > 0).slice(0, 2).map(({ input, name, swing, elasticity }) => ({ input, name, swing, elasticity }));
   return {
     id, kind, candidate_id, calibrated, engine_version: ENGINE_VERSION,
     model: { id: model.id, version: model.version, title: model.title },
@@ -277,6 +284,8 @@ export function simulate(model, variables, { seed, samples = DEFAULT_SAMPLES, ra
     dimension_check: dimensionCheck(model, x, nominal),
     success_probability: round(ok / n, 4),
     summary,
+    forecast: { output: model.primary, unit: prim.unit, low: prim.p10, likely: prim.p50, high: prim.p90, interval: 'p10–p90', coverage: 0.8, note: 'An 80% range under the model\'s stated assumptions, not a guarantee.' },
+    drivers,
     evidence_level: 'simulated', evidence_label: EVIDENCE_LEVELS.simulated,
     created_at: now,
   };
@@ -289,7 +298,8 @@ export function replayRun(run, { now } = {}) {
   if (model.version !== run.model.version) return { identical: false, reason: `The run used ${model.id} v${run.model.version}; this CHE has v${model.version}, so it cannot be replayed exactly.` };
   const ranges = Object.fromEntries(run.uncertain.map((u) => [u.id, u.range]));
   const again = simulate(model, run.inputs, { seed: run.seed, samples: run.samples, ranges, id: run.id, now: now || run.created_at, kind: run.kind, candidate_id: run.candidate_id, calibrated: run.calibrated });
-  const strip = (r) => JSON.stringify({ ...r, id: '', created_at: '' });
+  // The track-record correction is added beside a run afterwards; it is not part of the simulation itself.
+  const strip = (r) => JSON.stringify({ ...r, id: '', created_at: '', bias_correction: undefined });
   return { identical: strip(again) === strip(run), run: again };
 }
 
@@ -377,19 +387,17 @@ export function compareRuns(model, candidates, runsByCandidate) {
     const cls = c.feasibility?.class || 'unknown';
     if (!run) return { candidate_id: c.id, name: c.name, class: cls, label: FEASIBILITY[cls], simulated: false };
     const prim = run.summary[model.primary];
-    const costs = run.nominal.outputs.cost_high != null ? { cost_low: run.nominal.outputs.cost_low, cost_high: run.nominal.outputs.cost_high } : {};
     return {
       candidate_id: c.id, name: c.name, class: cls, label: FEASIBILITY[cls], simulated: true, run_id: run.id,
       success_probability: run.success_probability,
       primary: { id: model.primary, unit: prim.unit, p10: prim.p10, p50: prim.p50, p90: prim.p90 },
       key_outputs: Object.fromEntries(model.outputs.slice(0, 6).map((o) => [o.id, { unit: o.unit, p10: run.summary[o.id].p10, p50: run.summary[o.id].p50, p90: run.summary[o.id].p90 }])),
-      ...costs,
       limiting_constraint: c.feasibility?.limiting_constraint || null,
     };
   });
   // Ties within a class: higher success probability, then fewer goals or limits missed at nominal values,
   // then the better primary median.
-  for (const r of rows) r.missed_at_nominal = r.run_id ? runsByCandidate[r.candidate_id].nominal.checks.filter((c) => !c.ok).map((c) => c.id) : [];
+  for (const r of rows) r.missed_at_nominal = r.run_id ? runsByCandidate[r.candidate_id].nominal.checks.filter((c) => c.ok === false).map((c) => c.id) : [];
   rows.sort((a, b) => CLASS_ORDER.indexOf(a.class) - CLASS_ORDER.indexOf(b.class)
     || (b.success_probability ?? -1) - (a.success_probability ?? -1)
     || a.missed_at_nominal.length - b.missed_at_nominal.length
@@ -409,6 +417,9 @@ export function createProject(spec, { id, now = new Date().toISOString() } = {})
     id, version: ENGINE_VERSION, title: clip(spec.goal || spec.request, 120), request: spec.request, domain: spec.domain,
     status: 'IDEA', blocked_from: null, history: [{ from: null, to: 'IDEA', at: now, reason: 'Goal received.' }],
     spec, candidates: [], runs: [], latest_runs: {}, comparison: null, plan: null, evidence: [], outcomes: [], calibration: {}, authorizations: [],
+    // One record per idea: every stage appends claims; the tests are pre-registered once; the first test is proposed before PLAN.
+    claims: appendClaims({ claims: [] }, specClaims(spec, MODELS[spec.model?.id]), { stage: 'IDEA', now }).claims,
+    preregistration: null, first_test: null, paused: false,
     created_at: now, updated_at: now,
   };
 }
@@ -426,12 +437,14 @@ export function gateFor(project, to) {
     case 'FEASIBILITY':
       return p.candidates.length && p.candidates.every((c) => c.evidence?.length && c.sources) ? '' : 'Candidates with their sources are needed first.';
     case 'SIMULATION':
+      if (!p.preregistration) return 'The success test, failure test and stop rule must be pre-registered first.';
       return p.candidates.length && p.candidates.every((c) => c.feasibility?.class) ? '' : 'Every candidate needs a feasibility class first.';
     case 'PLAN': {
       const live = p.candidates.filter((c) => c.feasibility?.class !== 'incompatible');
       if (!live.length) return 'Every candidate is incompatible with physical constraints; see the alternatives.';
       if (!live.every((c) => p.latest_runs[c.id])) return 'Every compatible candidate needs a full simulation run.';
-      return p.comparison ? '' : 'The candidates have not been compared yet.';
+      if (!p.comparison) return 'The candidates have not been compared yet.';
+      return p.first_test ? '' : 'The cheapest real-world test of the riskiest assumption must be proposed first.';
     }
     case 'EXECUTION':
       if (!p.plan) return 'There is no Realization Plan yet.';
@@ -440,7 +453,11 @@ export function gateFor(project, to) {
       return p.plan?.steps.some((s) => s.status === 'verified') ? '' : 'At least one step needs accepted evidence first.';
     case 'COMPLETE': {
       const open = (p.plan?.steps || []).filter((s) => s.milestone && s.status !== 'verified');
-      return open.length ? `Not verified yet: ${open.map((s) => s.title).join('; ')}.` : '';
+      if (open.length) return `Not verified yet: ${open.map((s) => s.title).join('; ')}.`;
+      // Judged against the ORIGINAL pre-registered success test, never an amendment.
+      const verdict = judge(p);
+      if (verdict.success === null) return `No real result yet for the pre-registered success test (${p.preregistration?.original.success_test.text || 'none'}).`;
+      return verdict.success ? '' : 'The real result does not meet the pre-registered success test.';
     }
     default:
       return `Unknown status ${to}.`;
@@ -464,7 +481,7 @@ export function transition(project, to, { reason = '', now = new Date().toISOStr
   }
   if (from === 'BLOCKED') {
     if (to !== project.blocked_from) return { ok: false, error: `A blocked project returns to ${project.blocked_from} first.` };
-    return done({ blocked_from: null });
+    return done({ blocked_from: null, paused: false });
   }
   const i = STATUSES.indexOf(from);
   if (STATUSES.indexOf(to) !== i + 1) return { ok: false, error: `From ${from} the next status is ${STATUSES[i + 1]}; statuses are never skipped.` };
@@ -480,18 +497,21 @@ export function buildRealizationPlan(project, candidateId, run) {
   if (!candidate || !run) throw new Error('The plan needs a simulated candidate.');
   const steps = model.planSteps({ candidate: { ...candidate, variables: run.inputs }, nominal: run.nominal, run }).map((s, i, all) => ({
     id: `s${i + 1}`, title: s.title, who: s.who, instructions: s.instructions || [], materials: s.materials || [],
-    cost_usd: s.cost_usd || [0, 0], time: s.time || '', prerequisites: i ? [`s${i}`] : [],
+    cost_usd: Array.isArray(s.cost_usd) ? s.cost_usd : null, time: s.time || '', prerequisites: i ? [`s${i}`] : [],
     safety_legal: s.safety || '', expected: s.expected || '', verification: s.verification || 'owner_report', metric: s.metric || null,
     fallback: s.fallback || '', consequential: s.consequential || null,
+    // Enforced in setStepStatus and validateEvidence: such a step never runs or verifies without a recorded approval.
+    approval_required: APPROVAL_KINDS.includes(s.consequential),
     milestone: ['measurement', 'artifact', 'owner_report'].includes(s.verification) && (s.verification !== 'owner_report' || i === all.length - 1 || !!s.consequential),
     status: 'todo', evidence_ids: [],
   }));
-  const cost = steps.reduce((t, s) => [t[0] + s.cost_usd[0], t[1] + s.cost_usd[1]], [0, 0]);
+  const priced = steps.filter((s) => Array.isArray(s.cost_usd));
+  const cost = priced.reduce((t, s) => [t[0] + s.cost_usd[0], t[1] + s.cost_usd[1]], [0, 0]);
   return {
     candidate_id: candidate.id, candidate_name: candidate.name, run_id: run.id, model: run.model,
     class: candidate.feasibility?.class, label: candidate.feasibility?.label,
     expected: Object.fromEntries(Object.entries(run.summary).slice(0, 6).map(([k, v]) => [k, { unit: v.unit, p10: v.p10, p50: v.p50, p90: v.p90 }])),
-    cost_usd: cost, steps,
+    cost_usd: cost, unpriced_steps: steps.filter((s) => !Array.isArray(s.cost_usd)).map((s) => s.id), first_test: project.first_test || null, steps,
     office: { department: OFFICE_DEPARTMENT[project.domain] || null, task_id: null, note: 'Suggested Office department only; no task has been queued.' },
     note: 'Costs and times are planning ranges, not quotes. Steps marked consequential (money, applications, accounts, contracts, deployments, devices) wait for your explicit yes for that step.',
   };
@@ -661,6 +681,8 @@ export async function advanceToPlan(store, project, { now = new Date().toISOStri
   if (p.status === 'RESEARCH') {
     p.candidates = generateCandidates(p.spec);
     p = moveTo(p, 'FEASIBILITY', `${p.candidates.length} candidates with sources.`, now);
+    // Written once, here; later changes are appended as amendments and never replace it.
+    preregister(p, now);
   }
   if (p.status === 'FEASIBILITY') {
     // Screening: a short seeded Monte Carlo per candidate to classify it; the full run follows.
@@ -669,6 +691,7 @@ export async function advanceToPlan(store, project, { now = new Date().toISOStri
       const screen = simulate(model, c.variables, { seed, samples: SCREEN_SAMPLES, id: newId('mr'), now, kind: 'screening', candidate_id: c.id });
       await saveRun(store, p, screen);
       c.feasibility = classifyCandidate(model, p.spec, c, screen);
+      appendClaims(p, feasibilityClaims(c, model), { stage: 'FEASIBILITY', now });
     }
     p = moveTo(p, 'SIMULATION', 'Every candidate classified from a screening run.', now);
   }
@@ -681,9 +704,12 @@ export async function advanceToPlan(store, project, { now = new Date().toISOStri
       await store.put(p);
       return p;
     }
-    p = moveTo(p, 'PLAN', 'Candidates simulated and compared under equal conditions.', now);
     const best = p.comparison.best;
-    p.plan = buildRealizationPlan(p, best, await store.getRun(p.latest_runs[best]));
+    const bestRun = await store.getRun(p.latest_runs[best]);
+    // Cheapest test first: the smallest real experiment on the assumption the best forecast depends on most.
+    p.first_test = cheapestTest(bestRun, model, now) || { title: null, reason: 'No experiment is catalogued for this model\'s main driver.', proposed_at: now };
+    p = moveTo(p, 'PLAN', 'Candidates simulated and compared under equal conditions; cheapest first test proposed.', now);
+    p.plan = buildRealizationPlan(p, best, bestRun);
   }
   p.updated_at = now;
   await store.put(p);
@@ -695,13 +721,17 @@ export async function simulateAll(store, p, { now, newId = newIdDefault, samples
   const model = MODELS[p.spec.model.id];
   const seed = seedOf(`${p.id}|full`);
   const runs = {};
+  const track = await loadTrackRecord(store.storage, model);
   for (const c of p.candidates) {
     if (c.feasibility?.class === 'incompatible') continue;
     const variables = { ...c.variables, ...(p.calibration[c.id]?.variables || {}) };
     const run = simulate(model, variables, { seed, samples, ranges: p.calibration[c.id]?.ranges || null, id: newId('mr'), now, kind: 'simulation', candidate_id: c.id, calibrated: !!p.calibration[c.id] });
+    // The model's track record from real outcomes, shown beside the raw forecast (never replacing it).
+    run.bias_correction = biasCorrection(run, track);
     await saveRun(store, p, run);
     runs[c.id] = run;
     c.feasibility = classifyCandidate(model, p.spec, { ...c, variables }, run);
+    appendClaims(p, runClaims(run, model), { stage: p.status, now });
   }
   p.comparison = compareRuns(model, p.candidates, runs);
   return runs;
@@ -729,7 +759,12 @@ export async function recordOutcome(store, p, { metric, value, unit, candidate_i
     outcome.updated_run = again.id;
     outcome.updated_estimate = Object.fromEntries(Object.entries(again.summary).map(([k, v]) => [k, { unit: v.unit, p10: v.p10, p50: v.p50, p90: v.p90 }]));
   }
+  // Predicted vs actual goes into the model's track record (outputs: the p50; measured inputs: the assumed value).
+  const predicted = cmp.kind === 'output' ? cmp.predicted.p50 : cmp.assumed.nominal;
+  await updateTrackRecord(store.storage, model, { metric: cmp.metric, predicted, actual: cmp.observed, project_id: p.id, outcome_id: outcome.id, at: now });
+  appendClaims(p, [{ subject: `${cid}: ${cmp.metric.replace(/_/g, ' ')} (real)`, value: cmp.observed, unit: cmp.unit, provenance: 'verified_real', basis: { outcome: outcome.id, evidence: clip(note, 80), predicted }, candidate_id: cid }], { stage: p.status, now });
   p.outcomes.push(outcome);
+  outcome.preregistered = judge(p);
   p.updated_at = now;
   await store.put(p);
   return outcome;

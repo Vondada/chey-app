@@ -29,7 +29,7 @@ export const G0 = 9.80665;
 export const HYDROCARBON_WH_PER_KG = 12_800;
 // Today's battery packs (CHE planning assumption; cell-level figures run higher than packs).
 export const TODAY_PACK_WH_PER_KG = 300;
-// Small unmanned aircraft limit used for the hobby cost model and the "small drone" scale (55 lb, FAA Part 107).
+// Small unmanned aircraft limit used for the "small drone" scale (55 lb, FAA Part 107).
 export const SMALL_UAS_KG = 25;
 
 const INPUTS = [
@@ -64,8 +64,6 @@ const OUTPUTS = [
   { id: 'max_power', name: 'Electrical power for 2:1 thrust-to-weight', unit: 'W' },
   { id: 'span', name: 'Overall width', unit: 'm', better: 'lower' },
   { id: 'c_rate', name: 'Hover discharge rate', unit: '1/h' },
-  { id: 'cost_low', name: 'Parts cost, low (planning estimate)', unit: 'USD' },
-  { id: 'cost_high', name: 'Parts cost, high (planning estimate)', unit: 'USD' },
 ];
 
 function geometry(n, D) {
@@ -86,15 +84,11 @@ function evaluate(x) {
   const endurance = hover > 0 ? (usable / hover) * 60 : Infinity;
   const maxPower = (2 * T) ** 1.5 / root / (x.figure_of_merit * x.drive_efficiency) + x.avionics_power;
   const small = m <= SMALL_UAS_KG;
-  // Hobby-scale parts (planning estimate, not quotes): battery $0.5–1.5/Wh, motors and ESCs $0.10–0.30 per W of
-  // peak power, propellers $3–15 each per 0.25 m of diameter, frame $40–200, flight controller, GPS and radio $150–400.
-  const costLow = small ? rated * 0.5 + maxPower * 0.1 + x.rotors * 3 * (x.rotor_diameter / 0.25) + 40 + 150 : NaN;
-  const costHigh = small ? rated * 1.5 + maxPower * 0.3 + x.rotors * 15 * (x.rotor_diameter / 0.25) + 200 + 400 : NaN;
+  // No part-price table is wired (DATA_SOURCES.part_prices), so the model produces no cost figure.
   const outputs = {
     endurance, hover_power: hover, ideal_power: ideal, total_mass: m, weight: T, disk_area: area,
     disk_loading: T / area, induced_velocity: Math.sqrt(T / (2 * x.air_density * area)), battery_energy: rated,
     usable_energy: usable, max_power: maxPower, span, c_rate: rated > 0 ? hover / rated : Infinity,
-    cost_low: costLow, cost_high: costHigh,
   };
   const checks = [
     { id: 'figure_of_merit_le_1', kind: 'physics', ok: x.figure_of_merit <= 1, text: 'Momentum theory: no rotor can hover on less than the ideal power (figure of merit ≤ 1).' },
@@ -105,7 +99,8 @@ function evaluate(x) {
     { id: 'rotor_today', kind: 'technology', ok: x.figure_of_merit <= 0.8, text: 'Real rotors reach a figure of merit of about 0.8 at best.' },
     { id: 'endurance_goal', kind: 'goal', ok: endurance >= x.target_endurance, text: `Hover for at least ${round(x.target_endurance, 1)} minutes.` },
     { id: 'span_goal', kind: 'goal', ok: span <= x.max_span + 1e-9, text: Number.isFinite(x.max_span) ? `Fit within ${round(x.max_span, 2)} m overall width.` : 'No width limit.' },
-    { id: 'budget', kind: 'practical', ok: !Number.isFinite(x.budget) || (Number.isFinite(costHigh) ? costHigh <= x.budget : false), text: Number.isFinite(x.budget) ? `Parts within $${Math.round(x.budget).toLocaleString('en-US')} (high estimate).` : 'No budget limit.' },
+    // null = cannot be judged: no part-price data source.
+    { id: 'budget', kind: 'practical', ok: Number.isFinite(x.budget) ? null : true, text: Number.isFinite(x.budget) ? `Parts within $${Math.round(x.budget).toLocaleString('en-US')}: cannot be checked, no part-price data source.` : 'No budget limit.' },
     { id: 'small_uas', kind: 'practical', ok: small, text: `Under ${SMALL_UAS_KG} kg: a small unmanned aircraft. Heavier or crewed aircraft need certification.` },
   ];
   return { outputs, checks };
@@ -209,7 +204,8 @@ function classify({ x, nominal, run }) {
     optimal_battery_kg: round(best, 3),
   };
   const p = run?.success_probability ?? (nominal.checks.every((c) => c.ok || c.kind === 'practical') ? 1 : 0);
-  const practical = nominal.checks.filter((c) => c.kind === 'practical' && !c.ok);
+  const practical = nominal.checks.filter((c) => c.kind === 'practical' && c.ok === false);
+  const unchecked = nominal.checks.filter((c) => c.ok === null).map((c) => `Cannot check: ${c.text}`);
   const goalFails = nominal.checks.filter((c) => c.kind === 'goal' && !c.ok);
   if (required > HYDROCARBON_WH_PER_KG) {
     return { class: 'incompatible', violated: [{ id: 'chemical_energy', text: `Needs ${Math.round(required).toLocaleString('en-US')} Wh/kg, more than any chemical store (gasoline is about ${HYDROCARBON_WH_PER_KG.toLocaleString('en-US')} Wh/kg).` }], limiting_constraint: limiting, reasons: [`Even an ideal battery fraction needs ${Math.round(required).toLocaleString('en-US')} Wh/kg.`], alternatives };
@@ -219,12 +215,13 @@ function classify({ x, nominal, run }) {
   }
   const geometryFail = goalFails.find((c) => c.id === 'span_goal');
   if (p >= 0.5 && !practical.length && !geometryFail) {
-    return { class: 'feasible_now', violated: [], limiting_constraint: limiting, reasons: [`Meets every goal in ${Math.round(p * 100)}% of Monte Carlo runs.`], alternatives };
+    return { class: 'feasible_now', violated: [], limiting_constraint: limiting, reasons: [`Meets every goal in ${Math.round(p * 100)}% of Monte Carlo runs.`, ...unchecked], alternatives };
   }
   const reasons = [
     ...(p < 0.5 ? [`Meets the endurance goal in only ${Math.round(p * 100)}% of Monte Carlo runs.`] : []),
     ...practical.map((c) => `Not met: ${c.text}`),
     ...(geometryFail ? [`Not met: ${geometryFail.text}`] : []),
+    ...unchecked,
   ];
   return { class: 'feasible_expensive', violated: [], limiting_constraint: geometryFail ? { id: 'span_goal', text: geometryFail.text } : practical[0] ? { id: practical[0].id, text: practical[0].text } : limiting, reasons, alternatives };
 }
@@ -260,14 +257,27 @@ function planSteps({ candidate, nominal }) {
   }
   const wh = Math.ceil(o.battery_energy);
   return [
-    { title: 'Check local drone rules', who: 'owner', instructions: ['Read your aviation authority\'s small-drone rules. In the US the FAA requires registration for drones over 250 g and a recreational test (TRUST) or Part 107 for commercial use.', 'Write down where you may fly.'], materials: [], cost_usd: [0, 10], time: '1 to 2 hours', expected: 'You know where and how you may fly.', verification: 'owner_report', consequential: null, safety: 'Never fly over people, near airports or above the legal height.', fallback: 'Fly only at a club field.' },
-    { title: 'Choose parts that match the model', who: 'che', instructions: [`Rotors: ${x.rotors} at ${round(x.rotor_diameter * 39.37, 1)} inches.`, `Motors and ESCs: at least ${Math.ceil(o.max_power / x.rotors)} W each for 2:1 thrust-to-weight.`, `Battery: about ${wh} Wh at ${round(x.battery_mass, 2)} kg or less; discharge rate at least ${Math.ceil(o.max_power / Math.max(o.battery_energy, 1))}C.`, `Frame: fits ${round(o.span, 2)} m overall.`], materials: ['motors', 'ESCs', 'propellers', 'battery', 'frame', 'flight controller', 'GPS', 'radio'], cost_usd: [Math.round(o.cost_low), Math.round(o.cost_high)], time: '1 evening', expected: `A parts list within ${Math.round(o.cost_low)}–${Math.round(o.cost_high)} USD (planning estimate, not quotes).`, verification: 'artifact', consequential: null, safety: 'Buy batteries with protection and a fire-safe charging bag.', fallback: 'Pick the nearest stocked size and rerun the simulation with its real numbers.' },
-    { title: 'Buy the parts', who: 'owner', instructions: ['Order the list after you approve it.'], cost_usd: [Math.round(o.cost_low), Math.round(o.cost_high)], time: '1 to 2 weeks delivery', expected: 'Parts on hand.', verification: 'owner_report', consequential: 'money', safety: '', fallback: 'Substitute and rerun the model.' },
-    { title: 'Bench-test one motor and propeller on a thrust stand', who: 'owner', instructions: ['Clamp the motor to a stand on a kitchen scale, propeller pushing up, behind a guard.', `Raise throttle until thrust reads ${round(o.weight / x.rotors / G0 * 1000, 0)} grams; read the volts and amps.`, 'Report: grams of thrust, volts and amps.'], materials: ['kitchen scale', 'power meter'], cost_usd: [20, 60], time: '2 hours', expected: `About ${round((o.hover_power - x.avionics_power) / x.rotors, 0)} W per rotor at hover thrust.`, verification: 'measurement', consequential: null, safety: 'Eye protection; stand clear of the propeller plane; battery in a fire-safe bag.', fallback: 'If power is over 20% high, record it as an outcome: CHE recalibrates the figure of merit.' },
+    { title: 'Check local drone rules', who: 'owner', instructions: ['Read your aviation authority\'s small-drone rules. In the US the FAA requires registration for drones over 250 g and a recreational test (TRUST) or Part 107 for commercial use.', 'Write down where you may fly.'], materials: [], cost_usd: null, time: '1 to 2 hours', expected: 'You know where and how you may fly.', verification: 'owner_report', consequential: null, safety: 'Never fly over people, near airports or above the legal height.', fallback: 'Fly only at a club field.' },
+    { title: 'Choose parts that match the model', who: 'che', instructions: [`Rotors: ${x.rotors} at ${round(x.rotor_diameter * 39.37, 1)} inches.`, `Motors and ESCs: at least ${Math.ceil(o.max_power / x.rotors)} W each for 2:1 thrust-to-weight.`, `Battery: about ${wh} Wh at ${round(x.battery_mass, 2)} kg or less; discharge rate at least ${Math.ceil(o.max_power / Math.max(o.battery_energy, 1))}C.`, `Frame: fits ${round(o.span, 2)} m overall.`], materials: ['motors', 'ESCs', 'propellers', 'battery', 'frame', 'flight controller', 'GPS', 'radio'], cost_usd: null, time: '1 evening', expected: 'A parts list matching these numbers, with real prices you look up (CHE has no part-price data source).', verification: 'artifact', consequential: null, safety: 'Buy batteries with protection and a fire-safe charging bag.', fallback: 'Pick the nearest stocked size and rerun the simulation with its real numbers.' },
+    { title: 'Buy the parts', who: 'owner', instructions: ['Order the list after you approve it.'], cost_usd: null, time: '1 to 2 weeks delivery', expected: 'Parts on hand.', verification: 'owner_report', consequential: 'money', safety: '', fallback: 'Substitute and rerun the model.' },
+    { title: 'Bench-test one motor and propeller on a thrust stand', who: 'owner', instructions: ['Clamp the motor to a stand on a kitchen scale, propeller pushing up, behind a guard.', `Raise throttle until thrust reads ${round(o.weight / x.rotors / G0 * 1000, 0)} grams; read the volts and amps.`, 'Report: grams of thrust, volts and amps.'], materials: ['kitchen scale', 'power meter'], cost_usd: null, time: '2 hours', expected: `About ${round((o.hover_power - x.avionics_power) / x.rotors, 0)} W per rotor at hover thrust.`, verification: 'measurement', consequential: null, safety: 'Eye protection; stand clear of the propeller plane; battery in a fire-safe bag.', fallback: 'If power is over 20% high, record it as an outcome: CHE recalibrates the figure of merit.' },
     { title: 'Assemble and hover tethered, then measure hover power', who: 'owner', instructions: ['Tie the drone to a weight with a 2 m line on open ground.', 'Hover 60 seconds; read average volts × amps from the flight log.'], time: '1 day', expected: `Hover power near ${Math.round(o.hover_power)} W.`, verification: 'measurement', consequential: null, safety: 'Tethered, outdoors, nobody within 10 m.', fallback: 'Recalibrate from the measured power.' },
     { title: 'Endurance flight with the payload', who: 'owner', instructions: [`Carry ${round(x.payload, 2)} kg; hover until the ${Math.round(x.reserve * 100)}% reserve alarm.`, 'Report the minutes flown.'], time: '1 hour', expected: `${round(o.endurance, 1)} minutes (see the Monte Carlo band).`, verification: 'measurement', metric: 'endurance', consequential: null, safety: 'Land at the reserve alarm.', fallback: 'If short, CHE compares it with the simulation and names the assumption that was wrong.' },
   ];
 }
+
+// Where each kind of number comes from, and when it was last checked. `kind: 'none'` means no data source is
+// wired, so the model produces no figure of that kind.
+export const DATA_SOURCES = Object.freeze([
+  { id: 'momentum_theory', what: 'Hover power equation and figure-of-merit range', kind: 'reference', source: 'Leishman, Principles of Helicopter Aerodynamics, 2nd ed., ch. 2', url: 'https://en.wikipedia.org/wiki/Momentum_theory', as_of: '2026-10-27', stale_after_days: null },
+  { id: 'battery_packs', what: 'Battery pack specific energy range (150–250 Wh/kg, today about 300 at best)', kind: 'assumed', source: 'CHE planning assumption; replace with your pack\'s rated Wh and weighed mass', url: '', as_of: '2026-10-27', stale_after_days: 365 },
+  { id: 'gasoline', what: 'Chemical energy ceiling (~12,800 Wh/kg, gasoline ~46 MJ/kg)', kind: 'reference', source: 'Energy density tables', url: 'https://en.wikipedia.org/wiki/Energy_density', as_of: '2026-10-27', stale_after_days: null },
+  { id: 'benchmark_p4p', what: 'Benchmark aircraft: DJI Phantom 4 Pro, 1,388 g, 89.2 Wh, about 30 min', kind: 'sourced', source: 'DJI product page (web search)', url: 'https://www.dji.com/us/phantom-4-pro', as_of: '2026-10-27', stale_after_days: null },
+  { id: 'faa_rules', what: 'Small-drone rules (registration over 250 g)', kind: 'sourced', source: 'FAA', url: 'https://www.faa.gov/uas/recreational_flyers', as_of: '2026-10-27', stale_after_days: 365 },
+  { id: 'road_width', what: 'Road vehicle width limit 2.55 m (EU), 8.5 ft (US)', kind: 'assumed', source: 'CHE reading of EU and US vehicle width rules; not linked to the regulation text', url: '', as_of: '2026-10-27', stale_after_days: 365 },
+  { id: 'part_prices', what: 'Part prices (motors, batteries, frames)', kind: 'none', source: 'no data source', url: '', as_of: null, stale_after_days: null },
+  { id: 'materials', what: 'Materials strength and mass tables', kind: 'none', source: 'no data source', url: '', as_of: null, stale_after_days: null },
+]);
 
 export const DRONE_MODEL = Object.freeze({
   id: 'multirotor_hover', version: 1, domain: 'physical',
@@ -285,7 +295,8 @@ export const DRONE_MODEL = Object.freeze({
     { id: 'max_power', text: 'P_max = (2T)^(3/2) / sqrt(2·ρ·A) / (FM·η) + P_avionics', units: 'W' },
     { id: 'span', text: 'span = 2·(1.1·D / (2·sin(π/n))) + D', units: 'm' },
   ],
-  assumptions: ['Steady hover out of ground effect in still air; forward flight not modelled.', 'Rotors on a ring with 10% tip clearance.', 'Cost model: hobby parts under 25 kg only, planning estimates, not quotes.', 'Frame-mass scaling and person-scale empty mass are CHE assumptions, labelled on each candidate.'],
+  assumptions: ['Steady hover out of ground effect in still air; forward flight not modelled.', 'Rotors on a ring with 10% tip clearance.', 'No cost figures: no part-price data source is wired.', 'Frame-mass scaling and person-scale empty mass are CHE assumptions, labelled on each candidate.'],
+  data_sources: DATA_SOURCES,
   references: [
     { title: 'Momentum theory', url: 'https://en.wikipedia.org/wiki/Momentum_theory' },
     { title: 'Disk loading', url: 'https://en.wikipedia.org/wiki/Disk_loading' },

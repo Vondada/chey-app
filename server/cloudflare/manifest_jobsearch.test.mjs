@@ -68,15 +68,24 @@ test('spec, candidates and classification, with low confidence until the owner t
   const cands = generateCandidates(spec);
   assert.deepEqual(cands.map((c) => c.id), ['volume', 'targeted', 'referral']);
   const t = cands.find((c) => c.id === 'targeted');
+  // No job-market data source is wired: with placeholder rates the odds are not judged.
   const f = classifyCandidate(JOBSEARCH_MODEL, spec, t, simulate(JOBSEARCH_MODEL, t.variables, { seed: 4, samples: 800 }));
-  assert.ok(['feasible_now', 'feasible_expensive'].includes(f.class));
+  assert.equal(f.class, 'unknown');
+  assert.match(f.reasons[0], /No data source for job-market conversion rates/);
+  assert.deepEqual(f.limiting_constraint.missing, ['response_rate', 'interview_rate', 'offer_rate']);
   assert.match(f.confidence, /^low/);
-  // Over-committed hours are impractical even if the odds are good.
-  const heavy = { ...t, variables: { ...t.variables, apps_per_week: 30, hours_per_app: 1.5 } };
-  assert.equal(classifyCandidate(JOBSEARCH_MODEL, spec, heavy, simulate(JOBSEARCH_MODEL, heavy.variables, { seed: 4, samples: 300 })).class, 'feasible_expensive');
+  assert.ok(JOBSEARCH_MODEL.data_sources.some((d) => d.id === 'job_market' && d.source === 'no data source'));
   const bad = classifyCandidate(JOBSEARCH_MODEL, spec, { variables: base({ response_rate: 1.4 }) }, null);
   assert.equal(bad.class, 'incompatible');
-  const own = buildSpec('Find a job in 3 months with a 12% reply rate, 40% interview rate and 25% offer rate');
+  // With the owner's own tracked rates the odds are judged.
+  const own = buildSpec('Find a job in 4 months with a 12% reply rate, 40% interview rate and 25% offer rate, 15 hours a week');
   assert.equal(own.variables.response_rate, 0.12);
   assert.equal(own.variables.offer_rate, 0.25);
+  const ot = generateCandidates(own).find((c) => c.id === 'targeted');
+  const g = classifyCandidate(JOBSEARCH_MODEL, own, ot, simulate(JOBSEARCH_MODEL, ot.variables, { seed: 4, samples: 800 }));
+  assert.ok(['feasible_now', 'feasible_expensive'].includes(g.class), g.class);
+  assert.match(g.confidence, /^medium/);
+  // Over-committed hours are impractical even if the odds are good.
+  const heavy = { ...ot, variables: { ...ot.variables, apps_per_week: 30, hours_per_app: 1.5 } };
+  assert.equal(classifyCandidate(JOBSEARCH_MODEL, own, heavy, simulate(JOBSEARCH_MODEL, heavy.variables, { seed: 4, samples: 300 })).class, 'feasible_expensive');
 });

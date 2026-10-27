@@ -1317,4 +1317,14 @@ test('/manifest and its spoken forms reach the Manifestation Engine with no mode
   assert.equal(stored.project.status, 'PLAN');
   assert.equal(stored.project.plan.steps.find((s) => s.consequential === 'money').status, 'todo', 'nothing is bought');
   assert.equal((await che.say('What is the meaning of manifestation in psychology?')).route === 'che_manifest', false, 'a question about the word is not a project');
+  // Briefing, pause, resume and stop ride the same catalog entry.
+  const brief = await che.say('/manifest briefing 2');
+  assert.equal(brief.route, 'che_manifest');
+  assert.match(brief.reply, /Stage: PLAN\.[\s\S]*Options: 1\./);
+  const pause = await che.say('Pause manifestation project 2');
+  assert.equal(pause.route, 'che_manifest');
+  assert.equal(pause.done.status, 'BLOCKED');
+  assert.equal((await che.say('/manifest resume 2')).done.status, 'PLAN');
+  assert.equal((await che.say('Manifestation weekly review')).route, 'che_manifest');
+  assert.equal((await che.say('Pause the music')).route === 'che_manifest', false);
 });

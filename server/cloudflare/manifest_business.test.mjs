@@ -38,7 +38,7 @@ test('the equations are dimensionally consistent (USD, items, months)', () => {
   const x = base();
   const r = dimensionCheck(BUSINESS_MODEL, x, BUSINESS_MODEL.evaluate(x));
   assert.ok(r.ok, r.error);
-  assert.deepEqual(r.checked.map((k) => k.id).sort(), ['breakeven_units', 'first_month_cash', 'margin_ratio', 'unit_contribution']);
+  assert.deepEqual(r.checked.map((k) => k.id).sort(), ['breakeven_units', 'cac', 'first_month_cash', 'margin_ratio', 'unit_contribution']);
 });
 
 test('Monte Carlo gives ordered percentiles, repeats with the same seed and changes with another', () => {

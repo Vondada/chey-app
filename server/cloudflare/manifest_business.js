@@ -44,6 +44,7 @@ const OUTPUTS = [
   { id: 'final_cash', name: 'Cumulative cash at the end', unit: 'USD', better: 'higher' },
   { id: 'profit_last_month', name: 'Operating profit in the last month', unit: 'USD/month', better: 'higher' },
   { id: 'goal_month', name: 'First month at the profit goal', unit: 'month', better: 'lower' },
+  { id: 'cac', name: 'Marketing spend per first-month sale (an upper bound on customer acquisition cost)', unit: 'USD/item', better: 'lower' },
   { id: 'total_revenue', name: 'Revenue over the horizon', unit: 'USD' },
   { id: 'total_profit', name: 'Operating profit over the horizon', unit: 'USD' },
 ];
@@ -80,6 +81,7 @@ function evaluate(x) {
     final_cash: months.at(-1)?.cash ?? -x.startup_cost,
     profit_last_month: months.at(-1)?.profit ?? -F,
     goal_month: first((m) => m.profit >= x.target_profit),
+    cac: x.units_month1 > 0 ? x.marketing_monthly / x.units_month1 : Infinity,
     total_revenue: months.reduce((s, m) => s + m.revenue, 0),
     total_profit: months.reduce((s, m) => s + m.profit, 0),
   };
@@ -102,6 +104,7 @@ function dimensional(x) {
   return {
     unit_contribution: c,
     margin_ratio: div(c, p),
+    cac: div(q(x.marketing_monthly, 'USD/month'), units1),
     breakeven_units: div(F, c),
     // One month of profit times one month is USD, the same dimension as the start-up spend it pays back.
     first_month_cash: add(q(-x.startup_cost, 'USD'), mul(profit1, q(1, 'month'))),
@@ -160,14 +163,22 @@ function planSteps({ candidate, nominal, run }) {
   const x = candidate.variables;
   const band = run?.summary?.funding_needed;
   return [
-    { title: 'Check demand with real people before spending', who: 'owner', instructions: ['Ask 10 likely customers what they pay today and whether they would pay your price.', 'Write down each answer.'], cost_usd: [0, 50], time: '1 week', expected: `Most say yes at about $${round(x.price, 0)}.`, verification: 'measurement', metric: 'price', consequential: null, safety: '', fallback: 'If fewer than 3 of 10 would pay, rerun the simulation with the price they named.' },
+    { title: 'Check demand with real people before spending', who: 'owner', instructions: ['Ask 10 likely customers what they pay today and whether they would pay your price.', 'Write down each answer.'], cost_usd: null, time: '1 week', expected: `Most say yes at about $${round(x.price, 0)}.`, verification: 'measurement', metric: 'price', consequential: null, safety: '', fallback: 'If fewer than 3 of 10 would pay, rerun the simulation with the price they named.' },
     { title: 'Replace every placeholder with a real quote', who: 'che', instructions: ['CHE lists each cost in the simulation; you get two quotes for each start-up item and monthly cost.', 'Send the quotes to CHE to rerun the numbers.'], cost_usd: [0, 0], time: '1 week', expected: `Start-up spend near $${Math.round(x.startup_cost).toLocaleString('en-US')} and fixed costs near $${Math.round(x.fixed_monthly).toLocaleString('en-US')} a month.`, verification: 'owner_report', consequential: null, safety: '', fallback: 'If quotes run higher, choose the lean candidate.' },
-    { title: 'Register the business and get insurance', who: 'owner', instructions: ['Check your city and state licence rules and register.', 'Get liability insurance quotes.'], cost_usd: [50, 600], time: '1 to 3 weeks', expected: 'Licensed and insured.', verification: 'owner_report', consequential: 'account', safety: 'Legal: rules vary by place; check with your city or a local small-business centre.', fallback: 'Ask the local small-business development centre (free in the US).' },
+    { title: 'Register the business and get insurance', who: 'owner', instructions: ['Check your city and state licence rules and register.', 'Get liability insurance quotes.'], cost_usd: null, time: '1 to 3 weeks', expected: 'Licensed and insured.', verification: 'owner_report', consequential: 'account', safety: 'Legal: rules vary by place; check with your city or a local small-business centre.', fallback: 'Ask the local small-business development centre (free in the US).' },
     { title: 'Spend the start-up money', who: 'owner', instructions: ['Buy the start-up items after you approve the list.'], cost_usd: [Math.round(x.startup_cost * 0.8), Math.round(x.startup_cost * 1.3)], time: '1 week', expected: band ? `Total cash needed between $${Math.round(band.p10).toLocaleString('en-US')} and $${Math.round(band.p90).toLocaleString('en-US')} (p10–p90).` : `About $${Math.round(o.funding_needed).toLocaleString('en-US')} before it pays for itself.`, verification: 'owner_report', consequential: 'money', safety: '', fallback: 'Buy only what the first ten customers need.' },
     { title: 'Run a pilot month and record every sale', who: 'owner', instructions: ['Record each sale: date, price, and its variable cost.', 'At month end tell CHE the number of sales and the profit.'], cost_usd: [Math.round(x.fixed_monthly + x.marketing_monthly), Math.round((x.fixed_monthly + x.marketing_monthly) * 1.2)], time: '1 month', expected: `About ${round(x.units_month1, 1)} sales in month 1.`, verification: 'measurement', metric: 'units_month1', consequential: null, safety: '', fallback: 'CHE compares the month with the simulation and updates the estimate before month 2.' },
     { title: 'Go or no-go review at month 3', who: 'owner', instructions: ['CHE compares months 1 to 3 with the p10–p90 band and names which assumptions were wrong.'], cost_usd: [0, 0], time: '1 hour', expected: `Break-even by month ${Number.isFinite(o.breakeven_month) ? o.breakeven_month : 'not within the horizon'}.`, verification: 'owner_report', consequential: null, safety: '', fallback: 'Change price or scope, or stop before more cash goes in.' },
   ];
 }
+
+export const DATA_SOURCES = Object.freeze([
+  { id: 'owner_figures', what: 'Price, costs, start-up spend and sales volumes', kind: 'owner', source: 'your own figures, when you give them', url: '', as_of: null, stale_after_days: 90 },
+  { id: 'placeholders', what: 'Default figures used until you give yours', kind: 'assumed', source: 'CHE placeholders (not market data)', url: '', as_of: '2026-10-27', stale_after_days: null },
+  { id: 'market_cac', what: 'Market customer-acquisition cost benchmarks', kind: 'none', source: 'no data source', url: '', as_of: null, stale_after_days: null },
+  { id: 'market_demand', what: 'Local demand and competitor prices', kind: 'none', source: 'no data source', url: '', as_of: null, stale_after_days: null },
+  { id: 'method', what: 'Contribution margin and break-even method', kind: 'reference', source: 'Contribution margin', url: 'https://en.wikipedia.org/wiki/Contribution_margin', as_of: '2026-10-27', stale_after_days: null },
+]);
 
 export const BUSINESS_MODEL = Object.freeze({
   id: 'unit_economics_cashflow', version: 1, domain: 'business',
@@ -182,6 +193,7 @@ export const BUSINESS_MODEL = Object.freeze({
     { id: 'cash', text: 'C_k = −S + Σ_{j≤k} π_j', units: 'USD' },
     { id: 'funding', text: 'funding = −min(0, min_k C_k)', units: 'USD' },
   ],
+  data_sources: DATA_SOURCES,
   assumptions: ['No taxes, loans or interest; no seasonality.', 'Sales are paid in the month they happen.', 'Placeholder figures are labelled and must be replaced with your own quotes and measured sales.'],
   references: [
     { title: 'Contribution margin', url: 'https://en.wikipedia.org/wiki/Contribution_margin' },
