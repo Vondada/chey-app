@@ -227,7 +227,7 @@ class _CheBrainReliabilityScreenState extends State<CheBrainReliabilityScreen> {
     final theme = Theme.of(context).textTheme;
     final buttons = Wrap(spacing: 8, runSpacing: 8, children: [
       OutlinedButton.icon(icon: const Icon(Icons.record_voice_over_rounded), label: const Text('Read Aloud'), onPressed: widget.onSpeak == null ? null : () => _say(v.summary)),
-      OutlinedButton.icon(icon: const Icon(Icons.tag_rounded), label: const Text('Which test are we on?'), onPressed: widget.onSpeak == null || v.take.isEmpty ? null : () => _say(v.take)),
+      OutlinedButton.icon(icon: const Icon(Icons.tag), label: const Text('Which test are we on?'), onPressed: widget.onSpeak == null || v.take.isEmpty ? null : () => _say(v.take)),
     ]);
     if (v.isEmpty) {
       return ListView(padding: const EdgeInsets.all(16), children: [
@@ -246,11 +246,11 @@ class _CheBrainReliabilityScreenState extends State<CheBrainReliabilityScreen> {
       (Icons.help_outline_rounded, 'Questions asked', '$atLeast${t['attempts']}', 'individual test questions, retests included'),
       (Icons.replay_rounded, 'Retests', '${t['retests']}', 'questions asked again on a later occasion; already inside the questions count'),
       (Icons.verified_rounded, 'Graded with evidence', '${t['verified_results']}', 'results with a recorded reply or a grader\'s record'),
-      (Icons.help_center_outlined, 'Unknown results', '${t['unknown_results']}', 'no reply or grade is recorded'),
-      (Icons.pending_actions_rounded, 'Proposed, never run', '${t['proposed_unexecuted']}', 'not counted as tests'),
-      (Icons.rule_rounded, 'Outcomes', '${o['pass'] ?? 0} pass', '${o['partial'] ?? 0} partial, ${o['fail'] ?? 0} failed, ${o['blocked'] ?? 0} blocked, ${o['unknown'] ?? 0} unknown'),
-      (Icons.report_gmailerrorred_rounded, 'Invented facts', '${t['fabricated']}', 'answers that stated things the records disprove'),
-      (Icons.hourglass_disabled_rounded, 'No answer', '${t['no_answer']}', '"Working on it" or the failed-answer fallback instead of an answer'),
+      (Icons.help_outline_rounded, 'Unknown results', '${t['unknown_results']}', 'no reply or grade is recorded'),
+      (Icons.schedule_rounded, 'Proposed, never run', '${t['proposed_unexecuted']}', 'not counted as tests'),
+      (Icons.fact_check_rounded, 'Outcomes', '${o['pass'] ?? 0} pass', '${o['partial'] ?? 0} partial, ${o['fail'] ?? 0} failed, ${o['blocked'] ?? 0} blocked, ${o['unknown'] ?? 0} unknown'),
+      (Icons.error_outline_rounded, 'Invented facts', '${t['fabricated']}', 'answers that stated things the records disprove'),
+      (Icons.hourglass_empty_rounded, 'No answer', '${t['no_answer']}', '"Working on it" or the failed-answer fallback instead of an answer'),
       (Icons.alt_route_rounded, 'Wrong handler', '${t['misrouted']}', 'answered by an unrelated route'),
     ];
     return ListView(
@@ -279,7 +279,7 @@ class _CheBrainReliabilityScreenState extends State<CheBrainReliabilityScreen> {
         if (v.mostFailed.isNotEmpty) ...[
           const SizedBox(height: 16),
           Text('Most failed', style: theme.titleLarge),
-          for (final (name, count) in v.mostFailed) _tile(Icons.trending_down_rounded, name, '$count', 'failed or partial answers'),
+          for (final (name, count) in v.mostFailed) _tile(Icons.trending_down, name, '$count', 'failed or partial answers'),
         ],
         const SizedBox(height: 16),
         Text('Sessions, newest first', style: theme.titleLarge),
@@ -323,8 +323,8 @@ class _CheBrainReliabilityScreenState extends State<CheBrainReliabilityScreen> {
   Widget _attempt(CheTestAttempt a) {
     final icon = switch (a.outcome) {
       'pass' => Icons.check_circle_rounded,
-      'partial' => Icons.adjust_rounded,
-      'fail' => Icons.cancel_rounded,
+      'partial' => Icons.timelapse_rounded,
+      'fail' => Icons.cancel,
       'blocked' => Icons.block_rounded,
       _ => Icons.help_outline_rounded,
     };

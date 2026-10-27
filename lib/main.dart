@@ -2444,7 +2444,7 @@ OWNER AGENCY
           hue: kit.CheColors.accent,
         ),
         CheMoreItem(
-          icon: Icons.rule_rounded,
+          icon: Icons.fact_check_rounded,
           title: 'Reliability Registry',
           subtitle: 'Every test of CHE: sessions, questions, her replies and grades',
           onTap: () => unawaited(_openBrainReliability()),

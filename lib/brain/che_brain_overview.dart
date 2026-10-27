@@ -465,7 +465,7 @@ class _CheBrainOverviewState extends State<CheBrainOverview> {
                 excludeSemantics: true,
                 child: ListTile(
                   dense: true,
-                  leading: const Icon(Icons.rule_rounded, size: 20, color: Colors.white70),
+                  leading: const Icon(Icons.fact_check_rounded, size: 20, color: Colors.white70),
                   title: const Text('Reliability Registry', style: TextStyle(color: Colors.white70, fontSize: 14)),
                   onTap: widget.onOpenReliability,
                 ),
