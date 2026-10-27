@@ -237,3 +237,56 @@ test('"what do you know versus what are you guessing?" is answered from owner re
   assert.match(empty.text, /nothing yet in your own words/);
   assert.match(empty.text, /checked no completion claims/);
 });
+
+test('a text brief about a track is not read as generated audio (review of #534)', () => {
+  const kept = auditReply("I've created a production brief for your track.");
+  assert.match(kept.text, /production brief for your track/);
+  assert.equal(kept.claims.some((c) => c.kind === 'audio_made'), false);
+});
+
+test('a real audio claim is still caught when a brief is mentioned as well (review of #534)', () => {
+  const caught = auditReply("I've created a song and wrote a brief.");
+  assert.equal(caught.claims.some((c) => c.kind === 'audio_made'), true);
+});
+
+test('a guest denial of record access is kept as written, while owners still get the records correction (review of #534)', () => {
+  const denial = 'I cannot access your memory.';
+  assert.equal(auditReply(denial, { ownerRecords: false }).text, denial);
+  assert.notEqual(auditReply(denial).text, denial);
+});
+
+test('an agent research claim with no execution record is removed (owner test on iPhone, 2026-10-25)', () => {
+  const r = auditReply('Mira researched the market and found three strong setups.', { evidence: {} });
+  assert.equal(r.outcome, 'blocked');
+  assert.doesNotMatch(r.text, /Mira researched/);
+  assert.match(r.text, /No execution record shows an agent doing that work/);
+  assert.equal(r.entries[0].claim_type, 'agent_research');
+});
+
+test('an agent research claim is kept when that agent has a verified, completed task', () => {
+  const evidence = { agent_tasks: [{ id: 'task-1', status: 'complete', verified: true, agent_name: 'Mira' }] };
+  const r = auditReply('Mira researched the market and wrote a short report.', { evidence });
+  assert.equal(r.outcome, 'pass');
+  assert.match(r.text, /Mira researched the market/);
+});
+
+test('a claim about one agent is not proved by another agent\'s task', () => {
+  const evidence = { agent_tasks: [{ id: 'task-2', status: 'complete', verified: true, agent_name: 'Nova' }] };
+  const r = auditReply('Atlas backtested the strategies.', { evidence });
+  assert.equal(r.outcome, 'blocked');
+  assert.doesNotMatch(r.text, /Atlas backtested/);
+});
+
+test('an unfinished or unverified agent task does not prove research', () => {
+  const evidence = { agent_tasks: [
+    { id: 't3', status: 'running', verified: false, agent_name: 'Atlas' },
+    { id: 't4', status: 'complete', verified: false, agent_name: 'Atlas' },
+  ] };
+  assert.equal(auditReply('Atlas tested the setup.', { evidence }).outcome, 'blocked');
+});
+
+test('a hedged guess about agent work is not presented as a completed claim', () => {
+  const r = auditReply('Nova may have checked the news already.', { evidence: {} });
+  assert.equal(r.outcome, 'none');
+  assert.equal(r.text, 'Nova may have checked the news already.');
+});

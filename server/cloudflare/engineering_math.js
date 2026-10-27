@@ -93,14 +93,17 @@ export function rotation({ rpm, seconds = 1 } = {}) {
 export function shaftPowerTorque({ torque, omega, power } = {}) {
   const given = [torque, omega, power].filter((x) => x !== undefined && x !== null);
   if (given.length !== 2 || !finite(...given)) return fail('shaft power', 'give exactly two of torque (N·m), omega (rad/s), power (W)');
-  let T = torque, W = omega, P = power, solved;
+  let T = torque ?? undefined, W = omega ?? undefined, P = power ?? undefined, solved;
+  if ((T === undefined && W === 0) || (W === undefined && T === 0)) return fail('shaft power', 'cannot solve an unknown quantity with a zero denominator');
   if (T === undefined) { T = P / W; solved = 'torque'; } else if (W === undefined) { W = P / T; solved = 'omega'; } else { P = T * W; solved = 'power'; }
+  if (!finite(T, W, P)) return fail('shaft power', 'result exceeds finite numeric range');
+  const checkedPower = T * (W / (2 * Math.PI)) * (2 * Math.PI);
   return {
     ok: true, name: 'shaft power', value: { torque: T, omega: W, power: P }, units: { torque: 'N·m', omega: 'rad/s', power: 'W' },
     formula: 'P = T·ω', inputs: { torque, omega, power }, solved,
     assumptions: ['steady state; no losses unless the caller passes an efficiency'],
     steps: [`${solved} solved from P = T·ω`, `T=${T.toFixed(4)} N·m, ω=${W.toFixed(4)} rad/s, P=${P.toFixed(4)} W`],
-    checks: { method: 'P/ω and P/T recomputed', value: P, relDiff: relDiff(P, (P / W) * W), pass: relDiff(P, (P / W) * W) < TOL },
+    checks: { method: 'work per revolution multiplied by revolutions per second', value: checkedPower, relDiff: relDiff(P, checkedPower), pass: relDiff(P, checkedPower) < TOL },
     dimension: dimCheck('power', 'power'),
   };
 }

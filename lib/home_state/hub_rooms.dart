@@ -59,6 +59,7 @@ extension _CheHomeHubRooms on _CHEHomeState {
       onOpenEvidence: _openBrainEvidence,
       onOpenSource: _openBrainSource,
       onOpenLedger: () => unawaited(_openBrainLedger()),
+      onOpenReliability: () => unawaited(_openBrainReliability()),
       brain: CheMemoryBrainRoom(
         active: active,
         dots: dots,
@@ -264,7 +265,7 @@ extension _CheHomeHubRooms on _CHEHomeState {
         icon: Icons.groups_rounded,
         title: 'Plan with the team',
         what: 'Agents draft a business goal, check each other, and CHE brings you the plan.',
-        status: 'Ready',
+        status: 'Opens chat',
         action: 'Start',
         onTap: () {
           Navigator.of(context).pop();
@@ -337,7 +338,7 @@ extension _CheHomeHubRooms on _CHEHomeState {
         icon: Icons.add_circle_outline_rounded,
         title: 'Start a business',
         what: 'Name the business, its first offer and the next three steps. Nothing is published or paid.',
-        status: 'Ready',
+        status: 'Opens chat',
         action: 'Start',
         onTap: () => _runHubPrompt(
           'Start a business plan with me. Help me pick the first offer, the customer, and the next three steps. Do not publish, charge or buy anything.',

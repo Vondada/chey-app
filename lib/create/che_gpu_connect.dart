@@ -62,15 +62,23 @@ bool cheValidEmail(String s) => RegExp(r'^[^\s@<>,;"]+@[^\s@<>,;"]+\.[a-z]{2,}$'
 String cheGpuNotebookUrl(String email) =>
     email.isEmpty ? cheColabNotebookUrl : '$cheColabNotebookUrl?authuser=${Uri.encodeQueryComponent(email)}';
 
+/// The Google account Colab opens with unless the owner sets another (owner, 2026-10-25: his CHE Office account).
+const cheGpuDefaultAccount = 'chetheoffice@gmail.com';
+
+/// What CHE says for the signed-in Colab account. A real address is spoken as written. A page initial or name that
+/// CHE cannot match to an address is never spoken as the account; it is said as an unreadable account.
+String cheGpuAccountLabel(String shown) => cheValidEmail(shown) ? shown : 'an account I cannot read';
+
 /// The owner's preferred Google account for Colab (his CHE Office account). An address only, kept on this iPhone.
 class CheGpuAccount {
   CheGpuAccount._();
   static const key = 'che_gpu_google_account';
   static Future<String> read() async {
     try {
-      return ((await SharedPreferences.getInstance()).getString(key) ?? '').trim().toLowerCase();
+      final saved = ((await SharedPreferences.getInstance()).getString(key) ?? '').trim().toLowerCase();
+      return saved.isEmpty ? cheGpuDefaultAccount : saved;
     } catch (_) {
-      return '';
+      return cheGpuDefaultAccount;
     }
   }
 
@@ -445,7 +453,7 @@ class CheGpuConnect extends ChangeNotifier {
       }
       if (email.isEmpty) {
         _check(account, CheGpuCheckState.unverified,
-            'Colab is signed in as $shown, but no preferred account is set. Say "my CHE Office Google account is" and the address.');
+            'Colab is signed in, but no CHE Office Google account is set, so I cannot check which account it is. Say "my CHE Office Google account is" and the address.');
         return p;
       }
       if (shown == email) {
@@ -456,13 +464,13 @@ class CheGpuConnect extends ChangeNotifier {
         // Google's account chooser for the preferred address, then back to the notebook. The owner picks or signs in.
         switched = true;
         await b.open('https://accounts.google.com/AccountChooser?Email=${Uri.encodeQueryComponent(email)}&continue=${Uri.encodeQueryComponent(url)}');
-        final ok = await _askOwner(b, 'Colab is signed in as $shown, not your CHE Office account $email. Google\'s account chooser is open: choose $email, or sign in to it. Say continue when you are done.',
+        final ok = await _askOwner(b, 'Colab is signed in as ${cheGpuAccountLabel(shown)}, not your CHE Office account $email. Google\'s account chooser is open: choose $email, or sign in to it. Say continue when you are done.',
             cleared: (q) => '${q['account'] ?? ''}' == email || q['blocked'] == true);
         if (!ok) return _fail(account, 'Colab stayed on $shown instead of $email.');
         continue;
       }
-      _check(account, CheGpuCheckState.failed, 'Colab is signed in as $shown, not $email.');
-      _set(CheGpuPhase.failed, 'Colab is still signed in as $shown, not your CHE Office account $email. I stopped before connecting.');
+      _check(account, CheGpuCheckState.failed, 'Colab is signed in as ${cheGpuAccountLabel(shown)}, not $email.');
+      _set(CheGpuPhase.failed, 'Colab is still signed in as ${cheGpuAccountLabel(shown)}, not your CHE Office account $email. I stopped before connecting.');
       _say(status);
       _cancelled = true;
       return p;
@@ -824,7 +832,7 @@ class _CheGpuConnectPanelState extends State<CheGpuConnectPanel> {
                 autocorrect: false,
                 decoration: InputDecoration(
                   labelText: 'CHE Office Google account for Colab',
-                  helperText: _saved.isEmpty ? 'Not set. Or say: my CHE Office Google account is, then the address.' : 'Saved on this iPhone: $_saved',
+                  helperText: _saved.isEmpty ? 'Default: $cheGpuDefaultAccount. Or say: my CHE Office Google account is, then the address.' : 'Saved on this iPhone: $_saved',
                 ),
                 onSubmitted: (_) => unawaited(_saveEmail()),
               )),
