@@ -12902,12 +12902,12 @@ export class CheState extends DurableObject {
         // Status of CHE's trading and memory (owner, 2026-10-27): is it live, is the data real-time, is Rithmic connected,
         // the latest paper trade, what was learned, is long-term memory storing. Each answer is read from stored records;
         // it runs before the paper-trade and chart routes so "is your trading live" never reaches the ticker lookup.
-        const status = !body.attachment ? tradingStatusIntent(message) : null;
-        if (status) {
+        const tradingStatusAsk = !body.attachment ? tradingStatusIntent(message) : null;
+        if (tradingStatusAsk) {
           if (!ownerDevice) return ndjsonReply('Only the CHE owner can read CHE\'s trading and memory status, sir.', { source: 'che_trading_status', ok: false });
           const dash = await this.liveTradingDashboard();
           const facts = await gatherTradingStatus(this.ctx.storage, dash);
-          return ndjsonReply(tradingStatusReply(status.kind, facts), { source: 'che_trading_status', model_calls: 0, ok: true });
+          return ndjsonReply(tradingStatusReply(tradingStatusAsk.kind, facts), { source: 'che_trading_status', model_calls: 0, ok: true });
         }
         // Forward paper trading by voice (owner, 2026-10-18), answered from the journal only.
         // "Set CHE paper balance to 500" / "show CHE positions" belong to the phone's CHE paper account (chart route below).
