@@ -124,6 +124,8 @@ import { ANALYSIS_SOURCE, LEDGER_SOURCE, analyzeStrategy, ledgerIntent, readLedg
 import { TRADING_STATUS_SOURCE, newTradesIntent, tradingStatus } from './trading_status.js';
 import { meetingCommand, meetingScene, planScene, simScene } from './world_scene.js';
 import { SIM_SOURCE, listRuns, loadRun, loadSimMemory, runLab, saveRun, simLabIntent } from './sim_lab.js';
+import { manifestChat, manifestRoute } from './manifest_api.js';
+import { pcm16ToWav } from './audio_wav.js';
 import { PLAN_SOURCE, answerPlanFollowUp, buildPlan, classifyProject, listPlans, loadPlan, planFollowUpIntent, planSubject, projectPlanIntent, researchSource, savePlan } from './project_plan.js';
 import { BRAIN_ROOMS_SOURCE, ROOMS as BRAIN_ROOMS, answerCrossRoom, crossRoomIntent, drainRoomEvents, imageReference, pointsAtScreen, prFollowUp, recentScreen, relinkRecords, rememberScreen, screenDeictic, screenFollowUp, screenRoomContext, screenRoomFor, statusLabel } from './brain_rooms.js';
 import { controlChangeEvent, meetingEvent, officeTaskEvent, paperOrderRefusedEvent, phoneRoomEvent, queueRoomEvent, researchEvent } from './room_events.js';
@@ -142,7 +144,7 @@ import { CHE_SELF_BRIEF, starredFocus, studyLesson } from './che_self_knowledge.
 import { connectServiceIntent, onboardingChatReply, onboardingIntent, onboardingRoute } from './service_onboarding.js';
 import { privateChatGate, privateTurn } from './private_voice.js';
 import { KEY_PROVIDERS, MEMORY_DB, hasStoredMemoryDatabase, memorySetupIntent, memorySetupSteps, removeMemoryDatabase, saveMemoryDatabase, removeKey, storedKeys, withStoredKeys, cachedAnswer, checkAllKeys, fileLetter, fileTech, forgetAnswer, isLockedDown, listLetters, looksLikeAttack, markLetter, nextLetter, rememberAnswer, resilienceIntent, runScout, saveKey, setLockdown, setupSteps, speakKeyHealth, speakMailboxSummary, speakTech, techItems } from './resilience.js';
-import { modalKeyRowFor } from './modal_gpu.js';
+import { modalKeyRowFor, modalProbe } from './modal_gpu.js';
 import { applyCorrections, correctedPrevious, correctionsContext, detectCorrection, learnCorrection, loadCorrections } from './speech_learning.js';
 import { applyModelReading, asksAboutScreen, clipKeepingLimits, interpretOwnerTurn, interpretWithModel } from './speech_intent.js';
 import { intentFrame, understoodAs } from './intent_frame.js';
@@ -956,30 +958,6 @@ function ownerContextPreview(item) {
     created_at: item.created_at,
     updated_at: item.updated_at,
   };
-}
-
-// PCM16 mono -> WAV container so AVAudioPlayer can play it directly.
-function pcm16ToWav(pcm, sampleRate = 24000) {
-  const header = new ArrayBuffer(44);
-  const v = new DataView(header);
-  const writeText = (offset, text) => { for (let i = 0; i < text.length; i++) v.setUint8(offset + i, text.charCodeAt(i)); };
-  writeText(0, 'RIFF');
-  v.setUint32(4, 36 + pcm.byteLength, true);
-  writeText(8, 'WAVE');
-  writeText(12, 'fmt ');
-  v.setUint32(16, 16, true);
-  v.setUint16(20, 1, true); // PCM
-  v.setUint16(22, 1, true); // mono
-  v.setUint32(24, sampleRate, true);
-  v.setUint32(28, sampleRate * 2, true);
-  v.setUint16(32, 2, true);
-  v.setUint16(34, 16, true);
-  writeText(36, 'data');
-  v.setUint32(40, pcm.byteLength, true);
-  const out = new Uint8Array(44 + pcm.byteLength);
-  out.set(new Uint8Array(header), 0);
-  out.set(pcm, 44);
-  return out;
 }
 
 let lastGeminiVoiceError = '';
@@ -4150,6 +4128,8 @@ export class CheState extends DurableObject {
   }
 
   // Summary for the deploy check: feed, counts, positions and the newest trades, from records.
+  async modalProbe() { return modalProbe(this.keyEnv || this.env, this.ctx.storage); }
+
   async tradingProbe() {
     const ensured = await this.ensureLivePaper();
     const run = ensured.enabled ? await this.runForwardPaper({ force: true }) : { skipped: 'paper trading is off' };
@@ -9362,6 +9342,8 @@ export class CheState extends DurableObject {
         if (!meeting) return json({ detail: 'No such meeting.' }, 404);
         return json({ scene: meetingScene(meeting, runtimeSnapshot(data).agents) });
       }
+      const manifest = await manifestRoute(request, path, this.ctx.storage, ownerDevice, body); // manifest_api.js
+      if (manifest) return manifest;
       // Simulation Lab (sim_lab.js): the saved runs, newest first, and one run in full. Owner only.
       if (path === '/api/sims' && request.method === 'GET') {
         if (!ownerDevice) return ownerOnly();
@@ -11199,6 +11181,8 @@ export class CheState extends DurableObject {
         // "run a million simulations on this idea". It runs on the latest plan, or plans the idea named first,
         // then searches the design space with a seeded, budgeted, staged search (sim_lab.js). No model call;
         // the reply states the evaluations actually executed and labels predictions vs simulated results.
+        const manifestReply = body.attachment ? null : await manifestChat(message, this.ctx.storage, ownerDevice);
+        if (manifestReply) return manifestReply;
         const simAsk = body.attachment ? null : simLabIntent(message);
         if (simAsk) {
           if (!ownerDevice) return ownerOnly();
@@ -16278,6 +16262,8 @@ async function routeRequest(request, env, ctx) {
   // The deploy check. The route exists only for the per-deploy random token.
   // The deploy's trading check: arms and runs one forward-paper pass on the owner's CHE and
   // prints what the records hold (paper only). Exists only for the per-deploy random token.
+  // The deploy's Modal check: the authenticated /health with the owner's real MODAL_TOKEN (modal_gpu.js modalProbe).
+  if (path === '/api/probe/modal' && request.method === 'POST') return voiceProbeAuthorized(request, env) ? json(await env.CHE_STATE.getByName('owner').modalProbe()) : json({ detail: 'Not found.' }, 404);
   if (path === '/api/trading/probe' && request.method === 'POST') {
     if (!voiceProbeAuthorized(request, env)) return json({ detail: 'Not found.' }, 404);
     return json(await env.CHE_STATE.getByName('owner').tradingProbe());
