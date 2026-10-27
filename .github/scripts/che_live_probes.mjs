@@ -377,6 +377,27 @@ const PROBES = {
     return pass(line);
   },
 
+  async history() {
+    // Long-term memory on the isolated test CHE (conversation_history.js historyProbe): a spoken conversation on a
+    // random 2025 day, posted to /api/logs as the phone does, is retrieved by its date; CHE's wrong answer that day is
+    // found with the owner's pushback as evidence; a correction is saved and linked; a day with no conversation is
+    // said to have none. Every answer must come from the records, with 0 model calls.
+    const { body: report, error } = await postProbe('/api/history/probe', { attempts: 3, timeoutMs: 120000 });
+    if (!report) {
+      console.log(`::error title=Conversation history check did not run::The ${WHERE} did not answer (${error}).`);
+      return fail(`did not run (${error})`);
+    }
+    printSteps(report);
+    console.log(`::notice title=Conversation history::${report.passed}/${report.total} live checks passed`);
+    summary(`**Conversation history and mistakes (${WHERE}):** ${report.passed}/${report.total} live checks passed on the isolated test CHE.`);
+    if (!report.ok) {
+      const what = (report.steps || []).filter((s) => !s.pass).map((s) => s.name).join('; ') || report.error || 'see log';
+      console.log(`::error title=Conversation history check failed::${what}`);
+      return fail(what);
+    }
+    return pass(`${report.passed}/${report.total} live checks passed`);
+  },
+
   async commands() {
     // Live checks on the isolated test CHE (never the owner's): the catalog, an unknown command, a
     // slash command reaching its handler, an approval hold, and a suggestion card. Then which
@@ -627,7 +648,7 @@ const PROBES = {
 
 // The production deploy's order. The staging gate runs all of it; production runs one per step.
 export const SUITE = ['health', 'engines', 'sidestore', 'mary-settings', 'fish-settings', 'voice', 'trading', 'trading-audit',
-  'memory', 'creation', 'creation-viewport', 'character-accept', 'commands', 'atlas', 'privacy', 'projects-audit', 'video', 'rea', 'fish-measure'];
+  'memory', 'history', 'creation', 'creation-viewport', 'character-accept', 'commands', 'atlas', 'privacy', 'projects-audit', 'video', 'rea', 'fish-measure'];
 
 async function runOne(name) {
   if (PRODUCTION_STEPS[name]) {

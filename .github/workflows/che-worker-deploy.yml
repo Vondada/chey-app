@@ -382,6 +382,9 @@ jobs:
           }
           JS
 
+      - name: Check CHE's conversation history and past mistakes through the live Worker
+        run: node .github/scripts/che_live_probes.mjs history
+
       - name: Check CHE's Knowledge Atlas through the live Worker
         run: node .github/scripts/che_live_probes.mjs atlas
 

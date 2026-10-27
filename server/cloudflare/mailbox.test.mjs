@@ -61,6 +61,15 @@ test('CHE and another AI can exchange messages on the mailbox branch', async () 
   assert.equal(all.threads[0].peer, 'claude');
 });
 
+test('a message is marked as automated when CHE sends it and as the owner\'s when the owner typed it', async () => {
+  const fetcher = fakeRepo();
+  await sendMail(env, { to: 'claude', text: 'CHE asks on her own' }, fetcher);
+  await sendMail(env, { to: 'claude', text: 'Owner typed this', source: 'owner' }, fetcher);
+  await sendMail(env, { from: 'claude', to: 'che', text: 'Claude replies' }, fetcher);
+  const thread = await readThread(env, 'claude', fetcher);
+  assert.deepEqual(thread.messages.map((m) => m.source ?? null), ['automated', 'owner', null]);
+});
+
 test('mailbox refuses to send secrets', async () => {
   const out = await sendMail(env, { to: 'chatgpt', text: 'my token is github_pat_abc123' }, fakeRepo());
   assert.equal(out.status, 400);

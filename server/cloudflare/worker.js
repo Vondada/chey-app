@@ -171,6 +171,8 @@ import { auditLedger, knowVsGuessQuestion, knowVsGuessReply, MEMORY_CLAIM_MS, me
 import { verifyReply } from './truth_pipeline.js';
 import { auditReply } from './hallucination_auditor.js';
 import { memoryTruthProbe } from './memory_probe.js';
+import { probeObjectName, isMemoryProbeObject } from './probe_identity.js';
+import { commandCenterProbe } from './command_probe.js';
 import { asksForCurrentOwnerLocation, executeWithReceipt, guardExecutionClaims, guardRetrievalClaims, changeHistoryIntent, guardClaimedOwnerActions, guardClaimedResearchActions, guardGroundedFacts, guardLocationWeatherReply, guardOwnerReply, loadChangeHistory, loadReceipts, OWNER_LOCATION_NOT_VERIFIED, recordReceipt, requestedCodeNames, speakChangeHistory, vagueResearchRequest, verifiedState, verifiedStatusText } from './truth_layer.js';
 import { ENGINEERING_PLAYBOOK_SPOKEN, playbookIntent } from './engineering_playbook.js';
 import { describeSkillsReport, reusableLicense, selectFilesForAgent, skillFromMarkdown, skillImportIntent, skillsReportIntent } from './skill_import.js';
@@ -188,6 +190,7 @@ import { brainRecordIntent, chatgptHistoryIntent, importChatgptBatch, inspectMem
 import { adRequest, adStatusLines, assetTruthReply } from './asset_truth.js';
 import { dropAgentTaskTurns, replyRepeatsAgentTask } from './agent_task_guard.js';
 import { openKnowledgeLibrary, seedKnowledgeCatalog } from './knowledge_catalog_seed.js';
+import { answerEvidence, historyProbe, historyTurn } from './conversation_history.js';
 import { CheBrainStore, backfillConversations, forgetBrainSchema, displayCopy, isSafeText, ownerMemoryRecord, projectLegacyState, rememberExchange, retrievableOwnerRecord, retrievalBody, sameDisplayCopy } from './brain_store.js';
 import { brainReviewIntent, latestReview, ownerScore, runBrainMaintenance, speakReview } from './brain_audit.js';
 import { answerCorrespondenceQuestion, archiveTasks, correspondenceStatus, importOutsideCorrespondence, outsideCorrespondenceIntent, projectOfficeExperience, recoverHistory, speakCorrespondenceCount, speakCorrespondenceImport, workerBrains } from './brain_office.js';
@@ -564,89 +567,11 @@ function isMemoryProbeRequest(request, env) {
   return voiceProbeAuthorized(new Request('https://che.internal/', { headers: { Authorization: `Bearer ${token}` } }), env);
 }
 
-const MEMORY_PROBE_OBJECT = 'memory-truth-probe';
+
 
 // The deploy's Command Center check. Live steps run against the same
 // isolated test CHE as the memory check (never the owner's); readiness is
 // the owner's real connector states (ready or not, never a secret value).
-async function commandCenterProbe(env, token) {
-  const probe = env.CHE_STATE.getByName(MEMORY_PROBE_OBJECT);
-  const call = (path, body, device = '') => probe.fetch(new Request(`https://che.internal${path}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'X-CHE-Memory-Probe': token, ...(device ? { Authorization: `Bearer ${device}` } : {}) },
-    body: JSON.stringify(body),
-  }));
-  const paired = await (await call('/api/pair', { code: String(env.CHE_PAIR_CODE || ''), device_name: 'CHE command center check' })).json().catch(() => ({}));
-  const device = paired.device_token;
-  if (!device) return { ok: false, error: 'The check could not pair with its test CHE.', steps: [] };
-  const steps = [];
-  const step = async (name, message, check, { optional = false } = {}) => {
-    const started = Date.now();
-    const res = await call('/api/chat', { message, history: [] }, device);
-    const raw = await res.text();
-    let held = null;
-    try { held = JSON.parse(raw); } catch (_) { held = null; }
-    const events = raw.split('\n').filter(Boolean).map((line) => { try { return JSON.parse(line); } catch (_) { return null; } }).filter(Boolean);
-    const done = events.find((e) => e.type === 'done') || {};
-    const reply = held?.message || events.filter((e) => e.type === 'delta').map((e) => e.delta).join('').trim();
-    const pass = res.status === 200 && check({ reply, done, held, events });
-    steps.push({ name, pass, optional, ms: Date.now() - started, route: held?.held_for_owner ? 'held' : done.source || '', model_calls: done.model_calls ?? null, reply: reply.slice(0, 300) });
-  };
-  try {
-    const catalog = await (await call('/api/commands', {}, device)).json().catch(() => ({}));
-    steps.push({ name: `catalog: ${COMMANDS.length} commands in ${CATEGORIES.length} categories`, pass: catalog.commands?.length === COMMANDS.length && catalog.categories?.length === CATEGORIES.length, ms: 0, route: 'catalog', model_calls: 0, reply: `${catalog.commands?.length} commands` });
-    await step('unknown command answered honestly, nothing run', '/lead-scot barbers',
-      ({ done, reply }) => done.source === 'che_command' && done.ok === false && done.model_calls === 0 && /Nothing was run/.test(reply));
-    await step('slash command reaches its existing handler', '/trade-journal',
-      ({ done }) => done.source === 'che_trading' && Number(done.model_calls || 0) === 0);
-    // This isolated CHE has no broker sign-in, so the money command must say
-    // what is missing and run nothing (its approval hold is unit-tested).
-    await step('a command needing setup says what is missing, nothing run', '/trade-execute',
-      ({ done, reply }) => done.source === 'che_command' && done.ok === false && done.model_calls === 0
-        && ['setup_required', 'unsupported'].includes(done.command_status) && /Nothing was run/.test(reply));
-    await step('a suggestion card follows a matching question', 'How can I make some money building websites?',
-      ({ events }) => events.some((e) => e.type === 'command_suggestions' && e.suggestions?.[0]?.id === 'website-clients'), { optional: true });
-  } finally {
-    await call('/api/security/revoke_self', {}, device).catch(() => null);
-  }
-  // Production CHE_STATE returns a Durable Object stub (fetch only), not a
-  // CheState instance. Ask the owner's object for the read-only count through
-  // a probe-token-gated endpoint; never pretend an unknown count is zero.
-  let readiness;
-  try {
-    const owner = env.CHE_STATE.getByName('owner');
-    if (typeof owner.commandReadiness === 'function') {
-      // Asked of the owner's object directly, as the voice probe asks it. There is no token to
-      // hand over, so a stored env cannot refuse this deploy's check.
-      readiness = await owner.commandReadiness();
-    } else {
-      // A stub that exposes only fetch(): hand this deploy's token over first, then ask the route.
-      // Without that, the object keeps the env it was created with and refuses the token (HTTP 404).
-      if (typeof owner.setVoiceSecrets === 'function') {
-        await owner.setVoiceSecrets({ ...voiceSecretsFrom(env), CHE_VOICE_PROBE_TOKEN: String(env.CHE_VOICE_PROBE_TOKEN || '') });
-      }
-      const response = await owner.fetch(new Request('https://che.internal/api/commands/readiness', {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body: '{}',
-      }));
-      if (!response.ok) throw new Error(`Readiness request returned HTTP ${response.status}`);
-      readiness = await response.json();
-    }
-    if (!Number.isInteger(readiness?.available) || !Array.isArray(readiness?.setup_required)) {
-      throw new Error('Readiness count was not returned');
-    }
-  } catch (error) {
-    readiness = { error: String(error?.message || error).slice(0, 160) };
-  }
-  return {
-    ok: steps.every((s) => s.pass || s.optional) && !readiness.error,
-    passed: steps.filter((s) => s.pass).length,
-    total: steps.length,
-    steps,
-    readiness,
-  };
-}
 
 // Emergency warning signs about a person (the speaker or someone with them): the action and its source, no model.
 function emergencyReply(message) {
@@ -5435,7 +5360,7 @@ export class CheState extends DurableObject {
     if (request.method === 'POST' && new URL(request.url).pathname === '/api/memory-probe/reset') {
       // Only an object positively named as the test CHE is ever cleared: an unknown name refuses,
       // so the owner's CHE can never be reached by this route.
-      if (!isMemoryProbeRequest(request, this.env) || this.ctx.id?.name !== MEMORY_PROBE_OBJECT) return json({ detail: 'Not found.' }, 404);
+      if (!isMemoryProbeRequest(request, this.env) || !isMemoryProbeObject(this.ctx.id?.name)) return json({ detail: 'Not found.' }, 404);
       await this.ctx.storage.deleteAll();
       forgetBrainSchema(this.ctx.storage);
       return json({ ok: true, reset: true });
@@ -5550,7 +5475,8 @@ export class CheState extends DurableObject {
         const memory = await recordConversationMemory(this.ctx.storage, { message: safeMessage.text, reply: safeReply.text });
         if (memory) {
           // The Brain keeps the whole exchange; brainmem keeps its linked summary. Same id.
-          try { rememberExchange(new CheBrainStore(this.ctx.storage), { id: memory.id, message: safeMessage.text, reply: safeReply.text, at: memory.at }); } catch (_) {}
+          const evidence = answerEvidence(raw, await findAnswerEvidence(this.ctx.storage, reply));
+          try { rememberExchange(new CheBrainStore(this.ctx.storage), { id: memory.id, message: safeMessage.text, reply: safeReply.text, at: memory.at, evidence }); } catch (_) {}
           await storeVectorMemory(this.keyEnv || this.env, {
             external_id: `conversation:${memory.id}`,
             kind: 'conversation',
@@ -5652,11 +5578,8 @@ export class CheState extends DurableObject {
     };
   }
 
-  // One slash command from the owner. An unknown or unavailable command is
-  // answered honestly with no model call; a command that needs approval is
-  // held for a plain yes (or the Command Center's confirm button); anything
-  // else is re-sent through /api/chat as its ordinary request, so every owner
-  // gate, truth guard and receipt applies exactly as if he had said it.
+  // A slash command: unknown ones answered with no model, approval ones held for a yes, the rest re-sent through
+  // /api/chat so every gate and guard applies.
   // Chat for a family/guest device: conversation only. It never reaches a
   // tool, the owner's data, memory, mailbox, autonomy, money, messages,
   // media, code or connections; owner actions are refused with no model call.
@@ -8768,7 +8691,8 @@ export class CheState extends DurableObject {
         return json(peer ? await readThread(this.env, peer) : await listThreads(this.env));
       }
       if (path === '/api/mailbox' && request.method === 'POST') {
-        const { status, ...rest } = await sendMail(this.env, { from: 'che', to: body.to, text: body.text, replyTo: body.reply_to });
+        // Typed in the app by the owner, so it is recorded as theirs, not as CHE's automated message.
+        const { status, ...rest } = await sendMail(this.env, { from: 'che', to: body.to, text: body.text, replyTo: body.reply_to, source: 'owner' });
         return json(rest, status);
       }
 
@@ -12156,12 +12080,10 @@ export class CheState extends DurableObject {
           const turn = await ownerSearchTurn(this.ctx.storage, data, store, ownerSearch);
           return ndjsonReply(turn.text, { source: 'che_memory_search', model_calls: 0, ...turn.meta });
         }
-        // The owner's memory search reads the Brain store and the Flagstaff archive and names what matched, with
-        // ids, dates and the sender as stored. The model is never asked, so it cannot say a search ran or invent
-        // records (owner, 2026-10-21: "I found two records dated February 10 and March 15, 2023").
-        // "Tell me more about that" / "who wrote it?" right after a memory search re-run its terms and name the
-        // stored senders; right after an Office desk reply they read that agent's board (subject-loss audit,
-        // 2026-10-24). Both answer from the records, with no model.
+        // A past day, CHE's past mistakes, or a correction of one (conversation_history.js), from the Brain and logs.
+        // Memory search and its follow-ups name only stored records (ids, dates, senders); no model.
+        const hist = body.attachment ? null : await historyTurn({ env: this.env, storage: this.ctx.storage, store: new CheBrainStore(this.ctx.storage), data, message: rawMessage, owner: ownerDevice, save: () => this.saveChatData(data) });
+        if (hist) return ndjsonReply(hist.text, hist.meta);
         const memoryFollowup = body.attachment ? null : memorySearchFollowup(followupWords || message, ownerHistory);
         if (memoryFollowup?.referent === 'office_agent') {
           if (!ownerDevice) return ownerOnly();
@@ -13709,13 +13631,8 @@ export class CheState extends DurableObject {
           earlierFailure = `The earlier render failed (${checked.detail || 'no valid MP4'}), so I started a new one. `;
         }
 
-        // "Check your renderer ... the last verified MP4. Don't render or upload anything yet": a status
-        // question with the render forbidden, answered from settings and the media library only.
-        // A question about the renderer itself ("which rendering engines are connected", "the last verified
-        // MP4") with no render asked for at the start of a sentence is a status question too.
-        // "Don't upload it yet" or "don't make it longer than a minute" still asks for the video; only a
-        // prohibition whose own verb is the render forbids it. A renderer question with no render asked
-        // for ("can you make a video about bees?" asks for one) is a status question too.
+        // A renderer question with the render forbidden or not asked for is answered from settings and the media
+        // library only; a prohibition forbids the render only when its own verb is the render.
         const RENDER_VERB = /^(?:render|create|make|generate|produce|start|queue)\w*\b(?!\s+it\s+(?:longer|shorter|more|less|over|under)\b)/i;
         const renderForbidden = prohibitionSpans(message).some(([a, b]) => RENDER_VERB.test(forbiddenAction(message.slice(a, b))));
         const renderAsked = /(?:^|[.!?;]\s*|,\s*(?:and\s+)?|\band\s+)(?:(?:hey\s+)?(?:che|chey|chay)[,:]?\s+)?(?:please\s+)?(?:(?:can|could|would|will)\s+you\s+(?:please\s+)?|i\s+(?:want|need|would\s+like|['’]d\s+like)\s+(?:you\s+to\s+)?)?(?:make|create|render|produce|generate|start)\b/i.test(withoutProhibitions(message));
@@ -16274,14 +16191,15 @@ async function routeRequest(request, env, ctx) {
   if (path === '/api/commands/probe' && request.method === 'POST') {
     if (!voiceProbeAuthorized(request, env)) return json({ detail: 'Not found.' }, 404);
     const token = /^Bearer (\S+)$/.exec(request.headers.get('Authorization') || '')?.[1] || '';
-    return json(await commandCenterProbe(env, token));
+    return json(await commandCenterProbe(env, token, { commands: COMMANDS, categories: CATEGORIES, voiceSecrets: voiceSecretsFrom(env) }));
   }
-  if (path === '/api/coding-audit/probe' && request.method === 'POST') return voiceProbeAuthorized(request, env) ? json(await codingAuditProbe(env, request, MEMORY_PROBE_OBJECT)) : json({ detail: 'Not found.' }, 404);
+  if (path === '/api/history/probe' && request.method === 'POST') return voiceProbeAuthorized(request, env) ? json(await historyProbe(env, request, await probeObjectName(String(env.CHE_VOICE_PROBE_TOKEN || '')))) : json({ detail: 'Not found.' }, 404);
+  if (path === '/api/coding-audit/probe' && request.method === 'POST') return voiceProbeAuthorized(request, env) ? json(await codingAuditProbe(env, request, await probeObjectName(String(env.CHE_VOICE_PROBE_TOKEN || '')))) : json({ detail: 'Not found.' }, 404);
   // The deploy's Knowledge Atlas check, on the same isolated test CHE (#346).
   if (path === '/api/atlas/probe' && request.method === 'POST') {
     if (!voiceProbeAuthorized(request, env)) return json({ detail: 'Not found.' }, 404);
     const token = /^Bearer (\S+)$/.exec(request.headers.get('Authorization') || '')?.[1] || '';
-    return json(await atlasProbe(env, token, MEMORY_PROBE_OBJECT));
+    return json(await atlasProbe(env, token, await probeObjectName(token)));
   }
   // The opt-in deploy video check (deploy run with video_check): same
   // per-deploy token; without it the route does not exist.
@@ -16304,7 +16222,7 @@ async function routeRequest(request, env, ctx) {
   if (path === '/api/memory/probe' && request.method === 'POST') {
     if (!voiceProbeAuthorized(request, env)) return json({ detail: 'Not found.' }, 404);
     const token = /^Bearer (\S+)$/.exec(request.headers.get('Authorization') || '')?.[1] || '';
-    return json(await memoryTruthProbe(env, token, MEMORY_PROBE_OBJECT));
+    return json(await memoryTruthProbe(env, token, await probeObjectName(token)));
   }
   // The live voice settings reach the Durable Object before each voice or key
   // request, so a secret change is seen without restarting the object.

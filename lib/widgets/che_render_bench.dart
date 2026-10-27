@@ -335,7 +335,16 @@ class _CheRenderBenchScreenState extends State<CheRenderBenchScreen> with Single
       }
     };
     SchedulerBinding.instance.addTimingsCallback(_timingsCallback!);
-    _orbit = createTicker((_) => c.camera.rotate(.012, 0))..start();
+    // The orbit drives the controller's own tick, exactly as the Brain view does. Moving the camera alone never
+    // repaints the painter, so the frame count would stay at one (the bug this fixes).
+    var last = Duration.zero;
+    _orbit = createTicker((elapsed) {
+      final dt = (elapsed - last).inMicroseconds / 1000000;
+      last = elapsed;
+      c.camera.rotate(.012, 0);
+      c.tick(dt.clamp(0, .05).toDouble(), repaint: c.budget.admitTick());
+    })
+      ..start();
     setState(() {});
     await Future<void>.delayed(Duration(seconds: widget.seconds));
     _stopNative();
