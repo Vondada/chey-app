@@ -69,7 +69,7 @@ export function manifestScene(project) {
 }
 
 function latestResult(project, rows) {
-  const r = rows.find((x) => x.candidate_id === project.comparison?.best);
+  const r = rows.find((x) => x.candidate_id === (project.plan?.candidate_id || project.comparison?.best));
   if (!r?.primary) return null;
   return { candidate_id: r.candidate_id, run_id: r.run_id, forecast: { low: r.primary.p10, likely: r.primary.p50, high: r.primary.p90, unit: r.primary.unit }, success_probability: r.success_probability, at: project.runs.find((x) => x.id === r.run_id)?.created_at || null };
 }
@@ -141,7 +141,12 @@ export async function manifestChat(message, storage, ownerDevice) {
     return ndjson(`Your manifestation projects, newest first, sir. ${lines.join(' ')}`, { source: MANIFEST_SOURCE, ok: true, model_calls: 0, project_id: list[0].id, status: list[0].status });
   }
   if (ask.kind !== 'create') return otherChat(store, ask);
-  const started = await startProject(store, ask.goal, { newId });
+  let started;
+  try {
+    started = await startProject(store, ask.goal, { newId });
+  } catch (error) {
+    return ndjson(`${String(error?.message || error)}`, { source: MANIFEST_SOURCE, ok: false, model_calls: 0, project_id: '' });
+  }
   if (started.refused) return ndjson(`I won't take that on, sir. ${started.spec.safety.notes.join(' ')} Nothing was created.`, { source: MANIFEST_SOURCE, ok: false, model_calls: 0, project_id: '' });
   const p = started.project;
   return ndjson(speakProject(p), { source: MANIFEST_SOURCE, ok: p.status !== 'BLOCKED', model_calls: 0, project_id: p.id, status: p.status });
@@ -355,6 +360,12 @@ export async function manifestRoute(request, path, storage, ownerDevice, parsedB
         if (!r.ok) return json({ ok: false, detail: r.error, approval_required: !!r.approval_required }, 409);
         await store.put(project);
         return json({ ok: true, step: r.step });
+      }
+      case 'delete': {
+        // Deleting cannot be undone: the app asks the owner first and sends confirm: true only after his yes.
+        if (b.confirm !== true) return json({ ok: false, needs_confirmation: true, detail: `Deleting "${project.title}" removes the project and its ${project.runs.length} run records for good. Ask the owner, then send confirm: true.` }, 409);
+        await store.remove(project.id);
+        return json({ ok: true, deleted: project.id });
       }
       case 'pause': case 'resume': case 'stop': {
         const r = controlProject(project, action);

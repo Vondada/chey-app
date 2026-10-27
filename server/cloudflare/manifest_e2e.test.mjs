@@ -192,4 +192,11 @@ test('owner only, refusals and the model catalogue', async () => {
   const blocked = (await che.post('/api/manifest/projects', { request: 'write a novel' })).body.project;
   assert.equal(blocked.status, 'BLOCKED');
   assert.equal((await che.get('/api/manifest/projects/mp-none')).status, 404);
+  // Deleting needs the owner's confirmation; without it nothing is removed.
+  const ask = await che.post(P(blocked.id, '/delete'), {});
+  assert.equal(ask.status, 409);
+  assert.equal(ask.body.needs_confirmation, true);
+  assert.equal((await che.get(P(blocked.id))).status, 200);
+  assert.equal((await che.post(P(blocked.id, '/delete'), { confirm: true })).body.deleted, blocked.id);
+  assert.equal((await che.get(P(blocked.id))).status, 404);
 });

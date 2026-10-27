@@ -253,9 +253,11 @@ export function setStepStatus(project, stepId, status, { now = new Date().toISOS
 /** A short briefing for one idea: stage, forecast range, blocker, pending approval with its cost, numbered options. */
 export function briefing(project) {
   const lines = [`${project.title}. Stage: ${project.status}.`];
-  const best = project.comparison?.rows.find((r) => r.candidate_id === project.comparison.best);
-  if (best?.primary) lines.push(`Best option, ${best.name}: ${best.primary.id.replace(/_/g, ' ')} most likely ${say(best.primary.p50)}${unitWord(best.primary.unit)}, between ${say(best.primary.p10)} and ${say(best.primary.p90)} (80% range). ${best.label.charAt(0).toUpperCase()}${best.label.slice(1)}.`);
-  const c = project.candidates.find((x) => x.id === project.comparison?.best);
+  // The plan's candidate once there is a plan (it is what is being executed), otherwise the best compared.
+  const focus = project.plan?.candidate_id || project.comparison?.best;
+  const best = project.comparison?.rows.find((r) => r.candidate_id === focus);
+  if (best?.primary) lines.push(`${project.plan ? 'Planned option' : 'Best option'}, ${best.name}: ${best.primary.id.replace(/_/g, ' ')} most likely ${say(best.primary.p50)}${unitWord(best.primary.unit)}, between ${say(best.primary.p10)} and ${say(best.primary.p90)} (80% range). ${best.label.charAt(0).toUpperCase()}${best.label.slice(1)}.`);
+  const c = project.candidates.find((x) => x.id === focus);
   if (c?.feasibility?.confidence) lines.push(`Confidence: ${c.feasibility.confidence}.`);
   if (project.status === 'BLOCKED') lines.push(`Blocked: ${project.history.at(-1).reason}`);
   const pending = (project.plan?.steps || []).filter((s) => s.approval_required && !project.authorizations.some((a) => a.step_id === s.id) && s.status !== 'verified');

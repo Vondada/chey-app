@@ -549,7 +549,16 @@ export async function validateEvidence(project, input, { submitted_by = 'owner',
     record.hash_checked = input.content != null;
   }
   if (record.kind === 'test_run' && !(Number.isInteger(record.tests?.passed) && record.tests.passed > 0 && record.tests.failed === 0 && record.ref)) return reject('A test run needs a reference, at least one passing test and no failures.');
-  if (record.kind === 'measurement' && !(record.observed && Number.isFinite(record.observed.value) && record.observed.unit)) return reject('A measurement needs a metric, a number and a unit.');
+  if (record.kind === 'measurement') {
+    if (!(record.observed && Number.isFinite(record.observed.value) && record.observed.unit)) return reject('A measurement needs a metric, a number and a unit.');
+    // The measurement must be the quantity the step measures, in units of the same dimension.
+    const model = MODELS[project.spec?.model?.id];
+    const known = model ? [...model.outputs, ...model.inputs] : [];
+    if (step.metric && record.observed.metric !== step.metric) return reject(`This step measures ${step.metric.replace(/_/g, ' ')}, not ${record.observed.metric.replace(/_/g, ' ')}.`);
+    const def = known.find((k) => k.id === record.observed.metric);
+    if (!def) return reject(`${record.observed.metric} is not a quantity this model can compare; measure one of: ${(model?.outcome_metrics || []).join(', ')}.`);
+    if (!sameDimension(record.observed.unit, def.unit)) return reject(`${record.observed.unit} cannot be compared with ${def.unit}: the units measure different things.`);
+  }
   if (record.kind === 'owner_report' && record.note.trim().length < 12) return reject('Say what you actually observed (at least a short sentence).');
   // The same claim again is not new evidence.
   const key = JSON.stringify([record.kind, record.ref, record.note.trim().toLowerCase(), record.sha256, record.observed]);
@@ -612,8 +621,7 @@ export function compareOutcome(model, run, { metric, value, unit }) {
 
 // ── Storage ────────────────────────────────────────────────────────────────────────────────────
 const INDEX_KEY = 'manifest_projects';
-const MAX_PROJECTS = 30;
-const MAX_RUNS_PER_PROJECT = 40;
+export const MAX_PROJECTS = 30;
 const projectKey = (id) => `manifest_project:${id}`;
 const runKey = (id) => `manifest_run:${id}`;
 
@@ -623,24 +631,22 @@ export class ManifestStore {
   async get(id) { return (await this.storage.get(projectKey(id))) || null; }
   async getRun(id) { return (await this.storage.get(runKey(id))) || null; }
   async putRun(run) { await this.storage.put(runKey(run.id), run); }
+  // Saving never deletes anything: no run record is trimmed and no older project is evicted (AGENTS.md: ask
+  // before deleting). The project limit is enforced where a project is created, by refusing.
   async put(project) {
-    // Old run records beyond the per-project limit are dropped from storage; the index keeps their summary.
-    if (project.runs.length > MAX_RUNS_PER_PROJECT) {
-      const keep = new Set(Object.values(project.latest_runs));
-      const drop = project.runs.slice(0, project.runs.length - MAX_RUNS_PER_PROJECT).filter((r) => !keep.has(r.id));
-      for (const r of drop) await this.storage.delete(runKey(r.id));
-      const dropped = new Set(drop.map((r) => r.id));
-      project.runs = project.runs.map((r) => (dropped.has(r.id) ? { ...r, stored: false } : r));
-    }
     await this.storage.put(projectKey(project.id), project);
     const index = await this.list();
     const next = [{ id: project.id, title: project.title, domain: project.domain, status: project.status, updated_at: project.updated_at }, ...index.filter((p) => p.id !== project.id)];
-    for (const old of next.slice(MAX_PROJECTS)) {
-      const gone = await this.get(old.id);
-      for (const r of gone?.runs || []) await this.storage.delete(runKey(r.id));
-      await this.storage.delete(projectKey(old.id));
-    }
-    await this.storage.put(INDEX_KEY, next.slice(0, MAX_PROJECTS));
+    await this.storage.put(INDEX_KEY, next);
+  }
+  /** Deletes one project and its run records. Only called after the owner confirmed that deletion. */
+  async remove(id) {
+    const gone = await this.get(id);
+    if (!gone) return false;
+    for (const r of gone.runs || []) await this.storage.delete(runKey(r.id));
+    await this.storage.delete(projectKey(id));
+    await this.storage.put(INDEX_KEY, (await this.list()).filter((p) => p.id !== id));
+    return true;
   }
 }
 
@@ -661,6 +667,9 @@ async function saveRun(store, project, run) {
 export async function startProject(store, request, { overrides = {}, auto = true, now = new Date().toISOString(), newId = newIdDefault, samples = DEFAULT_SAMPLES } = {}) {
   const spec = buildSpec(request, { overrides, now });
   if (spec.refused) return { refused: true, spec };
+  if ((await store.list()).length >= MAX_PROJECTS) {
+    throw Object.assign(new Error(`You have ${MAX_PROJECTS} manifestation projects, the most CHE keeps. Nothing was deleted and no new project was made. Delete one you no longer need (CHE asks you to confirm first), then try again.`), { status: 409 });
+  }
   let project = createProject(spec, { id: newId('mp'), now });
   if (auto) project = await advanceToPlan(store, project, { now, newId, samples });
   else await store.put(project);
@@ -737,6 +746,32 @@ export async function simulateAll(store, p, { now, newId = newIdDefault, samples
   return runs;
 }
 
+/**
+ * After a recalibrated run: the comparison is rebuilt from every candidate's latest run, and when the
+ * recalibrated candidate is the plan's, the plan's forecast-bearing fields (run, expected ranges, each step's
+ * expected result and instructions) are refreshed. Step status, evidence, history and approvals are kept.
+ */
+async function refreshForecasts(store, p, model, run) {
+  const runs = {};
+  for (const c of p.candidates) {
+    const id = p.latest_runs[c.id];
+    if (!id || c.feasibility?.class === 'incompatible') continue;
+    runs[c.id] = id === run.id ? run : await store.getRun(id);
+  }
+  p.comparison = compareRuns(model, p.candidates, runs);
+  if (!p.plan || p.plan.candidate_id !== run.candidate_id) return;
+  const fresh = buildRealizationPlan(p, run.candidate_id, run);
+  const old = new Map(p.plan.steps.map((s) => [s.id, s]));
+  p.plan = {
+    ...fresh,
+    steps: fresh.steps.map((s) => {
+      const was = old.get(s.id);
+      return was ? { ...was, expected: s.expected, instructions: s.instructions, cost_usd: s.cost_usd } : s;
+    }),
+    refreshed_at: run.created_at, refreshed_from_run: run.id,
+  };
+}
+
 /** The owner's real outcome: compared with the simulation, assumptions named, estimates updated by a new run. */
 export async function recordOutcome(store, p, { metric, value, unit, candidate_id, note = '' }, { now = new Date().toISOString(), newId = newIdDefault } = {}) {
   const cid = candidate_id || p.plan?.candidate_id;
@@ -758,6 +793,8 @@ export async function recordOutcome(store, p, { metric, value, unit, candidate_i
     if (c) c.feasibility = classifyCandidate(model, p.spec, { ...c, variables }, again);
     outcome.updated_run = again.id;
     outcome.updated_estimate = Object.fromEntries(Object.entries(again.summary).map(([k, v]) => [k, { unit: v.unit, p10: v.p10, p50: v.p50, p90: v.p90 }]));
+    appendClaims(p, runClaims(again, model), { stage: p.status, now });
+    await refreshForecasts(store, p, model, again);
   }
   // Predicted vs actual goes into the model's track record (outputs: the p50; measured inputs: the assumed value).
   const predicted = cmp.kind === 'output' ? cmp.predicted.p50 : cmp.assumed.nominal;

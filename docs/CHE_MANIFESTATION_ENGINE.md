@@ -205,6 +205,13 @@ t50, t90 = first week with P ≥ 0.5, 0.9
 | 10 | Domain models cite a data source and date; stale data flagged; "no data source" instead of invented numbers | **Implemented for what exists.** Each model has `data_sources` (`GET /api/manifest/models` adds `age_days` and `stale`). Kinds: reference, sourced, assumed, owner and `none`. Drone part prices, materials tables, market CAC, demand, job-market data and the skills gap are `none`, so no number of that kind is produced. **TODO:** real feeds for any of them. |
 | Bonus | Pause or stop an idea by voice; a weekly review on request only | **Implemented.** "Pause manifestation project 2", "manifest resume 2", "kill my manifestation project" (stop: FAILED, the record is kept), "manifestation weekly review" (`GET /api/manifest/review`). Nothing is scheduled. |
 
+## Storage and the project limit
+
+- Saving never deletes anything. No run record is trimmed and no older project is evicted.
+- At 30 projects, creating another is refused with a clear message, and nothing is deleted. A project is removed only through `POST …/delete { confirm: true }`, after the owner says yes.
+- Owner-supplied inputs (in words or through `variables`) override every candidate's design and the model defaults. The drone battery is auto-sized only when no battery mass was given.
+- After an outcome recalibrates a candidate, the comparison is rebuilt. For the plan's candidate, the plan's run, expected ranges and each step's expected result are refreshed. Step status, evidence and approvals are kept. The briefing and scene follow the plan's candidate.
+
 ## Runs are repeatable
 
 A run record holds:
@@ -239,7 +246,7 @@ Outcomes are labelled `provenance: owner_report`. A simulation is never evidence
 - **Kinds**:
   - `artifact`: a reference plus a SHA-256; if `content` is sent, its hash is checked.
   - `test_run`: a reference, at least one test passed, none failed.
-  - `measurement`: a metric, a number and a unit.
+  - `measurement`: a metric, a number and a unit. The metric must be the one the step measures (or, for a step without one, a quantity the model knows), in units of the same dimension: `{metric: 'temperature', unit: 'C'}` never verifies an endurance flight.
   - `owner_report`: what you actually saw, in a sentence.
 - **Refused**:
   - `simulation`, `model_output`, `prediction`, `estimate`, `speculation` and `opinion`;
@@ -281,6 +288,7 @@ All bodies are JSON. In JSON, `null` stands for an unlimited or never-reached va
 | `POST …/amend` | `{ field: success_test \| failure_test \| stop_rule, text, reason }` | `{ preregistration, judged_against: 'original' }` |
 | `POST …/step` | `{ step_id, status: running \| failed \| todo, note? }` | `{ ok, step }`, or 409 `{ ok: false, detail, approval_required }` |
 | `POST …/pause`, `…/resume`, `…/stop` | | `{ ok, project }` or 409 |
+| `POST …/delete` | `{ confirm: true }` | `{ ok, deleted }`; without `confirm: true`, 409 `{ needs_confirmation: true, detail }` and nothing is removed. The app asks the owner first. |
 | `GET /api/manifest/review` | | `{ since, items, spoken }` (the last 7 days, on request) |
 | `GET /api/manifest/track` | | `{ tracks: { <model>: { by_metric: { <metric>: { n, sum_log, records } } } } }` |
 
