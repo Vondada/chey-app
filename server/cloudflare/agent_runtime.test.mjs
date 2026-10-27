@@ -8,6 +8,7 @@ import {
   officeSkillsView,
   queueAgentTask,
   recordAgentWork,
+  agentLocation,
   steerAgentTask,
   teachOfficeSkill,
 } from './agent_runtime.js';
@@ -199,4 +200,23 @@ test('an office agent keeps its personality and works with its teammates; its me
   assert.match(prompt, /Personality \(keep it/);
   assert.doesNotMatch(prompt, /old line 1\b/, 'only the last three office messages are kept');
   assert.match(prompt, /old line 6/);
+});
+
+test('a completed job is recorded with whether its evidence was there', () => {
+  const data = {};
+  const agent = { id: 'atlas', name: 'Atlas' };
+  const bare = recordAgentWork(data, { task: { id: 't-bare', result: 'It works.' }, agent, outcome: 'complete' });
+  const checked = recordAgentWork(data, { task: { id: 't-checked', result: 'It works.', evidence: { tests: ['npm test: pass'] } }, agent, outcome: 'complete' });
+  const failed = recordAgentWork(data, { task: { id: 't-failed' }, agent, outcome: 'failed', error: 'timeout' });
+  assert.equal(bare.evidence_ok, false);
+  assert.equal(checked.evidence_ok, true);
+  assert.equal(failed.evidence_ok, null);
+});
+
+test('a member works in their designated room, whatever the task words say', () => {
+  const working = { runtime_status: 'building', runtime_task: 'make a painting for the logo', role: 'Designer' };
+  assert.equal(agentLocation(working).room, 'gallery');
+  assert.equal(agentLocation({ ...working, home_room: 'music' }).room, 'music');
+  assert.equal(agentLocation({ ...working, home_room: 'lounge' }).room, 'gallery', 'lounge and theater are not working rooms');
+  assert.equal(agentLocation({ ...working, home_room: 'studio', runtime_status: 'meeting' }).room, 'office', 'meetings stay in the Office');
 });
