@@ -1,21 +1,15 @@
 name: CHE iOS simulator smoke test
 
 # Starts the real CHE app on an iOS simulator (macOS runner) and fails if it
-# throws during startup. Runs on PRs that touch the app or its native code,
-# and can be run by hand. Nothing is signed or published.
+# throws during startup. Nothing is signed or published.
+#
+# Manual and informational only (owner, 2026-10-27): it is NOT a merge gate and
+# does not run on pull requests. The pre-merge gate is the live staging test
+# (che-worker-staging.yml, job "live (staging)") plus the release gate's
+# worker, flutter and coding jobs. Run this by hand from the Actions tab when a
+# change needs an on-simulator startup check.
 
 on:
-  pull_request:
-    branches: [main]
-    paths:
-      - "lib/**"
-      - "integration_test/**"
-      - "pubspec.yaml"
-      - "pubspec.lock"
-      - "native/iphone/**"
-      - "tool/bootstrap.sh"
-      - "tool/patch_local_runtime.py"
-      - ".github/workflows/che-ios-simulator-test.yml"
   workflow_dispatch:
 
 permissions:

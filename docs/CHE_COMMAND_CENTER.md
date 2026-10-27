@@ -109,6 +109,10 @@ Honest limits:
 - `/invoices`, `/lead-outreach` and `/lead-followup` draft only; nothing is charged or sent from them.
 - `/automate` designs saved workflows; unattended schedules stay off by the owner's rule.
 
+## Manifestation Engine (`/manifest`, owner 2026-10-27)
+
+One entry in the Intelligence category, over `manifest_api.js` (route `che_manifest`, zero model calls). "Manifest a drone that carries 1 kg for 25 minutes", "manifest a flying car for 2 people" or `/manifest <goal>` creates a project. It holds the spec, classified candidates, seeded Monte Carlo runs, a comparison under equal conditions and a Realization Plan. "Manifestation status" reads the newest five. Nothing is bought, sent or signed, and a step is verified only with evidence. See `docs/CHE_MANIFESTATION_ENGINE.md`.
+
 ## Knowledge Atlas (`/learn`, issue #346)
 
 Concept cards for coding and trading: the ten phase-1 cards of each domain in `server/cloudflare/knowledge_atlas.js`, and 24 more trading cards in `atlas_trading.js`: each has a beginner, intermediate and expert explanation, an analogy, the exact formula where one exists, a worked example and a short quiz. The phone bundles the same cards (`assets/atlas/knowledge_atlas.json`, written by `node tool/dump_knowledge_atlas.mjs`), shown in More → Knowledge Atlas, from the Brain's header, or by saying "open the knowledge atlas".

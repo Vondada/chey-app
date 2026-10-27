@@ -60,3 +60,25 @@ test('the crew page starts idle, takes real states, reports real readiness and s
   assert.match(script, /addEventListener\('visibilitychange', resume\)/);
   assert.match(script, /for \(const c of crew\) if \(!c\.still\) c\.mixer\.update\(dt\)/, 'offline agents stand still');
 });
+
+// Big J World slice (2026-10-27): crew roles follow the server roster, Atlas has a named workstation whose tap
+// reaches the app, and the app can save and restore where the owner stands (CHE.getPose / CHE.setPose).
+test('the crew page uses the server roles, names Atlas\'s workstation and exposes the pose', async () => {
+  const { LA_AGENCIA_ROLES } = await import('../../server/cloudflare/office_company.js');
+  const page = readFileSync(new URL('../../assets/characters/app/index.html', import.meta.url), 'utf8');
+  const script = page.slice(page.lastIndexOf('<script>') + 8, page.lastIndexOf('</script>'));
+  const crew = script.slice(script.indexOf('const CREW = ['), script.indexOf('];', script.indexOf('const CREW = [')));
+  const members = [...crew.matchAll(/name: '([A-Za-z]+)', role: '([^']+)'/g)];
+  assert.equal(members.length, 7);
+  const words = (text) => text.toLowerCase().split(/[^a-z]+/).filter((w) => w.length > 3);
+  for (const [, name, role] of members) {
+    const server = LA_AGENCIA_ROLES[name]?.role;
+    assert.ok(server, `${name} is on the server roster`);
+    assert.ok(words(server).every((w) => words(role).includes(w)), `${name}: page role "${role}" does not match server role "${server}"`);
+  }
+  assert.match(script, /\{ id: 'atlas', label: "Atlas's workstation"/);
+  assert.match(script, /g\.name = `ws:\$\{w\.id\}`/);
+  assert.match(script, /tellApp\(\{ type: 'workstationTap', id \}\)/);
+  assert.match(script, /getPose: \(\) => getPose\(\)/);
+  assert.match(script, /setPose: \(p\) => setPose\(p\)/);
+});
