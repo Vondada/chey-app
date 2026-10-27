@@ -780,6 +780,39 @@
    "optional_missing": []
   },
   {
+   "id": "che-model-status",
+   "category": "intelligence",
+   "title": "AI Model Status",
+   "summary": "Read verified coding-provider availability and cost evidence.",
+   "does": "Reads the existing coding runner model ledger and reports provider availability, pauses and verified billing evidence. Changes nothing.",
+   "mode": "EXPLORE",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": null,
+   "examples": [
+    "AI model status",
+    "Which AI models are free?"
+   ],
+   "needs": [],
+   "optional": [],
+   "handler": "model_status.modelStatusIntent → modelStatusTurn",
+   "route": "che_model_status",
+   "produces": "status",
+   "evidence": "Runner ledger on che-mailbox; missing or unavailable records are reported explicitly.",
+   "cost": "Read-only ledger lookup; no model execution.",
+   "keywords": [
+    "model status",
+    "coding providers",
+    "free AI",
+    "billing"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
    "id": "che-status",
    "category": "intelligence",
    "title": "Che Status",

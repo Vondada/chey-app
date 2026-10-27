@@ -202,6 +202,7 @@ import {
 } from './google_services.js';
 import { FYE_STATUS, fundyouredgeDraft, fundyouredgeDraftReply, fundyouredgeIntent, fundyouredgeReply } from './fundyouredge.js';
 import { CheCodingRuntime, codingRuntimeEnabled, ownerRequiresMergeApproval, recoverableRuntimeFailure, runtimeState, runtimeStateClass, speakRuntimeStatus } from './coding_runtime.js';
+import { aiModelStatus, modelStatusIntent, modelStatusTurn } from './model_status.js';
 import { newMissionAction, RESUME_LIMIT, resumeAction, resumeDecision } from './coding_failover.mjs';
 import { handoffIntent, hasGitHubMailbox, readLiveHandoff, latestHandoff, unseenReplies, relayText, listThreads, mailboxHead, mailboxIntent, readAllMail, readThread, sendMail, speakThreads } from './mailbox.js';
 import { officeToday, ownerDayKey, ownerTimeZone } from './office_board.js';
@@ -8549,6 +8550,7 @@ export class CheState extends DurableObject {
             { id: 'fish', name: 'Fish Audio (backup voice)', page: 'https://fish.audio', status: fish.status, last4: fish.last4, detail: fishUsage ? `${fish.detail} Today ${fishUsage}.` : fish.detail, readonly: true },
           ],
           memory: { name: MEMORY_DB.name, page: MEMORY_DB.page, status: memoryStored ? (health.memory?.status || 'connected') : (memoryOn ? 'connected (server secret)' : 'not set up'), last4: memoryStored ? (health.memory?.last4 || '') : '', stored: memoryStored },
+          ai_model_status: await aiModelStatus(this.keyEnv || this.env, this.ctx.storage).catch(() => null),
         });
       }
       if (path === '/api/keys/memory' && request.method === 'POST') {
@@ -12404,6 +12406,7 @@ export class CheState extends DurableObject {
         // investigates, reads repo files or starts a job. Handoffs, AI messages, consultations and
         // attachments keep their routes. Work by Claude or another AI is not in CHE's records, so the
         // model is never asked (it invented authors).
+        if (!body.attachment && modelStatusIntent(message)) { const t = await modelStatusTurn(this.keyEnv || this.env, this.ctx.storage, ownerDevice); return ndjsonReply(t.reply, t.meta); }
         const otherAgent = body.attachment || handoffIntent(message) || mailboxIntent(message) || consultIntent(message) ? '' : otherAgentWorkAsk(message);
         if (otherAgent) {
           if (!ownerDevice) return ndjsonReply('Only the CHE owner can read coding job status, sir.', { source: 'che_coding_history', ok: false, outcome: RECALL_OUTCOMES.PERMISSION_DENIED });
@@ -15521,7 +15524,7 @@ export class CheState extends DurableObject {
       // the failure cannot be waited out, does CHE's own coding team take over.
       const blocked = String(await this.ctx.storage.get('che_runtime_resume_blocked') || '') === id;
       const plan = !blocked && status.resumable === true
-        ? resumeDecision({ resumable: true, resumeCount: Number(status.resume_count || 0) })
+        ? resumeDecision({ resumable: true, resumeCount: Number(status.resume_count || 0), notBefore: status.capacity_resume_at })
         : { resume: false };
       if (plan.resume) {
         const resumeState = {
