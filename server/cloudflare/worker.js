@@ -267,6 +267,7 @@ import { loadRegistry as loadCapabilityRegistry } from './capability_registry.js
 import { BrainLedger, answerLedger, decidePending as decideBrainPending, installBrainLedger, ledgerApi, recordGraphConnections, ledgerIntent as brainLedgerIntent, DEFAULT_ZONE as LEDGER_DEFAULT_ZONE } from './brain_ledger.js';
 import { FilmStore, filmIntent, filmProgress, farmProviders, loadRates, loadUsage, speakFarm, speakPlan, speakStatus as speakFilmStatus } from './film_studio.js';
 import { GpuQueue, gpuWorkerRoute, speakGpuConnect, speakGpuSummary } from './gpu_queue.js';
+import { recoverCreations } from './creation_orchestrator.js';
 import { CreationStudio, studioOwnerRoute } from './creation_studio.js';
 import { populationAnswer, worldPopulationIntent, worldRoute } from './world_population.js';
 import { creationProbeRoute } from './creation_probe.js';
@@ -4272,17 +4273,17 @@ export class CheState extends DurableObject {
     // autonomy on or off: recovery only corrects statuses, it never starts work.
     times.push(...data.team_tasks.filter((t) => ['running', 'reviewing'].includes(t.status))
       .map((t) => Math.max(Date.now() + 250, (Date.parse(t.updated_at) || Date.now()) + 5 * 60_000 + 1000)));
-    // Film Studio: an active film asks for its next pass.
-    const filmWake = Number(await this.ctx.storage.get('film:wake')) || 0;
-    if (filmWake) times.push(Math.max(Date.now() + 250, filmWake));
+    // Film and creation share the alarm.
+    for (const key of ['film:wake', 'gpu:wake_at']) {
+      const at = Number(await this.ctx.storage.get(key)) || 0;
+      if (at) times.push(Math.max(Date.now() + 250, at));
+    }
     times.push(...await paidWakes(this.ctx.storage));
     // While Flagstaff is open, do one cheap GitHub-head check every 30 seconds.
     // The AI only runs when a genuinely new message addressed to CHE appears.
     const flagstaffInitialized = Boolean(await this.ctx.storage.get('web_mailbox_code'));
     if (flagstaffInitialized && await flagstaffOpen(this.ctx.storage)) times.push(Date.now() + 30_000);
-    // OpenCode is an execution attempt, not the durable owner mission. While an
-    // attempt is active, wake periodically so a terminal runner failure is
-    // recovered without waiting for the owner to ask for status.
+    // Wake active OpenCode attempts to recover a terminal runner failure.
     const runtimeMonitorUntil = Number(await this.ctx.storage.get('che_runtime_monitor_until')) || 0;
     const runtimeSessionAt = String(await this.ctx.storage.get('che_runtime_last_session_at') || '');
     if (runtimeSessionAt && runtimeMonitorUntil > Date.now()) times.push(Date.now() + 60_000);
@@ -14635,6 +14636,7 @@ export class CheState extends DurableObject {
       if (kept.length) await this.ctx.storage.setAlarm(Math.min(...kept));
       return;
     }
+    await recoverCreations(this.env, { storage: this.ctx.storage }).catch(() => null);
     await this.filmPass().catch((error) => console.error('Film Studio pass failed:', error?.message || error));
     await reapPaid(this.env, { storage: this.ctx.storage }).catch(() => null);
     // Flagstaff stays responsive even when Office autonomy is paused. Incoming
