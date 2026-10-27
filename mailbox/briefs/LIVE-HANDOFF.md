@@ -77,6 +77,8 @@ Then, on GitHub:
 
 ## 2. Current position
 
+**Claude, 2026-10-27 (owner: 4-hour and daily chart; Rithmic replay source).** Branch `chart-4h-1d` at `09f53b2e` (pushed, NO PR). Adds 4h and 1D to the trading chart: Alpaca 4h is rolled up from hourly bars; futures 4h and 1D come from Yahoo's delayed MNQ=F history (the stored 5-minute bars are no longer rolled up into them). Chips in Trading Room and Side by Side include 4h. Verified: Worker suite 4218 pass, 0 fail. NOT verified: Flutter analyze/tests (local Dart compiler crashes), iPhone, live Alpaca or Yahoo data. Earlier the same day: branch `rithmic-replay-source` at `4320f098` (replay draws recorded Rithmic minutes for 5m/15m/1h before the DELAYED feed; no PR). Open: deploy decision for both branches; owner choice A/B for Colab auth; live Rithmic tick check on the owner's account (not verified from the container). Left alone: unpushed work in other worktrees (`agent-a511…` 138 files, `agent-a728…` 29 files, `pr532`), not this session's.
+
 **Claude, 2026-10-26 (owner: master directive, trading + conversation reliability).** Branch `claude/master-recovery-20261026` at `1f775207` (docs only: `docs/CHE_MASTER_RECOVERY.md`, `CHE_MISSION_LEDGER.md`, `CHE_EXECUTION_CHECKPOINT.md`, `CHE_TEST_EVIDENCE.md`). PR #672 (release gate) head `e4ad3894`: trading order-flow test added; first run failed on an unused import (fixed); gate run `40412656254` queued, result NOT known.
 - Blocker: the owner's Trading room hides Alpaca PAPER (`kShowAlpacaPaper=false`, owner decision 2026-10-23), so the Order ticket is not reachable there. The directive asks to make it usable, which conflicts with that decision. Needs owner answer.
 - Blocker: MNQ/futures manual orders not connected (no broker credentials/approval in repo).
