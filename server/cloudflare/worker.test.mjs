@@ -1003,6 +1003,8 @@ test('chat recovers on a larger model without shortening context, and reports re
 
 test('voice falls back to free Gemini speech (WAV) when Cloudflare voice is out of allowance', async () => {
   const saved = new Map();
+  // Gemini is an outside engine: connected mode (Private Mode is proven in privacy_mode.test.mjs).
+  saved.set('che:privacy_mode', JSON.stringify({ level: 'connected', grants: [] }));
   const env = {
     CHE_PAIR_CODE: '123456',
     GEMINI_API_KEY: 'gem',

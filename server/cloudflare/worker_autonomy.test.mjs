@@ -18,6 +18,8 @@ try { mod = await import(generated.href + '?t=' + Date.now()); } finally { try {
 const { default: worker, openAiVision, CheState, busyError, dispatchChange, enqueueJob, selfUpdateChatIntent, isExistingChangeCommand, selectReadyJobs, shouldHandleSelfUpdateAction, MAX_JOB_ATTEMPTS, MAX_JOB_RETRIES } = mod;
 
 function storageFor(saved, alarms = []) {
+  // These tests cover outside providers, so they run in connected mode; Private Mode is proven in privacy_mode.test.mjs.
+  if (!saved.has('che:privacy_mode')) saved.set('che:privacy_mode', { level: 'connected', grants: [] });
   return {
     get: async (key) => (saved.has(key) ? structuredClone(saved.get(key)) : undefined),
     put: async (key, value) => saved.set(key, structuredClone(value)),

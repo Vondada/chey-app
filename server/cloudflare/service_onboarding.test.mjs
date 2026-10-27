@@ -24,6 +24,8 @@ try { mod = await import(generated.href + '?t=' + Date.now()); } finally { try {
 const { default: worker, CheState } = mod;
 
 function storageFor(saved) {
+  // These tests cover outside providers, so they run in connected mode; Private Mode is proven in privacy_mode.test.mjs.
+  if (!saved.has('che:privacy_mode')) saved.set('che:privacy_mode', { level: 'connected', grants: [] });
   return {
     get: async (key) => Array.isArray(key) ? new Map(key.filter((k) => saved.has(k)).map((k) => [k, structuredClone(saved.get(k))])) : saved.has(key) ? structuredClone(saved.get(key)) : undefined,
     put: async (key, value) => {
