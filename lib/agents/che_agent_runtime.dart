@@ -12,6 +12,7 @@ import 'package:flutter/widgets.dart' show AppLifecycleState, WidgetsBinding, Wi
 import 'package:http/http.dart' as http;
 
 import '../che_ui/che_agents.dart';
+import 'che_office_conversation.dart';
 
 class CheAgentRuntimeException implements Exception {
   const CheAgentRuntimeException(this.message);
@@ -599,6 +600,28 @@ class CheAgentRuntimeClient {
     final j = await _send('POST', '/api/autonomy', {'enabled': false});
     if (j['autonomy'] == true) throw const CheAgentRuntimeException('CHE could not confirm the Office stood down.');
     return 'CHE here. Office standing down. ${j['reply'] ?? ''}'.trim();
+  }
+
+  /// The full conversation for an agent, read from GET /api/agents/:id (its `conversation` record). With [taskId],
+  /// only that task's messages, from the same record. Read only.
+  Future<CheOfficeConversation> conversation({required String agentId, String? taskId}) async {
+    final j = await _send('GET', '/api/agents/${Uri.encodeComponent(agentId)}');
+    final raw = j['conversation'];
+    if (raw is! Map<String, dynamic>) {
+      throw const CheAgentRuntimeException('The conversation record is missing from the Office.');
+    }
+    final all = CheOfficeConversation.fromJson(raw);
+    if (taskId == null) return all;
+    final matching = [for (final t in all.tasks) if (t.id == taskId) t];
+    return CheOfficeConversation(
+      scope: 'task',
+      agent: all.agent,
+      task: matching.isEmpty ? null : matching.first,
+      tasks: matching,
+      messages: [for (final m in all.messages) if (m.taskId == taskId) m],
+      notes: all.notes,
+      generatedAt: all.generatedAt,
+    );
   }
 
   Future<CheAgentDetail> agent(String id) async {
