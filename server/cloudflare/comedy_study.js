@@ -27,6 +27,7 @@ const norm = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').tr
 
 // ─── The owner's words ───
 const STUDY_VERB = /\b(?:go |please )?(?:study|watch|research|binge|analy[sz]e|learn from|go through)\b/i;
+const HUMOR_CUE = /\b(?:joke|jokes|funny|humou?r|comedy|comedic|roast|roasting|sarcas\w*|witty|banter|tease|teasing|timing|laugh\w*|haha+|lol|lmao)\b/i;
 const HUMOR_GOAL = /\b(?:funny|humou?r|comedy|comedic|jokes?|joking|timing|sarcas\w*|witty|wit)\b/i;
 
 /** "Go study the entire Martin series and The Fresh Prince of Bel-Air ... what makes them funny". Null otherwise. */
@@ -465,6 +466,10 @@ export async function studyChatTurn(storage, message) {
 
 /** The chat prompt's humor line, after scoring the owner's reaction to CHE's previous reply. */
 export async function humorTurn(storage, message, history = []) {
+  // Only a turn about humor, or a laugh or flat reaction to a joke, reads the lessons: every other owner turn
+  // keeps its storage budget (perf_budget.test.mjs), and the prompt line is for the moments it can help.
+  const text = String(message ?? '');
+  if (!HUMOR_CUE.test(text) && !LAUGH.test(text.trim()) && !FLAT.test(text)) return '';
   const line = await humorLine(storage);
   if (line) await scoreHumor(storage, message, [...(Array.isArray(history) ? history : [])].reverse().find((h) => h?.role === 'assistant')?.content || '').catch(() => null);
   return line;
