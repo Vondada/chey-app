@@ -157,10 +157,7 @@ class _CheMailboxScreenState extends State<CheMailboxScreen> {
       );
       final body = jsonDecode(res.body);
       final map = body is Map ? body : const {};
-      final checks = map['checks'] is List ? map['checks'] as List : const [];
-      final detail = '${map['detail'] ?? (checks.isNotEmpty && checks.first is Map ? (checks.first as Map)['detail'] ?? '' : '')}'.trim();
-      final ok = map['ok'] == true;
-      _say(ok ? 'Modal is connected. $detail' : 'Modal is not connected. ${detail.isEmpty ? 'The check gave no detail.' : detail}');
+      _say(cheModalCheckSpeech(map, httpStatus: res.statusCode));
     } catch (_) {
       _say('The Modal check could not reach CHE. Nothing was changed.');
     }
@@ -1171,4 +1168,21 @@ class _AiNeuralPainter extends CustomPainter {
   @override
   bool shouldRepaint(covariant _AiNeuralPainter oldDelegate) =>
       oldDelegate.positions.length != positions.length || oldDelegate.weights.toString() != weights.toString();
+}
+
+/// What Check Connection says for CHE's Modal verify reply: the result, its failure category, the plain reason and the
+/// check's request ID, so a failure can be traced. Secrets never reach this reply (the server redacts it).
+String cheModalCheckSpeech(Map<dynamic, dynamic> map, {int httpStatus = 200}) {
+  String text(Object? v) => v == null ? '' : '$v'.trim();
+  final checks = map['checks'] is List ? map['checks'] as List : const [];
+  final failure = map['failure'] is Map ? map['failure'] as Map : const {};
+  final firstCheck = checks.isNotEmpty && checks.first is Map ? text((checks.first as Map)['detail']) : '';
+  final found = [text(map['detail']), text(failure['detail']), firstCheck].firstWhere((d) => d.isNotEmpty, orElse: () => '');
+  final detail = found.isEmpty || RegExp(r'[.!?]$').hasMatch(found) ? found : '$found.';
+  final category = text(map['category']).replaceAll('_', ' ');
+  final id = text(map['request_id']);
+  final trace = id.isEmpty ? '' : ' Check ID $id.';
+  if (map['ok'] == true) return 'Modal is connected. $detail$trace'.trim();
+  final reason = detail.isNotEmpty ? detail : 'CHE answered HTTP $httpStatus with no reason.';
+  return 'Modal is not connected${category.isEmpty ? '' : ' ($category)'}. $reason$trace';
 }
