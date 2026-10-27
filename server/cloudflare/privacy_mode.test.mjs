@@ -124,6 +124,11 @@ test('a permission opens exactly one company, for a limited time; turning Privat
   const storage = storageMap();
   let c = await che(storage, { aiDown: true });
   let r = await c.say('Let Claude help with this for an hour.');
+  assert.match(r.reply, /Just to confirm, sir: that would let Anthropic \(Claude\) receive what you send it for 1 hour/);
+  outbound.length = 0;
+  await c.say('Write a short toast for my uncle\'s wedding.');
+  assert.deepEqual(toProviders(), [], 'nothing opens before he confirms');
+  r = await c.say('Yes');
   assert.match(r.reply, /Anthropic \(Claude\) is allowed until/);
   outbound.length = 0;
   await c.say('Write a short toast for my brother\'s wedding.');
@@ -134,6 +139,11 @@ test('a permission opens exactly one company, for a limited time; turning Privat
   await c.say('Write a short toast for my sister\'s wedding.');
   assert.deepEqual(toProviders(), []);
   r = await c.say('Turn off private mode.');
+  assert.match(r.reply, /Just to confirm/);
+  r = await c.say('no');
+  assert.match(r.reply, /Nothing changed/);
+  r = await c.say('Turn off private mode.');
+  r = await c.say('yes, do it');
   assert.match(r.reply, /Private Mode is off/);
   c = await che(storage, { aiDown: true }); // restart: a new CheState over the same storage
   outbound.length = 0;
@@ -179,4 +189,28 @@ test('the live check passes against this code and fails when an outside company 
   assert.deepEqual(leaked.steps.filter((s) => !s.pass).map((s) => s.name), ['Test 1/4: nothing went to an outside AI or voice company (fetch-layer ledger)']);
   assert.equal(privacyIntent('always let ElevenLabs speak')?.standing, true);
   assert.equal(privacyIntent('let fish audio speak for me from now on')?.provider, 'fish');
+});
+
+test('Codex review: two CHE objects in one isolate keep their own policy and ledger; daily totals survive a trimmed ledger', async () => {
+  const owner = storageMap();
+  const other = storageMap();
+  other.saved.set('che:privacy_mode', { level: 'connected', grants: [] });
+  const a = await che(owner, { aiDown: true });
+  const b = await che(other, { aiDown: true });
+  outbound.length = 0;
+  // Interleaved: the connected object's request runs while the owner's is in flight.
+  await Promise.all([a.say('Write a short toast for my aunt.'), b.say('Write a short toast for my uncle.')]);
+  const ownerLedger = owner.saved.get('che:egress_ledger') || [];
+  const otherLedger = other.saved.get('che:egress_ledger') || [];
+  assert.ok(ownerLedger.length && ownerLedger.every((e) => e.outcome === 'blocked'), 'the owner object never sent anything');
+  assert.ok(otherLedger.some((e) => e.outcome === 'sent'), `the connected object did: ${JSON.stringify(otherLedger)} ${JSON.stringify(toProviders().map((x) => x.host))}`);
+  const sentHosts = toProviders().map((r) => r.host);
+  assert.ok(sentHosts.length > 0);
+  // 600 blocked entries after one sent one: the detail list keeps 500, the daily total still counts the send.
+  const today = new Date().toISOString().slice(0, 10);
+  owner.saved.set('che:egress_ledger', Array.from({ length: 500 }, () => ({ at: new Date().toISOString(), provider: 'groq', host: 'api.groq.com', outcome: 'blocked' })));
+  owner.saved.set('che:egress_daily', { [today]: { sent: 1, blocked: 600, bytes: 1200, providers: { openai: 1 } } });
+  const r = await a.say('Knox, has anything private left CHE today?');
+  assert.match(r.reply, /1 request went out today, to OpenAI \(ChatGPT\), 1200 bytes in all/);
+  assert.match(r.reply, /I blocked 600 requests/);
 });

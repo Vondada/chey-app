@@ -1,3 +1,5 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
+
 // Private Mode (owner, 2026-10-27: "I do not want OpenAI, Anthropic, Google, or other outside AI providers receiving
 // my private conversations by default"). Enforced in code, at the one place every outbound request passes: the
 // Worker's fetch guard (security_intelligence.installEgressGuard) asks privacyVerdict() before a byte leaves.
@@ -17,6 +19,8 @@
 
 export const PRIVACY_KEY = 'che:privacy_mode';
 export const LEDGER_KEY = 'che:egress_ledger';
+export const DAILY_KEY = 'che:egress_daily';
+export const PENDING_KEY = 'che:privacy_pending';
 const LEDGER_MAX = 500;
 const HOUR = 3_600_000;
 
@@ -46,7 +50,11 @@ export function providerFor(host) {
   return null;
 }
 
-const STATE = { level: 'private', grants: [], pending: [] };
+// The policy is carried per request (AsyncLocalStorage, wrangler flag nodejs_als): two CHE objects sharing an isolate
+// never see each other's setting or ledger, and background work a request starts keeps that request's policy.
+// Private Mode governs everything a CheState does; code outside one (public pages, health checks) is not gated.
+const CONTEXT = new AsyncLocalStorage();
+const current = () => CONTEXT.getStore() || null;
 
 export function normalizePrivacy(saved, now = Date.now()) {
   const level = saved?.level === 'connected' ? 'connected' : 'private';
@@ -54,25 +62,29 @@ export function normalizePrivacy(saved, now = Date.now()) {
   return { level, grants, at: saved?.at || null };
 }
 
-/** Applies the stored setting to this Worker for the current request and its background work. */
-export function setPrivacy(saved, now = Date.now()) {
-  const p = normalizePrivacy(saved, now);
-  STATE.level = p.level;
-  STATE.grants = p.grants;
-  return p;
+export async function loadPrivacy(storage, now = Date.now()) {
+  try { return normalizePrivacy(await storage.get(PRIVACY_KEY), now); } catch (_) { return normalizePrivacy(null, now); }
 }
 
-export function privacyLevel() { return STATE.level; }
+/** Runs fn under this object's stored policy, then waits for its ledger writes. */
+export async function runWithPrivacy(storage, fn, now = Date.now()) {
+  const ctx = { ...(await loadPrivacy(storage, now)), storage, queue: Promise.resolve() };
+  return CONTEXT.run(ctx, async () => {
+    try { return await fn(); } finally { await ctx.queue.catch(() => {}); }
+  });
+}
 
-/** { allow, provider, reason } for one outbound URL, or null when it is not an outside AI or voice host. */
+/** { allow, provider, reason } for one outbound URL; null when it is not an outside AI or voice host or no CHE policy applies. */
 export function privacyVerdict(url, now = Date.now()) {
+  const p = current();
+  if (!p) return null;
   let host = '';
   try { host = new URL(String(url)).hostname.toLowerCase(); } catch (_) { return null; }
   const provider = providerFor(host);
   if (!provider) return null;
-  if (STATE.level === 'connected') return { allow: true, provider, host, basis: 'connected mode' };
-  const grant = STATE.grants.find((g) => g.provider === provider && Number(g.until) > now);
-  if (grant) return { allow: true, provider, host, basis: `your permission until ${new Date(grant.until).toISOString().slice(11, 16)} UTC` };
+  if (p.level === 'connected') return { allow: true, provider, host, basis: 'connected mode' };
+  const grant = p.grants.find((g) => g.provider === provider && Number(g.until) > now);
+  if (grant) return { allow: true, provider, host, basis: grant.until - now > 30 * 24 * HOUR ? 'your standing permission' : `your permission until ${new Date(grant.until).toISOString().slice(11, 16)} UTC` };
   return { allow: false, provider, host, reason: `Private Mode is on, so nothing was sent to ${PROVIDERS[provider].name}.` };
 }
 
@@ -85,41 +97,45 @@ function bodyText(init, input) {
   return body == null ? '' : null;
 }
 
-/** Notes one outside request for Knox's ledger: metadata and a body fingerprint only. */
-export async function noteEgress(verdict, input, init, now = Date.now()) {
+const day = (iso) => String(iso || '').slice(0, 10);
+
+async function appendLedger(storage, entry) {
+  const saved = (await storage.get(LEDGER_KEY)) || [];
+  await storage.put(LEDGER_KEY, [entry, ...saved].slice(0, LEDGER_MAX));
+  // Daily totals outlive the bounded detail list, so "nothing left today" is never said from a trimmed record.
+  const totals = (await storage.get(DAILY_KEY)) || {};
+  const d = (totals[day(entry.at)] ||= { sent: 0, blocked: 0, bytes: 0, providers: {} });
+  d[entry.outcome] += 1;
+  if (entry.outcome === 'sent') { d.bytes += entry.bytes || 0; d.providers[entry.provider] = (d.providers[entry.provider] || 0) + 1; }
+  await storage.put(DAILY_KEY, Object.fromEntries(Object.entries(totals).sort().slice(-31)));
+}
+
+/** Records one outside request in this object's ledger: metadata and a body fingerprint only, never the body. */
+export function noteEgress(verdict, input, init, now = Date.now()) {
+  const p = current();
+  if (!p?.storage) return Promise.resolve();
   const text = bodyText(init, input);
-  let fingerprint = null;
-  if (typeof text === 'string' && text) {
-    const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
-    fingerprint = Array.from(new Uint8Array(digest).slice(0, 8), (b) => b.toString(16).padStart(2, '0')).join('');
-  }
-  STATE.pending.push({
-    at: new Date(now).toISOString(), provider: verdict.provider, host: verdict.host,
-    outcome: verdict.allow ? 'sent' : 'blocked', basis: verdict.allow ? verdict.basis : 'private mode',
-    bytes: typeof text === 'string' ? new TextEncoder().encode(text).length : null, fingerprint,
-  });
-  if (STATE.pending.length > LEDGER_MAX) STATE.pending.splice(0, STATE.pending.length - LEDGER_MAX);
-}
-
-/** Writes noted requests to CHE's storage (called at the end of each request and alarm). */
-export async function flushEgressLedger(storage) {
-  if (!STATE.pending.length) return 0;
-  const batch = STATE.pending.splice(0);
-  try {
-    const saved = (await storage.get(LEDGER_KEY)) || [];
-    await storage.put(LEDGER_KEY, [...batch.reverse(), ...saved].slice(0, LEDGER_MAX));
-  } catch (_) { STATE.pending.unshift(...batch.reverse()); return 0; }
-  return batch.length;
-}
-
-export async function loadPrivacy(storage, now = Date.now()) {
-  try { return normalizePrivacy(await storage.get(PRIVACY_KEY), now); } catch (_) { return normalizePrivacy(null, now); }
+  // Queued at once (before any await), so the request's end always waits for this entry.
+  p.queue = p.queue.then(async () => {
+    let fingerprint = null;
+    if (typeof text === 'string' && text) {
+      const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
+      fingerprint = Array.from(new Uint8Array(digest).slice(0, 8), (b) => b.toString(16).padStart(2, '0')).join('');
+    }
+    await appendLedger(p.storage, {
+      at: new Date(now).toISOString(), provider: verdict.provider, host: verdict.host,
+      outcome: verdict.allow ? 'sent' : 'blocked', basis: verdict.allow ? verdict.basis : 'private mode',
+      bytes: typeof text === 'string' ? new TextEncoder().encode(text).length : null, fingerprint,
+    });
+  }).catch(() => {});
+  return p.queue;
 }
 
 async function storePrivacy(storage, next, now) {
   const p = { ...normalizePrivacy(next, now), at: new Date(now).toISOString() };
   await storage.put(PRIVACY_KEY, p);
-  setPrivacy(p, now);
+  const ctx = current();
+  if (ctx?.storage === storage) Object.assign(ctx, { level: p.level, grants: p.grants });
   return p;
 }
 
@@ -163,6 +179,19 @@ export function privacyIntent(message) {
   return null;
 }
 
+/** A yes or no to a pending provider change (within five minutes), or null. One storage read. */
+export async function privacyConfirmIntent(storage, message, now = Date.now()) {
+  const t = String(message ?? '').replace(/[\u2018\u2019]/g, "'").trim().toLowerCase().replace(/[.!]+$/, '');
+  if (t.length > 40) return null;
+  const yes = /^(?:yes|yeah|yep|yup|confirm|confirmed|do it|go ahead|yes,? (?:do it|please|go ahead)|ok(?:ay)?,? do it)$/.test(t);
+  const no = /^(?:no|nope|nah|cancel|never ?mind|don'?t|keep (?:it|things) private)$/.test(t);
+  if (!yes && !no) return null;
+  let pending = null;
+  try { pending = await storage.get(PENDING_KEY); } catch (_) { return null; }
+  if (!pending || now - Number(pending.at || 0) > 5 * 60_000) return null;
+  return yes ? { action: 'confirm', pending } : { action: 'cancel' };
+}
+
 const time = (iso) => String(iso || '').slice(11, 16);
 const today = (iso, now) => String(iso || '').slice(0, 10) === new Date(now).toISOString().slice(0, 10);
 
@@ -174,41 +203,68 @@ export async function privacyTurn(storage, ask, { devices = [], security = null,
   const meta = (extra = {}) => ({ source: 'che_knox_privacy', ok: true, model_calls: 0, privacy_action: ask.action, ...extra });
   const p = await loadPrivacy(storage, now);
   let ledger = [];
-  try { ledger = (await storage.get(LEDGER_KEY)) || []; } catch (_) { ledger = []; }
-  const day = ledger.filter((e) => today(e.at, now));
-  const sent = day.filter((e) => e.outcome === 'sent');
-  const blocked = day.filter((e) => e.outcome === 'blocked');
+  let totals = null;
+  try { ledger = (await storage.get(LEDGER_KEY)) || []; totals = ((await storage.get(DAILY_KEY)) || {})[new Date(now).toISOString().slice(0, 10)] || null; } catch (_) { ledger = []; }
+  const todays = ledger.filter((e) => today(e.at, now));
+  const sentDetail = todays.filter((e) => e.outcome === 'sent');
+  const blockedDetail = todays.filter((e) => e.outcome === 'blocked');
+  // Counts come from the daily totals; the detail list (last 500) only names companies and times.
+  const sentCount = Math.max(totals?.sent || 0, sentDetail.length);
+  const blockedCount = Math.max(totals?.blocked || 0, blockedDetail.length);
+  const sentNames = [...new Set([...Object.keys(totals?.providers || {}), ...sentDetail.map((e) => e.provider)])].map((id) => PROVIDERS[id]?.name || id).join(', ');
   const names = (list) => [...new Set(list.map((e) => PROVIDERS[e.provider]?.name || e.host))].join(', ');
   const modeLine = p.level === 'private'
     ? `Private Mode is on${p.grants.length ? `, with your permission open for ${p.grants.map((g) => `${PROVIDERS[g.provider].name} ${g.until - now > 30 * 24 * HOUR ? 'from now on' : `until ${time(new Date(g.until).toISOString())} UTC`}`).join(' and ')}` : ''}: no outside AI or voice company gets your conversations.`
     : 'Private Mode is off (connected mode): outside AI and voice companies can be used.';
   const caveat = ' Honest limit: CHE\'s memory and her Workers AI model still run in Cloudflare, not only on your phone.';
 
-  if (ask.action === 'set') {
-    const next = await storePrivacy(storage, { level: ask.level, grants: ask.level === 'private' ? [] : p.grants }, now);
-    return { text: next.level === 'private' ? `Done, sir. Private Mode is on: I won't send your conversations, voice or memories to OpenAI, Anthropic, Google or any other outside AI or voice company. If something needs one, I'll say so and ask first.${caveat}` : 'Done, sir. Private Mode is off: I can use outside AI and voice companies again, and every request is still recorded in my ledger. Say "turn on private mode" to close it.', meta: meta({ privacy_level: next.level }) };
+  // Opening outside companies is confirmed aloud first (AGENTS.md: consequential AI-provider permission changes);
+  // closing them (Private Mode on, revoke) takes effect at once.
+  const opening = (ask.action === 'set' && ask.level === 'connected') || ask.action === 'grant';
+  if (opening) {
+    await storage.put(PENDING_KEY, { ...ask, at: now });
+    const what = ask.action === 'grant'
+      ? `let ${PROVIDERS[ask.provider].name} receive what you send it ${ask.standing ? 'from now on, until you revoke it' : `for ${Math.round(ask.ms / 60_000) >= 60 ? `${Math.round(ask.ms / HOUR)} hour${Math.round(ask.ms / HOUR) === 1 ? '' : 's'}` : `${Math.round(ask.ms / 60_000)} minutes`}`}`
+      : 'turn Private Mode off, so OpenAI, Anthropic, Google and the other outside AI and voice companies can receive your conversations again';
+    return { text: `Just to confirm, sir: that would ${what}. Say "yes" to do it, or "no" to keep things private.`, meta: meta({ pending: true, ok: true }) };
   }
-  if (ask.action === 'grant') {
-    const until = now + ask.ms;
-    await storePrivacy(storage, { level: p.level, grants: [...p.grants.filter((g) => g.provider !== ask.provider), { provider: ask.provider, until, at: new Date(now).toISOString() }] }, now);
-    return { text: `Okay, sir. ${PROVIDERS[ask.provider].name} is allowed ${ask.standing ? 'from now on, until you say "revoke all permissions"' : `until ${time(new Date(until).toISOString())} UTC`}. Only that company, and every request is recorded. Private Mode stays on for everyone else.`, meta: meta({ provider: ask.provider, until: new Date(until).toISOString() }) };
+  if (ask.action === 'cancel') {
+    await storage.delete(PENDING_KEY);
+    return { text: 'Okay, sir. Nothing changed; Private Mode stays as it was.', meta: meta() };
+  }
+  if (ask.action === 'confirm') {
+    const pending = ask.pending;
+    await storage.delete(PENDING_KEY);
+    if (pending.action === 'set') {
+      await storePrivacy(storage, { level: 'connected', grants: p.grants }, now);
+      return { text: 'Done, sir. Private Mode is off: I can use outside AI and voice companies again, and every request is still recorded in my ledger. Say "turn on private mode" to close it.', meta: meta({ privacy_level: 'connected' }) };
+    }
+    const until = now + pending.ms;
+    await storePrivacy(storage, { level: p.level, grants: [...p.grants.filter((g) => g.provider !== pending.provider), { provider: pending.provider, until, at: new Date(now).toISOString() }] }, now);
+    return { text: `Done, sir. ${PROVIDERS[pending.provider].name} is allowed ${pending.standing ? 'from now on, until you say "revoke all permissions"' : `until ${time(new Date(until).toISOString())} UTC`}. Only that company, and every request is recorded. Private Mode stays on for everyone else.`, meta: meta({ provider: pending.provider, until: new Date(until).toISOString() }) };
+  }
+  if (ask.action === 'set') {
+    await storage.delete(PENDING_KEY);
+    await storePrivacy(storage, { level: 'private', grants: [] }, now);
+    return { text: `Done, sir. Private Mode is on: I won't send your conversations, voice or memories to OpenAI, Anthropic, Google or any other outside AI or voice company. If something needs one, I'll say so and ask first.${caveat}`, meta: meta({ privacy_level: 'private' }) };
   }
   if (ask.action === 'revoke') {
+    await storage.delete(PENDING_KEY);
     await storePrivacy(storage, { level: p.level, grants: [] }, now);
     return { text: `Done, sir. ${p.grants.length ? `I closed ${p.grants.length} open permission${p.grants.length === 1 ? '' : 's'}.` : 'No permission was open.'} ${p.level === 'private' ? 'Private Mode is on.' : 'Private Mode is still off; say "turn on private mode" to close everything.'}`, meta: meta() };
   }
-  if (ask.action === 'status') return { text: `${modeLine} Today ${sent.length} request${sent.length === 1 ? '' : 's'} went to outside providers and ${blocked.length} ${blocked.length === 1 ? 'was' : 'were'} blocked.${caveat}`, meta: meta({ privacy_level: p.level }) };
+  if (ask.action === 'status') return { text: `${modeLine} Today ${sentCount} request${sentCount === 1 ? '' : 's'} went to outside providers and ${blockedCount} ${blockedCount === 1 ? 'was' : 'were'} blocked.${caveat}`, meta: meta({ privacy_level: p.level }) };
   if (ask.action === 'egress') {
-    const sentLine = sent.length
-      ? `${sent.length} request${sent.length === 1 ? '' : 's'} went out today, to ${names(sent)}, ${sent.reduce((n, e) => n + (e.bytes || 0), 0)} bytes in all; the last at ${time(sent[0].at)} UTC (${sent[0].basis}).`
+    const sentLine = sentCount
+      ? `${sentCount} request${sentCount === 1 ? '' : 's'} went out today, to ${sentNames}, ${totals?.bytes ?? sentDetail.reduce((n, e) => n + (e.bytes || 0), 0)} bytes in all${sentDetail[0] ? `; the last at ${time(sentDetail[0].at)} UTC (${sentDetail[0].basis})` : ''}.`
       : 'Nothing went to an outside AI or voice company today.';
-    const blockedLine = blocked.length ? ` I blocked ${blocked.length} request${blocked.length === 1 ? '' : 's'} to ${names(blocked)}.` : '';
-    return { text: `Knox here, sir. ${sentLine}${blockedLine} ${modeLine} My ledger keeps the company, time and size of each request, never its content. Not covered by this record: web searches and market data.${caveat}`, meta: meta({ sent: sent.length, blocked: blocked.length }) };
+    const blockedLine = blockedCount ? ` I blocked ${blockedCount} request${blockedCount === 1 ? '' : 's'}${blockedDetail.length ? ` to ${names(blockedDetail)}` : ''}.` : '';
+    return { text: `Knox here, sir. ${sentLine}${blockedLine} ${modeLine} My ledger keeps the company, time and size of each request, never its content. Not covered by this record: web searches and market data.${caveat}`, meta: meta({ sent: sentCount, blocked: blockedCount }) };
   }
   if (ask.action === 'access') {
     const live = devices.filter((d) => !d.revoked_at);
     const list = live.map((d, i) => `${i + 1}. ${d.name || 'a device'}, last used ${String(d.last_seen_at || d.created_at || '').slice(0, 10) || 'unknown'}`).join('\n');
-    return { text: `Knox here, sir. ${live.length} signed-in device${live.length === 1 ? '' : 's'} can read CHE's brain:\n${list || 'none'}\nOutside AI companies that received anything today: ${sent.length ? names(sent) : 'none'}. ${modeLine} What I can't show you yet: a read-by-read history of CHE's brain. I don't record individual memory reads, so I won't guess.`, meta: meta({ devices: live.length }) };
+    return { text: `Knox here, sir. ${live.length} signed-in device${live.length === 1 ? '' : 's'} can read CHE's brain:\n${list || 'none'}\nOutside AI companies that received anything today: ${sentCount ? sentNames : 'none'}. ${modeLine} What I can't show you yet: a read-by-read history of CHE's brain. I don't record individual memory reads, so I won't guess.`, meta: meta({ devices: live.length }) };
   }
   // suspicious
   const events = (security?.events || []).filter((e) => Date.parse(e.at) > now - 24 * HOUR);
@@ -216,9 +272,9 @@ export async function privacyTurn(storage, ask, { devices = [], security = null,
   const contained = events.filter((e) => e.classification === 'contained');
   const lines = [];
   if (suspicious.length) lines.push(`SUSPICIOUS ACTIVITY: ${suspicious.length} event${suspicious.length === 1 ? '' : 's'} in the last day. ${suspicious.slice(0, 3).map((e) => e.evidence).join(' ')}`);
-  if (contained.length || blocked.length) lines.push(`VERIFIED AND CONTAINED: ${[contained.length ? `${contained.length} recorded event${contained.length === 1 ? '' : 's'} (${[...new Set(contained.map((e) => e.type.replace(/_/g, ' ')))].join(', ')})` : '', blocked.length ? `${blocked.length} outside AI request${blocked.length === 1 ? '' : 's'} blocked by Private Mode today` : ''].filter(Boolean).join('; ')}.`);
+  if (contained.length || blockedCount) lines.push(`VERIFIED AND CONTAINED: ${[contained.length ? `${contained.length} recorded event${contained.length === 1 ? '' : 's'} (${[...new Set(contained.map((e) => e.type.replace(/_/g, ' ')))].join(', ')})` : '', blockedCount ? `${blockedCount} outside AI request${blockedCount === 1 ? '' : 's'} blocked by Private Mode today` : ''].filter(Boolean).join('; ')}.`);
   if (!lines.length) lines.push('No suspicious activity in CHE\'s records for the last day.');
-  return { text: `Knox here, sir. ${lines.join(' ')} INSUFFICIENT EVIDENCE for anything outside CHE: I only see CHE's own sign-ins, pairing attempts, errors, deploys and outgoing requests, not other apps or your iPhone's system.${security ? '' : ' (I could not read the security log just now.)'}`, meta: meta({ suspicious: suspicious.length, contained: contained.length + blocked.length }) };
+  return { text: `Knox here, sir. ${lines.join(' ')} INSUFFICIENT EVIDENCE for anything outside CHE: I only see CHE's own sign-ins, pairing attempts, errors, deploys and outgoing requests, not other apps or your iPhone's system.${security ? '' : ' (I could not read the security log just now.)'}`, meta: meta({ suspicious: suspicious.length, contained: contained.length + blockedCount }) };
 }
 
 // ─── Live check (deploy and staging gate) ───

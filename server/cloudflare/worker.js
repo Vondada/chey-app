@@ -269,7 +269,7 @@ import { CHE_TENANT, CHE_SECURITY, access as coreAccess, coreEvents, coreInciden
 import { securityVisibility, speakVisibility } from './security_visibility.js';
 import { securityChief, securityChiefIntent, speakChiefReport } from './security_chief.js';
 import { acquire as acquireCapability, applyPolicy as applyCapabilityPolicy, capabilityIntent, engineSummary as capabilityEngineSummary, learnFromOutcome, loadPolicy as loadCapabilityPolicy, populate as populateKnowledge, retrieve as retrieveKnowledge, rollbackTool, savePolicy as saveCapabilityPolicy, projectBlocked, speakCapabilities, speakLearned as speakLearnedKnowledge, useTool, LAST_USED_KEY as KNOWLEDGE_USED_KEY } from './capability_engine.js';
-import { PRIVACY_KEY, flushEgressLedger, privacyIntent, privacyProbe, privacyTurn, privacyVerdict, setPrivacy } from './privacy_mode.js';
+import { privacyConfirmIntent, privacyIntent, privacyProbe, privacyTurn, privacyVerdict, runWithPrivacy } from './privacy_mode.js';
 import { EGRESS_KEY, SNAPSHOT_KEY, holdEgress, installEgressGuard, setEgressOwner, setEgressPolicy, storeEgressPolicy, SESSION_SCOPES, bump as securityBump, checkSession, createSession, dependencyAdvisories, detectThreats, issueNonce, loadSecurity, recordFindings, redact as redactSecretText, redactDeep, respondToIncident, restoreTrustedState, revokeSessions, saveSecurity, securityIntent, snapshotTrustedState, speakStatus as speakSecurityStatus } from './security_intelligence.js';
 import { loadRegistry as loadCapabilityRegistry } from './capability_registry.js';
 import { BrainLedger, answerLedger, decidePending as decideBrainPending, installBrainLedger, ledgerApi, recordGraphConnections, ledgerIntent as brainLedgerIntent, DEFAULT_ZONE as LEDGER_DEFAULT_ZONE } from './brain_ledger.js';
@@ -5444,7 +5444,6 @@ export class CheState extends DurableObject {
     installEgressGuard();
     setEgressOwner(this.env);
     try { setEgressPolicy(await this.ctx.storage.get(EGRESS_KEY), request.url); } catch (_) {}
-    try { setPrivacy(await this.ctx.storage.get(PRIVACY_KEY)); } catch (_) {}
     // A project the owner said must stay inside CHE holds the same guard for the length of the request.
     let projectHold = false;
     try {
@@ -5457,10 +5456,10 @@ export class CheState extends DurableObject {
     if (projectHold) holdEgress(1);
     const priv = await privateTurn(request, this);
     try {
-      return await (priv || this).fetchInner(request);
+      // Private Mode (privacy_mode.js): this object's policy and ledger for the request and what it starts.
+      return await runWithPrivacy(this.ctx.storage, () => (priv || this).fetchInner(request));
     } finally {
       if (projectHold) holdEgress(-1);
-      await flushEgressLedger(this.ctx.storage);
     }
   }
 
@@ -10638,7 +10637,7 @@ export class CheState extends DurableObject {
           }
           // Workflow Engine: the owner's words about the library, then a promoted learned workflow this request matches.
           // Private Mode and Knox's privacy answers (privacy_mode.js), from records only.
-          const privAsk = ownerDevice && !body.attachment && !body.workflow_step ? privacyIntent(rawMessage) : null;
+          const privAsk = ownerDevice && !body.attachment && !body.workflow_step ? (privacyIntent(rawMessage) || await privacyConfirmIntent(this.ctx.storage, rawMessage)) : null;
           if (privAsk) { const t = await privacyTurn(this.ctx.storage, privAsk, { devices: platformView(data, activeTenant.id, tokenHash).devices, security: await loadSecurity(this.ctx.storage).catch(() => null) }); return ndjsonReply(t.text, t.meta); }
           const secAsk = ownerDevice && !body.attachment && !body.workflow_step ? (securityIntent(rawMessage) || securityChiefIntent(rawMessage)) : null;
           if (secAsk) return this.securityChat(data, secAsk, tokenHash);
@@ -14574,7 +14573,10 @@ export class CheState extends DurableObject {
     installEgressGuard();
     setEgressOwner(this.env);
     try { setEgressPolicy(await this.ctx.storage.get(EGRESS_KEY)); } catch (_) {}
-    try { setPrivacy(await this.ctx.storage.get(PRIVACY_KEY)); await flushEgressLedger(this.ctx.storage); } catch (_) {}
+    return runWithPrivacy(this.ctx.storage, () => this.alarmInner());
+  }
+
+  async alarmInner() {
     await this.refreshKeyEnv();
     // A minute-only wake-up: the simulation's minute is the only work due. It runs that one pass and makes no
     // mailbox (GitHub), job, Tradovate, hourly or live call. Those keep their own wake-up times and run on them.
