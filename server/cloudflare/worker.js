@@ -12479,16 +12479,10 @@ export class CheState extends DurableObject {
           const finished = active.length ? null : objectives.find((o) => o.status === 'complete' && o.artifact?.sha256);
           return ndjsonReply(active.length ? `${active.map(speakObjective).join(' ')} Sir.` : `No mission is in progress, sir.${finished ? ` The last one finished: ${speakObjective(finished)}` : ''}`, { source: 'che_mission_status', model_calls: 0 });
         }
-        // "coding status" and every other question about a coding record: the stored job and
-        // runtime records answer, with their evidence. Asking never runs an investigation, never
-        // inspects repository files and never starts a job. The route sits where the old exact
-        // "coding status" route sat, so every route above keeps its turns as before; repository
-        // inspection and REA follow-ups above skip these questions themselves. Of the routes below,
-        // a handoff, a message for another AI ("tell Claude the coding run failed") and a
-        // consultation ("ask ChatGPT why the coding job failed") keep theirs.
-        // A turn with an attachment is about that attachment, which this route cannot read.
-        // A question about who did coding work, when it names Claude or another AI: CHE's records never hold that work, so
-        // the model is never asked (it invented speakers and authors). Handoffs, mailbox and consultations keep their routes.
+        // Coding-record questions: stored job and runtime records answer with evidence; asking never
+        // investigates, reads repo files or starts a job. Handoffs, AI messages, consultations and
+        // attachments keep their routes. Work by Claude or another AI is not in CHE's records, so the
+        // model is never asked (it invented authors).
         const otherAgent = body.attachment || handoffIntent(message) || mailboxIntent(message) || consultIntent(message) ? '' : otherAgentWorkAsk(message);
         if (otherAgent) {
           if (!ownerDevice) return ndjsonReply('Only the CHE owner can read coding job status, sir.', { source: 'che_coding_history', ok: false, outcome: RECALL_OUTCOMES.PERMISSION_DENIED });
