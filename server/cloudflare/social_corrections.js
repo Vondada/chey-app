@@ -115,14 +115,17 @@ export async function readSocial(storage, now = Date.now()) {
 // and serious moments switch it off for that time on their own.
 export const FLIRT_KEY = 'social_flirt';
 const FLIRT_OFF = /\b(?:stop|quit|cut(?: out)?|no more|chill(?: out)? (?:on|with)) (?:the )?flirt(?:ing)?\b|\b(?:don'?t|do not) flirt\b|\bno flirting\b|\bnot in the mood for flirting\b/i;
+const KEEP_FLIRTING = /\b(?:don'?t|do not|never) (?:stop|quit) flirt(?:ing)?\b/i;
 const FLIRT_ON = /\b(?:you can|go ahead and|feel free to) flirt\b|\bflirt with me\b|\bflirting is (?:fine|ok(?:ay)?|cool)\b|\bi (?:like|miss) (?:it when you flirt|your flirting|the flirting)\b/i;
 
 /** The stored "no flirting" record after one owner message, or null when flirting is allowed. */
 export function nextFlirt(prev, message, now = Date.now()) {
   const text = String(message ?? '').replace(/[‘’]/g, "'");
   if (QUESTION_ABOUT_PAST.test(text) || HYPOTHETICAL.test(text)) return prev || null;
-  if (FLIRT_ON.test(text)) return null;
+  // "Don't flirt with me" contains "flirt with me": the opt-out is checked first, except "don't stop flirting".
+  if (KEEP_FLIRTING.test(text)) return null;
   if (FLIRT_OFF.test(text)) return { off: true, at: now };
+  if (FLIRT_ON.test(text)) return null;
   return prev || null;
 }
 

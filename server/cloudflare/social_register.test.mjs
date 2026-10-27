@@ -58,7 +58,7 @@ async function owner(storage = storageMap()) {
     const { register, flirt } = await (await post('/api/social', {}, token)).json();
     // The main reply prompt is the one carrying the LANGUAGE STYLE line.
     const prompt = prompts.slice(before).find((p) => p.includes('LANGUAGE STYLE')) || '';
-    return { done, register, flirt, prompt };
+    return { done, register, flirt, prompt, all: prompts.slice(before) };
   };
   return { say, storage };
 }
@@ -199,6 +199,10 @@ test('flirting is hers by default; "stop flirting" holds across turns until "you
   assert.ok(t.prompt.includes(FLIRT) && t.flirt === true);
   assert.equal(nextFlirt(null, 'What if I told you to stop flirting?'), null, 'a hypothetical is not an instruction');
   assert.equal(nextFlirt({ off: true }, 'remember when I said flirt with me?')?.off, true);
+  // Codex, PR #704: the opt-out contains "flirt with me", so it must win.
+  assert.equal(nextFlirt(null, "Don't flirt with me.")?.off, true);
+  assert.equal(nextFlirt(null, 'Do not flirt with me right now')?.off, true);
+  assert.equal(nextFlirt({ off: true }, "Don't stop flirting with me"), null);
 });
 
 test('clean language and serious moments switch off profanity and flirting; profanity is paced', async () => {
@@ -225,4 +229,16 @@ test('a negated release keeps clean language; a new cue keeps a "from now on" se
   assert.equal(kept.scope, 'persistent');
   assert.equal(activeRegister(kept, t + 10 * 3_600_000)?.clean, true);
   assert.equal(nextRegister(on, 'Alright, you can talk normal again.', { now: t }), null, 'a real release still lifts it');
+});
+
+test('a web search answer keeps the clean-language rule the owner set (Codex, PR #704)', async () => {
+  const che = await owner();
+  await che.say("Chill, chill, I'm by my mama.");
+  const t = await che.say('Use the browser to find pizza places near me');
+  assert.equal(t.done.source, 'che_browse', 'took the browse path, not ordinary chat');
+  assert.ok(t.all.length, 'the search planner called the model');
+  // The search answer is written under CHE's own Soul (the coworker sub-agents only gather sources).
+  const answer = t.all.filter((p) => p.includes('You are CHE deciding the next step'));
+  assert.ok(answer.length, 'the search planner called the model as CHE');
+  assert.ok(answer.every((p) => p.includes(CLEAN)), 'the search answer is told to keep it clean');
 });

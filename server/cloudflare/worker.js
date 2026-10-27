@@ -3533,7 +3533,7 @@ export class CheState extends DurableObject {
       };
       // The Worker's Soul is the one personality; the phone's copy (body.soul) is not a second source (soul.js).
       soulProfile = await loadSoul(this.ctx.storage);
-      const searched = await runSearchRoute(message, { complete, soul: soulPromptBlock(soulProfile) });
+      const searched = await runSearchRoute(message, { complete, soul: soulPromptBlock(soulProfile) + languageLine(await readSocial(this.ctx.storage)) });
       // Every page the run read is kept as a research page: kept until the owner asks for it to be forgotten.
       const kept = storeLoopReads(new CheBrainStore(this.ctx.storage), { question: message, observations: searched.observations, now: new Date().toISOString() }).kept.length;
       parts.push(kept ? `${searched.text}\nI kept ${kept} page${kept === 1 ? '' : 's'} I read as research pages.` : searched.text);
