@@ -49,6 +49,8 @@ class _CheMailboxScreenState extends State<CheMailboxScreen> {
   bool _loading = true;
   String _status = '';
   String _keyQuery = '';
+  // The last Save-and-test result, kept at the top of the Keys tab so the owner can read it there.
+  String _keyResult = '';
 
   @override
   void initState() {
@@ -218,6 +220,7 @@ class _CheMailboxScreenState extends State<CheMailboxScreen> {
     controller.dispose();
     if (key == null || key.isEmpty) return;
     _say('Testing the $name key.');
+    var result = 'I could not reach my server to test the key. Nothing was saved.';
     try {
       final response = await http.post(
         Uri.parse('${widget.baseUrl}/api/keys'),
@@ -227,15 +230,19 @@ class _CheMailboxScreenState extends State<CheMailboxScreen> {
       final data = jsonDecode(response.body);
       if (response.statusCode == 200 && data is Map) {
         HapticFeedback.mediumImpact();
-        _say('$name key saved and tested. It ends in ${data['last4']} and is now in my rotation.');
+        result = '$name key saved and tested. It ends in ${data['last4']} and is now in my rotation.';
       } else {
         HapticFeedback.heavyImpact();
-        _say(data is Map ? '${data['detail'] ?? 'That key did not work.'}' : 'That key did not work.');
+        result = data is Map ? '${data['detail'] ?? 'That key did not work.'}' : 'That key did not work.';
       }
     } catch (_) {
-      _say('I could not reach my server to test the key. Nothing was saved.');
+      HapticFeedback.heavyImpact();
     }
+    // Reload first: the reload writes its own banner, so the key result is shown after it, not overwritten by it.
     await _load();
+    if (!mounted) return;
+    setState(() => _keyResult = result);
+    _say(result);
   }
 
   Future<void> _flagAction(String action) async {
@@ -764,8 +771,29 @@ class _CheMailboxScreenState extends State<CheMailboxScreen> {
 
     return Column(
       children: [
+        if (_keyResult.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 12, 12, 0),
+            child: Semantics(
+              liveRegion: true,
+              child: Card(
+                color: cheHudActive ? null : CheColors.surface,
+                child: Padding(
+                  padding: const EdgeInsets.all(12),
+                  child: Row(children: [
+                    Expanded(child: Text(_keyResult, style: CheType.body)),
+                    IconButton(
+                      tooltip: 'Read this result',
+                      onPressed: () => _say(_keyResult),
+                      icon: const Icon(Icons.volume_up_rounded),
+                    ),
+                  ]),
+                ),
+              ),
+            ),
+          ),
         Padding(
-          padding: const EdgeInsets.fromLTRB(12, 12, 12, 0),
+          padding: EdgeInsets.fromLTRB(12, _keyResult.isEmpty ? 12 : 8, 12, 0),
           child: _youtubeCard(),
         ),
         if (_aiStatus != null)
