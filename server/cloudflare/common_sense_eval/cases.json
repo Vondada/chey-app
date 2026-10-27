@@ -1,0 +1,12 @@
+[
+  {"id": "spider-legs", "question": "How many legs does a spider have?", "must_include": ["eight", "8"], "must_not_include": ["six", "six legs"]},
+  {"id": "percent", "question": "What is 15 percent of 200?", "must_include": ["30"], "must_not_include": ["35", "25"]},
+  {"id": "sun-star", "question": "Is the sun a star?", "must_include": ["yes", "star"], "must_not_include": ["no, the sun is not a star"]},
+  {"id": "feathers-steel", "question": "Which is heavier, a kilogram of feathers or a kilogram of steel?", "must_include": ["same", "equal"], "must_not_include": ["steel is heavier", "feathers are heavier"]},
+  {"id": "blue-yellow", "question": "What color do you get when you mix blue and yellow paint?", "must_include": ["green"], "must_not_include": ["purple", "orange"]},
+  {"id": "leap-year", "question": "How many days are in a leap year?", "must_include": ["366"], "must_not_include": ["365 days"]},
+  {"id": "australia-capital", "question": "What is the capital of Australia?", "must_include": ["canberra"], "must_not_include": ["sydney is the capital"]},
+  {"id": "minutes", "question": "How many minutes are in two and a half hours?", "must_include": ["150"], "must_not_include": ["120", "250"]},
+  {"id": "ice-water", "question": "Does ice float on water?", "must_include": ["float"], "must_not_include": ["sinks"]},
+  {"id": "boiling-sea-level", "question": "At what temperature does water boil at sea level in Celsius?", "must_include": ["100"], "must_not_include": ["212 celsius", "90"]}
+]

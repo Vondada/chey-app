@@ -26,16 +26,43 @@ export const COLOURS = Object.freeze({
   white: '#e6e6e2', silver: '#b8bcc2', grey: '#6f747a', gray: '#6f747a', green: '#2f7a46', purple: '#6c4ab0', orange: '#d8662a',
   teal: '#1f6f78', pink: '#c86a98', bronze: '#8c5a2c', chrome: '#d0d4da',
 });
-const DEFAULT_PRIMARY = { powered_suit: 'red', exoskeleton: 'grey', robot: 'silver', device: 'navy' };
-const SECONDARY = { powered_suit: '#c8a040', exoskeleton: '#2a2d33', robot: '#2a2d33', device: '#b8bcc2' };
+const DEFAULT_PRIMARY = { powered_suit: 'red', exoskeleton: 'grey', robot: 'silver', device: 'navy', jet_engine: 'silver' };
+const SECONDARY = { powered_suit: '#c8a040', exoskeleton: '#2a2d33', robot: '#2a2d33', device: '#b8bcc2', jet_engine: '#b8bcc2' };
 const GLOW = '#9fe8ff';
 const JOINT = '#2a2d33';
 
 const box = (name, subsystem, mat, [x, y, z], [w, h, d], taper = 1) => ({ name, subsystem, mat, c: [x, y, z], s: [w, h, d], taper });
 const mirror = (parts) => parts.flatMap((p) => (p.c[0] === 0 ? [p] : [p, { ...p, name: p.name.replace('left', 'right'), c: [-p.c[0], p.c[1], p.c[2]] }]));
 
+// A jet engine (owner, 2026-10-25: "a jet-engine-inspired assembly with at least 12 individually identifiable components").
+// The engine's axis runs along z (intake at +z, nozzle at -z), centred on y = 1. Every part is a box: a visual
+// approximation, not an engineering model. `stage` is the explode order (0 intake and fan ... 4 nozzle), `group` names
+// what a casing or core command moves, so "open the casing" and "separate the turbine stages" act on real parts.
+const staged = (stage, group, p) => ({ ...p, stage, group });
+export const JET_ENGINE_PARTS = 15;
+function jetEngineParts() {
+  return [
+    staged(0, 'casing', box('intake cowl', 'intake', 'primary', [0, 1.0, 0.62], [0.42, 0.42, 0.22])),
+    staged(0, 'casing-upper', box('casing upper', 'casing', 'primary', [0, 1.22, 0], [0.38, 0.14, 1.0])),
+    staged(0, 'casing-lower', box('casing lower', 'casing', 'primary', [0, 0.86, 0], [0.38, 0.14, 1.0])),
+    staged(0, 'rotor', box('front fan blades', 'fan', 'secondary', [0, 1.0, 0.45], [0.36, 0.36, 0.04])),
+    staged(0, 'rotor', box('fan hub', 'fan', 'joint', [0, 1.0, 0.43], [0.1, 0.1, 0.1])),
+    staged(1, 'core', box('low pressure compressor', 'compressor', 'secondary', [0, 1.0, 0.2], [0.3, 0.3, 0.2])),
+    staged(1, 'core', box('high pressure compressor', 'compressor', 'secondary', [0, 1.0, 0], [0.26, 0.26, 0.2])),
+    staged(1, 'core', box('accessory gearbox', 'accessories', 'joint', [0, 0.72, 0.05], [0.2, 0.14, 0.22])),
+    staged(2, 'core', box('combustor chamber', 'combustion', 'glow', [0, 1.0, -0.2], [0.28, 0.28, 0.2])),
+    staged(2, 'core', box('fuel line', 'fuel', 'joint', [0.2, 0.9, -0.2], [0.03, 0.03, 0.4])),
+    staged(3, 'core', box('high pressure turbine', 'turbine', 'secondary', [0, 1.0, -0.38], [0.26, 0.26, 0.16])),
+    staged(3, 'core', box('low pressure turbine', 'turbine', 'secondary', [0, 1.0, -0.54], [0.3, 0.3, 0.16])),
+    staged(0, 'shaft', box('main shaft', 'shaft', 'joint', [0, 1.0, 0], [0.06, 0.06, 1.3])),
+    staged(4, 'nozzle', box('exhaust nozzle', 'exhaust', 'joint', [0, 1.0, -0.7], [0.22, 0.22, 0.12], 0.8)),
+    staged(0, 'pylon', box('mounting pylon', 'frame', 'primary', [0, 1.3, -0.1], [0.08, 0.22, 0.5])),
+  ];
+}
+
 /** The named parts of a template, in metres, standing on y = 0 and facing +z. */
 export function partsFor(template) {
+  if (template === 'jet_engine') return jetEngineParts();
   if (template === 'device') {
     return [
       box('housing', 'shell', 'primary', [0, 0.12, 0], [0.34, 0.22, 0.22]),

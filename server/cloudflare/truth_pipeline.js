@@ -21,7 +21,7 @@ import { groundedReply } from './personal_recall.js';
 import { redactGoogleIds } from './research_memory.js';
 import { guardEngineClaims, guardSoulClaims } from './soul.js';
 import { guardCitations } from './source_verification.js';
-import { guardClaimedOwnerActions, guardClaimedResearchActions, guardExecutionClaims, guardOwnerReply, recordReceipt, verifiedStatusText } from './truth_layer.js';
+import { guardClaimedOwnerActions, guardClaimedResearchActions, guardExecutionClaims, validateCodingEvidence, guardOwnerReply, recordReceipt, verifiedStatusText } from './truth_layer.js';
 
 const userTurns = (history, n) => (Array.isArray(history) ? history : []).filter((turn) => turn?.role === 'user').slice(-n).map((turn) => String(turn.content ?? turn.text ?? ''));
 
@@ -129,6 +129,7 @@ export const TRUTH_STAGES = Object.freeze([
     if (removed.length) console.log('CHE memory truth removed', redactGoogleIds(JSON.stringify(removed)).slice(0, 800));
     ctx.shared.attributionRemoved = attribution.removed.length;
     const text = guardRememberBlock(speakers.text, { ownerTurns: ownerTurnsNow, retracted: await loadRetractions(ctx.storage) }).text;
+    ctx.shared.rememberValidated = true;
     return { text, removed };
   } },
   // An Office task is never shown as CHE's own reply; the owner finds it in the Office view.
@@ -164,8 +165,11 @@ export const TRUTH_STAGES = Object.freeze([
   } },
   // Final owner-facing boundary: keep internal provider/model failover chatter out of chat and TTS.
   { name: 'execution_claims', run(reply, ctx) {
-    const guard = guardExecutionClaims(sanitizeOwnerText(reply, { truncate: false }), { message: ctx.rawMessage, receipts: ctx.skillResults.map((r) => r.execution_receipt), documentRead: ctx.shared.documentRead, verifiedText: ctx.brainContext });
-    return { text: guard.text, removed: guard.removed };
+    const original = sanitizeOwnerText(reply, { truncate: false });
+    const coding = validateCodingEvidence(original, { message: ctx.rawMessage, preserveRemember: ctx.shared.rememberValidated === true });
+    // Reject model evidence while letting the trusted receipt renderer report the actual result.
+    const guard = guardExecutionClaims(coding.ok === false ? original : coding.text, { message: ctx.rawMessage, receipts: ctx.skillResults.map((r) => r.execution_receipt), documentRead: ctx.shared.documentRead, verifiedText: ctx.brainContext, requireEvidence: coding.ok === false });
+    return { text: guard.text, removed: [...(coding.ok === false || coding.cleaned ? [{ rule: coding.reason || 'internal_memory_block', sentence: reply }] : []), ...guard.removed] };
   } },
   // Hallucination auditor: each completion claim must match a receipt from this request. An unreadable evidence
   // list fails closed. This stage writes the one ledger entry for the whole pipeline.
