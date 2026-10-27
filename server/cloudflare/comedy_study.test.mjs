@@ -65,6 +65,10 @@ function fakeWiki(url) {
       const pages = { 'List of Martin episodes': MARTIN_LIST, 'List of The Fresh Prince of Bel-Air episodes': FRESH_LIST, 'The Fresh Prince of Bel-Air season 1': FRESH_S1, 'The Fresh Prince of Bel-Air season 2': FRESH_S2 };
       return pages[p.page] ? { parse: { title: p.page, wikitext: pages[p.page] } } : { error: { code: 'missingtitle' } };
     }
+    if (p.prop === 'revisions') {
+      const pages = { 'The Fresh Prince of Bel-Air season 1': FRESH_S1, 'The Fresh Prince of Bel-Air season 2': FRESH_S2 };
+      return { query: { pages: p.titles.split('|').map((title) => (pages[title] ? { title, revisions: [{ slots: { main: { content: pages[title] } } }] } : { title, missing: true })) } };
+    }
     if (p.prop === 'extracts') return { query: { pages: [{ extract: `${p.titles} is an American sitcom known for its ensemble cast, physical comedy and rapid insults between friends.` }] } };
     return {};
   })();
@@ -166,7 +170,7 @@ test('end to end: plan, background passes with real-format sources, coverage by 
   c = await che(storage);
   for (let i = 0; i < 6; i += 1) { await storage.put('study:wake', Date.now() - 1); await c.state.alarm(); }
   assert.ok(wikiCalls.includes('search:Martin sitcom television series'));
-  assert.ok(wikiCalls.includes('parse:The Fresh Prince of Bel-Air season 2'), 'season pages were followed');
+  assert.ok(wikiCalls.includes('query:The Fresh Prince of Bel-Air season 1|The Fresh Prince of Bel-Air season 2'), 'season pages were followed in one request');
   const [a] = storage.saved.get('study:assignments');
   assert.equal(a.status, 'done');
   assert.deepEqual(a.subjects.map((s) => [s.article, s.episodes.length, s.cursor]), [['Martin (TV series)', 3, 3], ['The Fresh Prince of Bel-Air', 2, 2]]);

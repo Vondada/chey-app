@@ -17,7 +17,7 @@ export const STUDY_KEY = 'study:assignments';
 export const STUDY_WAKE_KEY = 'study:wake';
 export const HUMOR_KEY = 'humor_lessons';
 const WIKI = 'https://en.wikipedia.org/w/api.php';
-const UA = { 'User-Agent': 'CHE-study/1.0 (owner assistant; contact via repository Vondada/chey-app)', Accept: 'application/json' };
+const UA = { 'User-Agent': 'CHE-study/1.0 (https://github.com/Vondada/chey-app; owner assistant)', Accept: 'application/json' };
 const EPISODES_PER_PASS = 12;
 const PASS_GAP_MS = 60_000;
 const MAX_LESSONS = 40;
@@ -58,7 +58,12 @@ export function studyIntent(message) {
 async function wiki(params, fetcher) {
   const url = `${WIKI}?${new URLSearchParams({ format: 'json', formatversion: '2', redirects: '1', origin: '*', ...params })}`;
   const res = await fetcher(url, { headers: UA, signal: AbortSignal.timeout(15000) });
-  if (!res.ok) throw new Error(`Wikipedia returned ${res.status}`);
+  if (!res.ok) {
+    // A rate limit says how long to wait; the next pass is scheduled after it instead of retrying into it.
+    const error = new Error(`Wikipedia returned ${res.status}`);
+    if (res.status === 429 || res.status === 503) error.retryAfter = Math.min(Number(res.headers.get('Retry-After')) || 60, 3600);
+    throw error;
+  }
   return { url, data: await res.json() };
 }
 
@@ -115,6 +120,21 @@ export function seasonPages(wikitext) {
   return [...found].slice(0, 12);
 }
 
+/** Several season pages in one request (Wikipedia allows 50 titles), so a long series is not a burst of calls. */
+async function wikitexts(titles, fetcher) {
+  if (!titles.length) return [];
+  const { data } = await wiki({ action: 'query', prop: 'revisions', rvprop: 'content', rvslots: 'main', titles: titles.join('|') }, fetcher);
+  if (data?.error) throw new Error(`Wikipedia: ${data.error.code || 'invalid response'}`);
+  const pages = data?.query?.pages;
+  if (!Array.isArray(pages)) throw new Error('Wikipedia returned no page evidence');
+  const named = (t) => (data.query.redirects || []).find((r) => r.from === t)?.to || (data.query.normalized || []).find((n) => n.from === t)?.to || t;
+  return titles.map((t) => {
+    const page = pages.find((x) => x.title === named(t));
+    if (!page || page.missing) throw new Error(`Episode guide unavailable: ${t}`);
+    return { title: page.title, text: page.revisions?.[0]?.slots?.main?.content || '' };
+  });
+}
+
 async function wikitext(title, fetcher) {
   const { url, data } = await wiki({ action: 'parse', page: title, prop: 'wikitext' }, fetcher);
   if (data?.error?.code === 'missingtitle') return null;
@@ -167,7 +187,7 @@ async function savePass(storage, assignment, checkpoint, summaries, now) {
     current[index] = assignment;
     await saveAssignments(tx, current);
     if (assignment.status === 'done') await tx.delete(STUDY_WAKE_KEY);
-    else await tx.put(STUDY_WAKE_KEY, now + PASS_GAP_MS);
+    else await tx.put(STUDY_WAKE_KEY, now + Math.max(PASS_GAP_MS, (assignment.last_error?.retry_after_s || 0) * 1000));
     return true;
   };
   return typeof storage.transaction === 'function' ? storage.transaction(commit) : commit(storage);
@@ -221,9 +241,10 @@ export async function studyPass(storage, { store = null, complete, fetcher = fet
         let episodes = page ? parseEpisodes(page.text, base) : [];
         const pages = page ? [page.title] : [];
         if (page && !episodes.length) {
-          for (const season of seasonPages(page.text)) {
-            const sp = await wikitext(season, fetcher);
-            if (!sp) throw new Error(`Episode guide unavailable: ${season}`);
+          const seasons = seasonPages(page.text);
+          const texts = await wikitexts(seasons, fetcher);
+          for (const [i, season] of seasons.entries()) {
+            const sp = texts[i];
             const n = Number(/season (\d+)/i.exec(season)?.[1]) || null;
             episodes.push(...parseEpisodes(sp.text, base).map((e) => ({ ...e, season: e.season || n })));
             pages.push(sp.title);
@@ -255,7 +276,7 @@ export async function studyPass(storage, { store = null, complete, fetcher = fet
       if (subject.cursor >= subject.episodes.length) { subject.status = 'done'; summariesToSave.set(`${a.id}:summaries:${a.subjects.indexOf(subject)}`, null); }
     }
   } catch (error) {
-    a.last_error = { at: new Date(now).toISOString(), message: clip(error?.message || error, 120) };
+    a.last_error = { at: new Date(now).toISOString(), message: clip(error?.message || error, 120), ...(error?.retryAfter ? { retry_after_s: error.retryAfter } : {}) };
     note(a, `A pass stopped (${clip(error?.message || error, 120)}); I'll pick up at the same place.`, now);
   }
   await savePass(storage, a, checkpoint, summariesToSave, now);
@@ -406,6 +427,9 @@ export async function studyProbe(env, request, objectName, { passes = 6 } = {}) 
       const last = assignment?.log?.at(-1)?.text || out.error || `HTTP ${res.status}: ${JSON.stringify(out).slice(0, 160)}`;
       steps.push({ name: `background pass ${i + 1}`, optional: true, pass: Boolean(out.ok), ms: Date.now() - started, route: 'study_pass', model_calls: null, reply: last });
       if (!assignment || assignment.status === 'done') break;
+      // Like the alarm, wait out Wikipedia's rate limit instead of passing straight into it (bounded for the check).
+      const wait = Math.min(assignment.last_error?.retry_after_s || 0, 20) * 1000;
+      if (wait) await new Promise((r) => setTimeout(r, wait));
     }
     const subjects = assignment?.subjects || [];
     const found = subjects.filter((s) => s.article);

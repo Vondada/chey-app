@@ -104,3 +104,14 @@ test('article-only lesson failures retry instead of completing the assignment', 
   assert.notEqual(a.status,'done');
   assert.match(a.last_error.message,/Workers AI unavailable/);
 });
+
+test('a Wikipedia rate limit schedules the next pass after Retry-After, keeping the place', async () => {
+  const storage = memory();
+  await studyTurn(storage,ask,{now:100});
+  await studyPass(storage,{now:200,fetcher:async url=>new URL(url).searchParams.get('list')==='search'?wiki(url):new Response('slow down',{status:429,headers:{'Retry-After':'600'}})});
+  const [a] = await storage.get(STUDY_KEY);
+  assert.equal(a.subjects[0].status,'pending');
+  assert.equal(a.last_error.retry_after_s,600);
+  assert.match(a.log.at(-1).text,/429/);
+  assert.equal(await storage.get(STUDY_WAKE_KEY),200+600_000);
+});
