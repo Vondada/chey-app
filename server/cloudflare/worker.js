@@ -99,6 +99,7 @@ import { CALENDAR_SOURCE, calendarIntent, learningWindows, officeCalendar, offic
 import { cancelCandidates, cancelConfirmation, cancelOrderIntent, chartIntent, chartOpenReply, chartView, drawIntent, futuresOrderIntent, marketOrderFeedProblem, paperAccountIntent, readDrawings, saveDrawings, speakOrder } from './trading_chart.js';
 import { marketUniverse, searchUniverse } from './market_universe.js';
 import { readRithmicCandles, storeRithmicCandles } from './rithmic_dataset.js';
+import { gatherTradingStatus, tradingStatusIntent, tradingStatusReply } from './trading_answers.js';
 // A spoken cancel of one Alpaca PAPER order waiting for the owner's yes, or for his pick from a numbered list.
 const CHART_CANCEL_PENDING = 'trading_chart_cancel_pending';
 // "Number 2", "2", "the second one": a pick from a numbered list of n. 0 when the turn picks nothing.
@@ -12897,6 +12898,16 @@ export class CheState extends DurableObject {
           }
           const saved = await readMatrix(this.ctx.storage);
           return ndjsonReply(saved ? speakMatrix(saved) : 'The timeframe backtest has not run yet, sir. Say "backtest every strategy on every timeframe" and I will test them on free delayed NQ data. It places no orders.', { source: 'che_trading_matrix' });
+        }
+        // Status of CHE's trading and memory (owner, 2026-10-27): is it live, is the data real-time, is Rithmic connected,
+        // the latest paper trade, what was learned, is long-term memory storing. Each answer is read from stored records;
+        // it runs before the paper-trade and chart routes so "is your trading live" never reaches the ticker lookup.
+        const tradingStatusAsk = !body.attachment ? tradingStatusIntent(message) : null;
+        if (tradingStatusAsk) {
+          if (!ownerDevice) return ndjsonReply('Only the CHE owner can read CHE\'s trading and memory status, sir.', { source: 'che_trading_status', ok: false });
+          const dash = await this.liveTradingDashboard();
+          const facts = await gatherTradingStatus(this.ctx.storage, dash);
+          return ndjsonReply(tradingStatusReply(tradingStatusAsk.kind, facts), { source: 'che_trading_status', model_calls: 0, ok: true });
         }
         // Forward paper trading by voice (owner, 2026-10-18), answered from the journal only.
         // "Set CHE paper balance to 500" / "show CHE positions" belong to the phone's CHE paper account (chart route below).
