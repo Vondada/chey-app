@@ -30,6 +30,8 @@ export const TIMEFRAMES = Object.freeze({
   '5m': { alpaca: '5Min', days: 5, minutes: 5 },
   '15m': { alpaca: '15Min', days: 10, minutes: 15 },
   '1h': { alpaca: '1Hour', days: 30, minutes: 60 },
+  // Alpaca has no 4-hour bars: these are rolled up from its hourly bars (see alpacaPaperDashboard's BAR_FRAMES).
+  '4h': { alpaca: '1Hour', days: 90, minutes: 240 },
   '1d': { alpaca: '1Day', days: 365, minutes: 1440 },
 });
 export const MARKER_SOURCES = Object.freeze({
@@ -41,7 +43,8 @@ export const MARKER_SOURCES = Object.freeze({
 // A feed older than this is not current enough for new entries from the chart.
 // Futures bars are CHE's stored 5-minute bars, so nothing finer than 5 minutes exists for them.
 export const FUTURES_TIMEFRAMES = Object.freeze(Object.keys(TIMEFRAMES).filter((tf) => TIMEFRAMES[tf].minutes >= 5));
-const FRESH_SECONDS = { '1m': 180, '5m': 600, '15m': 1800, '1h': 5400, '1d': 3 * 86400 };
+// A 4-hour bar is still forming for up to four hours, so it is fresh for five.
+const FRESH_SECONDS = { '1m': 180, '5m': 600, '15m': 1800, '1h': 5400, '4h': 5 * 3600, '1d': 3 * 86400 };
 
 const num = (v) => (v == null || v === '' || !Number.isFinite(Number(v)) ? null : Number(v));
 
@@ -128,7 +131,8 @@ export async function chartView(storage, env, { account = 'alpaca_paper', symbol
         feed: feedHealth({ provider: 'Alpaca', status: 'UNAVAILABLE', now, tf: frame }), entries_allowed: false,
         entries_blocked_reason: d.state === 'not_configured' ? 'Alpaca PAPER is not connected.' : `Alpaca could not be read: ${d.error || d.state}.` };
     }
-    const bars = d.chart.bars || [];
+    const hourly = d.chart.bars || [];
+    const bars = frame === '4h' ? rollUp(hourly, 240) : hourly;
     const feed = feedHealth({ provider: `Alpaca ${String(d.chart.feed || 'iex').toUpperCase()}`, status: d.chart.error ? 'UNAVAILABLE' : 'REALTIME', lastBarTime: bars.at(-1)?.t, now, tf: frame });
     const markers = chartMarkers({ orders: d.orders, fills: d.fills, symbol: d.chart.symbol });
     // The stock market is shut outside its hours: an old bar then means "closed", and a limit order can still be queued.
@@ -141,7 +145,9 @@ export async function chartView(storage, env, { account = 'alpaca_paper', symbol
   const stored = (await storage.get(LIVE_FEED)) || {};
   const five = Array.isArray(stored.bars) ? stored.bars : [];
   const minutes = TIMEFRAMES[frame].minutes;
-  let bars = minutes <= 5 ? five : rollUp(five, minutes);
+  // Stored 5-minute bars cover only days, so they make 15-minute to 1-hour candles here. A 4-hour or daily chart is
+  // read from Yahoo's history below instead, so it is never a few days of bars labelled as a longer period.
+  let bars = minutes <= 5 ? five : minutes < 240 ? rollUp(five, minutes) : [];
   // The owner's blank gray chart (2026-10-24): with no stored forward bars, draw Yahoo's delayed MNQ=F candles (the
   // same public source, labelled DELAYED), and when that fails too, say exactly why instead of an empty chart.
   let fallback = null;

@@ -46,6 +46,7 @@ import 'brain/che_brain_sections.dart' show CheBrainEvidence, CheEvidenceKind, c
 import 'che_ui/che_owner_improvements.dart';
 import 'workflows/che_workflows_screen.dart';
 import 'film/che_film_studio_screen.dart';
+import 'mailbox/che_fact_check.dart';
 import 'music/che_recording_studio.dart';
 import 'world/che_meeting_room.dart';
 import 'world/che_meetings.dart';
@@ -108,6 +109,8 @@ import 'create/che_gpu_browser.dart';
 import 'create/che_gpu_connect.dart';
 import 'create/che_live_studio.dart';
 import 'agents/che_agent_runtime.dart';
+import 'agents/che_office_conversation.dart';
+import 'agents/che_office_conversation_screen.dart';
 import 'agents/che_office_floor_screen.dart';
 import 'home/che_activity_feed.dart';
 import 'home/che_ui_controls_screen.dart';

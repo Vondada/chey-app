@@ -12,6 +12,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../che_ui/che_hud.dart';
 import '../che_ui/che_theme.dart';
 import '../platform/che_platform_screens.dart';
+import 'che_fact_check.dart';
 import 'che_mail_time.dart';
 import 'che_message_split.dart';
 
@@ -259,9 +260,12 @@ class _CheMailboxScreenState extends State<CheMailboxScreen> {
   /// One message as iMessage-style bubbles: CHE on the right in her teal,
   /// the other AI on the left in a dark grey. A long message becomes several
   /// bubbles in order; the name and time sit above the first bubble only.
-  Widget _message(Map m) {
+  Widget _message(Map m, List<Map> thread) {
     final fromChe = '${m['from']}' == 'che';
-    final who = fromChe ? 'CHE' : _nice('${m['from']}');
+    // Who typed it (owner, 2026-10-26): the owner's own messages, CHE's automated ones, and other AIs read differently.
+    final typedByOwner = '${m['source']}' == 'owner';
+    final automated = fromChe && !typedByOwner;
+    final who = typedByOwner ? 'You, typed' : automated ? 'CHE, automated' : fromChe ? 'CHE' : _nice('${m['from']}');
     final parts = cheSplitMessage('${m['text']}');
     return Padding(
       padding: const EdgeInsets.only(top: 8),
@@ -272,13 +276,36 @@ class _CheMailboxScreenState extends State<CheMailboxScreen> {
             padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
             child: Text('$who · ${cheMailWhen(m)}', style: CheType.caption),
           ),
-          for (var i = 0; i < parts.length; i++) _bubble(m, fromChe, parts[i], i, parts.length),
+          for (var i = 0; i < parts.length; i++) _bubble(m, fromChe, parts[i], i, parts.length, typedByOwner: typedByOwner),
+          if (cheFactCheckStatus(thread, m) != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 4, right: 6, left: 6),
+              child: Semantics(
+                label: 'Fact-check: ${cheFactCheckStatus(thread, m)}',
+                child: Text(cheFactCheckStatus(thread, m)!, style: CheType.caption.copyWith(color: CheColors.textDim)),
+              ),
+            ),
+          if (cheVerdictFor(thread, m) case final verdict?)
+            Container(
+              key: Key('verdict_${verdict['id'] ?? ''}'),
+              margin: const EdgeInsets.only(top: 6),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              constraints: BoxConstraints(maxWidth: MediaQuery.sizeOf(context).width * 0.72),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: CheColors.accentAlt.withValues(alpha: 0.5)),
+              ),
+              child: Semantics(
+                label: "Claude's fact-check: ${verdict['text']}",
+                child: SelectableText("Claude's fact-check: ${verdict['text']}", style: CheType.body.copyWith(color: CheColors.text)),
+              ),
+            ),
         ],
       ),
     );
   }
 
-  Widget _bubble(Map m, bool fromChe, String text, int index, int count) {
+  Widget _bubble(Map m, bool fromChe, String text, int index, int count, {bool typedByOwner = false}) {
     final who = fromChe ? 'CHE' : _nice('${m['from']}');
     final part = count > 1 ? ', part ${index + 1} of $count' : '';
     // Tail corner on the last bubble of a run, like Messages.
@@ -294,7 +321,8 @@ class _CheMailboxScreenState extends State<CheMailboxScreen> {
           padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 8),
           constraints: BoxConstraints(maxWidth: MediaQuery.sizeOf(context).width * 0.72),
           decoration: BoxDecoration(
-            color: fromChe ? CheColors.accent : (cheHudActive ? CheHud.ice.withValues(alpha: 0.10) : CheColors.surfaceHi),
+            // CHE's automated messages are the accent colour; the owner's typed messages are the quiet surface colour, on the right.
+            color: typedByOwner ? CheColors.surfaceHi : fromChe ? CheColors.accent : (cheHudActive ? CheHud.ice.withValues(alpha: 0.10) : CheColors.surfaceHi),
             border: !fromChe && cheHudActive ? Border.all(color: CheHud.ice.withValues(alpha: 0.32)) : null,
             borderRadius: BorderRadius.only(
               topLeft: round,
@@ -303,9 +331,34 @@ class _CheMailboxScreenState extends State<CheMailboxScreen> {
               bottomRight: !fromChe || !last ? round : tail,
             ),
           ),
-          child: SelectableText(
-            text,
-            style: CheType.body.copyWith(color: fromChe ? CheColors.bg : CheColors.text),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              SelectableText(
+                text,
+                style: CheType.body.copyWith(color: fromChe && !typedByOwner ? CheColors.bg : CheColors.text),
+              ),
+              // CHE's own replies go to Claude's mailbox for a fact-check (owner, 2026-10-26): Claude answers Verified, False or
+              // Can't verify for each claim, with a source to check. No paid model is called.
+              if (fromChe)
+                Semantics(
+                  button: true,
+                  label: 'Send this reply to Claude to fact-check',
+                  excludeSemantics: true,
+                  child: InkWell(
+                    onTap: () => _sendForFactCheck(text, '${m['id'] ?? ''}'),
+                    child: Padding(
+                      padding: const EdgeInsets.only(top: 6),
+                      child: Row(mainAxisSize: MainAxisSize.min, children: [
+                        Icon(Icons.fact_check_outlined, size: 16, color: CheColors.bg),
+                        const SizedBox(width: 4),
+                        Text('Send to Claude to fact-check', style: CheType.label.copyWith(color: CheColors.bg)),
+                      ]),
+                    ),
+                  ),
+                ),
+            ],
           ),
         ),
       ),
@@ -323,6 +376,16 @@ class _CheMailboxScreenState extends State<CheMailboxScreen> {
     final ordered = out.entries.toList()
       ..sort((a, b) => cheMailCompare(b.value.last, a.value.last));
     return {for (final e in ordered) e.key: e.value};
+  }
+
+  /// Posts one CHE reply to Claude's thread with the fact-check request, through the shared sender.
+  Future<void> _sendForFactCheck(String reply, String messageId) async {
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    HapticFeedback.selectionClick();
+    final result = await cheSendFactCheck(baseUrl: widget.baseUrl, headers: widget.headers(), reply: reply, messageId: messageId);
+    messenger?.showSnackBar(SnackBar(content: Text(result)));
+    // An action the owner asked for, so its real result is also spoken (AGENTS.md: report every action aloud).
+    _say(result);
   }
 
   String _nice(String peer) => peer.isEmpty ? 'Unknown' : '${peer[0].toUpperCase()}${peer.substring(1)}';
@@ -354,7 +417,7 @@ class _CheMailboxScreenState extends State<CheMailboxScreen> {
           child: ListView(
             reverse: true,
             padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-            children: thread.reversed.map(_message).toList(),
+            children: thread.reversed.map((m) => _message(m, thread)).toList(),
           ),
         ),
       ]);
@@ -505,7 +568,7 @@ class _CheMailboxScreenState extends State<CheMailboxScreen> {
                 children: [
                   Padding(
                     padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-                    child: Column(children: messages.map(_message).toList()),
+                    child: Column(children: messages.map((m) => _message(m, messages)).toList()),
                   ),
                 ],
               ),

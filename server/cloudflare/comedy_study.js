@@ -114,13 +114,18 @@ export function seasonPages(wikitext) {
 
 async function wikitext(title, fetcher) {
   const { url, data } = await wiki({ action: 'parse', page: title, prop: 'wikitext' }, fetcher);
+  if (data?.error?.code === 'missingtitle') return null;
+  if (data?.error) throw new Error(`Wikipedia: ${data.error.code || 'invalid response'}`);
+  if (!data?.parse) throw new Error('Wikipedia returned no page evidence');
   return { url, title: data?.parse?.title || title, text: data?.parse?.wikitext || '' };
 }
 
 /** The show's own article as plain text (premise, characters, style, reception), clipped. */
 async function showArticle(title, fetcher) {
   const { data } = await wiki({ action: 'query', prop: 'extracts', explaintext: '1', titles: title }, fetcher);
-  return clip(data?.query?.pages?.[0]?.extract || '', 6000);
+  const text = clip(data?.query?.pages?.[0]?.extract || '', 6000);
+  if (!text) throw new Error('Wikipedia returned no readable show article');
+  return text;
 }
 
 // ─── Lessons ───
@@ -144,9 +149,30 @@ function parseLessons(raw) {
 async function loadAssignments(storage) { return (await storage.get(STUDY_KEY)) || []; }
 async function saveAssignments(storage, list) { await storage.put(STUDY_KEY, list.slice(-10)); }
 
+// Network/model waits allow owner turns to interleave. Commit only this assignment, and only
+// if no pause, resume, replacement or competing pass changed its checkpoint in the meantime.
+async function savePass(storage, assignment, checkpoint, summaries, now) {
+  const commit = async (tx) => {
+    const current = await loadAssignments(tx);
+    const index = current.findIndex((x) => x.id === assignment.id);
+    const saved = current[index];
+    if (!saved || !['planning', 'studying'].includes(saved.status)
+      || (saved.control_revision || 0) !== checkpoint.revision || saved.passes !== checkpoint.passes) return false;
+    for (const [key, value] of summaries) {
+      if (value === null) await tx.delete(key); else await tx.put(key, value);
+    }
+    current[index] = assignment;
+    await saveAssignments(tx, current);
+    if (assignment.status === 'done') await tx.delete(STUDY_WAKE_KEY);
+    else await tx.put(STUDY_WAKE_KEY, now + PASS_GAP_MS);
+    return true;
+  };
+  return typeof storage.transaction === 'function' ? storage.transaction(commit) : commit(storage);
+}
+
 export function newAssignment(intent, now = Date.now()) {
   return {
-    id: `study:${now.toString(36)}`, goal: intent.goal, status: 'planning', created_at: new Date(now).toISOString(),
+    id: `study:${now.toString(36)}:${crypto.randomUUID()}`, goal: intent.goal, status: 'planning', created_at: new Date(now).toISOString(),
     subjects: intent.subjects.map((s) => ({ name: s, status: 'pending', article: null, list_pages: [], episodes: [], cursor: 0, sources: [] })),
     lessons: 0, passes: 0, log: [],
   };
@@ -162,16 +188,20 @@ export async function studyPass(storage, { store = null, complete, fetcher = fet
   const list = await loadAssignments(storage);
   const a = list.find((x) => ['planning', 'studying'].includes(x.status));
   if (!a) { await storage.delete(STUDY_WAKE_KEY); return null; }
-  const subject = a.subjects.find((s) => s.status !== 'done' && s.status !== 'not_found');
+  const checkpoint = { revision: a.control_revision || 0, passes: a.passes };
+  const summariesToSave = new Map();
+  // Discover every assigned show first; a long first series must not starve the others.
+  const subject = a.subjects.find((s) => s.status === 'pending')
+    || a.subjects.find((s) => s.status !== 'done' && s.status !== 'not_found');
   if (!subject) {
     a.status = 'done';
     note(a, `Finished: ${a.subjects.map((s) => `${s.name} ${s.status === 'done' ? `(${s.episodes.length} episode summaries)` : '(not found)'}`).join(', ')}.`, now);
-    await saveAssignments(storage, list);
-    await storage.delete(STUDY_WAKE_KEY);
+    await savePass(storage, a, checkpoint, summariesToSave, now);
     return a;
   }
   a.status = 'studying';
   a.passes += 1;
+  a.last_error = null;
   try {
     if (subject.status === 'pending') {
       const show = await findShow(subject.name, fetcher);
@@ -184,13 +214,13 @@ export async function studyPass(storage, { store = null, complete, fetcher = fet
         subject.sources.push(`https://en.wikipedia.org/wiki/${encodeURIComponent(show.title.replace(/ /g, '_'))}`);
         const base = show.title.replace(/\s*\((?:american )?(?:tv|television)? ?(?:series|sitcom)\)\s*/i, '').trim();
         const listTitle = `List of ${base} episodes`;
-        const page = await wikitext(listTitle, fetcher).catch(() => null);
+        const page = await wikitext(listTitle, fetcher);
         let episodes = page ? parseEpisodes(page.text, base) : [];
         const pages = page ? [page.title] : [];
         if (page && !episodes.length) {
           for (const season of seasonPages(page.text)) {
-            const sp = await wikitext(season, fetcher).catch(() => null);
-            if (!sp) continue;
+            const sp = await wikitext(season, fetcher);
+            if (!sp) throw new Error(`Episode guide unavailable: ${season}`);
             const n = Number(/season (\d+)/i.exec(season)?.[1]) || null;
             episodes.push(...parseEpisodes(sp.text, base).map((e) => ({ ...e, season: e.season || n })));
             pages.push(sp.title);
@@ -199,8 +229,8 @@ export async function studyPass(storage, { store = null, complete, fetcher = fet
         subject.list_pages = pages;
         subject.sources.push(...pages.map((p) => `https://en.wikipedia.org/wiki/${encodeURIComponent(p.replace(/ /g, '_'))}`));
         subject.episodes = episodes.map((e) => ({ season: e.season, number: e.number, overall: e.overall, title: e.title, aired: e.aired, has_summary: Boolean(e.summary), method: null }));
-        await storage.put(`${a.id}:summaries:${a.subjects.indexOf(subject)}`, episodes.map((e) => clip(e.summary, 600)));
-        subject.notes = await showArticle(show.title, fetcher).catch(() => '');
+        summariesToSave.set(`${a.id}:summaries:${a.subjects.indexOf(subject)}`, episodes.map((e) => clip(e.summary, 600)));
+        subject.notes = await showArticle(show.title, fetcher);
         subject.status = episodes.length ? 'reading' : 'done';
         note(a, episodes.length
           ? `${base}: found ${episodes.length} episodes in Wikipedia's episode guide (${pages.join(', ')}).`
@@ -216,13 +246,13 @@ export async function studyPass(storage, { store = null, complete, fetcher = fet
       for (let i = 0; i < batch.length; i += 1) subject.episodes[from + i].method = batch[i].summary ? 'episode summary (Wikipedia episode guide)' : 'title only (the guide has no summary)';
       subject.cursor = from + batch.length;
       note(a, `${subject.article}: read ${read.length} episode summaries (episodes ${from + 1} to ${subject.cursor} of ${subject.episodes.length}).`, now);
-      if (subject.cursor >= subject.episodes.length) { subject.status = 'done'; await storage.delete(`${a.id}:summaries:${a.subjects.indexOf(subject)}`); }
+      if (subject.cursor >= subject.episodes.length) { subject.status = 'done'; summariesToSave.set(`${a.id}:summaries:${a.subjects.indexOf(subject)}`, null); }
     }
   } catch (error) {
+    a.last_error = { at: new Date(now).toISOString(), message: clip(error?.message || error, 120) };
     note(a, `A pass stopped (${clip(error?.message || error, 120)}); I'll pick up at the same place.`, now);
   }
-  await saveAssignments(storage, list);
-  await storage.put(STUDY_WAKE_KEY, now + PASS_GAP_MS);
+  await savePass(storage, a, checkpoint, summariesToSave, now);
   return a;
 }
 
@@ -306,12 +336,14 @@ export async function studyTurn(storage, ask, { now = Date.now() } = {}) {
   }
   if (!active) return { text: 'I\'m not studying anything right now, sir. Tell me what to study and I\'ll plan it.', meta: meta({ ok: false }) };
   if (ask.action === 'stop') {
-    active.status = 'paused'; await saveAssignments(storage, list); await storage.delete(STUDY_WAKE_KEY);
+    active.status = 'paused'; active.control_revision = (active.control_revision || 0) + 1;
+    await saveAssignments(storage, list); await storage.delete(STUDY_WAKE_KEY);
     return { text: `Paused, sir. I stopped at ${active.subjects.map((s) => `${s.article || s.name}: ${s.cursor || 0} of ${s.episodes.length || '?'} episodes`).join('; ')}. Say "resume studying" to pick up there.`, meta: meta() };
   }
   if (ask.action === 'resume') {
     if (active.status === 'done') return { text: 'That study is finished, sir; nothing to resume.', meta: meta() };
-    active.status = 'studying'; await saveAssignments(storage, list); await storage.put(STUDY_WAKE_KEY, now + 1000);
+    active.status = 'studying'; active.control_revision = (active.control_revision || 0) + 1;
+    await saveAssignments(storage, list); await storage.put(STUDY_WAKE_KEY, now + 1000);
     return { text: 'Back on it, sir, from exactly where I stopped.', meta: meta({ wake: true }) };
   }
   if (ask.action === 'lessons') {
@@ -414,5 +446,5 @@ export async function studyPassRoute(request, storage, env) {
     return { ok: true, reset: true };
   }
   const assignment = await alarmStudy(storage, env, { force: true }).catch((error) => ({ error: String(error?.message || error) }));
-  return { ok: Boolean(assignment && !assignment.error), assignment: assignment?.error ? null : assignment, error: assignment?.error || null };
+  return { ok: Boolean(assignment && !assignment.error && !assignment.last_error), assignment: assignment?.error ? null : assignment, error: assignment?.error || assignment?.last_error?.message || null };
 }
