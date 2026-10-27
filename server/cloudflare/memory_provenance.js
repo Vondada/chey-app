@@ -351,12 +351,17 @@ export function answerOwnerMemoryQuestion(data = {}, question = {}, history = []
 
 // ─── 2. Final check on what a reply says the owner said or did ─────────────
 
+const PAST_CONVERSATION = /\bwe (?:talked|discussed|spoke|chatted) about\b|\b(?:in|during) our (?:last |earlier |previous )?(?:conversation|chat|talk)\b|\byou (?:asked|told) me (?:on|back on|back in|last)\b/;
 const ATTRIBUTION = new RegExp([
   `\\byou(?: have| had)? ${OWNER_ADVERBS}(?:also )?(?:confirmed|verified|told me|said|mentioned|stated|approved|tested|witnessed|experienced|decided|agreed|shared|reported|noted|explained|let me know|taught me|indicated|asked me to remember)\\b`,
   '\\bas you (?:said|mentioned|told me|confirmed|noted|explained|put it)\\b',
   '\\baccording to you\\b',
   '\\byour (?:confirmation|own words|earlier statement|approval)\\b',
   '\\bi remember (?:that )?you\\b',
+  // A past conversation is the owner's too (owner, 2026-10-27): "On September 12th we talked about your trip" needs a record.
+  '\\bwe (?:talked|discussed|spoke|chatted) about\\b',
+  '\\b(?:in|during) our (?:last |earlier |previous )?(?:conversation|chat|talk)\\b',
+  '\\byou (?:asked|told) me (?:on|back on|back in|last)\\b',
 ].join('|'));
 const HYPOTHETICAL = /^(?:if|when|whenever|once|unless|suppose|imagine|let s say|in case)\b/;
 const FICTION_REQUEST = /\b(?:story|stories|fiction|fictional|pretend|role ?play|imagine|hypothetical(?:ly)?|make up|made up|brainstorm|poem|joke|scenario|example dialogue)\b/;
@@ -422,6 +427,9 @@ export function guardOwnerAttributions(reply, { records = [], ownerTurns = [], m
       const plain = plainWords(sentence);
       if (!ATTRIBUTION.test(plain)) return true;
       if (/\?\s*$/.test(sentence) || HYPOTHETICAL.test(plain)) return true;
+      // A claim about an earlier conversation needs an earlier turn or a record: this message alone is not one.
+      // The owner's own questions ("what did we talk about on Sept 12?") are not evidence either.
+      if (PAST_CONVERSATION.test(plain)) return supportedBy(sentence, evidence.filter((e) => e !== message && !/\?/.test(String(e).split(/\n(?:CHE|ChatGPT) answered:/)[0]))) || (removed.push(clip(sentence, 300)), false);
       if (supportedBy(sentence, evidence)) return true;
       removed.push(clip(sentence, 300));
       return false;
@@ -779,7 +787,8 @@ export function memoryPromptContext(data = {}) {
  * through to the normal path.
  */
 export function ownerFactCorrection(rawMessage, records = []) {
-  const plain = String(rawMessage || '').trim()
+  // iPhone smart punctuation types ’ ("my boat’s name").
+  const plain = String(rawMessage || '').replace(/[\u2018\u2019]/g, "'").trim()
     .replace(/^(?:(?:hey |ok |okay )?(?:che|chay|chey|shay)[,:]?\s+)/i, '');
   const m = /^(?:no|nope|actually|correction|update|wait)[,.:!]?\s+(?:that(?:'s| is) (?:wrong|not right)[,.]?\s+)?(?:now\s+)?(my\s+[a-z0-9][a-z0-9 '\-]{1,60}?\s+(?:is|are)\s+[^.?!]{1,200}?)(?:\s+now)?(?:,?\s+not\s+[^.?!]{1,80})?[.!]?$/i.exec(plain);
   // "My latest confirmed favorite color is red" (owner, 2026-10-24) is a correction too, alone or after sentences that

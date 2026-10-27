@@ -375,7 +375,7 @@
     {"d":"research","say":"What's the score of the Suns game?","route":"model"},
     {"d":"weather","say":"Do I need an umbrella today?","route":["model","location_provenance"]},
     {"d":"smalltalk","say":"Thanks, that's all.","route":"model"},
-    {"d":"smalltalk","say":"What did we talk about yesterday?","route":["model","che_memory_provenance"]},
+    {"d":"smalltalk","say":"What did we talk about yesterday?","route":["che_history"]},
     {"d":"capability","say":"Can you call my mom?","route":"model"},
     {"d":"capability","say":"Could you transfer money for me?","route":["held","model"],"effect":"any"}
   ]
