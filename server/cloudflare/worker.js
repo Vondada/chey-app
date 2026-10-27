@@ -73,6 +73,7 @@ import { externalGrounding } from './external_grounding.js';
 import { answerEvidenceReceipt, cachedResearch, evidenceReferenceFollowup, factKey, forgetKnowledge, invalidateKnowledge, knownAnswer, LAST_ANSWER_EVIDENCE_KEY, ownerFactQuestion, markPureResearch, rememberOwnerFact, researchHit, researchKey } from './knowledge_cache.js';
 import { claimMatcher, disprovenContext, downgradeDisproven, externalCorrection, guardCitations, loadDisproven, newsQuestion, newsResearch, reopenArticles, recheckExternalClaim, recordDisproven, verifiedSourcesContext } from './source_verification.js';
 import { recordReliability, reliabilityIntent, reliabilitySummary, speakReliability } from './reliability_ledger.js';
+import { reliabilityApi, reliabilityChat } from './reliability_registry.js';
 import { answerOwnerMemoryQuestion, auditMemoryProvenance, evidenceQuestion, evidenceReferent, evidenceRequestSplit, explainEvidenceFor, findAnswerEvidence, brainRecordForProvenance, guardOwnerAttributions, guardRememberBlock, guardSpeakerAttributions, latestAnswerEvidence, loadRetractions, RECALL_OUTCOMES, readOutcome, memoryPromptContext, ownerFactCorrection, ownerMemoryQuestion, ownerWords, recordAnswerEvidence, recordRetractions, storedSpeaker, storyRequested } from './memory_provenance.js';
 import { condenseHistory, ownerNotificationPolicy } from './workflow_governor.js';
 import { analyze as tradeAnalyze, backtestAll, candleSpan, loadCandles, paperTick, readBook, speakAnalysis, speakBacktest, speakBook, speakLearning, nextTradingTickAt, tradingIntent, watchSymbol, STRATEGIES } from './trading_lab.js';
@@ -7625,6 +7626,7 @@ export class CheState extends DurableObject {
       // ─── Brain: the one logical Brain the phone replicates ──────────────
       // Reads and writes are the owner's only. /changes and /push are the two
       // halves of the phone's incremental sync; /status gives real counts.
+      if (path.startsWith('/api/brain/reliability')) return reliabilityApi(this.ctx.storage, path, request.method, body, ownerDevice);
       if (path === '/api/brain/ledger' && request.method === 'GET') {
         if (!ownerDevice) return json({ detail: 'Only the CHE owner can read his brain.' }, 403);
         const ledgerZone = new BrainLedger(this.ctx.storage).meta('owner_zone', LEDGER_DEFAULT_ZONE) || LEDGER_DEFAULT_ZONE;
@@ -10540,6 +10542,8 @@ export class CheState extends DurableObject {
         if (privBlock) return privBlock;
         // A family/guest device never reaches the owner's chat routes below.
         if (!ownerDevice) return this.guestChat(body, rawMessage, activeTenant);
+        const relTurn = !body.attachment && !body.workflow_step ? await reliabilityChat(this.ctx.storage, rawMessage) : null;
+        if (relTurn) { await this.dropHeldActions(); return ndjsonReply(relTurn.text, relTurn.done); }
         // The owner's exact words are authoritative for a read-only, verified
         // deployment lookup. Never let speech interpretation, REA, the local
         // code inspector, or a generic model discard the GitHub Actions request.
