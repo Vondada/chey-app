@@ -36,7 +36,10 @@ const NAME_TO_ID = new Map(CHARACTER_IDS.map((id) => [id, id]));
 export function parseRequest(text = '') {
   // "CHE, ..." addresses her; the character to make is named after that.
   const src = String(text || '').replace(/^\s*che\s*[,:!]\s*/i, '');
-  const lower = src.toLowerCase();
+  // Quoted dialogue is masked before the clauses are split, so commas, "and" and "then" inside it stay in one step.
+  const quotes = [];
+  const masked = src.replace(/"([^"]*)"/g, (_, q) => { quotes.push(q); return `QUOTE${quotes.length - 1}`; });
+  const lower = masked.toLowerCase();
   const character = [...NAME_TO_ID.keys()].find((id) => new RegExp(`\\b${id}\\b`, 'i').test(src)) || null;
   const secs = lower.match(/(\d+)\s*[- ]?\s*seconds?\b/);
   const setting = (lower.match(/\bin (?:an? |the )?([a-z][a-z -]{2,40}?)(?=,| and | make | render |$)/) || [])[1]?.trim() || null;
@@ -44,12 +47,20 @@ export function parseRequest(text = '') {
   const unsupported = [];
   const clauses = lower.split(/,| and |;|\bthen\b/).map((c) => c.trim()).filter(Boolean);
   for (const clause of clauses) {
+    const quote = clause.match(/quote(\d+)/);
     const walk = clause.match(/\bwalk(?:s|ing)? (?:over )?to (?:the |a |an )?([a-z ]+)$/);
     if (walk) { steps.push({ action: 'walk', target: walk[1].trim() }); continue; }
-    if (/\bspeak(?:s|ing)?\b|\bsay(?:s|ing)?\b/.test(clause)) { steps.push({ action: 'speak', text: src.match(/"([^"]+)"/)?.[1] || null }); continue; }
+    if (/\bspeak(?:s|ing)?\b|\bsay(?:s|ing)?\b/.test(clause)) {
+      steps.push({ action: 'speak', text: quote ? quotes[Number(quote[1])] : null });
+      continue;
+    }
     const named = Object.keys(ACTIONS).find((a) => new RegExp(`\\b${a}s?\\b`).test(clause));
     if (named) { steps.push({ action: named }); continue; }
-    if (/\b(render|create|make|video|scene|studio|realistic)\b/.test(clause) || /\bin (?:an? |the )/.test(clause)) continue;
+    // Setup only: creating or rendering the video, the character or the setting. Any other "make ..." is an action.
+    const setup = /^(?:create|make|render|generate|add)\b/.test(clause) && /\b(?:video|clip|film|scene|studio|room|second|seconds|character)\b/.test(clause)
+      || new RegExp(`^(?:create|make|render|generate)\\s+(?:${CHARACTER_IDS.join('|')})\\b`).test(clause)
+      || /^in (?:an? |the )/.test(clause);
+    if (setup) continue;
     if (clause.length > 2) unsupported.push(clause);
   }
   return { character_id: character, seconds: secs ? Number(secs[1]) : null, setting, steps, unsupported };
@@ -88,6 +99,22 @@ export function routesFor(plan, routes = RENDER_ROUTES) {
   });
 }
 
+/** What each step needs from the pinned version that the version does not have. Empty when every step is supported. */
+export function assetGaps(shots, version) {
+  const gaps = new Set();
+  for (const shot of shots) {
+    const need = ACTIONS[shot.action]?.needs || [];
+    for (const n of need) {
+      if (n === 'animations') {
+        if (shot.clip !== 'idle' && !(version?.animations || []).includes(shot.clip)) gaps.add(`no "${shot.clip}" animation saved for this version`);
+      } else if (!version?.[n]) {
+        gaps.add(`no ${n} asset saved for this version (needed for ${shot.action})`);
+      }
+    }
+  }
+  return [...gaps];
+}
+
 /**
  * Plan one video. `registry` is the character registry (character_registry.js). Returns the plan with an honest status:
  * 'ready' only when the character has a model and every step is supported; otherwise 'blocked' with the reasons.
@@ -107,6 +134,8 @@ export function planScene(text, registry, { seconds: override = null, now = Date
   let shots;
   try { shots = buildShots(parsed.steps.length ? parsed.steps : [{ action: 'wait' }], seconds); } catch (error) { reasons.push(error.message); }
   if (reasons.length || !shots) return { status: 'blocked', reasons, parsed, now };
+  const gaps = assetGaps(shots, latest);
+  if (gaps.length) return { status: 'blocked', reasons: gaps, parsed, character: { id: parsed.character_id, version: refs.version }, seconds, shots, now };
 
   const plan = {
     status: 'ready',
