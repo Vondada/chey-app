@@ -6,6 +6,8 @@
 // returned to the phone, never logged, never spoken beyond the last 4).
 
 // ─── Provider catalog: official pages only ───────────────────────────────
+export const MODAL_PASTE_REFUSAL = 'Modal is connected by the CHE Modal deploy workflow, so there is nothing to paste. Use Check Connection to test CHE\'s own Modal app.';
+
 export const KEY_PROVIDERS = {
   groq: { name: 'Groq', env: 'GROQ_API_KEY', page: 'https://console.groq.com/keys', test: 'https://api.groq.com/openai/v1/models', accounts: 'one account per person' },
   gemini: { name: 'Google AI Studio (Gemini)', env: 'GEMINI_API_KEY', page: 'https://aistudio.google.com/apikey', test: 'https://generativelanguage.googleapis.com/v1beta/openai/models', accounts: 'uses your Google account' },
@@ -23,8 +25,8 @@ export const KEY_PROVIDERS = {
   // GPU is never started by a key alone: the owner must also set a GPU budget ("allow up to $20 for GPUs").
   runpod: { name: 'RunPod (prepaid GPUs)', env: 'RUNPOD_API_KEY', page: 'https://www.runpod.io/console/user/settings', test: 'https://api.runpod.io/graphql', method: 'POST', body: '{"query":"query { myself { id } }"}', accounts: 'one account per person; you add prepaid credit yourself; CHE never pays' },
   vast: { name: 'Vast.ai (prepaid GPUs)', env: 'VAST_API_KEY', page: 'https://cloud.vast.ai/manage-keys/', test: 'https://console.vast.ai/api/v0/users/current/', accounts: 'one account per person; you add prepaid credit yourself; CHE never pays' },
-  // Modal: a Proxy Auth Token for CHE's own deployed app (modal_gpu.js), verified by an authenticated /health call there.
-  modal: { name: 'Modal (GPU functions)', env: 'MODAL_TOKEN', page: 'https://modal.com/settings', test: null, accounts: 'paste as wk-ID:ws-SECRET@https://<workspace>--che-gpu.modal.run (a Proxy Auth Token and the endpoint the CHE Modal deploy workflow printed); verified by calling that app' },
+  // Modal: connected by the CHE Modal deploy workflow (modal_gpu.js); the authenticated /health check is the verification.
+  modal: { name: 'Modal (GPU functions)', env: 'MODAL_TOKEN', page: 'https://modal.com/settings', test: null, accounts: 'connected by the CHE Modal deploy workflow, so there is nothing to paste; Check Connection tests CHE\'s own Modal app with a read-only health call' },
   youtube: { name: 'YouTube · @Cognitive.Horizon.Engine', env: 'YOUTUBE_GOOGLE_SIGNIN', page: 'https://console.cloud.google.com/apis/credentials', test: null, accounts: 'connected with Google sign-in (Connect YouTube), not a pasted key' },
 };
 
@@ -136,6 +138,8 @@ export async function testKey(provider, key, fetcher = fetch) {
 }
 
 export async function saveKey(storage, provider, key, fetcher = fetch) {
+  // Modal connects through the CHE Modal deploy workflow (modal_gpu.js), never a pasted key (owner, 2026-10-25).
+  if (provider === 'modal') return { ok: false, detail: MODAL_PASTE_REFUSAL };
   const p = KEY_PROVIDERS[provider];
   const clean = String(key || '').trim();
   if (!p) return { ok: false, detail: 'Unknown provider.' };

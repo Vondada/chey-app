@@ -34,6 +34,8 @@ export const CLAIMS = Object.freeze([
   { kind: 'live_price', re: /\b(?:live|real[- ]time|current|latest)\s+(?:price|quote|bid|ask)\b|\bLIVE\b[^.!?\n]{0,20}\bprice\b/i },
   { kind: 'task_finished', re: new RegExp(String.raw`\b(?:${SUBJECT}|[A-Z][a-z]+\s+|the\s+agent\s+|it\s+)${PAST}(?:finished|completed)\b[^.!?\n]{0,40}\b(?:task|job|assignment|research|study)\b`, 'i') },
   { kind: 'code_executed', re: new RegExp(String.raw`\b${SUBJECT}${PAST}(?:ran|executed)\b[^.!?\n]{0,40}\b(?:code|script|tests?|command|query|pytest|node|flutter)\b`, 'i') },
+  // An office agent's research, analysis or test is a claim about a task run by a named agent. It needs its own verified task.
+  { kind: 'agent_research', re: new RegExp(String.raw`\b(?:Nova|Atlas|Mira|Knox|Sage|Lyra|Orion|Vale|Juno|Rhea|Cato|Iris|my\s+(?:agents?|team)|the\s+(?:agents?|team))\s+(?:have\s+|has\s+|just\s+|already\s+|successfully\s+)*(?:researched|researches|analy[sz]ed|backtested|studied|investigated|looked\s+into|tested|verified|checked)\b`, 'i') },
   { kind: 'book_read', re: new RegExp(String.raw`\b${SUBJECT}${PAST}(?:read|finished\s+reading)\b[^.!?\n]{0,30}\b(?:book|chapter|pages?)\b`, 'i') },
 ]);
 
@@ -56,6 +58,7 @@ const CORRECTION = Object.freeze({
   task_finished: 'No verified result is on record for that task, so I have not marked it finished.',
   code_executed: 'No execution record exists for this answer, so I did not run that code.',
   book_read: 'I have not read that book, so I cannot say what it contains.',
+  agent_research: 'No execution record shows an agent doing that work, so I have not reported it as research. I can run it now, or tell you what I can check from the data I have.',
 });
 
 // A denial that CHE keeps, or can read, her own memory, mission, project, job or conversation records. Those stores exist
@@ -96,6 +99,7 @@ const PROOF = Object.freeze({
   video_made: (e) => (e.videos || []).filter((v) => v.mp4_verified === true && v.playable === true),
   trade_placed: (e) => (e.trades || []).filter((t) => t.order_id),
   task_finished: (e) => (e.tasks || []).filter((t) => t.status === 'complete' && t.verified === true),
+  agent_research: (e) => (e.agent_tasks || []).filter((t) => t.status === 'complete' && t.verified === true && t.agent_name),
   code_executed: (e) => (e.executions || []).filter((x) => x.status === 'success'),
   book_read: (e) => (e.book_reads || []).filter((b) => b.chars > 0),
 });
@@ -122,6 +126,12 @@ function labelClaim(kind, sentence, evidence, now) {
   if (kind === 'live_price') return priceVerdict(evidence, now);
   // A merge claim names its PR: a receipt for another PR proves nothing about this one.
   const named = sentence.match(/#\s?(\d+)/);
+  if (kind === 'agent_research') {
+    const who = sentence.match(/\b(Nova|Atlas|Mira|Knox|Sage|Lyra|Orion|Vale|Juno|Rhea|Cato|Iris)\b/);
+    const tasks = (evidence.agent_tasks || []).filter((t) => t.status === 'complete' && t.verified === true && t.agent_name && (!who || t.agent_name.toLowerCase() === who[1].toLowerCase()));
+    if (tasks.length) return { label: 'VERIFIED', refs: tasks.map((t) => t.id || 'agent_task') };
+    return { label: 'UNVERIFIED', refs: [] };
+  }
   const proof = kind === 'pr_merged' && named
     ? (evidence.merged_prs || []).filter((p) => p.sha && Number(p.number) === Number(named[1]))
     : PROOF[kind] ? PROOF[kind](evidence) : [];
@@ -217,6 +227,7 @@ export async function auditEvidenceFrom(storage, { executions = [], prices = [],
     memory_writes: [...memoryWrites, ...byKind('memory_saved').filter((r) => now - Date.parse(r.at || 0) <= MEMORY_CLAIM_MS).map((r) => ({ id: `memory:${r.record_id || ''}`, confirmed: true }))],
     // Office tasks prove "finished" only when complete and checked (agent_runtime.js sets verified on completion).
     tasks: [...tasks, ...teamTasks.filter(Boolean).map((t) => ({ id: String(t.id || ''), status: t.status, verified: t.verified === true }))],
+    agent_tasks: teamTasks.filter(Boolean).map((t) => ({ id: String(t.id || ''), status: t.status, verified: t.verified === true, agent_name: String(t.partner_name || '').slice(0, 40) })),
     // The phone's own report (POST /api/device/installed) is the only install evidence.
     device_installs: byKind('device_install').map((r) => ({ id: `install:${r.version}-${r.build}-${r.patch || 'none'}`, confirmed: r.confirmed === true })),
     prices, book_reads: [],

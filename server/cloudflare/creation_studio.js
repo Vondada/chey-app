@@ -23,6 +23,7 @@ import { BUILT_IN, HAIR_BUILT, HAIR_BUST_BUILT, STYLES, STYLE_LABELS, generateVa
 import { GpuQueue, VIEW_NAMES, engineRecord, engineSettingsOf, gpuOwnerRoute, referenceKey, rigLine } from './gpu_queue.js';
 import { mediaStore, sha256Hex } from './che_media_store.js';
 import { cloudUsable, engineRoute, ensureCapacity } from './creation_orchestrator.js';
+import { providerStatuses } from './compute_pool.js';
 import { CREATION_PROFILES, profileSettings } from './creation_profiles.js';
 import * as OBJ from './creation_objects.js';
 
@@ -602,6 +603,12 @@ export function critiqueOf(v, job) {
 }
 
 // ── Storage ──────────────────────────────────────────────────────────────────────────────────────────────────────
+// Version numbers can repeat after undo + a divergent edit. Bind retries to the actual renderer inputs too.
+async function renderRequestKey(p, v, settings, quality) {
+  const hash = await sha256Hex(new TextEncoder().encode(JSON.stringify({ kind: p.kind, settings, views: VIEWS, samples: quality.samples, res: quality.res })));
+  return `creation:${p.id}:v${v.n}:${hash}`;
+}
+
 async function load(storage) { return (await storage.get(PROJECTS_KEY)) || []; }
 // Never evicts: at MAX_PROJECTS a new creation is refused (create below), so no saved work is dropped without the owner
 // asking (AGENTS.md: deleting needs his yes; review of #520).
@@ -615,8 +622,11 @@ async function engineOf(queue, env = {}) {
   const last = v.workers.map((w) => w.last_seen).filter(Boolean).sort().pop() || null;
   // automatic: CHE can start a free cloud CPU worker herself right now (auto_cloud on, GitHub token, repo verified public).
   const automatic = cloudUsable(env, rec);
+  // Modal's real state (compute_pool.providerStatuses: the verified connection, the owner's credit policy and the reason). Colab and the CPU worker are not Modal.
+  const modal = (await providerStatuses(env, { storage: queue.storage, refreshQuota: false }).catch(() => [])).find((p) => p.id === 'modal') || null;
   const status = gpuOn.length ? 'online' : automatic ? 'cloud' : on.length ? 'online' : v.worker_paired ? 'offline' : 'not_paired';
   return { online: Boolean(on.length), gpu: gpuOn[0]?.gpu || (on.length ? 'CPU (GitHub cloud worker)' : null), paired: v.worker_paired, last_seen: last, notebook_url: NOTEBOOK_URL, status,
+    modal: modal ? { status: modal.status, gpu: modal.gpu, reason: modal.reason } : null,
     automatic, workers_online: on.length, max_concurrent: settings.max_cloud_workers + gpuOn.length, waiting_reason: rec.waiting_reason || '',
     label: { online: 'Creation Engine Online', cloud: 'Creation Engine ready: free cloud CPU', offline: 'Creation Engine Offline', not_paired: 'Creation Engine not connected' }[status], jobs: v.jobs };
 }
@@ -677,6 +687,10 @@ function stagesOf(job) {
 export function engineDeviceLine(engine) {
   const gpu = engine?.gpu && !/^CPU/.test(engine.gpu) ? engine.gpu : null;
   if (gpu) return `A GPU worker is connected: ${gpu}. It builds the next model.`;
+  // Modal is named by its real state, never called Colab. "Ready" needs a verified character build; "unverified" says so.
+  if (engine?.modal?.status === 'ready') return `A GPU is ready on Modal: ${engine.modal.gpu}. It builds the next model.`;
+  if (engine?.modal?.status === 'unverified') return `Modal's ${engine.modal.gpu} is connected but has not built a character yet, so it is not proven. ${engine.modal.reason || ''}`.trim();
+  if (engine?.modal?.status === 'offline' && engine.modal.reason) return `Modal's ${engine.modal.gpu} is connected but not used yet. ${engine.modal.reason}`;
   if (engine?.online || engine?.automatic) return 'No GPU is connected: your Colab GPU notebook is not open, so only the free GitHub cloud CPU worker is available. It builds on the CPU, which is slower than a GPU.';
   return 'No worker is connected right now: no GPU, and no free cloud CPU worker can start.';
 }
@@ -858,18 +872,25 @@ export class CreationStudio {
     return { ok: true, project: detail(p, engine.jobs, engine), spoken: speakProject(p, engine.jobs, engine) };
   }
 
-  async generate(id) {
+  async generate(id, { fresh = false } = {}) {
     const { list, p } = await this.find(id);
     if (!p) return { ok: false, status: 404, detail: 'No such creation.' };
-    const v = cur(p);
+    let v = cur(p);
+    if (fresh && v.job_id) {
+      const prior = (await this.queue.jobs()).find((j) => j.id === v.job_id);
+      if (prior && ['completed', 'failed', 'cancelled'].includes(prior.state)) v = this.pushVersion(p, 'Explicit new render check.', {});
+    }
     let out;
-    if (isThing(p)) {
+    const previous = (await this.queue.jobs()).find((j) => j.id === v.job_id && ['queued', 'paused', 'rendering', 'completed'].includes(j.state));
+    if (previous) out = { ok: true, job: previous, duplicate: true };
+    else if (isThing(p)) {
       // Objects and rooms are light procedural builds: any worker takes them, a free cloud CPU included.
       const bad = OBJ.specErrors(p.kind, v.params);
       if (bad.length) return { ok: false, detail: `This version cannot be built: ${bad.join('; ')}.` };
       const q = OBJ.qualityOf(v.render);
-      out = await this.queue.enqueue({ kind: OBJ.KIND_JOB[p.kind], title: `${p.title} v${v.n}: 3D model and previews`, views: VIEWS, samples: q.samples, res: q.res,
-        settings: OBJ.specSettings(v.params), queued_by: 'Live Studio', priority: 'high', requires: { gpu: 'none' } });
+      const settings = OBJ.specSettings(v.params);
+      out = await this.queue.enqueue({ request_key: await renderRequestKey(p, v, settings, q), kind: OBJ.KIND_JOB[p.kind], title: `${p.title} v${v.n}: 3D model and previews`, views: VIEWS, samples: q.samples, res: q.res,
+        settings, queued_by: 'Live Studio', priority: 'high', requires: { gpu: 'none' } });
     } else {
       const r = renderOf(v); const q = qualityOf(r);
       // Body macros and the variation seed only when set (so earlier versions queue the same settings as before); the
@@ -885,7 +906,7 @@ export class CreationStudio {
         settings.REFERENCE = JSON.stringify({ url: `/api/gpu/worker/reference?sha256=${ref.sha256}`, sha256: ref.sha256, bytes: ref.bytes, consent: ref.consent });
       }
       // Owner-interactive: high priority; a GPU is preferred, and a free cloud CPU worker takes it when none is online.
-      out = await this.queue.enqueue({ kind: 'person_model', title: `${p.title} v${v.n}: 3D model and previews`, views: VIEWS, samples: q.samples, res: q.res,
+      out = await this.queue.enqueue({ request_key: await renderRequestKey(p, v, settings, q), kind: 'person_model', title: `${p.title} v${v.n}: 3D model and previews`, views: VIEWS, samples: q.samples, res: q.res,
         settings, queued_by: 'Live Studio', priority: 'high', requires: { gpu: 'preferred' } });
     }
     if (!out.ok) return { ok: false, detail: out.detail };
@@ -893,7 +914,7 @@ export class CreationStudio {
     const cap = await this.capacity();
     const engine = await this.engine();
     const gpuOn = engine.online && engine.gpu && !/^CPU/.test(engine.gpu);
-    const spoken = out.duplicate ? 'This version is already queued or building.'
+    const spoken = out.duplicate ? (out.job.state === 'completed' ? 'This version already has completed output in Projects.' : 'This version is already queued or building.')
       : gpuOn ? `Queued. Your Creation Engine on ${engine.gpu} will build the 3D model, then front, three-quarter and side previews.`
         : cap.dispatched || engine.automatic ? `Queued. ${CLOUD_LINE} It builds the 3D model, then front, three-quarter and side previews.`
           : engine.online ? 'Queued. A cloud worker is online and takes it next.'
