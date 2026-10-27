@@ -132,6 +132,10 @@ export function nextFlirt(prev, message, now = Date.now()) {
 // A serious, sensitive or high-risk message: no profanity, flirting or jokes in that reply, whatever the register.
 const SERIOUS = /\b(?:chest (?:pain|hurts|feels tight)|can'?t breathe|heart attack|stroke|overdos\w*|bleeding|seizure|ambulance|911|emergency room|er visit|suicid\w*|kill (?:my|him|her)self|self[- ]harm|passed away|died|funeral|cancer|diagnos\w*|miscarriage|lost (?:my|our) (?:job|baby|mom|dad|mama|house)|evict\w*|lawsuit|lawyer|arrested|court date|divorce|got hacked|been hacked|stolen identity|identity theft|fraud|scam(?:med)?|lost (?:\w+ )?(?:money|thousand|grand|savings)|margin call|liquidat\w*|blew (?:up )?my account)\b/i;
 export const seriousMoment = (message) => SERIOUS.test(String(message || ''));
+// A first-person medical emergency: answered by a fixed line that tells him to call emergency services, before any model.
+const EMERGENCY = /\b(?:my chest (?:feels |is |has )?(?:tight\w*|hurts?|pain\w*|pressure)|chest (?:pain|pressure|tightness) (?:right )?now|i can'?t breathe|can'?t breathe right now|my face (?:is )?drooping|slurred speech|i(?:'m| am) having a (?:stroke|heart attack))\b/i;
+export const emergencyMoment = (message) => EMERGENCY.test(String(message || ''));
+export const EMERGENCY_REPLY = 'Sir, if this is happening now, call 911 (or your local emergency number) right away. Do not drive yourself. If you can, unlock the door and sit down, and tell them exactly what you feel and when it started. I am not a doctor, so do not wait for my answer. Once you are safe, I will help with the next step.';
 
 // The model's language line for one turn. Clean: no profanity and no flirting, naturally, with no announcement and no
 // guess about who is there. A serious message: none of it for that reply. Otherwise the owner's adult default, paced

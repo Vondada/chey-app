@@ -2,7 +2,7 @@
 // hypotheticals are not treated as corrections.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { classifySocialCorrection } from './social_corrections.js';
+import { EMERGENCY_REPLY, classifySocialCorrection, emergencyMoment } from './social_corrections.js';
 
 test('Test A: "Chill, I\'m by my mama" asks for clean language, situational, with the owner-facing reply', () => {
   const r = classifySocialCorrection("Chill, I'm by my mama.");
@@ -40,4 +40,12 @@ test('ordinary messages and empty input return null', () => {
   assert.equal(classifySocialCorrection('What is the weather in Flagstaff?'), null);
   assert.equal(classifySocialCorrection(''), null);
   assert.equal(classifySocialCorrection(null), null);
+});
+
+test('a first-person medical emergency gets the fixed call-for-help line, and an informational question does not', () => {
+  assert.equal(emergencyMoment('My chest feels tight and my left arm is numb. What should I do?'), true);
+  assert.equal(emergencyMoment("I can't breathe right now"), true);
+  assert.equal(emergencyMoment('What are the signs of a heart attack?'), false);
+  assert.equal(emergencyMoment('My chest feels fine after the run.'), false);
+  assert.match(EMERGENCY_REPLY, /call 911/);
 });

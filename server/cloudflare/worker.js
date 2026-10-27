@@ -153,7 +153,7 @@ import { intentFrame, understoodAs } from './intent_frame.js';
 import { replyHijacksOwnerRequest, usageIntent, usageReport, speakUsage } from './usage_tracker.js';
 import { newestStarredIntent, speakNewestStarred, autoImproveScan, analyticalRepositoryQuestion, chatOnlyResponseIntent, currentTurnActionPolicy, codeScoutIntent, fetchRepoFile, inspectReferenceRepo, inspirationUpgradeContext, listOwnerStarredRepos, readRepoSource, referenceSourceBlock, codingFollowupKind, codingHistoryIntent, codingTimingNote, hypotheticalChange, repositoryImplementationIntent, repositoryInspectionIntent, scoutCode, selectStudyRepos, speakScout, speakStarredRepos, starredRepoIntent, starredStudyList, studySelectionIntent } from './code_scout.js';
 import { agentReportTurn, codingHistoryReceipt, completedWorkProof, namedJobAnswer, otherAgentWorkAsk, otherAgentWorkReply, proofAsked } from './coding_history.js';
-import { languageLine, readRegister, readSocial, socialProbe, socialTurn } from './social_corrections.js';
+import { EMERGENCY_REPLY, emergencyMoment, languageLine, readRegister, readSocial, socialProbe, socialTurn } from './social_corrections.js';
 import { codingAuditApi, codingAuditProbe, codingAuditTurn, noStoredJobReceipt } from './coding_audit.js';
 import { inventionFollowUpAllowed, inventionIntent, inventionReply, planInvention, refusalReply } from './invention_studio.js';
 import { continuingInvention, inventionVisualIntent, inventionVisualRoute, makeConcept, visualTurn } from './invention_visuals.js';
@@ -10447,6 +10447,8 @@ export class CheState extends DurableObject {
         }
         // "Chill, I'm by my mama": the owner's words set or lift clean language (social_corrections.js).
         const social = ownerDevice ? await socialTurn(this.ctx.storage, rawMessage, body.history) : null;
+        // A first-person medical emergency gets the fixed call-for-help line, with no model call (social_corrections.js).
+        if (ownerDevice && emergencyMoment(rawMessage)) return ndjsonReply(EMERGENCY_REPLY, { source: 'che_safety_route', model_calls: 0 });
         // A broker key said or typed in chat is never kept or sent on to a model (review of #348):
         // the memory filters refuse it by its shape, and CHE says what to do instead.
         if (BROKER_KEY_RE.test(rawMessage)) {

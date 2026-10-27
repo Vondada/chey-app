@@ -210,7 +210,9 @@ test('clean language and serious moments switch off profanity and flirting; prof
   let t = await che.say("Chill, I'm by my mama.");
   assert.ok(t.prompt.includes(CLEAN) && t.prompt.includes('no flirting') && !t.prompt.includes(FLIRT) && !t.prompt.includes(SWEAR));
   await che.say('you can talk normal again');
-  t = await che.say('My chest feels tight and my left arm is numb.', { fresh: true });
+  // A medical emergency is answered by the fixed call-for-help line before any model (social_corrections.js), so a
+  // serious, non-emergency message carries the serious-tone check here.
+  t = await che.say('My grandma passed away last night.', { fresh: true });
   assert.ok(t.prompt.includes(SERIOUS) && !t.prompt.includes(SWEAR) && !t.prompt.includes(FLIRT));
   t = await che.say('lol ok what now', { lastReply: 'Damn, that was a hell of a game.' });
   assert.ok(t.prompt.includes(SWEAR) && t.prompt.includes(PACE), 'she cursed last reply, so not again');
