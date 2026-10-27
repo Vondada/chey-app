@@ -31,7 +31,7 @@ class CheGpuBrowser extends StatefulWidget {
 
 /// A spoken command about the screen itself (owner, 2026-10-25: "pull up the browser", "get this stuff out of the way").
 /// These change what is on screen and never start a GPU connection. Null when the words are not a screen command.
-enum CheGpuUiCommand { open, expand, minimize, close, back, forward, refresh, showStatus, hideStatus, signOutGoogle }
+enum CheGpuUiCommand { open, expand, minimize, close, back, forward, refresh, showStatus, hideStatus, signOutGoogle, checkGoogleSignIn }
 
 /// Google's own sign-out page. It signs out the Google session in the browser that opens it, and nothing else.
 const cheGpuGoogleSignOutUrl = 'https://accounts.google.com/Logout';
@@ -51,6 +51,10 @@ CheGpuUiCommand? cheGpuUiCommand(String words) {
   if (RegExp(r'^(?:refresh|reload)(?: (?:the )?(?:page|browser))?$').hasMatch(t)) return CheGpuUiCommand.refresh;
   if (RegExp(r'^(?:sign|log) ?out (?:of|from) google(?: (?:in|on) (?:the |my )?(?:gpu )?browser)?$|^(?:sign|log) ?out google$').hasMatch(t)) {
     return CheGpuUiCommand.signOutGoogle;
+  }
+  // The spoken way to check the sign-out: CHE reads Google's page aloud, so nobody has to look at it.
+  if (RegExp(r'^(?:check|read) (?:my |the )?google sign ?-?(?:in|out)(?: status)?$|^am i (?:still )?signed (?:in|out)(?: of google)?$|^did (?:it|google) sign (?:me )?out$').hasMatch(t)) {
+    return CheGpuUiCommand.checkGoogleSignIn;
   }
   if (RegExp(r'^(?:show|bring back|open) (?:the |my )?(?:gpu )?status(?: panel)?$').hasMatch(t)) return CheGpuUiCommand.showStatus;
   if (RegExp(r'^(?:hide|collapse) (?:the |my )?(?:gpu )?status(?: panel)?$|^get (?:this|that|the|all (?:this|the)|all of this|all that) (?:stuff|info|information|status|text|clutter|messages?|instructions?) (?:out of the way|away|aside)$').hasMatch(t)) {
@@ -229,7 +233,14 @@ class _CheGpuBrowserState extends State<CheGpuBrowser> with WidgetsBindingObserv
         } catch (_) {
           return 'I could not open Google\'s sign-out page. Nothing was signed out.';
         }
-        return 'Opened Google\'s sign-out page in CHE\'s browser. I cannot read whether it finished, so check the account picture in Colab before you connect.';
+        return 'Opened Google\'s sign-out page in CHE\'s browser. I cannot tell yet whether it finished. Say "check Google sign-in" and I will read Google\'s page to you before you connect.';
+      case CheGpuUiCommand.checkGoogleSignIn:
+        // CHE's browser reads its own page text; CHE says only what the page says, never that sign-out worked.
+        final read = CheBrowserActions.voice;
+        if (read == null) return 'The browser is not ready yet. Try again in a moment.';
+        final page = await read('read the page');
+        if (page == null || page.trim().isEmpty) return 'I could not read Google\'s page, so I cannot say whether you are signed out.';
+        return 'Google\'s page says: ${page.trim()}';
       case CheGpuUiCommand.back:
       case CheGpuUiCommand.forward:
       case CheGpuUiCommand.refresh:

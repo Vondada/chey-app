@@ -129,6 +129,8 @@ void main() {
       'reload the page': CheGpuUiCommand.refresh,
       'sign out of Google': CheGpuUiCommand.signOutGoogle,
       'log out of Google in the browser': CheGpuUiCommand.signOutGoogle,
+      'check Google sign-in': CheGpuUiCommand.checkGoogleSignIn,
+      'am I signed out of Google': CheGpuUiCommand.checkGoogleSignIn,
     };
     for (final entry in expected.entries) {
       expect(cheGpuUiCommand(entry.key), entry.value, reason: entry.key);
@@ -191,9 +193,19 @@ void main() {
     final reply = await CheGpuBrowser.voiceHandler!('sign out of Google');
     expect(opened, 'https://accounts.google.com/Logout');
     expect(reply, startsWith("Opened Google's sign-out page"));
-    expect(reply, contains('check the account picture in Colab'));
+    // The next step is spoken, not visual: "check Google sign-in" reads Google's own page aloud (Codex review, PR #689).
+    expect(reply, contains('check Google sign-in'));
+    expect(reply, isNot(contains('picture')));
+    final asked = <String>[];
+    CheBrowserActions.voice = (words) async { asked.add(words); return 'You are signed out. Choose an account.'; };
+    final check = await CheGpuBrowser.voiceHandler!('check Google sign-in');
+    expect(asked, ['read the page']);
+    expect(check, "Google's page says: You are signed out. Choose an account.");
+    CheBrowserActions.voice = (words) async => null;
+    expect(await CheGpuBrowser.voiceHandler!('am I signed out of Google'), contains('cannot say whether you are signed out'));
     expect(cheGpuUiCommand('connect the GPU'), isNull);
     CheBrowserActions.openUrl = null;
+    CheBrowserActions.voice = null;
     await tester.pumpWidget(const SizedBox());
   });
 
