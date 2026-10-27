@@ -15,6 +15,8 @@ import 'package:flutter/semantics.dart';
 import 'package:flutter/services.dart';
 
 import '../che_ui/che_agents.dart';
+import 'che_crew_pager.dart';
+import '../che_ui/che_progress_bar.dart';
 import '../che_ui/che_chrome_status.dart';
 import '../che_ui/che_hud.dart';
 import '../che_ui/che_rooms.dart';
@@ -452,18 +454,14 @@ class _CheOfficeFloorScreenState extends State<CheOfficeFloorScreen> {
             style: CheType.bodyDim,
           )
         else
-          for (final p in agents)
-            Padding(
-              padding: const EdgeInsets.only(bottom: CheSpace.sm),
-              child: _AgentListCard(
-                agent: p.agent,
-                onTap: () => _openDesk(p.agent.id),
-                onReadAloud: () => _speak(
-                  '${p.agent.name}, ${p.agent.role}. ${p.agent.status.label}. '
-                  '${p.agent.task?.isNotEmpty == true ? p.agent.task : p.agent.specialty}',
-                ),
-              ),
+          CheCrewPager(
+            agents: [for (final p in agents) p.agent],
+            onOpen: (agent) => _openDesk(agent.id),
+            onReadAloud: (agent) => _speak(
+              '${agent.name}, ${agent.role}. ${agent.status.label}. '
+              '${agent.task?.isNotEmpty == true ? agent.task : agent.specialty}',
             ),
+          ),
         const SizedBox(height: CheSpace.lg),
         Text('WAR ROOM', style: cheOfficeLabel(CheType.overline)),
         const SizedBox(height: CheSpace.sm),
@@ -947,94 +945,6 @@ class _FilterPill extends StatelessWidget {
   }
 }
 
-/// Large-chibi agent row matching mockup 03 (not postage-stamp).
-class _AgentListCard extends StatelessWidget {
-  const _AgentListCard({
-    required this.agent,
-    required this.onTap,
-    required this.onReadAloud,
-  });
-  final CheAgent agent;
-  final VoidCallback onTap;
-  final VoidCallback onReadAloud;
-
-  @override
-  Widget build(BuildContext context) {
-    final working = cheAgentIsMoving(agent.status);
-    final task = agent.task?.trim();
-    return Semantics(
-      button: true,
-      label: '${agent.name}, ${agent.role}. ${agent.status.label}. Double tap to open desk.',
-      excludeSemantics: true,
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          onTap: onTap,
-          onLongPress: onReadAloud,
-          borderRadius: BorderRadius.circular(CheRadius.lg),
-          child: CheOfficeInkPanel(
-            padding: const EdgeInsets.fromLTRB(10, 10, 12, 10),
-            glow: working ? CheColors.accent : null,
-            decoration: BoxDecoration(
-              color: CheColors.surfaceHi,
-              borderRadius: BorderRadius.circular(CheRadius.lg),
-              border: Border.all(
-                color: working
-                    ? CheColors.accent.withValues(alpha: 0.65)
-                    : CheColors.stroke,
-              ),
-              boxShadow: working
-                  ? [BoxShadow(color: CheColors.accent.withValues(alpha: 0.18), blurRadius: 16)]
-                  : null,
-            ),
-            child: Row(
-              children: [
-                CheMiniPerson(agent: agent, size: 72, showDesk: false),
-                const SizedBox(width: CheSpace.md),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(agent.name, style: CheType.headline, maxLines: 1, overflow: TextOverflow.ellipsis),
-                      Text(
-                        agent.role.isEmpty ? agent.specialty : agent.role,
-                        style: CheType.caption,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        task?.isNotEmpty == true ? task! : agent.status.label,
-                        style: CheType.caption.copyWith(
-                          color: working ? CheColors.success : CheColors.textDim,
-                        ),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      const SizedBox(height: 6),
-                      ClipRRect(
-                        borderRadius: BorderRadius.circular(99),
-                        child: LinearProgressIndicator(
-                          value: working ? null : (agent.status == CheAgentStatus.done ? 1 : 0.08),
-                          minHeight: 3,
-                          backgroundColor: CheColors.stroke,
-                          color: CheColors.accent,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                Icon(Icons.chevron_right_rounded, color: CheColors.textFaint),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-
 class _Banner extends StatelessWidget {
   const _Banner({required this.text, required this.color});
   final String text;
@@ -1072,7 +982,7 @@ class _MeetingTile extends StatelessWidget {
               maxLines: 1, overflow: TextOverflow.ellipsis, style: CheType.caption),
           if (meeting.live) ...[
             const SizedBox(height: 6),
-            LinearProgressIndicator(value: meeting.progress, color: amber, backgroundColor: CheColors.stroke),
+            CheProgressBar(value: meeting.progress, color: amber, background: CheColors.stroke, height: 6),
           ],
           Align(
             alignment: Alignment.centerLeft,
@@ -1240,21 +1150,26 @@ class _AgentDeskSheetState extends State<_AgentDeskSheet> {
     await _load();
   }
 
-  double _workflowProgress(CheAgentDetail detail) {
+  /// The measured share of a workflow that is finished: 1 when its task completed, otherwise null. No stage has a
+  /// measured percentage yet, so a running, queued or reviewing task shows an indeterminate bar and its real state
+  /// name, never a made-up percent (owner audit, 2026-10-26: the old fixed 0.55 and 0.22 were not measurements).
+  double? _workflowProgress(CheAgentDetail detail) {
     final status = detail.profile.assignmentStatus.toLowerCase();
     if (status.contains('complete') || status.contains('done')) return 1;
-    if (status.contains('review')) return 0.82;
-    if (status.contains('running') || detail.profile.working) return 0.55;
-    if (status.contains('queued') || status.contains('waiting')) return 0.22;
-    if (status.contains('fail') || status.contains('block')) return 0.08;
-    if (detail.history.isNotEmpty) {
-      final latest = detail.history.first.status.toLowerCase();
-      if (latest == 'complete') return 1;
-      if (latest == 'reviewing') return 0.82;
-      if (latest == 'running') return 0.55;
-      if (latest == 'queued') return 0.22;
+    if (status.contains('fail') || status.contains('block') || status.contains('review') || status.contains('running') ||
+        status.contains('queued') || status.contains('waiting') || detail.profile.working) {
+      return null;
     }
-    return 0;
+    if (detail.history.isNotEmpty && detail.history.first.status.toLowerCase() == 'complete') return 1;
+    return null;
+  }
+
+  /// The real state name for the progress line, from the same source as [_workflowProgress].
+  String _workflowStateLabel(CheAgentDetail detail) {
+    final status = detail.profile.assignmentStatus.trim();
+    if (status.isNotEmpty) return status;
+    if (detail.profile.working) return 'working';
+    return detail.history.isNotEmpty ? detail.history.first.status : 'no task';
   }
 
   String _verifiedOutputLine(CheAgentDetail detail) {
@@ -1394,7 +1309,7 @@ class _AgentDeskSheetState extends State<_AgentDeskSheet> {
                       : 'No active job right now. Status: ${a.status.label}.'),
             ),
             Semantics(
-              label: 'Verified productivity for ${a.name}. ${_verifiedOutputLine(d)}. Current workflow progress ${(progress * 100).round()} percent.',
+              label: 'Verified productivity for ${a.name}. ${_verifiedOutputLine(d)}. Current workflow state: ${_workflowStateLabel(d)}${progress == null ? '' : '. ${(progress * 100).round()} percent done'}.',
               child: CheOfficePanel(
                 padding: const EdgeInsets.all(CheSpace.md),
                 legacy: BoxDecoration(
@@ -1405,15 +1320,9 @@ class _AgentDeskSheetState extends State<_AgentDeskSheet> {
                 child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                   Text('VERIFIED PRODUCTIVITY', style: cheOfficeLabel(CheType.overline.copyWith(color: CheColors.accent))),
                   const SizedBox(height: 6),
-                  LinearProgressIndicator(
-                    value: progress,
-                    minHeight: 7,
-                    color: a.color,
-                    backgroundColor: CheColors.stroke,
-                    borderRadius: BorderRadius.circular(99),
-                  ),
+                  CheProgressBar(value: progress, color: a.color, background: CheColors.stroke),
                   const SizedBox(height: 6),
-                  Text('${(progress * 100).round()}% current workflow stage', style: CheType.label),
+                  Text(progress == null ? 'Current state: ${_workflowStateLabel(d)}. No measured percent yet.' : '${(progress * 100).round()}% done', style: CheType.label),
                   Text(_verifiedOutputLine(d), style: CheType.caption),
                   Text('Progress is based on real queued / working / review / completed states, not a guessed performance score.',
                       style: CheType.caption.copyWith(color: CheColors.textFaint)),

@@ -145,6 +145,24 @@ class _CheMailboxScreenState extends State<CheMailboxScreen> {
     _say('Letter deleted.');
   }
 
+  /// Modal is connected by the CHE Modal deploy workflow, so there is no key to paste. This runs CHE's own
+  /// authenticated /health check through the server and says what it found. No secret is sent or shown.
+  Future<void> _checkModal() async {
+    _say('Checking the Modal connection. CHE tests her own Modal app with one read-only health check.');
+    try {
+      final res = await http.post(
+        Uri.parse('${widget.baseUrl}/api/onboarding/modal/verify'),
+        headers: {...widget.headers(), 'Content-Type': 'application/json'},
+        body: jsonEncode(<String, Object?>{}),
+      );
+      final body = jsonDecode(res.body);
+      final map = body is Map ? body : const {};
+      _say(cheModalCheckSpeech(map, httpStatus: res.statusCode));
+    } catch (_) {
+      _say('The Modal check could not reach CHE. Nothing was changed.');
+    }
+  }
+
   Future<void> _addKey(Map<String, dynamic> provider) async {
     if (provider['readonly'] == true) {
       _say(_serverKeyStatusSpeech(provider));
@@ -743,7 +761,7 @@ class _CheMailboxScreenState extends State<CheMailboxScreen> {
                           trailing: Icon(readonly
                               ? Icons.lock_outline_rounded
                               : Icons.add_rounded),
-                          onTap: () => _addKey(p),
+                          onTap: () => p['check'] == 'modal' ? _checkModal() : _addKey(p),
                         ),
                       ),
                     );
@@ -1150,4 +1168,21 @@ class _AiNeuralPainter extends CustomPainter {
   @override
   bool shouldRepaint(covariant _AiNeuralPainter oldDelegate) =>
       oldDelegate.positions.length != positions.length || oldDelegate.weights.toString() != weights.toString();
+}
+
+/// What Check Connection says for CHE's Modal verify reply: the result, its failure category, the plain reason and the
+/// check's request ID, so a failure can be traced. Secrets never reach this reply (the server redacts it).
+String cheModalCheckSpeech(Map<dynamic, dynamic> map, {int httpStatus = 200}) {
+  String text(Object? v) => v == null ? '' : '$v'.trim();
+  final checks = map['checks'] is List ? map['checks'] as List : const [];
+  final failure = map['failure'] is Map ? map['failure'] as Map : const {};
+  final firstCheck = checks.isNotEmpty && checks.first is Map ? text((checks.first as Map)['detail']) : '';
+  final found = [text(map['detail']), text(failure['detail']), firstCheck].firstWhere((d) => d.isNotEmpty, orElse: () => '');
+  final detail = found.isEmpty || RegExp(r'[.!?]$').hasMatch(found) ? found : '$found.';
+  final category = text(map['category']).replaceAll('_', ' ');
+  final id = text(map['request_id']);
+  final trace = id.isEmpty ? '' : ' Check ID $id.';
+  if (map['ok'] == true) return 'Modal is connected. $detail$trace'.trim();
+  final reason = detail.isNotEmpty ? detail : 'CHE answered HTTP $httpStatus with no reason.';
+  return 'Modal is not connected${category.isEmpty ? '' : ' ($category)'}. $reason$trace';
 }

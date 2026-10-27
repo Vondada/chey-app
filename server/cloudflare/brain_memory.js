@@ -7,6 +7,7 @@
 // Sensitive text (passwords, codes, keys) is never stored.
 
 import { isSafeMemoryText } from './research_memory.js';
+import { recordReliabilityExchange } from './reliability_registry.js';
 
 const PREFIX = 'brainmem:';
 const INDEX = 'brainidx:'; // stable thread id -> its memory key (upserts)
@@ -108,6 +109,13 @@ export async function recordConversationMemory(storage, { message, reply, now = 
     links: [],
     strength: 1,
   };
+  // An open test session (reliability_registry.js) records this question and the reply the owner actually got.
+  try {
+    await recordReliabilityExchange(storage, { message: said, reply: answered && isSafeMemoryText(answered) ? answered : '[reply withheld: it looked like private information]', id: memory.id, now });
+  } catch (error) {
+    // The registry has already counted the failure where "what take are we on" reads it; the conversation is still kept.
+    console.error('CHE Reliability Registry: test question not recorded:', error?.message || error);
+  }
 
   // Build on earlier memories: link to the most related recent ones and
   // strengthen them (each link is a real shared topic, never invented).
