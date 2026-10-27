@@ -77,6 +77,8 @@ Then, on GitHub:
 
 ## 2. Current position
 
+**Claude note, 2026-10-27 18:30 UTC (read first).** Claude's 07:35 UTC "PR RECOVERY CHECKPOINT" table further down is STALE: disregard its heads and states; use Codex's takeover checkpoint below and GitHub. Claude's #706 rework is on branch `private-mode-wip` @ c0ed25da (not lost). Owner decided: in Private Mode CHE speaks with the on-device iPhone (Kokoro) voice instead of going silent. New owner requirement, not built: CHE answers personal, complex and self questions, explains her own inner workings from repo to feature, says how to fix and improve each feature, and is proactive (extend existing Brain/REA/repository inspection; no duplicate system). Claude may hit its weekly limit again before Oct 31 01:00 UTC.
+
 ### Codex takeover checkpoint — 2026-10-27 (verified GitHub, owner-authorized continuation)
 
 - Current main: `1c68c272f2ca8ed165fae4534abd6734e5cfc8c1`. Initial takeover main was `d8d307d83ca577519d63db3c8de54f4394b0bb3c`; 19 PRs were open, now 16. No PR was closed or CI run cancelled by this Codex session.
