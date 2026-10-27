@@ -124,6 +124,8 @@ import { ANALYSIS_SOURCE, LEDGER_SOURCE, analyzeStrategy, ledgerIntent, readLedg
 import { TRADING_STATUS_SOURCE, newTradesIntent, tradingStatus } from './trading_status.js';
 import { meetingCommand, meetingScene, planScene, simScene } from './world_scene.js';
 import { SIM_SOURCE, listRuns, loadRun, loadSimMemory, runLab, saveRun, simLabIntent } from './sim_lab.js';
+import { manifestChat, manifestRoute } from './manifest_api.js';
+import { pcm16ToWav } from './audio_wav.js';
 import { PLAN_SOURCE, answerPlanFollowUp, buildPlan, classifyProject, listPlans, loadPlan, planFollowUpIntent, planSubject, projectPlanIntent, researchSource, savePlan } from './project_plan.js';
 import { BRAIN_ROOMS_SOURCE, ROOMS as BRAIN_ROOMS, answerCrossRoom, crossRoomIntent, drainRoomEvents, imageReference, pointsAtScreen, prFollowUp, recentScreen, relinkRecords, rememberScreen, screenDeictic, screenFollowUp, screenRoomContext, screenRoomFor, statusLabel } from './brain_rooms.js';
 import { controlChangeEvent, meetingEvent, officeTaskEvent, paperOrderRefusedEvent, phoneRoomEvent, queueRoomEvent, researchEvent } from './room_events.js';
@@ -149,6 +151,7 @@ import { intentFrame, understoodAs } from './intent_frame.js';
 import { replyHijacksOwnerRequest, usageIntent, usageReport, speakUsage } from './usage_tracker.js';
 import { newestStarredIntent, speakNewestStarred, autoImproveScan, analyticalRepositoryQuestion, chatOnlyResponseIntent, currentTurnActionPolicy, codeScoutIntent, fetchRepoFile, inspectReferenceRepo, inspirationUpgradeContext, listOwnerStarredRepos, readRepoSource, referenceSourceBlock, codingFollowupKind, codingHistoryIntent, codingTimingNote, hypotheticalChange, repositoryImplementationIntent, repositoryInspectionIntent, scoutCode, selectStudyRepos, speakScout, speakStarredRepos, starredRepoIntent, starredStudyList, studySelectionIntent } from './code_scout.js';
 import { agentReportTurn, codingHistoryReceipt, completedWorkProof, namedJobAnswer, otherAgentWorkAsk, otherAgentWorkReply, proofAsked } from './coding_history.js';
+import { codingAuditApi, codingAuditProbe, codingAuditTurn, noStoredJobReceipt } from './coding_audit.js';
 import { inventionFollowUpAllowed, inventionIntent, inventionReply, planInvention, refusalReply } from './invention_studio.js';
 import { continuingInvention, inventionVisualIntent, inventionVisualRoute, makeConcept, visualTurn } from './invention_visuals.js';
 import { matchShowroom, showroomIntent, showroomReply, showroomView } from './capability_showroom.js';
@@ -955,30 +958,6 @@ function ownerContextPreview(item) {
     created_at: item.created_at,
     updated_at: item.updated_at,
   };
-}
-
-// PCM16 mono -> WAV container so AVAudioPlayer can play it directly.
-function pcm16ToWav(pcm, sampleRate = 24000) {
-  const header = new ArrayBuffer(44);
-  const v = new DataView(header);
-  const writeText = (offset, text) => { for (let i = 0; i < text.length; i++) v.setUint8(offset + i, text.charCodeAt(i)); };
-  writeText(0, 'RIFF');
-  v.setUint32(4, 36 + pcm.byteLength, true);
-  writeText(8, 'WAVE');
-  writeText(12, 'fmt ');
-  v.setUint32(16, 16, true);
-  v.setUint16(20, 1, true); // PCM
-  v.setUint16(22, 1, true); // mono
-  v.setUint32(24, sampleRate, true);
-  v.setUint32(28, sampleRate * 2, true);
-  v.setUint16(32, 2, true);
-  v.setUint16(34, 16, true);
-  writeText(36, 'data');
-  v.setUint32(40, pcm.byteLength, true);
-  const out = new Uint8Array(44 + pcm.byteLength);
-  out.set(new Uint8Array(header), 0);
-  out.set(pcm, 44);
-  return out;
 }
 
 let lastGeminiVoiceError = '';
@@ -7847,6 +7826,7 @@ export class CheState extends DurableObject {
         }
         return json({ detail: 'Method not allowed.' }, 405);
       }
+      if (path.startsWith('/api/coding/audit')) return codingAuditApi(request, path, this.env, ownerDevice);
       // Performance watch: measured timings per route against the budget (owner device only).
       if (request.method === 'GET' && path === '/api/performance') {
         if (!ownerDevice) return json({ detail: 'Not found.' }, 404);
@@ -9362,6 +9342,8 @@ export class CheState extends DurableObject {
         if (!meeting) return json({ detail: 'No such meeting.' }, 404);
         return json({ scene: meetingScene(meeting, runtimeSnapshot(data).agents) });
       }
+      const manifest = await manifestRoute(request, path, this.ctx.storage, ownerDevice, body); // manifest_api.js
+      if (manifest) return manifest;
       // Simulation Lab (sim_lab.js): the saved runs, newest first, and one run in full. Owner only.
       if (path === '/api/sims' && request.method === 'GET') {
         if (!ownerDevice) return ownerOnly();
@@ -11199,6 +11181,8 @@ export class CheState extends DurableObject {
         // "run a million simulations on this idea". It runs on the latest plan, or plans the idea named first,
         // then searches the design space with a seeded, budgeted, staged search (sim_lab.js). No model call;
         // the reply states the evaluations actually executed and labels predictions vs simulated results.
+        const manifestReply = body.attachment ? null : await manifestChat(message, this.ctx.storage, ownerDevice);
+        if (manifestReply) return manifestReply;
         const simAsk = body.attachment ? null : simLabIntent(message);
         if (simAsk) {
           if (!ownerDevice) return ownerOnly();
@@ -12157,6 +12141,8 @@ export class CheState extends DurableObject {
         }
         // "Show my last five missions", "Have we worked together before?": the stored missions, projects, jobs and Office
         // tasks, each store counted (activity_status.js), before the memory search.
+        const audit = body.attachment ? null : await codingAuditTurn(rawMessage, this.env, { owner: ownerDevice });
+        if (audit) return ndjsonReply(audit.text, audit.meta);
         const workHistoryAsk = !body.attachment && !memoryQuestion ? workHistoryIntent(rawMessage) : null;
         if (workHistoryAsk && !ownerDevice) {
           return ndjsonReply('Only the CHE owner can read mission, project and job history, sir.', { source: 'che_work_history', ok: false, model_calls: 0, outcome: RECALL_OUTCOMES.PERMISSION_DENIED });
@@ -12556,7 +12542,7 @@ export class CheState extends DurableObject {
           const stale = subject.job?.status === 'running' && Date.parse(subject.job.updated_at || 0) <= Date.now() - jobStaleMs(subject.job);
           // "How long will that take?": the record's own timestamps come first; no estimate is invented.
           const timing = codingFollowupKind(followupWords || message) === 'duration' ? codingTimingNote({ ...subject, acceptedAt: runtimeAt }) : '';
-          const receipt = codingHistoryReceipt({ ...subject, stale, request, repo: this.env.CHE_GITHUB_REPO });
+          const receipt = subject.kind === 'none' ? await noStoredJobReceipt(this.env) : codingHistoryReceipt({ ...subject, stale, request, repo: this.env.CHE_GITHUB_REPO });
           return ndjsonReply(timing ? `${timing} ${receipt}` : receipt, {
             source: 'che_coding_history',
             session_id: subject.kind === 'runtime' || subject.unreadRun ? sessionId : null,
@@ -16295,6 +16281,7 @@ async function routeRequest(request, env, ctx) {
     const token = /^Bearer (\S+)$/.exec(request.headers.get('Authorization') || '')?.[1] || '';
     return json(await commandCenterProbe(env, token));
   }
+  if (path === '/api/coding-audit/probe' && request.method === 'POST') return voiceProbeAuthorized(request, env) ? json(await codingAuditProbe(env, request, MEMORY_PROBE_OBJECT)) : json({ detail: 'Not found.' }, 404);
   // The deploy's Knowledge Atlas check, on the same isolated test CHE (#346).
   if (path === '/api/atlas/probe' && request.method === 'POST') {
     if (!voiceProbeAuthorized(request, env)) return json({ detail: 'Not found.' }, 404);

@@ -14,8 +14,13 @@
 const REPO = 'Vondada/chey-app';
 const API = 'https://api.github.com';
 const LIVE = 'https://chey-app.henryjavoni.workers.dev/health';
-// Fails on every PR branch by design; the owner skips it (2026-10-08).
-const NON_GATING = new Set(['Workers Builds: chey-app']);
+// Fails on every PR branch by design; the owner skips it (2026-10-08). The iOS simulator jobs
+// (che-release-gate.yml "screens", che-ios-simulator-test.yml "simulator") are manual and
+// informational since 2026-10-27; they never gate a merge.
+const NON_GATING = new Set(['Workers Builds: chey-app', 'screens', 'simulator']);
+// The pre-merge live test (che-worker-staging.yml): the PR deployed to chey-app-staging and probed live.
+// An open PR is not ready to merge until it succeeded on the head (owner, 2026-10-27).
+const LIVE_GATE = 'live (staging)';
 const DEPLOY_STEPS = {
   live_commit: /^Verify live deployed commit$/,
   memory_probe: /memory truth/i,
@@ -82,6 +87,9 @@ export async function releaseStatus({ pr = null, sha = null, fetcher = fetch, to
       out.checks.verdict = !gating.length ? 'NONE'
         : gating.some((r) => r.status !== 'completed') ? 'PENDING'
           : gating.every((r) => ['success', 'skipped', 'neutral'].includes(r.conclusion)) ? 'GREEN' : 'RED';
+      const live = runs.find((r) => r.name === LIVE_GATE);
+      out.checks.live_staging = live ? (live.status === 'completed' ? live.conclusion : live.status) : null;
+      if (out.pr && !out.pr.merged && out.checks.verdict === 'GREEN' && out.checks.live_staging !== 'success') out.checks.verdict = 'NOT READY';
     }
   }
 
@@ -171,6 +179,7 @@ export function formatStatus(s) {
     lines.push(`checks on ${short(s.checks.sha)}: ${s.checks.verdict}`);
     for (const c of s.checks.gating.filter((c) => !['success', 'skipped', 'neutral'].includes(c.conclusion))) lines.push(`  - ${c.name}: ${c.status === 'completed' ? c.conclusion : c.status}`);
     if (s.checks.non_gating.length) lines.push(`  (non-gating: ${s.checks.non_gating.map((c) => `${c.name}=${c.conclusion}`).join(', ')})`);
+    if (s.pr && !s.pr.merged) lines.push(`  ${LIVE_GATE}: ${s.checks.live_staging || 'MISSING (the pre-merge live test has not run on this head)'}`);
   }
   lines.push(`main: ${short(s.main_sha)}${s.target_sha && s.main_sha && s.target_sha !== s.main_sha ? ` (target ${short(s.target_sha)})` : ''}`);
   if (s.runs) {
