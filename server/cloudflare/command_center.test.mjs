@@ -29,7 +29,7 @@ const { default: worker, CheState } = mod;
 const MISSION_IDS = {
   // 'learn' is the Knowledge Atlas (issue #346), one entry over knowledge_atlas.js.
   // 'che-cancel-job' cancels a queued coding job by voice or typing (owner, 2026-10-19).
-  intelligence: ['che', 'che-explore', 'che-plan', 'che-build', 'che-research', 'che-verify', 'che-memory', 'che-brain-record', 'che-memory-inspect', 'che-brain-review', 'che-performance', 'che-flagstaff-import', 'che-outside-mail', 'che-recover', 'che-improve', 'che-cancel-job', 'che-status', 'learn', 'security-access', 'security-chief', 'security-findings'],
+  intelligence: ['che', 'che-explore', 'che-plan', 'che-build', 'che-research', 'che-verify', 'che-memory', 'che-brain-record', 'che-memory-inspect', 'che-brain-review', 'che-performance', 'che-flagstaff-import', 'che-outside-mail', 'che-recover', 'che-improve', 'che-cancel-job', 'che-status', 'learn', 'manifest', 'security-access', 'security-chief', 'security-findings'],
   youtube: ['yt-ideas', 'yt-research', 'yt-script', 'yt-video', 'yt-voice', 'yt-thumbnail', 'yt-seo', 'yt-publish', 'yt-batch', 'yt-analytics', 'yt-grow'],
   // trade-connections reads the owner-only connections of #348 (issue #350).
   // trade-setups opens the Signal Mode Setup Progress Board (owner, 2026-10-23).
@@ -112,8 +112,8 @@ async function owner({ saved = new Map(), model = () => 'Here is the answer, sir
 // ─── 1. Catalog identities ────────────────────────────────────────────────
 
 test('1. the owner\'s 71 commands exist exactly as listed, plus ten REA, six Creator Studio, two Strategy Control Center, two strategy learning commands, the historical study, the timeframe matrix, the CHE paper account and the two calendars, in 9 categories, each fully described', () => {
-  assert.equal(COMMANDS.length, 134);
-  assert.equal(new Set(COMMANDS.map((c) => c.id)).size, 134, 'ids are unique');
+  assert.equal(COMMANDS.length, 135);
+  assert.equal(new Set(COMMANDS.map((c) => c.id)).size, 135, 'ids are unique');
   assert.deepEqual(CATEGORIES.map((c) => c.id), Object.keys(MISSION_IDS));
   for (const [category, ids] of Object.entries(MISSION_IDS)) {
     assert.deepEqual(COMMANDS.filter((c) => c.category === category).map((c) => c.id), ids, category);
@@ -164,7 +164,7 @@ test('2. availability comes from real configuration: ready, needs setup, unsuppo
   const expired = connectorStatus({ CHE_TRADOVATE_OAUTH_CLIENT_ID: 'x', CHE_TRADOVATE_OAUTH_CLIENT_SECRET: 'y' }, { broker: { expired: true } });
   assert.equal(expired.broker.state, 'needs_reconnect');
   const view = catalogView(bare);
-  assert.equal(view.commands.length, 134);
+  assert.equal(view.commands.length, 135);
   assert.ok(view.commands.every((c) => ['available', 'setup_required', 'unsupported', 'temporarily_unavailable'].includes(c.status)));
 });
 
@@ -824,7 +824,7 @@ test('the Flutter catalog fixture matches what the Worker serves (regenerate: no
   const { fixtureCatalog } = await import('../../tool/dump_command_catalog.mjs');
   const fixture = JSON.parse(readFileSync(new URL('../../test/fixtures/command_catalog.json', import.meta.url), 'utf8'));
   assert.deepEqual(fixture, JSON.parse(JSON.stringify(fixtureCatalog())));
-  assert.equal(fixture.commands.length, 134);
+  assert.equal(fixture.commands.length, 135);
   assert.ok(fixture.templates.length >= 4);
 });
 
@@ -943,7 +943,7 @@ test('the owner\'s six spoken phrases are answered from the catalog with no mode
   for (const words of variants('CHE, open your Commands page.')) {
     const out = await che.say(words);
     assert.equal(out.route, 'che_command_center', words);
-    assert.match(out.reply, /134 commands in 9 groups[\s\S]*2\. YouTube, 11[\s\S]*9\. Creator Studio, 9[\s\S]*Nothing was run/, words);
+    assert.match(out.reply, /135 commands in 9 groups[\s\S]*2\. YouTube, 11[\s\S]*9\. Creator Studio, 9[\s\S]*Nothing was run/, words);
   }
   for (const words of variants('CHE, search for YouTube.')) {
     const out = await che.say(words);
@@ -1293,4 +1293,38 @@ test('Signal Mode: /trade-setups and plain questions open the Setup Progress Boa
     assert.equal(out.done.order_sent, undefined, said);
   }
   assert.notEqual((await che.say('Find setups on MNQ')).done?.chart?.section, 'setups', 'the learned-strategy analysis keeps its own command');
+});
+
+// Manifestation Engine (owner, 2026-10-27): one catalog entry, /manifest, over manifest_api.js. No model call.
+test('/manifest and its spoken forms reach the Manifestation Engine with no model and save a real project', async () => {
+  const che = await owner();
+  assert.equal(commandById('manifest').route, 'che_manifest');
+  const slash = await che.say('/manifest a drone that carries 1 kg for 25 minutes');
+  assert.equal(slash.route, 'che_manifest');
+  assert.equal(slash.modelCalls, 0);
+  assert.equal(slash.done.status, 'PLAN');
+  assert.match(slash.reply, /Battery-electric multirotor hover/);
+  assert.match(slash.reply, /simulated results, not measurements/);
+  const plain = await che.say('CHE, manifest a flying car for 2 people that flies for 1 hour');
+  assert.equal(plain.route, 'che_manifest');
+  assert.equal(plain.modelCalls, 0);
+  assert.match(plain.reply, /theoretically plausible but unproven/);
+  assert.match(plain.reply, /Wh\/kg/);
+  const status = await che.say('Manifestation status');
+  assert.equal(status.route, 'che_manifest');
+  assert.match(status.reply, /1\. a flying car for 2 people/i);
+  const stored = await che.get(`/api/manifest/projects/${slash.done.project_id}`);
+  assert.equal(stored.project.status, 'PLAN');
+  assert.equal(stored.project.plan.steps.find((s) => s.consequential === 'money').status, 'todo', 'nothing is bought');
+  assert.equal((await che.say('What is the meaning of manifestation in psychology?')).route === 'che_manifest', false, 'a question about the word is not a project');
+  // Briefing, pause, resume and stop ride the same catalog entry.
+  const brief = await che.say('/manifest briefing 2');
+  assert.equal(brief.route, 'che_manifest');
+  assert.match(brief.reply, /Stage: PLAN\.[\s\S]*Options: 1\./);
+  const pause = await che.say('Pause manifestation project 2');
+  assert.equal(pause.route, 'che_manifest');
+  assert.equal(pause.done.status, 'BLOCKED');
+  assert.equal((await che.say('/manifest resume 2')).done.status, 'PLAN');
+  assert.equal((await che.say('Manifestation weekly review')).route, 'che_manifest');
+  assert.equal((await che.say('Pause the music')).route === 'che_manifest', false);
 });

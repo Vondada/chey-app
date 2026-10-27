@@ -124,6 +124,8 @@ import { ANALYSIS_SOURCE, LEDGER_SOURCE, analyzeStrategy, ledgerIntent, readLedg
 import { TRADING_STATUS_SOURCE, newTradesIntent, tradingStatus } from './trading_status.js';
 import { meetingCommand, meetingScene, planScene, simScene } from './world_scene.js';
 import { SIM_SOURCE, listRuns, loadRun, loadSimMemory, runLab, saveRun, simLabIntent } from './sim_lab.js';
+import { manifestChat, manifestRoute } from './manifest_api.js';
+import { pcm16ToWav } from './audio_wav.js';
 import { PLAN_SOURCE, answerPlanFollowUp, buildPlan, classifyProject, listPlans, loadPlan, planFollowUpIntent, planSubject, projectPlanIntent, researchSource, savePlan } from './project_plan.js';
 import { BRAIN_ROOMS_SOURCE, ROOMS as BRAIN_ROOMS, answerCrossRoom, crossRoomIntent, drainRoomEvents, imageReference, pointsAtScreen, prFollowUp, recentScreen, relinkRecords, rememberScreen, screenDeictic, screenFollowUp, screenRoomContext, screenRoomFor, statusLabel } from './brain_rooms.js';
 import { controlChangeEvent, meetingEvent, officeTaskEvent, paperOrderRefusedEvent, phoneRoomEvent, queueRoomEvent, researchEvent } from './room_events.js';
@@ -955,30 +957,6 @@ function ownerContextPreview(item) {
     created_at: item.created_at,
     updated_at: item.updated_at,
   };
-}
-
-// PCM16 mono -> WAV container so AVAudioPlayer can play it directly.
-function pcm16ToWav(pcm, sampleRate = 24000) {
-  const header = new ArrayBuffer(44);
-  const v = new DataView(header);
-  const writeText = (offset, text) => { for (let i = 0; i < text.length; i++) v.setUint8(offset + i, text.charCodeAt(i)); };
-  writeText(0, 'RIFF');
-  v.setUint32(4, 36 + pcm.byteLength, true);
-  writeText(8, 'WAVE');
-  writeText(12, 'fmt ');
-  v.setUint32(16, 16, true);
-  v.setUint16(20, 1, true); // PCM
-  v.setUint16(22, 1, true); // mono
-  v.setUint32(24, sampleRate, true);
-  v.setUint32(28, sampleRate * 2, true);
-  v.setUint16(32, 2, true);
-  v.setUint16(34, 16, true);
-  writeText(36, 'data');
-  v.setUint32(40, pcm.byteLength, true);
-  const out = new Uint8Array(44 + pcm.byteLength);
-  out.set(new Uint8Array(header), 0);
-  out.set(pcm, 44);
-  return out;
 }
 
 let lastGeminiVoiceError = '';
@@ -9362,6 +9340,8 @@ export class CheState extends DurableObject {
         if (!meeting) return json({ detail: 'No such meeting.' }, 404);
         return json({ scene: meetingScene(meeting, runtimeSnapshot(data).agents) });
       }
+      const manifest = await manifestRoute(request, path, this.ctx.storage, ownerDevice, body); // manifest_api.js
+      if (manifest) return manifest;
       // Simulation Lab (sim_lab.js): the saved runs, newest first, and one run in full. Owner only.
       if (path === '/api/sims' && request.method === 'GET') {
         if (!ownerDevice) return ownerOnly();
@@ -11199,6 +11179,8 @@ export class CheState extends DurableObject {
         // "run a million simulations on this idea". It runs on the latest plan, or plans the idea named first,
         // then searches the design space with a seeded, budgeted, staged search (sim_lab.js). No model call;
         // the reply states the evaluations actually executed and labels predictions vs simulated results.
+        const manifestReply = body.attachment ? null : await manifestChat(message, this.ctx.storage, ownerDevice);
+        if (manifestReply) return manifestReply;
         const simAsk = body.attachment ? null : simLabIntent(message);
         if (simAsk) {
           if (!ownerDevice) return ownerOnly();
