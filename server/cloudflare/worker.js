@@ -269,6 +269,7 @@ import { CHE_TENANT, CHE_SECURITY, access as coreAccess, coreEvents, coreInciden
 import { securityVisibility, speakVisibility } from './security_visibility.js';
 import { securityChief, securityChiefIntent, speakChiefReport } from './security_chief.js';
 import { acquire as acquireCapability, applyPolicy as applyCapabilityPolicy, capabilityIntent, engineSummary as capabilityEngineSummary, learnFromOutcome, loadPolicy as loadCapabilityPolicy, populate as populateKnowledge, retrieve as retrieveKnowledge, rollbackTool, savePolicy as saveCapabilityPolicy, projectBlocked, speakCapabilities, speakLearned as speakLearnedKnowledge, useTool, LAST_USED_KEY as KNOWLEDGE_USED_KEY } from './capability_engine.js';
+import { PRIVACY_KEY, flushEgressLedger, privacyIntent, privacyProbe, privacyTurn, privacyVerdict, setPrivacy } from './privacy_mode.js';
 import { EGRESS_KEY, SNAPSHOT_KEY, holdEgress, installEgressGuard, setEgressOwner, setEgressPolicy, storeEgressPolicy, SESSION_SCOPES, bump as securityBump, checkSession, createSession, dependencyAdvisories, detectThreats, issueNonce, loadSecurity, recordFindings, redact as redactSecretText, redactDeep, respondToIncident, restoreTrustedState, revokeSessions, saveSecurity, securityIntent, snapshotTrustedState, speakStatus as speakSecurityStatus } from './security_intelligence.js';
 import { loadRegistry as loadCapabilityRegistry } from './capability_registry.js';
 import { BrainLedger, answerLedger, decidePending as decideBrainPending, installBrainLedger, ledgerApi, recordGraphConnections, ledgerIntent as brainLedgerIntent, DEFAULT_ZONE as LEDGER_DEFAULT_ZONE } from './brain_ledger.js';
@@ -3511,7 +3512,8 @@ export class CheState extends DurableObject {
     try { watchCheWrites(state.storage, () => { this.cheWrites += 1; }); } catch (_) { /* a storage without methods to wrap */ }
     // Every text model call goes through CHE's free-engine router. Persist
     // per-engine daily usage estimates in this owner's Durable Object.
-    this.env = routedEnv(env, fetch, state.storage);
+    // Looked up per call, so the router goes through the egress guard installed later (internal-only, Private Mode).
+    this.env = routedEnv(env, (...a) => globalThis.fetch(...a), state.storage);
   }
 
   // The fast engine reads only the turns the rules could not, for the listening layer.
@@ -3688,13 +3690,7 @@ export class CheState extends DurableObject {
     }
   }
 
-  // One paper-trading pass, then its entries go to the trading desk
-  // (alerts; simulated-account orders when the owner chose sim mode), and the
-  // NinjaTrader sign-in is kept alive.
-  // The Trading Room's forward-paper dashboard with the real broker state: Tradovate's
-  // OAuth sign-in as stored, FundYourEdge as not connected (Rithmic needs a licence), and
-  // live orders disabled. Nothing is assumed about balances or firm rules.
-  // Every trading connection as its own system reports it (issue #344); nothing here changes a mode.
+  // Trading Room views from each connection's own state (issue #344); live orders stay disabled.
   /** GET /api/trading/visual?view=…, read through trade_evidence.js. */
   tradingVisualView(q) { return tradingVisualViewOf(this.ctx.storage, q); }
 
@@ -5448,6 +5444,7 @@ export class CheState extends DurableObject {
     installEgressGuard();
     setEgressOwner(this.env);
     try { setEgressPolicy(await this.ctx.storage.get(EGRESS_KEY), request.url); } catch (_) {}
+    try { setPrivacy(await this.ctx.storage.get(PRIVACY_KEY)); } catch (_) {}
     // A project the owner said must stay inside CHE holds the same guard for the length of the request.
     let projectHold = false;
     try {
@@ -5463,6 +5460,7 @@ export class CheState extends DurableObject {
       return await (priv || this).fetchInner(request);
     } finally {
       if (projectHold) holdEgress(-1);
+      await flushEgressLedger(this.ctx.storage);
     }
   }
 
@@ -6037,9 +6035,6 @@ export class CheState extends DurableObject {
     return { env: this.keyEnv || this.env, storage: this.ctx.storage, data, origin: new URL(request.url).origin, fetcher: fetch, changed: false };
   }
 
-  // Starts a workflow on CHE's existing objective graph: each step is a
-  // `command` node, independent steps run in parallel lanes, approval steps
-  // wait for the owner. Nothing starts unless every step can run now.
   // ── Capability Engine ──────────────────────────────────────────────────
   // Internal-only mode has one switch: Security Intelligence's egress policy (security_intelligence.js), which guards
   // every outbound fetch. Turning it on is allowed from here; turning it off needs Face ID on the Security page.
@@ -7388,6 +7383,7 @@ export class CheState extends DurableObject {
       if (request.method === 'POST' && path === '/api/live/token') {
         // Older clients play provider audio before any execution check. Keep
         // their existing guarded native/HTTP voice fallback, never raw audio.
+        if (privacyVerdict('https://api.openai.com/')?.allow === false) return json({ detail: 'Private Mode is on, so your voice stays off OpenAI, sir. I am listening on your iPhone instead.' }, 503);
         if (!this.env.CHE_OPENAI_API_KEY || !paidAllowed(this.env)) {
           return json({ detail: 'Live voice is not available right now, sir. I am listening the normal way.' }, 503);
         }
@@ -10528,15 +10524,8 @@ export class CheState extends DurableObject {
         if (!ownerDevice) return this.guestChat(body, rawMessage, activeTenant);
         const relTurn = await reliabilityTurn(this, rawMessage, body);
         if (relTurn) return relTurn;
-        // The owner's exact words are authoritative for a read-only, verified
-        // deployment lookup. Never let speech interpretation, REA, the local
-        // code inspector, or a generic model discard the GitHub Actions request.
-        // Owner asks for the latest deployment receipt: query GitHub Actions
-        // before any source-code inspection. Reading a workflow YAML or the
-        // CHE-only last_self_update_deploy key cannot prove deployment history.
-        // "What changed in commit X / what can I test on my iPhone / verify the deployment / is the latest commit
-        // live": GitHub's commit, PR and run records plus this Worker's own version tag and the phone's own report,
-        // each with its link (deploy_receipt.js). Checked before the status route, which once swallowed these.
+        // Deployment and commit questions are answered from GitHub's commit, PR and run records, this Worker's
+        // version tag and the phone's report (deploy_receipt.js), before source inspection or the status route.
         const commitAsk = !body.attachment && !body.workflow_step ? commitIntent(rawMessage, body.history) : null;
         if (commitAsk) {
           await this.dropHeldActions();
@@ -10648,6 +10637,9 @@ export class CheState extends DurableObject {
             return ndjsonReply(started.spoken, { source: 'che_command_workflow', ok: started.ok, objective_id: started.objective?.id || null, model_calls: 0 });
           }
           // Workflow Engine: the owner's words about the library, then a promoted learned workflow this request matches.
+          // Private Mode and Knox's privacy answers (privacy_mode.js), from records only.
+          const privAsk = ownerDevice && !body.attachment && !body.workflow_step ? privacyIntent(rawMessage) : null;
+          if (privAsk) { const t = await privacyTurn(this.ctx.storage, privAsk, { devices: platformView(data, activeTenant.id, tokenHash).devices, security: await loadSecurity(this.ctx.storage).catch(() => null) }); return ndjsonReply(t.text, t.meta); }
           const secAsk = ownerDevice && !body.attachment && !body.workflow_step ? (securityIntent(rawMessage) || securityChiefIntent(rawMessage)) : null;
           if (secAsk) return this.securityChat(data, secAsk, tokenHash);
           // Film Studio: make, plan, status, remake, pause/resume/stop and the free render farm (film_studio.filmIntent).
@@ -14582,6 +14574,7 @@ export class CheState extends DurableObject {
     installEgressGuard();
     setEgressOwner(this.env);
     try { setEgressPolicy(await this.ctx.storage.get(EGRESS_KEY)); } catch (_) {}
+    try { setPrivacy(await this.ctx.storage.get(PRIVACY_KEY)); await flushEgressLedger(this.ctx.storage); } catch (_) {}
     await this.refreshKeyEnv();
     // A minute-only wake-up: the simulation's minute is the only work due. It runs that one pass and makes no
     // mailbox (GitHub), job, Tradovate, hourly or live call. Those keep their own wake-up times and run on them.
@@ -16303,6 +16296,7 @@ async function routeRequest(request, env, ctx) {
     return json(await env.CHE_STATE.getByName('owner').reaProbe({ message: String(body.message || '').slice(0, 500), allow_build: body.allow_build === true }));
   }
   if (path === '/api/trading/audit/probe' && request.method === 'POST') return voiceProbeAuthorized(request, env) ? json(await env.CHE_STATE.getByName('owner').tradingAuditProbe()) : json({ detail: 'Not found.' }, 404);
+  if (path === '/api/privacy/probe' && request.method === 'POST') return voiceProbeAuthorized(request, env) ? json(await privacyProbe(env, request, MEMORY_PROBE_OBJECT)) : json({ detail: 'Not found.' }, 404);
   if (path === '/api/memory/probe' && request.method === 'POST') {
     if (!voiceProbeAuthorized(request, env)) return json({ detail: 'Not found.' }, 404);
     const token = /^Bearer (\S+)$/.exec(request.headers.get('Authorization') || '')?.[1] || '';

@@ -129,8 +129,11 @@ test('the private hold forces every model call to Workers AI and closes outbound
 
   holdPrivateEgress(-1);
   assert.equal(privateEgressHeld(), false);
-  await globalThis.fetch('https://api.groq.com/openai/v1/models');
+  await globalThis.fetch('https://api.duckduckgo.com/?q=weather');
   assert.equal(reached.length, 1, 'the guard opens again once the private turn ends');
+  // Outside AI engines stay closed afterwards too: Private Mode (privacy_mode.js) is on by default.
+  await assert.rejects(globalThis.fetch('https://api.groq.com/openai/v1/models'), /Private Mode is on/);
+  assert.equal(reached.length, 1);
 });
 
 // ─── The real /api/chat route ────────────────────────────────────────────────
