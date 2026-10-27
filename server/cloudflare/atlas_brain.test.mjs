@@ -1,3 +1,4 @@
+import { probeObjectName } from './probe_identity.js';
 // Knowledge Atlas in the Brain (owner issue #346, Brain lane). The cards are projected into CHE's one
 // Brain as curated lessons (never the owner's memories, never measured facts), once: a second run
 // writes nothing. The owner's study is recorded there as owner practice, measured from this chat,
@@ -862,6 +863,7 @@ test('the deploy probe checks the Knowledge Atlas on an isolated CHE, never the 
   const storages = new Map();
   const pending = [];
   const token = 'p'.repeat(40);
+  const probeName = await probeObjectName(token);
   const env = {
     CHE_PAIR_CODE: '123456', CHE_DISABLE_KEYLESS_AI: '1', CHE_VOICE_PROBE_TOKEN: token, ELEVENLABS_API_KEY: 'el_secret_value',
     AI: { run: async () => { modelCalls += 1; return { response: 'Here is the answer, sir.' }; } },
@@ -904,7 +906,7 @@ test('the deploy probe checks the Knowledge Atlas on an isolated CHE, never the 
   assert.equal(modelCalls, 0, 'a second run made no model call either');
   // The owner's CHE was never asked: its object was never even created.
   assert.equal(states.has('owner'), false);
-  const probeBrain = new CheBrainStore(storages.get('memory-truth-probe'));
+  const probeBrain = new CheBrainStore(storages.get(probeName));
   assert.ok(learningRecords(probeBrain).filter((r) => r.source.event === 'quiz').length >= 2, 'the practice is on the test CHE');
-  assert.equal(await storages.get('memory-truth-probe').get('che:pending_owner_action'), null, 'the held buy was dropped');
+  assert.equal(await storages.get(probeName).get('che:pending_owner_action'), null, 'the held buy was dropped');
 });

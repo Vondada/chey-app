@@ -65,6 +65,10 @@ void main() {
     expect(find.text('Done. Results below.'), findsOneWidget);
     expect(find.textContaining('Native painter (Flutter canvas'), findsOneWidget);
     expect(find.textContaining('600 orbs'), findsOneWidget);
+    // Regression: the orbit must repaint the painter. The old pass moved the camera without a repaint and counted one frame.
+    final frameText = tester.widget<Text>(find.textContaining('frames in 1 seconds')).data!;
+    final painted = int.parse(RegExp(r'(\d+) frames in').firstMatch(frameText)!.group(1)!);
+    expect(painted, greaterThan(10), reason: 'the native pass counted $painted frames in one second');
     // The notes sit below the result cards: scroll them into view first.
     await tester.drag(find.byType(ListView), const Offset(0, -600));
     await tester.pump();

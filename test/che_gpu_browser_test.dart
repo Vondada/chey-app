@@ -127,6 +127,10 @@ void main() {
       'go forward': CheGpuUiCommand.forward,
       'refresh': CheGpuUiCommand.refresh,
       'reload the page': CheGpuUiCommand.refresh,
+      'sign out of Google': CheGpuUiCommand.signOutGoogle,
+      'log out of Google in the browser': CheGpuUiCommand.signOutGoogle,
+      'check Google sign-in': CheGpuUiCommand.checkGoogleSignIn,
+      'am I signed out of Google': CheGpuUiCommand.checkGoogleSignIn,
     };
     for (final entry in expected.entries) {
       expect(cheGpuUiCommand(entry.key), entry.value, reason: entry.key);
@@ -175,6 +179,34 @@ void main() {
     expect(reply, isNot(contains('Google account')), reason: 'a screen command never answers with account text');
     await tester.pumpWidget(const SizedBox());
     CheBrowserActions.openUrl = null;
+  });
+
+  testWidgets("sign out of Google opens Google's sign-out page in CHE's browser and reports only that (owner, 2026-10-25)", (tester) async {
+    var opened = '';
+    CheBrowserActions.openUrl = (url) async { opened = url; };
+    final client = MockClient((r) async => http.Response(jsonEncode({'workers': []}), 200));
+    await tester.pumpWidget(MaterialApp(home: CheGpuBrowser(
+      baseUrl: 'https://che.test', headers: const {'Authorization': 'Bearer test'},
+      client: client, browser: const SizedBox(), onRead: (_) {},
+    )));
+    await tester.pumpAndSettle();
+    final reply = await CheGpuBrowser.voiceHandler!('sign out of Google');
+    expect(opened, 'https://accounts.google.com/Logout');
+    expect(reply, startsWith("Opened Google's sign-out page"));
+    // The next step is spoken, not visual: "check Google sign-in" reads Google's own page aloud (Codex review, PR #689).
+    expect(reply, contains('check Google sign-in'));
+    expect(reply, isNot(contains('picture')));
+    final asked = <String>[];
+    CheBrowserActions.voice = (words) async { asked.add(words); return 'You are signed out. Choose an account.'; };
+    final check = await CheGpuBrowser.voiceHandler!('check Google sign-in');
+    expect(asked, ['read the page']);
+    expect(check, "Google's page says: You are signed out. Choose an account.");
+    CheBrowserActions.voice = (words) async => null;
+    expect(await CheGpuBrowser.voiceHandler!('am I signed out of Google'), contains('cannot say whether you are signed out'));
+    expect(cheGpuUiCommand('connect the GPU'), isNull);
+    CheBrowserActions.openUrl = null;
+    CheBrowserActions.voice = null;
+    await tester.pumpWidget(const SizedBox());
   });
 
   testWidgets('back, forward and refresh go to the browser and report its real answer (owner, 2026-10-25)', (tester) async {
