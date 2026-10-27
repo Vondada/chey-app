@@ -77,6 +77,19 @@ Then, on GitHub:
 
 ## 2. Current position
 
+**Claude, 2026-10-27 late (owner: finish PR #706 and #722, then trading loss analysis). Verified state.**
+- MERGED and DEPLOYED (deploy verified live, live-commit check passed):
+  - #721 trading probe reports feed authentication and verified subscription: merge `b6ab0b53`. Deploy run 40599121604 failed on social Test 5 (model wording), so the Worker went live but the workflow is red; not re-run by me.
+  - #722 safety: first-person medical emergency gets a fixed 911 line, no model call, clears held actions, matches only current symptoms: merge `e796288e`. Deploy run 40601713296 success, live commit verified. Social live check passed on this run.
+  - #723 trading loss review (why paper trades lost, futures and crypto kept apart, streaks, costs flipping profitable trades, too-quick re-entry, per-strategy trend): merge `bc11dc3a`. Deploy run 40603498573 success, live commit verified. Route tested with fixtures (9 unit, 1 chat-route, zero model calls).
+- MERGED without deploy verification of the answers: #706 Private Mode (merge `0981d054`, deploy 40597883659 failed on social Test 7, fixed by #722).
+- NOT VERIFIED LIVE: loss answers on the owner's real paper journal. The deploy probes use an isolated test CHE, not the owner's records. The owner must ask "CHE, why are you losing so many trades?" on the phone, or a probe must read the owner's journal.
+- OPEN FINDING: the trading audit shows gross -182.8 R against recorded costs 7,960.6 R; 327 trades with costs over risk; crypto journal 486 problem records. Not established whether a real market effect or a cost-model unit error. Next: check trading_evidence.js settleTrade units against a real record.
+- NOT STARTED: improvement journal, proactive mistake alerts, strategy-improvement testing (owner add-on items 9-14).
+- BLOCKED: Kaggle GPU render needs owner-side film-make on the phone (no workflow can trigger it); iPhone installed version needs the owner's CHE Updates version+build; Face ID automatic credential setup is manual today.
+- LOCAL-ONLY WORK still unpushed on this container (preflight exit 3, disk ~1.9 GB free): several agent worktrees and scratchpad copies, branches feat/trading-chart-phase1, model-router-zero-cost, pr532, one stash. Not touched; needs owner decision or a push.
+
+
 **Claude, 2026-10-27 (owner: Kaggle authentication and GPU farm status). Verified state.**
 - MERGED earlier today: #713 (`de90dae9`), #714 (`06e67f3a`), #715 (`d9d6d0b8`), #716 (`5a7796c0`).
 - OPEN #717 `fix/kaggle-auth` @ cbe3f5e5: a saved modern Kaggle token is accepted alone; the account name is read from Kaggle's IntrospectToken call (source: official kagglesdk 0.1.38); transient failures retry with a bound; status says what is missing and never asks for the token again; token scrubbed from errors. Tests: kaggle_auth 8/8, film_studio 26/26, compute_budget 14/14, full Worker suite 4620 pass, 0 fail, 7 skipped (2 pre-existing TODO).
