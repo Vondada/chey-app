@@ -462,3 +462,42 @@ export async function noStoredJobReceipt(env, { fetcher = globalThis.fetch, now 
   if (!listed.runs.length) return NO_JOB_TEXT;
   return `No coding job is stored on this device, sir, but my coding runner's newest record on GitHub (of ${listed.total}) is this. ${speakRun(listed.runs[0])}`;
 }
+
+// ─── The deploy's live check (che-worker-deploy.yml) ────────────────────────────────────────────────────
+// Asks the isolated test CHE (the memory probe's object, never the owner's) the question she failed in
+// Reliability Test 2, and a run id that does not exist, through the real /api/chat. The test CHE reads the
+// same che-mailbox records with the Worker's own GitHub token. A reply that claims a missing telemetry,
+// plugin or connector, any model call, or a failed record read fails the check.
+export const CLAIMS_MISSING_ACCESS = /telemetry|plug-?ins?\b|audit[- ]?logs?\b|\bconnectors?\b|\bauthori[sz]ed\s+(?:\w+\s+){0,3}(?:connection|integration)\b/i;
+export async function codingAuditProbe(env, request, objectName) {
+  const token = /^Bearer (\S+)$/.exec(request.headers.get('Authorization') || '')?.[1] || '';
+  const probe = env.CHE_STATE.getByName(objectName);
+  const call = (path, body, device = '') => probe.fetch(new Request(`https://che.internal${path}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-CHE-Memory-Probe': token, ...(device ? { Authorization: `Bearer ${device}` } : {}) },
+    body: JSON.stringify(body),
+  }));
+  const paired = await (await call('/api/pair', { code: String(env.CHE_PAIR_CODE || ''), device_name: 'CHE coding audit check' })).json().catch(() => ({}));
+  const device = paired.device_token;
+  if (!device) return { ok: false, error: 'The check could not pair with its test CHE.', steps: [] };
+  const steps = [];
+  const step = async (name, message, check) => {
+    const started = Date.now();
+    const res = await call('/api/chat', { message, history: [] }, device);
+    const events = (await res.text()).split('\n').filter(Boolean).map((line) => { try { return JSON.parse(line); } catch (_) { return null; } }).filter(Boolean);
+    const done = events.find((e) => e.type === 'done') || {};
+    const reply = events.filter((e) => e.type === 'delta').map((e) => e.delta).join('').trim();
+    const recordBacked = done.source === 'che_coding_audit' && done.model_calls === 0 && !CLAIMS_MISSING_ACCESS.test(reply);
+    steps.push({ name, pass: res.status === 200 && recordBacked && Boolean(check({ reply, done })), ms: Date.now() - started, route: done.source || 'model', model_calls: done.model_calls ?? null, outcome: done.outcome || '', reply: reply.slice(0, 600) });
+  };
+  try {
+    await step('Reliability Test 2: why did my coding agent fail, answered from the records', 'Why did my coding agent fail, what did it try, and what actually happened?',
+      ({ reply, done }) => done.outcome === 'retrieved' && /^I read my coding runner's own records on GitHub/.test(reply) && /Evidence: che-mailbox mailbox\/runtime\/ocr-[0-9a-f]{8}\.json/.test(reply));
+    await step('a run id with no record is said to have none', 'show coding attempts for ocr-00000000',
+      ({ reply, done }) => done.outcome === 'no_match' && /^There is no coding run record ocr-00000000/.test(reply));
+  } finally {
+    await call('/api/security/revoke_self', {}, device).catch(() => null);
+  }
+  const passed = steps.filter((s) => s.pass).length;
+  return { ok: passed === steps.length, passed, total: steps.length, steps };
+}

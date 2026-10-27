@@ -299,3 +299,47 @@ test('/api/chat: a GitHub failure is an honest failed read through the real rout
     chat.restore();
   }
 });
+
+// ─── The deploy's live check ──────────────────────────────────────────────────────────────────────────────
+async function deployProbe(fetcher, { model = 'Here is the answer, sir.' } = {}) {
+  clearAuditCache();
+  const states = new Map();
+  const token = 'p'.repeat(40);
+  let modelCalls = 0;
+  const env = { CHE_PAIR_CODE: '123456', CHE_DISABLE_KEYLESS_AI: '1', CHE_VOICE_PROBE_TOKEN: token, ...ENV, AI: { run: async () => { modelCalls += 1; return { response: model }; } } };
+  env.CHE_STATE = { getByName: (name) => {
+    if (!states.has(name)) states.set(name, new mod.CheState({ storage: storageFor(new Map()), waitUntil: () => {}, id: { name } }, env));
+    return { fetch: (request) => states.get(name).fetch(request) }; // production stubs expose fetch only
+  } };
+  const real = globalThis.fetch;
+  globalThis.fetch = async (url, init) => (String(url).startsWith('https://api.github.com/') ? fetcher(url, init) : new Response('{}', { status: 503 }));
+  try {
+    const denied = await mod.default.fetch(new Request('https://che.example/api/coding-audit/probe', { method: 'POST' }), env);
+    const res = await mod.default.fetch(new Request('https://che.example/api/coding-audit/probe', { method: 'POST', headers: { Authorization: `Bearer ${token}` } }), env);
+    return { denied: denied.status, report: await res.json(), modelCalls, states };
+  } finally {
+    globalThis.fetch = real;
+  }
+}
+
+test('the deploy probe asks the isolated test CHE the Reliability Test 2 question and a missing id, from the records', async () => {
+  const { denied, report, modelCalls, states } = await deployProbe(github({ 'ocr-49bea5b4': QWEN, 'ocr-cb88d817': MERGED }).fetcher);
+  assert.equal(denied, 404, 'no route without the per-deploy token');
+  assert.equal(report.ok, true, JSON.stringify(report.steps, null, 1));
+  assert.deepEqual(report.steps.map((s) => [s.route, s.model_calls, s.outcome]), [['che_coding_audit', 0, 'retrieved'], ['che_coding_audit', 0, 'no_match']]);
+  assert.equal(modelCalls, 0);
+  assert.equal(states.has('owner'), false, 'the owner\'s CHE is never asked');
+  assert.doesNotMatch(JSON.stringify(report), /p{40}|123456|test-token|device_token/);
+});
+
+test('the deploy probe fails on a failed record read, and its guard catches a missing-access claim', async () => {
+  const { report } = await deployProbe(github({}, { fail: 401 }).fetcher);
+  assert.equal(report.ok, false);
+  assert.equal(report.steps[0].pass, false);
+  assert.match(report.steps[0].reply, /HTTP 401/);
+  const { CLAIMS_MISSING_ACCESS } = await import('./coding_audit.js');
+  for (const claim of ["I don't have an authorized telemetry or audit-log connection to my coding providers' runtime records.", 'I would need a new plugin for that.', 'That needs a GitHub connector.', 'I lack an authorized runtime connection.']) assert.match(claim, CLAIMS_MISSING_ACCESS, claim);
+  // The record's own words never trip it.
+  assert.doesNotMatch(speakRun(normalizeRecord(QWEN)), CLAIMS_MISSING_ACCESS);
+  assert.doesNotMatch(speakRun(normalizeRecord({ ...QWEN, attempts: [{ ...QWEN.attempts[0], kind: 'access', error: 'The model does not exist or you do not have access to it.' }] })), CLAIMS_MISSING_ACCESS);
+});
