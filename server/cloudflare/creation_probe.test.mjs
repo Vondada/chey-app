@@ -73,7 +73,8 @@ test('deploy check: Generate on the test project dispatches the free worker, whi
   assert.equal(done.job.worker_name, 'free GitHub cloud CPU runner gha-555-1 (GitHub Actions run 555)');
   assert.match(done.job.status_line, /on the free GitHub cloud CPU runner gha-555-1/);
   assert.match(done.job.history.at(-1).note, /worker: free GitHub cloud CPU runner gha-555-1/);
-  const deployYml = readFileSync(new URL('../../.github/workflows/che-worker-deploy.yml', import.meta.url), 'utf8');
+  // The deploy's creation step runs the shared live probe script (.github/scripts/che_live_probes.mjs).
+  const deployYml = readFileSync(new URL('../../.github/scripts/che_live_probes.mjs', import.meta.url), 'utf8');
   const noticeLine = deployYml.split('\n').find((l) => /const worker = /.test(l) && /creation|worker_name|worker_class/.test(l)) || '';
   assert.match(noticeLine, /job\.worker_name \|\| 'unknown worker'/, 'the deploy notice prints the Worker\'s worker name');
   assert.doesNotMatch(noticeLine, /'\?'/, 'never a question mark for the worker');

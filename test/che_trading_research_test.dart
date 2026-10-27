@@ -234,11 +234,11 @@ void main() {
     await tester.pumpWidget(const SizedBox());
   });
 
-  testWidgets('no qualified strategy is said plainly, with the reason', (tester) async {
+  testWidgets('no qualified strategy says "No strategy." and nothing more', (tester) async {
     final api = _Api()..best = false;
     await _pump(tester, api);
     await _scrollTo(tester, find.byKey(const Key('best_now'), skipOffstage: false));
-    expect(find.text('No strategy currently meets your threshold. Every candidate has fewer than 30 trades on this timeframe.'), findsOneWidget);
+    expect(find.text('No strategy.'), findsOneWidget);
     expect(find.byKey(const Key('best_now_open')), findsNothing);
     await tester.pumpWidget(const SizedBox());
   });

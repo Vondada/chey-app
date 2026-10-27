@@ -60,7 +60,8 @@ void main() {
       home: CheConnectionsScreen(baseUrl: 'https://che.test', headers: () => {'Authorization': 'Bearer x'},
         client: client, onVoiceSettings: () {}, onKeys: () {})));
     await tester.pumpAndSettle();
-    expect(paths, ['/api/commands']);
+    // The NinjaTrader card's separate facts come from the trading connections view.
+    expect(paths, ['/api/commands', '/api/trading/connections']);
     expect(find.text('YouTube channel'), findsOneWidget);
     expect(find.text('Existing YouTube channel'), findsOneWidget);
     expect(find.text('NinjaTrader / Tradovate'), findsOneWidget);
