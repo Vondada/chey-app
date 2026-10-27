@@ -1731,6 +1731,25 @@ extension _CheHomeSend on _CHEHomeState {
     }
   }
 
+  /// Sends a CHE chat reply to Claude's mailbox for a fact-check, and says what happened on screen.
+  Future<void> _sendFactCheckFromChat(String reply, String messageId) async {
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    HapticFeedback.selectionClick();
+    final result = await cheSendFactCheck(baseUrl: cheAgentBaseUrl, headers: _authHeaders, reply: reply, messageId: messageId);
+    messenger?.showSnackBar(SnackBar(content: Text(result)));
+    // An action the owner asked for, so its real result is also spoken and shown as large text.
+    await speakText(result, record: false, show: true);
+  }
+
+  /// The chat message's own ID, or a new unique one stored on it, so each checked reply has its own verdict key.
+  String _factCheckMessageId(Map<String, String> item) {
+    final existing = item['id'] ?? '';
+    if (existing.isNotEmpty) return existing;
+    final id = 'chat-${DateTime.now().microsecondsSinceEpoch}';
+    _set(() => item['id'] = id);
+    return id;
+  }
+
   Future<void> _showMessageActions(int index) async {
     if (index < 0 || index >= messages.length) return;
     final item = messages[index];
@@ -1761,6 +1780,16 @@ extension _CheHomeSend on _CHEHomeState {
                 unawaited(_translateText(text));
               },
             ),
+            // CHE's replies go to Claude's mailbox for a fact-check, and the verdict comes back under the reply (owner, 2026-10-26).
+            if (!isUser && text.trim().isNotEmpty)
+              ListTile(
+                leading: const Icon(Icons.fact_check_outlined),
+                title: const Text('Send to Claude to fact-check'),
+                onTap: () {
+                  Navigator.pop(sheetContext);
+                  unawaited(_sendFactCheckFromChat(text, _factCheckMessageId(item)));
+                },
+              ),
             ListTile(
               leading: const Icon(Icons.copy_all_rounded),
               title: const Text('Copy whole conversation'),
