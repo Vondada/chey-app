@@ -278,10 +278,14 @@ extension _CheHomeSend on _CHEHomeState {
     if (CheRecordingStudio.voiceHandler == null) {
       final rec = RegExp(r'\b(?:open|show|go to)\s+(?:the\s+|my\s+)?(recording studio|music studio|studio recorder|beat maker|my songs|mixer|mastering)\b').firstMatch(lower);
       // "Let's start a song" means make a new song in the recording studio, not play one (owner, 2026-10-26).
-      final takeNow = RegExp(r'\b(record (my )?(vocals?|voice|a song|a take)|start recording (my )?(vocals?|a song)|(?:let.?s\s+)?(?:start|make|begin|create)\s+(?:a|my|the|new)\s+song|new song|new recording|make (?:me )?a beat|play the beat)\b').hasMatch(lower);
+      // Beat words act only as a command: a question about beats or an ask for a playlist, video or picture of beats
+      // goes on to chat (Codex review, PR #688).
+      final beatCommand = cheBeatAskIsCommand(message);
+      final takeNow = RegExp(r'\b(record (my )?(vocals?|voice|a song|a take)|start recording (my )?(vocals?|a song)|(?:let.?s\s+)?(?:start|make|begin|create)\s+(?:a|my|the|new)\s+song|new song|new recording)\b').hasMatch(lower)
+          || (beatCommand && RegExp(r'\b(make (?:me )?a beat|play the beat)\b').hasMatch(lower));
       // "Make me a beat ... in the style of ..." (owner, 2026-10-26): the Beat Producer makes a real rendered beat from
-      // the genre, tempo and key it can read. Playlists and videos of beats are not beat requests.
-      final beatRequest = !RegExp(r'\b(playlist|video|movie|picture|image|photo)s?\b').hasMatch(lower) && cheParseBeatRequest(message) != null;
+      // the genre, tempo and key it can read.
+      final beatRequest = beatCommand && cheParseBeatRequest(message) != null;
       if (rec != null || takeNow || beatRequest) {
         final name = rec?.group(1) ?? '';
         // With words to act on, the studio says the real result itself; otherwise CHE says where she went.

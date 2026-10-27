@@ -333,3 +333,12 @@ CheBeatSpec? cheParseBeatRequest(String said) {
   if (genre == null && key == null && tempo == null && !styleRequest && !RegExp(r'\b(produce|generate|cook up)\b').hasMatch(s)) return null;
   return CheBeatSpec.of(genre ?? (styleRequest ? 'trap' : 'hip hop'), bpm: bpm, key: root == null ? null : root % 12, minor: minor, bars: bars == null ? 4 : int.parse(bars.group(1)!));
 }
+
+/// Whether chat words ask CHE to make or play a beat now. A question about beats ("how do I make a trap beat?") is
+/// answered in chat, and an ask for a playlist, video or picture of beats is not a beat to render (Codex review, PR #688).
+bool cheBeatAskIsCommand(String said) {
+  final s = said.toLowerCase().replaceFirst(RegExp(r'^\s*(?:che|chay|chey)[,:]?\s+'), '').trim();
+  if (RegExp(r'\b(playlist|video|movie|picture|image|photo)s?\b').hasMatch(s)) return false;
+  if (RegExp(r"^(?:how|what|why|where|when|who|which|is|are|does|did|should)\b|\bhow (?:do|can|would|should) (?:i|you|we|one)\b|\bhow to\b").hasMatch(s)) return false;
+  return true;
+}
