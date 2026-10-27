@@ -47,4 +47,4 @@ and the renderer is verified on his iPhone before the build starts.
 - Verification on the owner's iPhone is required before claiming the world works.
 
 ## Mission ledger
-Tracked in `docs/CHE_WORK_QUEUE.md` as Q-15 (this plan), Q-16 (Gate 0: benchmark and renderer), Q-17 (vertical slice).
+Proposed queue rows (not yet added: `docs/CHE_WORK_QUEUE.md` lives on the `work-queue` branch, not main): Q-15 (this plan), Q-16 (Gate 0: benchmark and renderer, waiting on owner's iPhone run), Q-17 (vertical slice, starts after Q-16).
