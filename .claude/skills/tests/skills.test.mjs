@@ -281,6 +281,29 @@ test('che-release evidence integrity: a failed live check, an API outage or a mi
   assert.match(mismatch, /version_tag 0123456789ab \(DOES NOT match target\)/);
 });
 
+test('che-release: an open PR is NOT READY until the live staging test passed on its head; iOS simulator jobs never gate', async () => {
+  const { releaseStatus, formatStatus } = await releaseLib();
+  const openPr = (live) => async (url, init) => {
+    const u = String(url);
+    const json = (data) => new Response(JSON.stringify(data), { status: 200 });
+    if (u.endsWith('/pulls/301')) return json({ title: 'Live gate', state: 'open', merged: false, draft: false, head: { sha: HEAD }, merge_commit_sha: null, mergeable_state: 'clean' });
+    if (u.includes(`/commits/${HEAD}/check-runs`)) return json({ check_runs: [
+      { name: 'worker', status: 'completed', conclusion: 'success' },
+      { name: 'screens', status: 'completed', conclusion: 'failure' },
+      ...(live ? [{ name: 'live (staging)', status: 'completed', conclusion: live }] : []),
+    ] });
+    return fakeGitHub().fetcher(url, init);
+  };
+  const missing = formatStatus(await releaseStatus({ pr: 301, fetcher: openPr(null), token: '' }));
+  assert.match(missing, /checks on c9bc4198b89d: NOT READY/);
+  assert.match(missing, /live \(staging\): MISSING/);
+  assert.match(missing, /non-gating: screens=failure/);
+  assert.match(formatStatus(await releaseStatus({ pr: 301, fetcher: openPr('failure'), token: '' })), /checks on c9bc4198b89d: RED/);
+  const green = formatStatus(await releaseStatus({ pr: 301, fetcher: openPr('success'), token: '' }));
+  assert.match(green, /checks on c9bc4198b89d: GREEN/);
+  assert.match(green, /live \(staging\): success/);
+});
+
 test('che-release retries without a stale token instead of reporting a public repo as unreadable', async () => {
   const { releaseStatus } = await releaseLib();
   const { fetcher } = fakeGitHub();

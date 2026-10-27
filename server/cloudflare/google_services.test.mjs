@@ -22,6 +22,58 @@ const SCOPE = {
 };
 const NOW = Date.UTC(2026, 9, 14, 15, 0, 0);
 
+test('CHE Office uses an explicit account chooser and stores only a verified selected identity', async () => {
+  const data = {};
+  const start = await startGoogleConnect(env, data, ORIGIN, 'office', NOW);
+  assert.equal(start.ok, true);
+  const url = new URL(start.url);
+  assert.match(url.searchParams.get('prompt'), /select_account/);
+  assert.equal(url.searchParams.has('login_hint'), false);
+  const scope = 'openid email';
+  const fetcher = fakeGoogle({
+    'https://oauth2.googleapis.com/token': () => json({access_token:'office-access', refresh_token:'office-refresh', scope, expires_in:3600}),
+    'https://openidconnect.googleapis.com/v1/userinfo': () => json({sub:'office-123', email:'office@example.com', email_verified:true}),
+  });
+  const result = await finishGoogleConnect(env, data, {state:data.google_oauth.state,code:'office-code'}, fetcher, ORIGIN, NOW);
+  assert.equal(result.account, 'office@example.com');
+  assert.equal(data.google_connections.office.status, 'connected');
+  assert.ok(!JSON.stringify(data.google_connections).includes('office-refresh'));
+  assert.equal((await googleStates(env, data)).office.account, 'office@example.com');
+  const connectors = await googleConnectorStates(env, data);
+  assert.equal(connectors.office, undefined, 'the existing Office crew connector is not overwritten');
+  assert.equal(connectors.office_google.state, 'ready');
+});
+
+test('Office switching replaces only Office identity; expired access refreshes without prompting', async () => {
+  const data = { google_connections: {gmail: {account:'personal@example.com'}} };
+  for (const email of ['first@example.com', 'office@example.com']) {
+    await startGoogleConnect(env, data, ORIGIN, 'office', NOW);
+    const f = fakeGoogle({
+      'https://oauth2.googleapis.com/token': tokenHandler({scope:['openid', 'https://www.googleapis.com/auth/userinfo.email']}),
+      'https://openidconnect.googleapis.com/v1/userinfo': () => json({sub:email, email, email_verified:true}),
+    });
+    assert.equal((await finishGoogleConnect(env, data, {state:data.google_oauth.state,code:'c'}, f, ORIGIN, NOW)).ok, true);
+  }
+  assert.equal(data.google_connections.office.account, 'office@example.com');
+  assert.equal(data.google_connections.gmail.account, 'personal@example.com');
+  const f = fakeGoogle({'https://oauth2.googleapis.com/token': () => json({access_token:'refreshed', expires_in:3600})});
+  const out = await googleAccessToken(env, data, 'office', f, NOW + 3600_000);
+  assert.equal(out.ok, true);
+  assert.equal(data.google_connections.office.account, 'office@example.com');
+  assert.equal(f.calls.length, 1);
+  assert.equal(new URLSearchParams(f.calls[0].body).get('grant_type'), 'refresh_token');
+});
+test('Office refuses unverified email rather than remembering an asserted identity', async () => {
+  const data = {google_oauth:pendingFor('office')};
+  const f = fakeGoogle({
+    'https://oauth2.googleapis.com/token': tokenHandler({scope:['openid','email']}),
+    'https://openidconnect.googleapis.com/v1/userinfo': () => json({sub:'123',email:'office@example.com',email_verified:false}),
+    'https://oauth2.googleapis.com/revoke': () => json({}),
+  });
+  assert.equal((await finishGoogleConnect(env, data, {state:'expected-state',code:'c'}, f, ORIGIN, NOW)).ok, false);
+  assert.equal(data.google_connections?.office, undefined);
+});
+
 function json(body, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
 }

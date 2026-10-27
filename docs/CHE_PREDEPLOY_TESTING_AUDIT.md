@@ -1,5 +1,23 @@
 # CHE pre-deployment testing: audit (2026-10-26)
 
+> **Update 2026-10-27 (owner: "always do live tests ... before merging"; the iOS simulator is not a gate).**
+> - **Pre-merge live gate:** every pull request to main runs `.github/workflows/che-worker-staging.yml`, job
+>   `live (staging)`. It deploys the PR's merge commit to the staging Worker `chey-app-staging` (own Durable Object
+>   storage, no cron, no owner data) and runs `.github/scripts/che_live_probes.mjs --suite`, the same probe file the
+>   production deploy runs step by step. This closes gaps 1 and 2 below for every PR (the production deploy still runs
+>   its probes after deploying, as a second check).
+> - **Zero spend on staging:** a fresh random probe token and pairing code each run, and only the free-tier keys in
+>   `STAGING_FREE_KEYS` (Groq, Cerebras, Mistral, GitHub Models, SambaNova) plus Workers AI. Gemini, OpenRouter and
+>   Hugging Face are left out because their cost could not be shown to be zero from the repository; paid and
+>   production-only secrets never reach staging, any other staging secret is deleted before deploy, and the `engines`
+>   probe fails on an engine outside the allowlist.
+> - **Skips are explicit:** probes that need the owner's data or a production-only secret (SideStore release link,
+>   ElevenLabs and Fish voice calls, projects audit, Creation Engine, character acceptance, video, REA) are listed as
+>   SKIPPED with the reason in the run summary.
+> - **iOS simulator:** `che-release-gate.yml` `screens` and `che-ios-simulator-test.yml` no longer run on pull
+>   requests; they run only when dispatched by hand and never block a merge.
+> - Not yet done: Shorebird patches still have no pre-patch gate (gap 3).
+
 Scope: what already gates a change before it reaches the owner's iPhone or production. Read from `main` at
 `af3879a4`. Nothing here was run against production.
 
