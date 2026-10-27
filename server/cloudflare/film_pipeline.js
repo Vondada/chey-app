@@ -305,7 +305,7 @@ async function dispatchFarm(ctx, film, shots) {
     const usage = await loadUsage(ctx.storage, ctx.now || Date.now());
     const paid = await spend(ctx.storage, 'kaggle_seconds', seconds, { now: ctx.now || Date.now(), caps: { kaggle_seconds: usage.kaggle_seconds + left } });
     if (paid.ok) {
-      const session = await startKaggleSession(ctx.keys?.KAGGLE_API_TOKEN || ctx.env.KAGGLE_API_TOKEN, { base: ctx.base, film, token, seconds }, ctx.fetcher || fetch);
+      const session = await startKaggleSession(ctx.keys?.KAGGLE_API_TOKEN || ctx.env.KAGGLE_API_TOKEN, { base: ctx.base, film, token, seconds, username: kaggle.username }, ctx.fetcher || fetch);
       if (session.ok) { film.farm = { ...record, provider: 'kaggle', session, started_ms: ctx.now || Date.now(), window_s: seconds }; return; }
       film.notes = [...(film.notes || []), safe(`Kaggle: ${session.error}`)];
     }
