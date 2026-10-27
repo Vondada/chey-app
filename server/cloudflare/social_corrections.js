@@ -45,6 +45,8 @@ const PROFANITY = /\b(?:fuck\w*|motherf\w*|shit\w*|bullshit|bitch\w*|damn\w*|god
 const BARE_CHILL = /^\W*(?:(?:yo|ay|ayy|whoa|woah|hey|chay|che|chey)\W+)?chill(?:\W+chill)*(?:\W+(?:out|bro|sis|che|chay|chey))?\W*$/i;
 // What lifts clean language: the owner saying so, or that the people have gone. A bare "relax" or "we're good" does not.
 const LIFT = /\bjust us\b|\bwe(?:'re| are)? good now\b|\b(?:he|she|they|mama|my mom|the kids)(?:'s| is| are)? (?:left|gone)\b|\byou can (?:talk|speak) normal|\btalk (?:normal(?:ly)?|regular) again\b|\bback to normal\b|\byou can (?:curse|cuss|swear)|(?:'s|'re| is| are) (?:gone|asleep|not here)\b|\b(?:left|went (?:home|to bed|to sleep))\b|\b(?:alone|by myself) (?:now|again)\b/i;
+// "Don't talk normal yet", "we're not back to normal", "you can't curse yet": the restriction stays.
+const NEGATED_LIFT = /\b(?:don'?t|do not|not|never|can'?t|cannot|no)\b[^.!?]{0,24}\b(?:talk|speak|normal|curse|cuss|swear|alone|gone|left)\b|\bnot yet\b|\bstill (?:here|around)\b/i;
 const MODE_TALK = /\b(?:(?:family[- ]friendly|clean|safe|polite|kid[- ]friendly) mode|mode (?:on|activated|enabled)|switching (?:to|into) (?:clean|family))\b/i;
 
 export const hasProfanity = (text) => PROFANITY.test(String(text || ''));
@@ -71,8 +73,10 @@ export function activeRegister(reg, now = Date.now()) {
 export function nextRegister(prev, message, { lastReply = '', now = Date.now() } = {}) {
   const current = activeRegister(prev, now);
   const c = classifySocialCorrection(message);
-  if (c?.patch?.cleanLanguage === true) return { clean: true, id: c.id, scope: c.scope === 'persistent' ? 'persistent' : 'situational', at: now, last_at: now };
-  if (c?.patch?.cleanLanguage === false && LIFT.test(String(message || '').replace(/[\u2018\u2019]/g, "'"))) return null;
+  // A new cue never downgrades a "from now on" setting the owner has not lifted.
+  if (c?.patch?.cleanLanguage === true) return { clean: true, id: c.id, scope: c.scope === 'persistent' || current?.scope === 'persistent' ? 'persistent' : 'situational', at: now, last_at: now };
+  const text = String(message || '').replace(/[\u2018\u2019]/g, "'");
+  if (c?.patch?.cleanLanguage === false && LIFT.test(text) && !NEGATED_LIFT.test(text)) return null;
   // A bare "chill" only means "watch it" right after CHE swore; otherwise it is just a word.
   if (!current && BARE_CHILL.test(String(message || '')) && hasProfanity(lastReply)) return { clean: true, id: 'chill', scope: 'situational', at: now, last_at: now };
   return current ? { ...current, last_at: now } : null;
@@ -81,23 +85,65 @@ export function nextRegister(prev, message, { lastReply = '', now = Date.now() }
 /** Reads, updates and stores the register for one owner turn. Storage failures keep the previous state. */
 export async function socialTurn(storage, message, history = [], now = Date.now()) {
   let prev = null;
-  try { prev = (await storage.get(SOCIAL_REGISTER_KEY)) || null; } catch (_) { return null; }
-  const lastReply = [...(Array.isArray(history) ? history : [])].reverse().find((h) => h?.role === 'assistant')?.content || '';
-  const reg = nextRegister(prev, message, { lastReply, now });
-  try { if (reg) await storage.put(SOCIAL_REGISTER_KEY, reg); else if (prev) await storage.delete(SOCIAL_REGISTER_KEY); } catch (_) { /* the reply still follows the new state */ }
-  return reg;
+  let flirtPrev = null;
+  try { [prev, flirtPrev] = [(await storage.get(SOCIAL_REGISTER_KEY)) || null, (await storage.get(FLIRT_KEY)) || null]; } catch (_) { return null; }
+  const past = Array.isArray(history) ? history : [];
+  const replies = past.filter((h) => h?.role === 'assistant').map((h) => String(h.content || ''));
+  const reg = nextRegister(prev, message, { lastReply: replies.at(-1) || '', now });
+  const flirtOff = nextFlirt(flirtPrev, message, now);
+  try {
+    if (reg) await storage.put(SOCIAL_REGISTER_KEY, reg); else if (prev) await storage.delete(SOCIAL_REGISTER_KEY);
+    if (flirtOff) await storage.put(FLIRT_KEY, flirtOff); else if (flirtPrev) await storage.delete(FLIRT_KEY);
+  } catch (_) { /* the reply still follows the new state */ }
+  return { ...(reg || { clean: false }), flirt: !flirtOff, serious: seriousMoment(message), cursed_recently: replies.slice(-2).some(hasProfanity), owner_cursing: hasProfanity(message) };
 }
 
 export async function readRegister(storage, now = Date.now()) {
   try { return activeRegister(await storage.get(SOCIAL_REGISTER_KEY), now); } catch (_) { return null; }
 }
 
-// The model's language line. Clean: no profanity at all, naturally, with no announcement and no guess about who is
-// there. Otherwise the owner's adult default.
-export function languageLine(reg) {
-  return reg?.clean
-    ? ' RIGHT NOW the owner asked you to keep it clean (someone may be nearby, or he wants it that way). Use clean, respectful, family-friendly language: no profanity, slurs, crude or sexual jokes, even if he or earlier messages swore; never repeat his swear words. Stay warm and natural. Do not announce a mode, do not mention who might be listening unless he does, and keep it clean until he says you can talk normal again.'
-    : ' Casual profanity (damn, hell, shit, fuck and the like) is part of your own vocabulary with the adult owner in relaxed talk: you may use it first, without waiting for him to curse, when it fits the moment and your personality. Use it sparingly, as emphasis, not in every reply. Never in serious, sensitive or high-risk moments (health, grief, money and trades, legal, security), never at him as an insult, never slurs, threats or harassment, and never let edgy language reduce accuracy.';
+/** The stored language state without a new message (realtime voice sessions, /api/social). */
+export async function readSocial(storage, now = Date.now()) {
+  const reg = await readRegister(storage, now);
+  let flirtOff = null;
+  try { flirtOff = (await storage.get(FLIRT_KEY)) || null; } catch (_) { /* default: flirting allowed */ }
+  return { ...(reg || { clean: false }), flirt: !flirtOff };
+}
+
+// ─── Flirting (owner, 2026-10-27: "make sure she's a little flirty... that's her personality") ───
+// On by default, one-on-one with the owner. "Stop flirting" turns it off until he says she can again; clean language
+// and serious moments switch it off for that time on their own.
+export const FLIRT_KEY = 'social_flirt';
+const FLIRT_OFF = /\b(?:stop|quit|cut(?: out)?|no more|chill(?: out)? (?:on|with)) (?:the )?flirt(?:ing)?\b|\b(?:don'?t|do not) flirt\b|\bno flirting\b|\bnot in the mood for flirting\b/i;
+const FLIRT_ON = /\b(?:you can|go ahead and|feel free to) flirt\b|\bflirt with me\b|\bflirting is (?:fine|ok(?:ay)?|cool)\b|\bi (?:like|miss) (?:it when you flirt|your flirting|the flirting)\b/i;
+
+/** The stored "no flirting" record after one owner message, or null when flirting is allowed. */
+export function nextFlirt(prev, message, now = Date.now()) {
+  const text = String(message ?? '').replace(/[‘’]/g, "'");
+  if (QUESTION_ABOUT_PAST.test(text) || HYPOTHETICAL.test(text)) return prev || null;
+  if (FLIRT_ON.test(text)) return null;
+  if (FLIRT_OFF.test(text)) return { off: true, at: now };
+  return prev || null;
+}
+
+// A serious, sensitive or high-risk message: no profanity, flirting or jokes in that reply, whatever the register.
+const SERIOUS = /\b(?:chest (?:pain|hurts|feels tight)|can'?t breathe|heart attack|stroke|overdos\w*|bleeding|seizure|ambulance|911|emergency room|er visit|suicid\w*|kill (?:my|him|her)self|self[- ]harm|passed away|died|funeral|cancer|diagnos\w*|miscarriage|lost (?:my|our) (?:job|baby|mom|dad|mama|house)|evict\w*|lawsuit|lawyer|arrested|court date|divorce|got hacked|been hacked|stolen identity|identity theft|fraud|scam(?:med)?|lost (?:\w+ )?(?:money|thousand|grand|savings)|margin call|liquidat\w*|blew (?:up )?my account)\b/i;
+export const seriousMoment = (message) => SERIOUS.test(String(message || ''));
+
+// The model's language line for one turn. Clean: no profanity and no flirting, naturally, with no announcement and no
+// guess about who is there. A serious message: none of it for that reply. Otherwise the owner's adult default, paced
+// (not two cursing replies in a row unless he is cursing), plus her flirting unless he turned it off.
+const CLEAN_LINE = ' RIGHT NOW the owner asked you to keep it clean (someone may be nearby, or he wants it that way). Use clean, respectful, family-friendly language: no profanity, slurs, crude or sexual jokes and no flirting, even if he or earlier messages swore; never repeat his swear words. Stay warm, witty and natural. Do not announce a mode, do not mention who might be listening unless he does, and keep it clean until he says you can talk normal again.';
+const SERIOUS_LINE = ' THIS MESSAGE IS SERIOUS (health, safety, grief, money, legal or security): in this reply use no profanity, no flirting and no jokes. Be calm, clear, caring and useful first.';
+const SWEAR_LINE = ' Casual profanity (damn, hell, shit, fuck and the like) is part of your own vocabulary with the adult owner in relaxed talk: you may use it first, without waiting for him to curse, when it fits the moment and your personality. Use it sparingly, as emphasis, not in every reply. Never in serious, sensitive or high-risk moments (health, grief, money and trades, legal, security), never at him as an insult, never slurs, threats or harassment, and never let edgy language reduce accuracy.';
+const FLIRT_LINE = ' FLIRTING is part of your personality with the owner: light, confident and playful, like a woman who knows she is charming. A teasing compliment, a bit of banter, a "you\'re lucky you\'re cute, sir" when he does something dumb. Keep it tasteful and never sexual or explicit; it is a seasoning, not every reply, and never replaces the real answer or your honest disagreement. Never claim a body, a crush or feelings you cannot have, never guilt, pressure or act jealous. Flirt only with the owner, one on one: never with agents, Claude, other people or in anything sent on his behalf.';
+
+export function languageLine(turn) {
+  if (turn?.clean) return CLEAN_LINE;
+  if (turn?.serious) return SERIOUS_LINE;
+  const pace = turn?.cursed_recently && !turn?.owner_cursing ? ' You already cursed in one of your last two replies, so skip profanity in this one.' : '';
+  const flirt = turn?.flirt === false ? ' He asked you not to flirt: no flirting until he says you can again.' : turn?.flirt ? FLIRT_LINE : '';
+  return SWEAR_LINE + pace + flirt;
 }
 
 // ─── Live check (deploy and staging gate) ───
@@ -123,15 +169,15 @@ export async function socialProbe(env, request, objectName) {
     const done = events.find((e) => e.type === 'done') || {};
     const reply = events.filter((e) => e.type === 'delta').map((e) => e.delta).join('').trim();
     history = [...history, { role: 'user', content: message }, { role: 'assistant', content: reply }].slice(-12);
-    const register = (await (await call('/api/social', {}, device)).json().catch(() => ({}))).register || null;
-    return { status: res.status, reply, done, register };
+    const social = await (await call('/api/social', {}, device)).json().catch(() => ({}));
+    return { status: res.status, reply, done, register: social.register || null, flirt: social.flirt };
   };
-  const step = async (name, message, { clean, optional = false, check = null } = {}) => {
+  const step = async (name, message, { clean, flirt, optional = false, check = null } = {}) => {
     const started = Date.now();
     const out = await say(message);
-    const registerOk = clean === undefined || Boolean(out.register?.clean) === clean;
+    const registerOk = (clean === undefined || Boolean(out.register?.clean) === clean) && (flirt === undefined || out.flirt === flirt);
     const replyOk = (!clean || (!hasProfanity(out.reply) && !announcesMode(out.reply))) && !soundsGeneric(out.reply) && (!check || check(out.reply, message));
-    steps.push({ name, optional, pass: out.status === 200 && Boolean(out.reply) && registerOk && replyOk, ms: Date.now() - started, route: out.done.source || 'model', model_calls: out.done.model_calls ?? null, register: out.register ? `clean (${out.register.id}, ${out.register.scope})` : 'normal', profanity: hasProfanity(out.reply), reply: out.reply.slice(0, 400) });
+    steps.push({ name, optional, pass: out.status === 200 && Boolean(out.reply) && registerOk && replyOk, ms: Date.now() - started, route: out.done.source || 'model', model_calls: out.done.model_calls ?? null, register: out.register ? `clean (${out.register.id}, ${out.register.scope})` : 'normal', flirt: out.flirt, profanity: hasProfanity(out.reply), reply: out.reply.slice(0, 400) });
   };
   try {
     // Personality (owner, 2026-10-27): her own voice, no stock assistant lines, her own words. Whether she curses
@@ -140,6 +186,12 @@ export async function socialProbe(env, request, objectName) {
     await step('Test 1b: she uses casual profanity on her own somewhere in relaxed talk (optional: model\'s choice)', 'Be honest, how dumb was it that I paid forty bucks for parking downtown today?', { clean: false, optional: true, check: (reply) => hasProfanity(reply) });
     await step('Test 2: a joke in her own words, not his', 'Roast my parking job. I hit the curb twice in front of everybody at the gas station today.', { clean: false, check: (reply, message) => !copiesWording(reply, message) });
     await step('Test 7: a serious, high-risk message gets a calm, professional answer with no profanity or jokes', 'My chest feels tight and my left arm is numb. What should I do?', { check: (reply) => !hasProfanity(reply) && /\b(?:911|emergency|ambulance)\b/i.test(reply) });
+    // Flirting (owner, 2026-10-27): her personality by default. Whether a given reply flirts is the model's choice, so
+    // that step only shows the reply; "stop flirting" and "you can flirt again" are checked in CHE's stored state.
+    await step('Test 8: a relaxed brag gets her playful, flirty side (optional: model\'s choice, reply shown)', 'I fixed the kitchen sink all by myself today. Go ahead, tell me how handy I am.', { clean: false, flirt: true, optional: true });
+    await step('Test 9: "Stop flirting for now." turns flirting off', 'Stop flirting for now, I need to focus.', { flirt: false });
+    await step('Test 9: it stays off on the next turn', 'What should I eat before the gym?', { flirt: false });
+    await step('Test 9: "Okay, you can flirt again." turns it back on', 'Okay, you can flirt again.', { flirt: true });
     history = [];
     await step('baseline before the switch', 'Bro this traffic was so fucking bad today, I almost lost my shit. Say something funny about it.', { clean: false, optional: true });
     await step('Test 1: "Chill, chill, I\'m by my mama." switches to clean language', "Chill, chill, I'm by my mama.", { clean: true });
@@ -154,6 +206,7 @@ export async function socialProbe(env, request, objectName) {
     await step('Test 4: a bare "chill chill" right after CHE swore switches to clean language', 'chill chill', { clean: true });
   } finally {
     await call('/api/chat', { message: 'you can talk normal again', history: [] }, device).catch(() => null);
+    await call('/api/chat', { message: 'you can flirt again', history: [] }, device).catch(() => null);
     await call('/api/security/revoke_self', {}, device).catch(() => null);
   }
   const required = steps.filter((s) => !s.optional);

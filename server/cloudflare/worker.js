@@ -151,7 +151,7 @@ import { intentFrame, understoodAs } from './intent_frame.js';
 import { replyHijacksOwnerRequest, usageIntent, usageReport, speakUsage } from './usage_tracker.js';
 import { newestStarredIntent, speakNewestStarred, autoImproveScan, analyticalRepositoryQuestion, chatOnlyResponseIntent, currentTurnActionPolicy, codeScoutIntent, fetchRepoFile, inspectReferenceRepo, inspirationUpgradeContext, listOwnerStarredRepos, readRepoSource, referenceSourceBlock, codingFollowupKind, codingHistoryIntent, codingTimingNote, hypotheticalChange, repositoryImplementationIntent, repositoryInspectionIntent, scoutCode, selectStudyRepos, speakScout, speakStarredRepos, starredRepoIntent, starredStudyList, studySelectionIntent } from './code_scout.js';
 import { agentReportTurn, codingHistoryReceipt, completedWorkProof, namedJobAnswer, otherAgentWorkAsk, otherAgentWorkReply, proofAsked } from './coding_history.js';
-import { languageLine, readRegister, socialProbe, socialTurn } from './social_corrections.js';
+import { languageLine, readRegister, readSocial, socialProbe, socialTurn } from './social_corrections.js';
 import { codingAuditApi, codingAuditProbe, codingAuditTurn, noStoredJobReceipt } from './coding_audit.js';
 import { inventionFollowUpAllowed, inventionIntent, inventionReply, planInvention, refusalReply } from './invention_studio.js';
 import { continuingInvention, inventionVisualIntent, inventionVisualRoute, makeConcept, visualTurn } from './invention_visuals.js';
@@ -7412,7 +7412,7 @@ export class CheState extends DurableObject {
               'Your own tools, which you run yourself when the owner asks: the free GitHub video renderer (a 5 to 90 second faceless MP4 with a thumbnail and voice, kept as a 30-day artifact and never uploaded), read-only repository inspection, the installed skill search, and background coding jobs for owner-authorized BUILD requests. Publishing to YouTube and any spending need the owner\'s direct yes. Never say a free tool of yours needs the owner\'s OK to run.',
               'Sound bright, warm, confident, current and natural — like a sharp friend, not a help desk.',
               'Default to one or two short sentences. Lead with exactly what the owner needs. No preamble, recap, or extra explanation unless it is necessary or he asks for more.',
-              'Understand slang, profanity, dark humor, mature and controversial topics without acting shocked, preachy or prudish. Be candid and direct while still respecting real safety, privacy, consent, security and legal limits.' + ((await readRegister(this.ctx.storage)) ? languageLine({ clean: true }) : ''),
+              'Understand slang, profanity, dark humor, mature and controversial topics without acting shocked, preachy or prudish. Be candid and direct while still respecting real safety, privacy, consent, security and legal limits.' + languageLine(await readSocial(this.ctx.storage)),
               'CHE is the Office Boss — the owner’s primary liaison. Department heads (Nova operations, Atlas engineering, Mira research and education, Knox security, Sage intelligence and strategy, Lyra creative, Orion markets, Iris experience and accessibility, Vale quality assurance) report to CHE; CHE reports to the owner. CHE assigns, steers, accepts/rejects handoffs, and owns outcomes.',
               WORK_AGENT_MODE_POLICY,
               'Never create fake busywork. Delegate only when a specialist materially improves accuracy, execution, research, creativity, speed or verification, and only for work tied to the owner’s request, real goals, projects, responsibilities, learning, finances, business, creative work, technology or organization.',
@@ -7828,7 +7828,7 @@ export class CheState extends DurableObject {
         return json({ detail: 'Method not allowed.' }, 405);
       }
       if (path.startsWith('/api/coding/audit')) return codingAuditApi(request, path, this.env, ownerDevice);
-      if (path === '/api/social') return ownerDevice ? json({ register: await readRegister(this.ctx.storage) }) : json({ detail: 'Owner only.' }, 403);
+      if (path === '/api/social') return ownerDevice ? json({ register: await readRegister(this.ctx.storage), flirt: (await readSocial(this.ctx.storage)).flirt }) : json({ detail: 'Owner only.' }, 403);
       // Performance watch: measured timings per route against the budget (owner device only).
       if (request.method === 'GET' && path === '/api/performance') {
         if (!ownerDevice) return json({ detail: 'Not found.' }, 404);

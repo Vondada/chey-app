@@ -5,7 +5,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import test from 'node:test';
-import { activeRegister, classifySocialCorrection, hasProfanity, languageLine, nextRegister, socialProbe } from './social_corrections.js';
+import { activeRegister, classifySocialCorrection, hasProfanity, languageLine, nextFlirt, nextRegister, seriousMoment, socialProbe } from './social_corrections.js';
 
 globalThis.fetch = async () => new Response('{"error":"offline test"}', { status: 503, headers: { 'Content-Type': 'application/json' } });
 
@@ -20,6 +20,10 @@ const { default: worker, CheState } = mod;
 
 const SWEAR = 'Casual profanity (damn, hell, shit, fuck';
 const CLEAN = 'Use clean, respectful, family-friendly language';
+const FLIRT = 'FLIRTING is part of your personality';
+const NO_FLIRT = 'He asked you not to flirt';
+const SERIOUS = 'THIS MESSAGE IS SERIOUS';
+const PACE = 'skip profanity in this one';
 
 function storageMap() {
   const saved = new Map();
@@ -51,10 +55,10 @@ async function owner(storage = storageMap()) {
     const raw = await (await post('/api/chat', { message, history }, token)).text();
     const done = raw.split('\n').filter(Boolean).map((l) => JSON.parse(l)).find((f) => f.type === 'done') || {};
     history = [...history, { role: 'user', content: message }, { role: 'assistant', content: 'Sure thing.' }];
-    const register = (await (await post('/api/social', {}, token)).json()).register;
+    const { register, flirt } = await (await post('/api/social', {}, token)).json();
     // The main reply prompt is the one carrying the LANGUAGE STYLE line.
     const prompt = prompts.slice(before).find((p) => p.includes('LANGUAGE STYLE')) || '';
-    return { done, register, prompt };
+    return { done, register, flirt, prompt };
   };
   return { say, storage };
 }
@@ -137,7 +141,7 @@ test('the live check passes on a CHE that answers clean, and fails one that keep
   };
   const clean = await run('Sounds good, sir.');
   assert.equal(clean.ok, true, JSON.stringify(clean.steps.filter((s) => !s.pass)));
-  assert.equal(clean.steps.length, 16);
+  assert.equal(clean.steps.length, 20);
   const dirty = await run('Hell yeah, that shit is wild.');
   assert.equal(dirty.ok, false);
 });
@@ -181,4 +185,44 @@ test('CHE\'s notes: her own line on top, the exact content below, stable per mes
     const threads = conversationThreads({ team_tasks: [entry] });
     assert.match(JSON.stringify(threads), /Check the build logs/);
   }
+});
+
+test('flirting is hers by default; "stop flirting" holds across turns until "you can flirt again"', async () => {
+  const che = await owner();
+  let t = await che.say('What is good for breakfast?');
+  assert.ok(t.prompt.includes(FLIRT) && t.flirt === true);
+  t = await che.say('Stop flirting for now, I need to focus.');
+  assert.ok(t.prompt.includes(NO_FLIRT) && !t.prompt.includes(FLIRT) && t.flirt === false);
+  t = await che.say('What should I eat before the gym?');
+  assert.ok(t.prompt.includes(NO_FLIRT) && t.flirt === false, 'stays off');
+  t = await che.say('Okay, you can flirt again.');
+  assert.ok(t.prompt.includes(FLIRT) && t.flirt === true);
+  assert.equal(nextFlirt(null, 'What if I told you to stop flirting?'), null, 'a hypothetical is not an instruction');
+  assert.equal(nextFlirt({ off: true }, 'remember when I said flirt with me?')?.off, true);
+});
+
+test('clean language and serious moments switch off profanity and flirting; profanity is paced', async () => {
+  const che = await owner();
+  let t = await che.say("Chill, I'm by my mama.");
+  assert.ok(t.prompt.includes(CLEAN) && t.prompt.includes('no flirting') && !t.prompt.includes(FLIRT) && !t.prompt.includes(SWEAR));
+  await che.say('you can talk normal again');
+  t = await che.say('My chest feels tight and my left arm is numb.', { fresh: true });
+  assert.ok(t.prompt.includes(SERIOUS) && !t.prompt.includes(SWEAR) && !t.prompt.includes(FLIRT));
+  t = await che.say('lol ok what now', { lastReply: 'Damn, that was a hell of a game.' });
+  assert.ok(t.prompt.includes(SWEAR) && t.prompt.includes(PACE), 'she cursed last reply, so not again');
+  t = await che.say('that shit was crazy though', { lastReply: 'Damn, that was a hell of a game.' });
+  assert.ok(!t.prompt.includes(PACE), 'he is cursing, so matching him is fine');
+  for (const m of ['My grandma passed away last night', 'I think I got scammed out of 2 grand', 'my account got hacked', 'I have a court date Monday']) assert.ok(seriousMoment(m), m);
+  assert.equal(seriousMoment('this traffic is killing me'), false);
+  assert.ok(languageLine({ clean: false, flirt: true }).includes(FLIRT));
+});
+
+test('a negated release keeps clean language; a new cue keeps a "from now on" setting permanent (Codex review)', () => {
+  const t = Date.now();
+  const on = { clean: true, id: 'clean_language', scope: 'situational', at: t, last_at: t };
+  for (const m of ["Don't talk normal again yet", "We're not back to normal yet", "You can't curse yet, she's still here", 'Not yet, my mom is still here']) assert.equal(nextRegister(on, m, { now: t })?.clean, true, m);
+  const kept = nextRegister({ clean: true, id: 'clean_language', scope: 'persistent', at: t, last_at: t }, "I'm around kids right now", { now: t });
+  assert.equal(kept.scope, 'persistent');
+  assert.equal(activeRegister(kept, t + 10 * 3_600_000)?.clean, true);
+  assert.equal(nextRegister(on, 'Alright, you can talk normal again.', { now: t }), null, 'a real release still lifts it');
 });
