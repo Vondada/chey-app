@@ -100,6 +100,7 @@ import { cancelCandidates, cancelConfirmation, cancelOrderIntent, chartIntent, c
 import { marketUniverse, searchUniverse } from './market_universe.js';
 import { readRithmicCandles, storeRithmicCandles } from './rithmic_dataset.js';
 import { gatherTradingStatus, tradingStatusIntent, tradingStatusReply } from './trading_answers.js';
+import { lossAnswer } from './trading_loss_review.js';
 // A spoken cancel of one Alpaca PAPER order waiting for the owner's yes, or for his pick from a numbered list.
 const CHART_CANCEL_PENDING = 'trading_chart_cancel_pending';
 // "Number 2", "2", "the second one": a pick from a numbered list of n. 0 when the turn picks nothing.
@@ -12899,6 +12900,9 @@ export class CheState extends DurableObject {
           const saved = await readMatrix(this.ctx.storage);
           return ndjsonReply(saved ? speakMatrix(saved) : 'The timeframe backtest has not run yet, sir. Say "backtest every strategy on every timeframe" and I will test them on free delayed NQ data. It places no orders.', { source: 'che_trading_matrix' });
         }
+        // Why the paper trades lost (owner, 2026-10-27): answered from the recorded journal, futures and crypto kept apart.
+        const lossText = ownerDevice && !body.attachment ? await lossAnswer(this.ctx.storage, message) : null;
+        if (lossText) return ndjsonReply(lossText, { source: 'che_trading_losses', model_calls: 0, ok: true });
         // Status of CHE's trading and memory (owner, 2026-10-27): is it live, is the data real-time, is Rithmic connected,
         // the latest paper trade, what was learned, is long-term memory storing. Each answer is read from stored records;
         // it runs before the paper-trade and chart routes so "is your trading live" never reaches the ticker lookup.
