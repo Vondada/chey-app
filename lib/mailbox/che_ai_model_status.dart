@@ -223,8 +223,12 @@ class CheAiModelStatusCard extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(children: [
-              Icon(free ? Icons.verified_rounded : Icons.block_rounded,
-                  color: free ? CheColors.success : CheColors.warning, semanticLabel: free ? 'Free model available' : 'No free model verified'),
+              Semantics(
+                label: free ? 'Free model available' : 'No free model verified',
+                excludeSemantics: true,
+                child: Icon(free ? Icons.verified_rounded : Icons.block_rounded,
+                    color: free ? CheColors.success : CheColors.warning),
+              ),
               const SizedBox(width: 8),
               Expanded(child: Semantics(header: true, child: Text('AI Model Status', style: CheType.label))),
             ]),
