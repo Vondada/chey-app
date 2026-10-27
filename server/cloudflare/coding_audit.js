@@ -14,6 +14,7 @@
 import { gh } from './coding_runtime.js';
 import { classifyModelFailure, redactSecrets } from './coding_failover.mjs';
 import { codingHistoryIntent } from './code_scout.js';
+import { otherAgentWorkAsk } from './coding_history.js';
 
 export const AUDIT_REF = 'che-mailbox';
 export const AUDIT_DIR = 'mailbox/runtime';
@@ -296,8 +297,17 @@ export async function listRuns(env, { limit = 8, fetcher = globalThis.fetch, now
       runs[i] = normalizeRecord(decode(res.data?.content), { path, blob_sha: res.data?.sha || names.get(id), recorded_at: recordedAt.get(id), name: `${id}.json`, repo: env.CHE_GITHUB_REPO }, { now });
     } catch (_) { unread.push({ id, status: 502 }); }
   }));
-  const value = { ok: true, total: names.size, order, runs: runs.filter(Boolean), unread };
-  cache.set(key, { at: now, value });
+  const read = runs.filter(Boolean);
+  unread.sort((a, b) => picked.indexOf(a.id) - picked.indexOf(b.id));
+  const statuses = unread.map((u) => `${u.id}: ${u.status ? `HTTP ${u.status}` : 'network error'}`).join(', ');
+  // Records exist but none could be read (a rate limit, a revoked token): that is a failed read, never "no records".
+  if (picked.length && !read.length) {
+    return { ok: false, status: unread[0]?.status || 502, unread, detail: `${names.size} record${names.size === 1 ? '' : 's'} exist in ${AUDIT_DIR} on ${AUDIT_REF}, but none of the ${picked.length} I tried could be read (${statuses}).` };
+  }
+  const value = { ok: true, total: names.size, order, runs: read, unread, tried: picked.length,
+    unread_words: unread.length ? `${unread.length} of the ${picked.length} records I tried could not be read (${statuses}).` : '' };
+  // Only a complete read is cached, so an unreadable record is tried again on the next ask.
+  if (!unread.length) cache.set(key, { at: now, value });
   return value;
 }
 
@@ -365,13 +375,13 @@ const signature = (run) => `${run.failure_class.category}|${run.attempts.list.at
 /** "Why did my coding agent fail?": the newest failed run in detail, and how the recent runs ended. */
 export function speakFailureSummary(listed) {
   const runs = listed.runs;
-  if (!runs.length) return `I read ${AUDIT_DIR} on ${AUDIT_REF}: it holds no coding run records${listed.total ? ' I could read' : ''}, so there is no failure to explain.`;
+  if (!runs.length) return `I read ${AUDIT_DIR} on ${AUDIT_REF}: it holds no coding run records, so there is no failure to explain.`;
   const failed = runs.filter((r) => ['failed', 'not_delivered', 'stale', 'unverified'].includes(r.outcome));
-  const head = `I read my coding runner's own records on GitHub (${listed.total} in ${AUDIT_DIR} on ${AUDIT_REF}; the newest ${runs.length}, ordered by ${listed.order}).`;
+  const head = `I read my coding runner's own records on GitHub (${listed.total} in ${AUDIT_DIR} on ${AUDIT_REF}; the newest ${runs.length}${listed.unread.length ? ' I could read' : ''}, ordered by ${listed.order}).`;
   const tally = {};
   for (const r of runs) tally[r.outcome] = (tally[r.outcome] || 0) + 1;
   const counts = Object.entries(tally).map(([k, v]) => `${v} ${k.replace(/_/g, ' ')}`).join(', ');
-  const unread = listed.unread.length ? ` ${listed.unread.length} record${listed.unread.length === 1 ? '' : 's'} could not be read (${listed.unread.map((u) => `${u.id}: HTTP ${u.status || 'network'}`).join(', ')}).` : '';
+  const unread = listed.unread_words ? ` ${listed.unread_words}` : '';
   if (!failed.length) return `${head} Of those: ${counts}. None of them failed.${unread} Newest: ${speakRun(runs[0])}`;
   const latest = failed[0];
   const same = failed.filter((r) => signature(r) === signature(latest)).length;
@@ -383,8 +393,8 @@ export function speakFailureSummary(listed) {
 export function speakRunList(listed) {
   if (!listed.runs.length) return `I read ${AUDIT_DIR} on ${AUDIT_REF}: no coding run records are there.`;
   const rows = listed.runs.map((r) => `${r.id}, ${when(r)}: ${r.execution.state.replace(/_/g, ' ')}${has(r.execution.failure) ? ` (${r.execution.failure.replace(/_/g, ' ')})` : ''}, ${r.attempts.list.length} attempt${r.attempts.list.length === 1 ? '' : 's'}${r.attempts.list.length ? ` on ${r.attempts.list.map((a) => a.model).join(', ')}` : ''}${has(r.pr_number) ? `, PR #${r.pr_number}` : ''}.`);
-  const unread = listed.unread.length ? ` Unreadable: ${listed.unread.map((u) => `${u.id} (HTTP ${u.status || 'network'})`).join(', ')}.` : '';
-  return `My coding runner has ${listed.total} run records in ${AUDIT_DIR} on ${AUDIT_REF}. The newest ${listed.runs.length}, ordered by ${listed.order}: ${rows.map((row, i) => `${i + 1}. ${row}`).join(' ')}${unread} Ask "show coding attempts for" a run id for its full audit.`;
+  const unread = listed.unread_words ? ` ${listed.unread_words}` : '';
+  return `My coding runner has ${listed.total} run records in ${AUDIT_DIR} on ${AUDIT_REF}. The newest ${listed.runs.length}${listed.unread.length ? ' I could read' : ''}, ordered by ${listed.order}: ${rows.map((row, i) => `${i + 1}. ${row}`).join(' ')}${unread} Ask "show coding attempts for" a run id for its full audit.`;
 }
 
 // ─── Chat intent ─────────────────────────────────────────────────────────────────────────────────────────
@@ -403,6 +413,9 @@ const NOT_A_READ = /^\s*(?:(?:che|chey|chay)[,:]?\s+)?(?:please\s+)?(?:fix|make|
 export function codingAuditIntent(message) {
   const text = String(message || '').replace(/[’]/g, "'").trim();
   if (!text || text.length > 400 || /^\s*\//.test(text) || NOT_A_READ.test(text)) return '';
+  // Another AI's coding work ("What did Claude try on the coding task?") is not in these records: its own route
+  // (coding_history.otherAgentWorkAsk) reads that AI's mailbox and handoff.
+  if (otherAgentWorkAsk(text)) return '';
   const id = RUN_ID.exec(text);
   if (id) return AUDIT_WORD.test(text) || SUBJECT.test(text) ? 'run' : '';
   if (LIST_ASK.test(text)) return 'list';
@@ -432,7 +445,7 @@ export async function codingAuditTurn(message, env, { owner = false, fetcher = g
   if (!listed.ok) return failed(listed);
   const text = kind === 'list' ? speakRunList(listed) : speakFailureSummary(listed);
   const ids = listed.runs.map((r) => r.record_path);
-  return { text, meta: { ...base, ok: true, outcome: ids.length ? 'retrieved' : 'no_match', records: ids.length, record_ids: ids, total_records: listed.total } };
+  return { text, meta: { ...base, ok: true, outcome: ids.length ? 'retrieved' : 'no_match', records: ids.length, record_ids: ids, total_records: listed.total, unreadable_records: listed.unread.length } };
 }
 
 // ─── HTTP: GET /api/coding/audit[?limit=N] and GET /api/coding/audit/ocr-xxxxxxxx (owner device only) ───

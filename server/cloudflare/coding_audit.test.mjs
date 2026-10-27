@@ -300,6 +300,75 @@ test('/api/chat: a GitHub failure is an honest failed read through the real rout
   }
 });
 
+// ─── Review fixes (PR #683) ───────────────────────────────────────────────────────────────────────────────
+// A fake GitHub whose listing works but whose record reads fail for the ids in `failIds` (e.g. a 403 rate limit).
+function recordReadsFail(records, failIds, status = 403) {
+  const base = github(records);
+  return async (url, init) => {
+    const m = /\/contents\/mailbox\/runtime\/(ocr-[0-9a-f]{8})\.json/.exec(String(url));
+    if (m && failIds.includes(m[1])) return new Response(JSON.stringify({ message: 'API rate limit exceeded' }), { status });
+    return base.fetcher(url, init);
+  };
+}
+
+test('records listed but none readable is a failed read with the statuses, never "no records" or "no job"', async () => {
+  const records = { 'ocr-49bea5b4': QWEN, 'ocr-cb88d817': MERGED };
+  const fetcher = recordReadsFail(records, Object.keys(records));
+  clearAuditCache();
+  const listed = await listRuns(ENV, { fetcher });
+  assert.equal(listed.ok, false);
+  assert.equal(listed.status, 403);
+  assert.match(listed.detail, /2 records exist in mailbox\/runtime on che-mailbox, but none of the 2 I tried could be read \(ocr-49bea5b4: HTTP 403, ocr-cb88d817: HTTP 403\)/);
+  clearAuditCache();
+  const turn = await codingAuditTurn('Why did my coding agent fail?', ENV, { owner: true, fetcher });
+  assert.equal(turn.meta.outcome, 'storage_failed');
+  assert.doesNotMatch(turn.text, /no coding run records|nothing to explain|no failure/i);
+  clearAuditCache();
+  const list = await codingAuditTurn('show my coding runs', ENV, { owner: true, fetcher });
+  assert.equal(list.meta.outcome, 'storage_failed');
+  clearAuditCache();
+  const status = await noStoredJobReceipt(ENV, { fetcher });
+  assert.doesNotMatch(status, /has started yet/);
+  assert.match(status, /could not check my coding runner's records on GitHub: .*HTTP 403/);
+  // A failed read is not cached: the next ask reads again and succeeds.
+  const after = await listRuns(ENV, { fetcher: github(records).fetcher });
+  assert.equal(after.ok, true);
+});
+
+test('a partial read says how many records were unreadable', async () => {
+  const records = { 'ocr-49bea5b4': QWEN, 'ocr-cb88d817': MERGED, 'ocr-aaaaaaa1': { ...QWEN, session_id: 'ocr-aaaaaaa1' } };
+  const fetcher = recordReadsFail(records, ['ocr-cb88d817']);
+  clearAuditCache();
+  const why = await codingAuditTurn('Why did my coding agent fail?', ENV, { owner: true, fetcher });
+  assert.equal(why.meta.outcome, 'retrieved');
+  assert.equal(why.meta.unreadable_records, 1);
+  assert.match(why.text, /1 of the 3 records I tried could not be read \(ocr-cb88d817: HTTP 403\)/);
+  clearAuditCache();
+  const list = await codingAuditTurn('show my coding runs', ENV, { owner: true, fetcher });
+  assert.match(list.text, /1 of the 3 records I tried could not be read \(ocr-cb88d817: HTTP 403\)/);
+});
+
+test('a question about another AI\'s coding work keeps its own route; CHE\'s own coding agent stays with the audit', async () => {
+  for (const m of ["What happened to Claude's coding agent?", 'What did Claude try on the coding task?', "Why did Codex's coding agent fail?",
+    'What did the Gemini coding agent try?', 'Why did the Cursor coding agent fail?', 'What did Copilot try on the coding job?', "Why did Grok's coding run fail?",
+    'What did ChatGPT try on the coding task?']) assert.equal(codingAuditIntent(m), '', m);
+  for (const m of ['Why did my coding agent fail?', 'What did your coding agent try?', 'why did ocr-49bea5b4 fail']) assert.notEqual(codingAuditIntent(m), '', m);
+  // Through the real /api/chat: the other-agent route answers, and CHE's own question still reads the records.
+  clearAuditCache();
+  const chat = await chatWith(github({ 'ocr-49bea5b4': QWEN }).fetcher);
+  try {
+    for (const m of ["What happened to Claude's coding agent?", 'What did Claude try on the coding task?']) {
+      const { done, text } = await chat.ask(m);
+      assert.equal(done.source, 'che_coding_history', m);
+      assert.match(text, /I can't see Claude's live session/, m);
+    }
+    assert.equal((await chat.ask('Why did my coding agent fail?')).done.source, 'che_coding_audit');
+    assert.equal(chat.models(), 0);
+  } finally {
+    chat.restore();
+  }
+});
+
 // ─── The deploy's live check ──────────────────────────────────────────────────────────────────────────────
 async function deployProbe(fetcher, { model = 'Here is the answer, sir.' } = {}) {
   clearAuditCache();
