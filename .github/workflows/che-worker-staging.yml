@@ -70,11 +70,15 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          wf="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" --jq .workflow_id)"
+          # Order is by when each run's CURRENT attempt started (run_started_at, then run id), so a re-run
+          # of an older run waits for a newer run that is already using staging (Codex review, PR #682).
+          me="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}")"
+          wf="$(jq -r .workflow_id <<<"$me")"
+          started="$(jq -r .run_started_at <<<"$me")"
           deadline=$((SECONDS + 40 * 60))
           while :; do
             older="$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/${wf}/runs?per_page=100" \
-              --jq "[.workflow_runs[] | select(.id < ${GITHUB_RUN_ID} and (.status == \"queued\" or .status == \"in_progress\" or .status == \"waiting\" or .status == \"pending\" or .status == \"requested\")) | .id] | join(\" \")")"
+              --jq "[.workflow_runs[] | select(.id != ${GITHUB_RUN_ID} and (.status == \"queued\" or .status == \"in_progress\" or .status == \"waiting\" or .status == \"pending\" or .status == \"requested\") and (.run_started_at < \"${started}\" or (.run_started_at == \"${started}\" and .id < ${GITHUB_RUN_ID}))) | .id] | join(\" \")")"
             if [[ -z "$older" ]]; then echo "No older staging run is active; this run has the staging Worker."; break; fi
             if (( SECONDS > deadline )); then echo "::error::Older staging runs still active after 40 minutes: $older"; exit 1; fi
             echo "Waiting for older staging runs: $older"
@@ -123,28 +127,33 @@ jobs:
         working-directory: server/cloudflare
         run: |
           allowed="CHE_VOICE_PROBE_TOKEN CHE_PAIR_CODE CHE_ELEVENLABS_PREFERRED CHE_FISH_PREFERRED ${STAGING_FREE_KEYS}"
+          # The inventory must be read and parsed, or the job stops: a failed listing must never read as
+          # "staging holds only allowlisted secrets" (Codex review, PR #682).
           names() {
-            npx --yes wrangler@4 secret list --config wrangler.staging.json --format json > /tmp/staging-secrets.out
+            npx --yes wrangler@4 secret list --config wrangler.staging.json --format json > /tmp/staging-secrets.out || return 1
             node -e '
               const raw = require("fs").readFileSync("/tmp/staging-secrets.out", "utf8");
               const list = JSON.parse(raw.slice(raw.indexOf("["), raw.lastIndexOf("]") + 1));
+              if (!Array.isArray(list) || list.some((s) => typeof s?.name !== "string")) throw new Error("unexpected secret list shape");
               console.log(list.map((s) => s.name).join("\n"));
-            '
+            ' || return 1
           }
+          inventory="$(names)" || { echo "::error::Could not read the staging secret list; nothing was deployed."; exit 1; }
           extra=()
           while read -r name; do
             [[ -z "$name" ]] && continue
             [[ " $allowed " == *" $name "* ]] || extra+=("$name")
-          done < <(names)
+          done <<<"$inventory"
           for name in "${extra[@]}"; do
             echo "Deleting staging secret $name (not on the staging allowlist)"
             npx --yes wrangler@4 secret delete "$name" --config wrangler.staging.json < /dev/null || true
           done
+          after="$(names)" || { echo "::error::Could not re-read the staging secret list after cleanup; nothing was deployed."; exit 1; }
           left=()
           while read -r name; do
             [[ -z "$name" ]] && continue
             [[ " $allowed " == *" $name "* ]] || left+=("$name")
-          done < <(names)
+          done <<<"$after"
           if (( ${#left[@]} )); then echo "::error::Staging still holds secrets outside the allowlist: ${left[*]}"; exit 1; fi
           echo "Staging holds only allowlisted secret names."
 
