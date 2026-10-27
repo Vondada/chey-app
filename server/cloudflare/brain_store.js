@@ -754,7 +754,7 @@ export function retrievalBody(record = {}) {
   return body;
 }
 
-export function rememberExchange(store, { id, message, reply, at, correction = false } = {}) {
+export function rememberExchange(store, { id, message, reply, at, correction = false, evidence = null } = {}) {
   const said = String(message || '').trim();
   const answered = String(reply || '').trim();
   if (!id || !said) return { outcome: 'rejected', reason: 'empty' };
@@ -766,7 +766,9 @@ export function rememberExchange(store, { id, message, reply, at, correction = f
     path: correction ? 'Corrections' : `Chat/${day}`,
     title: clipWords(said, 90),
     body,
-    source: { kind: 'owner_chat', brainmem_id: id, full_text: true, ...source },
+    // How the answer was made (route, model calls, evidence kind, sources, claims the guard removed), so CHE can later
+    // explain a past mistake from the record (conversation_history.js).
+    source: { kind: 'owner_chat', brainmem_id: id, full_text: true, ...(evidence ? { evidence } : {}), ...source },
     verification: 'owner_attested',
     created_at: at,
   });
