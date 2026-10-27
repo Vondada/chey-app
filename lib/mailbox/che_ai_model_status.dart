@@ -224,6 +224,8 @@ class CheAiModelStatusCard extends StatelessWidget {
           children: [
             Row(children: [
               Semantics(
+                // Its own node, so VoiceOver reads the availability on its own and it is not merged into the card.
+                container: true,
                 label: free ? 'Free model available' : 'No free model verified',
                 excludeSemantics: true,
                 child: Icon(free ? Icons.verified_rounded : Icons.block_rounded,
