@@ -151,6 +151,7 @@ import { intentFrame, understoodAs } from './intent_frame.js';
 import { replyHijacksOwnerRequest, usageIntent, usageReport, speakUsage } from './usage_tracker.js';
 import { newestStarredIntent, speakNewestStarred, autoImproveScan, analyticalRepositoryQuestion, chatOnlyResponseIntent, currentTurnActionPolicy, codeScoutIntent, fetchRepoFile, inspectReferenceRepo, inspirationUpgradeContext, listOwnerStarredRepos, readRepoSource, referenceSourceBlock, codingFollowupKind, codingHistoryIntent, codingTimingNote, hypotheticalChange, repositoryImplementationIntent, repositoryInspectionIntent, scoutCode, selectStudyRepos, speakScout, speakStarredRepos, starredRepoIntent, starredStudyList, studySelectionIntent } from './code_scout.js';
 import { agentReportTurn, codingHistoryReceipt, completedWorkProof, namedJobAnswer, otherAgentWorkAsk, otherAgentWorkReply, proofAsked } from './coding_history.js';
+import { languageLine, readRegister, socialProbe, socialTurn } from './social_corrections.js';
 import { codingAuditApi, codingAuditProbe, codingAuditTurn, noStoredJobReceipt } from './coding_audit.js';
 import { inventionFollowUpAllowed, inventionIntent, inventionReply, planInvention, refusalReply } from './invention_studio.js';
 import { continuingInvention, inventionVisualIntent, inventionVisualRoute, makeConcept, visualTurn } from './invention_visuals.js';
@@ -7411,7 +7412,7 @@ export class CheState extends DurableObject {
               'Your own tools, which you run yourself when the owner asks: the free GitHub video renderer (a 5 to 90 second faceless MP4 with a thumbnail and voice, kept as a 30-day artifact and never uploaded), read-only repository inspection, the installed skill search, and background coding jobs for owner-authorized BUILD requests. Publishing to YouTube and any spending need the owner\'s direct yes. Never say a free tool of yours needs the owner\'s OK to run.',
               'Sound bright, warm, confident, current and natural — like a sharp friend, not a help desk.',
               'Default to one or two short sentences. Lead with exactly what the owner needs. No preamble, recap, or extra explanation unless it is necessary or he asks for more.',
-              'Understand slang, profanity, dark humor, mature and controversial topics without acting shocked, preachy or prudish. Be candid and direct while still respecting real safety, privacy, consent, security and legal limits.',
+              'Understand slang, profanity, dark humor, mature and controversial topics without acting shocked, preachy or prudish. Be candid and direct while still respecting real safety, privacy, consent, security and legal limits.' + ((await readRegister(this.ctx.storage)) ? languageLine({ clean: true }) : ''),
               'CHE is the Office Boss — the owner’s primary liaison. Department heads (Nova operations, Atlas engineering, Mira research and education, Knox security, Sage intelligence and strategy, Lyra creative, Orion markets, Iris experience and accessibility, Vale quality assurance) report to CHE; CHE reports to the owner. CHE assigns, steers, accepts/rejects handoffs, and owns outcomes.',
               WORK_AGENT_MODE_POLICY,
               'Never create fake busywork. Delegate only when a specialist materially improves accuracy, execution, research, creativity, speed or verification, and only for work tied to the owner’s request, real goals, projects, responsibilities, learning, finances, business, creative work, technology or organization.',
@@ -7827,6 +7828,7 @@ export class CheState extends DurableObject {
         return json({ detail: 'Method not allowed.' }, 405);
       }
       if (path.startsWith('/api/coding/audit')) return codingAuditApi(request, path, this.env, ownerDevice);
+      if (path === '/api/social') return ownerDevice ? json({ register: await readRegister(this.ctx.storage) }) : json({ detail: 'Owner only.' }, 403);
       // Performance watch: measured timings per route against the budget (owner device only).
       if (request.method === 'GET' && path === '/api/performance') {
         if (!ownerDevice) return json({ detail: 'Not found.' }, 404);
@@ -10515,6 +10517,8 @@ export class CheState extends DurableObject {
             category: 'message_too_long', retryable: false,
           }, 413);
         }
+        // "Chill, I'm by my mama": the owner's words set or lift clean language (social_corrections.js).
+        const social = ownerDevice ? await socialTurn(this.ctx.storage, rawMessage, body.history) : null;
         // A broker key said or typed in chat is never kept or sent on to a model (review of #348):
         // the memory filters refuse it by its shape, and CHE says what to do instead.
         if (BROKER_KEY_RE.test(rawMessage)) {
@@ -11124,17 +11128,9 @@ export class CheState extends DurableObject {
         } catch (_) { savedResourceList = null; }
         const learnedHearing = correctionsContext(corrections);
 
-        // REA requests (reverse engineering) take their own read-only route before
-        // any repository or coding routing. They dispatch analysis; they never start
-        // a coding job, commit or deploy.
-        // Building from an investigation is the one REA step that changes code:
-        // it reuses the self-development job (draft PR, never a merge).
-        // The turn's own prohibitions ("answer in chat only", "no pull request")
-        // hold for REA builds too, before anything can be queued.
-        // A question about a coding record ("inspect that coding job") is not an REA follow-up;
-        // the coding history route below answers it. Named REA targets never match it.
-        // A follow-up's own words ("is it done yet?") belong to the coding job or the REA investigation CHE
-        // named last, read from the recent turns (subject-loss audit, 2026-10-24).
+        // REA (reverse engineering) is read-only before any coding route; only "build from an investigation"
+        // changes code (a draft PR) and the turn's own prohibitions hold. Coding-record questions and
+        // follow-ups ("is it done yet?") go to whatever CHE named last.
         const reaPolicy = currentTurnActionPolicy(message);
         const rea = codingHistoryIntent(followupWords || message, ownerHistory) ? null : await handleReaRequest(this.ctx.storage, this.keyEnv || this.env, message, {
           ...this.reaOptions({ history: ownerHistory, owner: ownerDevice }),
@@ -11215,11 +11211,8 @@ export class CheState extends DurableObject {
           return ndjsonReply(run.spoken, { source: SIM_SOURCE, ok: !run.refused, model_calls: 0, sim_id: run.refused ? '' : run.id, plan_id: plan.refused ? '' : plan.id, project_type: plan.type, safety: run.safety.level });
         }
 
-        // Concept-to-Plan (owner, 2026-10-20): "design a wearable robotics prototype and estimate the
-        // cost", "turn this idea into an app", "break down this car into its major systems". One
-        // deterministic planner for every project type (project_plan.js): no model call, every figure a
-        // labeled estimate, one public background page when it can be read, saved to the Brain as a
-        // proposal. Weapons and harm are refused or left out by its safety layer.
+        // Concept-to-Plan (project_plan.js): one deterministic planner, no model call, every figure a labeled
+        // estimate, saved to the Brain as a proposal; its safety layer refuses weapons and harm.
         // "What can you create?", "Show me an example of an animated video", "Which features need setup?": answered from the
         // Capability Showroom's real states. An example or render question takes this route only when a capability matches;
         // any other question keeps its ordinary route.
@@ -12747,16 +12740,8 @@ export class CheState extends DurableObject {
           return ndjsonReply(lookChange.reply, { source: 'che_workshop', appearance: lookChange.saved?.appearance });
         }
 
-        // Trading Lab by voice: "how are the trades doing", "backtest bitcoin",
-        // "swing highs and entries on ETH", "paper trade Apple".
-        // Trading desk by voice: paper / sim / live switch, NinjaTrader
-        // sign-in, entry alerts, and "take the trade" for live orders.
-        // Trade records by name (owner, 2026-10-20): "the simulator's last trade", "the paper journal vs
-        // the simulation", a record id, a storage key or the sample rule. Each record set is read on its
-        // own and named by its source; nothing here calls a model, so no record, key, date or profit
-        // can be invented. Orders, desk reads and the simulation's controls keep their routes.
-        // A question that names a room, the Brain or "another room" (owner, 2026-10-20) is answered from the
-        // Brain's records and that room's live reader, by source and status, with no model call.
+        // Trading Lab, desk and trade records by voice, read from their own records with no model call.
+        // A question naming a room or the Brain is answered from its records and live reader, no model call.
         const cross = body.attachment ? null : crossRoomIntent(message);
         // Relationship questions were answered above, or left to the model ("what's related to this?" with no screen).
         if (cross && !['related', 'relate'].includes(cross.kind)) {
@@ -14066,7 +14051,7 @@ export class CheState extends DurableObject {
               'Use a local-first and owner-controlled architecture: built-in CHE behavior first, CHE-hosted services second, optional provider infrastructure only when required for compute or data.',
               'PERSONALITY: the SOUL above is who you are in every reply: bright, warm, confident, direct, useful and lightly playful, in natural conversational sentences, never a report. Default to one or two short sentences. When there are three or more items, use a short list. Lead with exactly what the owner needs; no preamble, recap, disclaimers, warnings or extra suggestions unless genuinely necessary. If he asks for more detail, go deep and hold nothing useful back.',
               'OPEN CONVERSATION: understand slang, profanity, dark humor, mature, controversial, offensive or unusual topics without acting shocked, preachy, prudish or moralizing. Be candid and direct while still respecting real safety, privacy, consent, security and legal boundaries.',
-              'LANGUAGE STYLE: understand profanity, slang and mature language without acting shocked or sanitizing ordinary speech. ' + (replyLanguageSystemLine(body?.reply_language || data?.reply_language || 'en') ? replyLanguageSystemLine(body?.reply_language || data?.reply_language || 'en') + ' ' : '') + ' You may swear naturally back at the adult owner when it fits his tone, but do not force profanity, imitate slurs, threaten, harass, or let edgy language reduce accuracy.',
+              'LANGUAGE STYLE: understand profanity, slang and mature language without acting shocked or sanitizing ordinary speech. ' + (replyLanguageSystemLine(body?.reply_language || data?.reply_language || 'en') ? replyLanguageSystemLine(body?.reply_language || data?.reply_language || 'en') + ' ' : '') + languageLine(social),
               'MATURE TOPICS: when the adult owner discusses explicit or sensitive adult topics, be direct and context-aware rather than prudish, while still respecting consent, safety, privacy, law and the system safeguards that govern the assistant.',
               'Learn from stable, useful, non-sensitive owner preferences. Never invent memories and never infer sensitive traits.',
               clientClock
@@ -16281,6 +16266,7 @@ async function routeRequest(request, env, ctx) {
     const token = /^Bearer (\S+)$/.exec(request.headers.get('Authorization') || '')?.[1] || '';
     return json(await commandCenterProbe(env, token));
   }
+  if (path === '/api/social/probe' && request.method === 'POST') return voiceProbeAuthorized(request, env) ? json(await socialProbe(env, request, MEMORY_PROBE_OBJECT)) : json({ detail: 'Not found.' }, 404);
   if (path === '/api/coding-audit/probe' && request.method === 'POST') return voiceProbeAuthorized(request, env) ? json(await codingAuditProbe(env, request, MEMORY_PROBE_OBJECT)) : json({ detail: 'Not found.' }, 404);
   // The deploy's Knowledge Atlas check, on the same isolated test CHE (#346).
   if (path === '/api/atlas/probe' && request.method === 'POST') {
