@@ -138,11 +138,11 @@ Future<void> openCenter(
 void main() {
   setUp(() => SharedPreferences.setMockInitialValues({}));
 
-  test('the fixture is the whole catalog: 134 commands in 9 categories', () {
+  test('the fixture is the whole catalog: 135 commands in 9 categories', () {
     final catalog = CheCommandCatalog.fromJson(fixture);
-    expect(catalog.commands.length, 134);
+    expect(catalog.commands.length, 135);
     expect(catalog.categories.length, 9);
-    expect(catalog.commands.map((c) => c.id).toSet().length, 134);
+    expect(catalog.commands.map((c) => c.id).toSet().length, 135);
     expect(catalog.byId('/trade-chart')?.title, isNotEmpty);
     expect(catalog.search('find website clients').take(3).map((c) => c.id), contains('lead-scout'));
     expect(catalog.search('how much should I charge').take(3).map((c) => c.id), contains('pricing'));
@@ -452,7 +452,7 @@ void main() {
     expect(spoken, isEmpty);
     await tester.tap(find.byTooltip('Read this page aloud'));
     await tester.pumpAndSettle();
-    expect(spoken.single, startsWith('Commands. 134 commands in 9 categories.'));
+    expect(spoken.single, startsWith('Commands. 135 commands in 9 categories.'));
   });
 
   testWidgets('VoiceOver labels and large Dynamic Type', (tester) async {
@@ -696,7 +696,7 @@ void main() {
     }
 
     final screen = (await say("what's on screen"))!;
-    expect(screen, contains('134 commands in 9 categories'));
+    expect(screen, contains('135 commands in 9 categories'));
     expect(screen, contains('Tabs: 1. Library, 2. Workflows, 3. Activity.'));
     final found = (await say('search for trade chart'))!;
     expect(found, contains('1. /trade-chart: '));
