@@ -576,6 +576,24 @@ test('research retention keeps every experiment record but only the newest datas
   assert.equal(again.reused, true);
 });
 
+test('the deploy probe exposes whether the feed is authenticated and its subscription verified, not only its status', async () => {
+  const storage = memoryStorage();
+  const env = { CHE_PAIR_CODE: '123456', CHE_DISABLE_KEYLESS_AI: '1' };
+  const state = new CheState({ storage }, env);
+  await setLivePaper(storage, true);
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response('{}', { status: 503 });
+  try {
+    const probe = await state.tradingProbe();
+    // The feed is unreachable here, so neither proof can be true; the probe must still say so explicitly.
+    assert.notEqual(probe.feed.status, 'LIVE');
+    assert.equal(typeof probe.feed.authenticated, 'boolean');
+    assert.equal(typeof probe.feed.subscription_verified, 'boolean');
+    assert.equal(probe.feed.authenticated, false);
+    assert.equal(probe.feed.subscription_verified, false);
+  } finally { globalThis.fetch = realFetch; }
+});
+
 test('the deploy probe follows the daily research attempt, not the archived experiment time', async () => {
   const storage = memoryStorage();
   const env = { CHE_PAIR_CODE: '123456', CHE_DISABLE_KEYLESS_AI: '1' };
