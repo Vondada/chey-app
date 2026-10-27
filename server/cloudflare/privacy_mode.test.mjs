@@ -4,7 +4,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import test from 'node:test';
-import { privacyIntent, privacyProbe, providerFor } from './privacy_mode.js';
+import { PENDING_KEY, privacyConfirmIntent, privacyIntent, privacyProbe, providerFor } from './privacy_mode.js';
 
 // Recorded below the Worker's egress guard: the guard wraps this fetch, so a request only lands here if it was let out.
 const outbound = [];
@@ -213,4 +213,13 @@ test('Codex review: two CHE objects in one isolate keep their own policy and led
   const r = await a.say('Knox, has anything private left CHE today?');
   assert.match(r.reply, /1 request went out today, to OpenAI \(ChatGPT\), 1200 bytes in all/);
   assert.match(r.reply, /I blocked 600 requests/);
+});
+
+test('a held provider change expires: a "yes" more than five minutes later opens nothing (Codex review)', async () => {
+  const now = Date.parse('2026-10-27T12:00:00Z');
+  const held = (minutesAgo) => ({ get: async (k) => (k === PENDING_KEY ? { kind: 'connected', at: now - minutesAgo * 60_000 } : undefined) });
+  assert.equal((await privacyConfirmIntent(held(1), 'yes', now))?.action, 'confirm');
+  assert.equal((await privacyConfirmIntent(held(1), 'no', now))?.action, 'cancel');
+  assert.equal(await privacyConfirmIntent(held(6), 'yes', now), null, 'a stale yes is not a confirmation');
+  assert.equal(await privacyConfirmIntent({ get: async () => undefined }, 'yes', now), null, 'a yes with nothing held changes nothing');
 });
