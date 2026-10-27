@@ -64,9 +64,19 @@ jobs:
                   names[e['test']['id']] = e['test']['name']
               elif e.get('type') == 'error':
                   failed.append((names.get(e.get('testID'), e.get('testID')), e.get('error', '')[:600]))
+          prints = {}
+          for line in open('flutter-test.json'):
+              try:
+                  e = json.loads(line)
+              except ValueError:
+                  continue
+              if e.get('type') == 'print':
+                  prints.setdefault(e.get('testID'), []).append(str(e.get('message', '')))
           for name, error in failed:
               print('FAILED TEST: ' + str(name))
               print(error)
+              print('--- console output of this test (last 6000 characters) ---')
+              print(''.join(prints.get(next((k for k, v in names.items() if v == name), None), []))[-6000:])
               print('---')
           print('FAILED TESTS LISTED: %d' % len(failed))
           PY

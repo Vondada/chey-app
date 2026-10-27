@@ -35,4 +35,6 @@ Future<void> _pumpUntilFound(WidgetTester tester, Finder finder) async {
   for (var i = 0; i < 30 && finder.evaluate().isEmpty; i++) {
     await tester.pump(const Duration(milliseconds: 100));
   }
+  // When the screen never shows what the test checks, print its real widget tree into the CI log so the cause is visible.
+  if (finder.evaluate().isEmpty) debugDumpApp();
 }
