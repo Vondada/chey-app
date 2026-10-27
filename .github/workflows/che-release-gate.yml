@@ -47,7 +47,29 @@ jobs:
           flutter pub get
           flutter analyze --fatal-infos
       - name: Flutter tests
-        run: flutter test
+        run: flutter test --file-reporter json:flutter-test.json
+      - name: List failing Flutter tests
+        if: failure()
+        run: |
+          python3 - <<'PY'
+          import json
+          names = {}
+          failed = []
+          for line in open('flutter-test.json'):
+              try:
+                  e = json.loads(line)
+              except ValueError:
+                  continue
+              if e.get('type') == 'testStart':
+                  names[e['test']['id']] = e['test']['name']
+              elif e.get('type') == 'error':
+                  failed.append((names.get(e.get('testID'), e.get('testID')), e.get('error', '')[:600]))
+          for name, error in failed:
+              print('FAILED TEST: ' + str(name))
+              print(error)
+              print('---')
+          print('FAILED TESTS LISTED: %d' % len(failed))
+          PY
 
   coding:
     # CHE's coding reliability: her own coding team's tests (search, planning, the engineering budget, the
