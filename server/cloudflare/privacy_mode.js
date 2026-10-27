@@ -282,6 +282,15 @@ export async function privacyTurn(storage, ask, { devices = [], security = null,
 // memory reaches no outside AI or voice company (Knox's fetch-layer ledger shows nothing sent), live voice refuses
 // OpenAI, and Knox's three questions are answered from records with no model call.
 export async function privacyProbe(env, request, objectName) {
+  try {
+    return await privacyProbeRun(env, request, objectName);
+  } catch (error) {
+    // Report what failed, so the live check says why instead of answering with an opaque server error.
+    return { ok: false, passed: 0, total: 0, steps: [], error: `The check failed inside CHE: ${String(error?.message || error).slice(0, 200)}` };
+  }
+}
+
+async function privacyProbeRun(env, request, objectName) {
   const token = /^Bearer (\S+)$/.exec(request.headers.get('Authorization') || '')?.[1] || '';
   const probe = env.CHE_STATE.getByName(objectName);
   const call = (path, body, device = '') => probe.fetch(new Request(`https://che.internal${path}`, {
