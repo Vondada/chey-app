@@ -36,6 +36,8 @@ export const ROOMS = Object.freeze({
   // War Room meetings, which the app shows as the Meeting Room; the Office projection files them under Conversations too.
   meetings: { label: 'Meeting Room', region: BRAIN_REGIONS.conversations, owns: 'War Room meetings: who met, about what, and what they concluded', live: 'meeting records', strict: true },
   help: { label: 'Help', region: BRAIN_REGIONS.self, owns: 'what the owner asked Help about and the walkthroughs CHE gave', live: 'help records', strict: true },
+  // The Reliability Registry (reliability_registry.js): every test the owner ran, by session and question.
+  reliability: { label: 'Reliability Registry', region: BRAIN_REGIONS.audits, owns: 'every test of CHE the owner ran: sessions, questions, CHE\'s replies, grades and evidence', live: 'the registry', strict: true },
   brain: { label: 'Brain', region: '', owns: 'every room\'s recorded conclusions', live: 'the Brain' },
 });
 

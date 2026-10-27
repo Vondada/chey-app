@@ -172,6 +172,15 @@ export const COMMANDS = Object.freeze([
     prompt: 'Read me my brain review',
     produces: 'review', evidence: 'Every line comes from the stored review record, computed from Brain records; zero model calls.', keywords: ['brain review', 'morning review', 'daily review', 'audit', 'conclusions'],
   }),
+  C('che-reliability', 'intelligence', 'EXPLORE', 'How many times you have tested CHE, and how she did.', {
+    title: 'CHE Reliability Registry',
+    does: 'Reads the Reliability Registry: every recorded test of CHE (sessions, questions, retests, proposed tests never run), each with the exact question, her actual reply, the grade and its evidence, and says which test you are on. Counts are said to be lower bounds when the history is incomplete. "Let\'s test CHE\'s reliability" opens a new session that records each question and reply.',
+    needs: ['memory'], route: 'che_reliability_registry', handler: 'reliability_registry.registryIntent → reliabilityChat → speakTake / speakSummary',
+    input: null,
+    examples: ['What take are we on?', 'How many times have I tested you?', 'Open the test registry', "Let's test CHE's reliability"],
+    prompt: 'What take are we on?',
+    produces: 'report', evidence: 'Every count comes from the registry records (seeded history with source links, plus live sessions); zero model calls.', keywords: ['test registry', 'reliability registry', 'what take', 'how many tests', 'tested', 'test history'],
+  }),
   C('che-performance', 'intelligence', 'EXPLORE', 'Hear how fast CHE is running, measured.', {
     title: 'CHE performance',
     does: 'Reads CHE’s own measured timings per route (typical and slowest 5 percent), compares them with her performance budget, and names the slowest step. Says so when nothing has been measured yet.',
