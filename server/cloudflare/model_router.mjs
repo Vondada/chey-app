@@ -360,7 +360,9 @@ export function mergeLedger(ledger, record, now = Date.now()) {
       row.last_used_at = at;
       next[bucket][key] = row;
     }
-    const decisionScope = errorClass && ['auth_failure', 'credit_exhausted', 'billing_risk'].includes(errorClass) ? provider : model;
+    // The receipt's own scope wins: a per-model quota (Gemini, Groq) pauses that model only.
+    const scoped = attempt.scope === 'model' ? model : attempt.scope === 'provider' ? provider : null;
+    const decisionScope = scoped || (errorClass && ['auth_failure', 'credit_exhausted', 'billing_risk'].includes(errorClass) ? provider : model);
     if (ok) {
       next.breakers[model] = breakerAfter(next.breakers[model], { ok: true, now });
       if (next.breakers[provider]) next.breakers[provider] = breakerAfter(next.breakers[provider], { ok: true, now });
@@ -432,6 +434,7 @@ export function modelStatusView({ ledger = null, workerKeys = {}, now = Date.now
       last_error_class: usage?.last_error_class || null,
       billed_usd_verified: typeof usage?.billed_usd_verified === 'number' ? usage.billed_usd_verified : null,
       circuit: breaker ? breakerState(breaker, now) : 'closed',
+      circuit_reason: breaker && breakerState(breaker, now) === 'open' ? breaker.last_error_class || null : null,
       reason: blocked ? (policy.paid_only ? 'paid_provider_spend_not_authorized' : verdict?.reason || 'not_checked_yet') : null,
       rule: policy.runtime_rule,
       remedy: blocked ? policy.remedy : null,
@@ -455,7 +458,8 @@ export function modelStatusView({ ledger = null, workerKeys = {}, now = Date.now
 // Spoken summary of the status, for Read Aloud. Short sentences, numbered providers.
 export function speakModelStatus(view) {
   const rows = Array.isArray(view?.providers) ? view.providers : [];
-  const usable = rows.filter((r) => r.usage !== 'blocked' && r.used_for_coding);
+  // A provider with an open circuit is skipped by planCandidates, so it is not announced as usable.
+  const usable = rows.filter((r) => r.usage !== 'blocked' && r.used_for_coding && r.circuit !== 'open');
   const parts = [`Authorized AI spend is ${Number(view?.authorized_spend_usd) === 0 ? 'zero dollars' : `$${view.authorized_spend_usd}`}, and paid fallback is off.`];
   parts.push(usable.length
     ? `${usable.length} provider${usable.length === 1 ? ' is' : 's are'} verified at no cost for coding: ${usable.map((r) => r.name).join(', ')}.`
@@ -466,7 +470,10 @@ export function speakModelStatus(view) {
     const use = r.usage === 'free' ? 'free' : r.usage === 'credit_covered' ? 'covered by credits' : 'blocked';
     const conn = r.connected === 'verified' ? 'connection verified' : r.connected === 'auth_failure' ? 'key rejected' : 'connection not verified';
     const counts = r.requests_completed || r.failed_attempts ? `, ${r.requests_completed} completed and ${r.failed_attempts} failed attempts` : '';
-    parts.push(`${i + 1}. ${r.name}: ${use}, ${conn}${counts}.`);
+    const paused = r.circuit !== 'open' ? ''
+      : (r.circuit_reason || r.last_error_class) === 'billing_risk' ? ', paused because a possible charge was detected; check its billing before using it again'
+        : `, paused after ${String(r.circuit_reason || r.last_error_class || 'repeated failures').replace(/_/g, ' ')}`;
+    parts.push(`${i + 1}. ${r.name}: ${use}, ${conn}${counts}${paused}.`);
   });
   return parts.join(' ');
 }

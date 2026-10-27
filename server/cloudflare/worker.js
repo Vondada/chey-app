@@ -197,7 +197,7 @@ import {
 } from './google_services.js';
 import { FYE_STATUS, fundyouredgeDraft, fundyouredgeDraftReply, fundyouredgeIntent, fundyouredgeReply } from './fundyouredge.js';
 import { CheCodingRuntime, codingRuntimeEnabled, ownerRequiresMergeApproval, recoverableRuntimeFailure, runtimeState, runtimeStateClass, speakRuntimeStatus } from './coding_runtime.js';
-import { aiModelStatus } from './model_status.js';
+import { aiModelStatus, modelStatusIntent, modelStatusTurn } from './model_status.js';
 import { newMissionAction, RESUME_LIMIT, resumeAction, resumeDecision } from './coding_failover.mjs';
 import { handoffIntent, hasGitHubMailbox, readLiveHandoff, latestHandoff, unseenReplies, relayText, listThreads, mailboxHead, mailboxIntent, readAllMail, readThread, sendMail, speakThreads } from './mailbox.js';
 import { officeToday, ownerDayKey, ownerTimeZone } from './office_board.js';
@@ -12483,6 +12483,7 @@ export class CheState extends DurableObject {
         // A turn with an attachment is about that attachment, which this route cannot read.
         // A question about who did coding work, when it names Claude or another AI: CHE's records never hold that work, so
         // the model is never asked (it invented speakers and authors). Handoffs, mailbox and consultations keep their routes.
+        if (!body.attachment && modelStatusIntent(message)) { const t = await modelStatusTurn(this.keyEnv || this.env, this.ctx.storage, ownerDevice); return ndjsonReply(t.reply, t.meta); }
         const otherAgent = body.attachment || handoffIntent(message) || mailboxIntent(message) || consultIntent(message) ? '' : otherAgentWorkAsk(message);
         if (otherAgent) {
           if (!ownerDevice) return ndjsonReply('Only the CHE owner can read coding job status, sir.', { source: 'che_coding_history', ok: false, outcome: RECALL_OUTCOMES.PERMISSION_DENIED });

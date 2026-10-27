@@ -55,3 +55,20 @@ export async function aiModelStatus(env, storage, { fetcher = fetch, now = Date.
   try { await storage?.put?.(CACHE_KEY, { cached_at: now, view }); } catch (_) { /* status still returned */ }
   return view;
 }
+
+// "AI model status", "which AI models are free?": the same view, spoken, for voice or typing (Codex, PR #685).
+// It names AI or coding models or providers, so a 3D model or a drone model never lands here.
+const MODEL_STATUS_RE = /\b(?:ai|coding)\s+(?:models?|providers?)\b(?:\s+\w+){0,3}?\s+(?:status|free|cost|costs|available|verified|paused|working|ledger)\b|\b(?:ai\s+)?model\s+status\b|\b(?:status|read|show|list)\b(?:\s+\w+){0,3}?\s+(?:ai|coding)\s+(?:models?|providers?)\b|\b(?:which|what)\s+(?:ai|coding)\s+(?:models?|providers?)\b/i;
+
+export function modelStatusIntent(message) {
+  return MODEL_STATUS_RE.test(String(message || ''));
+}
+
+/** The chat turn: owner only, 0 model calls; an unreadable ledger is said, never filled in. */
+export async function modelStatusTurn(env, storage, ownerDevice, opts) {
+  if (!ownerDevice) return { reply: 'Only the CHE owner can read the AI model status, sir.', meta: { source: 'che_model_status', ok: false, model_calls: 0 } };
+  const view = await aiModelStatus(env, storage, opts).catch(() => null);
+  return view
+    ? { reply: view.spoken, meta: { source: 'che_model_status', ok: true, model_calls: 0, ledger_source: view.ledger_source } }
+    : { reply: 'I could not read the AI model status right now, sir. Nothing was changed.', meta: { source: 'che_model_status', ok: false, model_calls: 0 } };
+}

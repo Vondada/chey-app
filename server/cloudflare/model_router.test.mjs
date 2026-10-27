@@ -249,6 +249,26 @@ test('a measured charge on a free key opens a billing_risk breaker on that provi
   assert.equal(ledger.providers.openrouter.billed_usd_verified, 0.02);
 });
 
+test('a per-model quota pauses that model only; an account-wide one pauses the provider (Codex, PR #685)', () => {
+  const attempt = (scope) => ({ ...RECORD, attempts: [{ model: 'gemini/gemini-2.5-flash', provider: 'gemini', outcome: 'failed', exit_code: 1, error_class: 'credit_exhausted', scope }] });
+  const perModel = mergeLedger(emptyLedger(), attempt('model'), T0);
+  assert.ok(perModel.breakers['gemini/gemini-2.5-flash'], 'the exhausted model is paused');
+  assert.equal(perModel.breakers.gemini, undefined, 'other Gemini models stay available');
+  const account = mergeLedger(emptyLedger(), attempt('provider'), T0);
+  assert.ok(account.breakers.gemini, 'an account-wide allowance pauses the provider');
+});
+
+test('a provider paused by a possible charge is not announced as usable, and the reason is spoken (Codex, PR #685)', () => {
+  const ledger = mergeLedger(mergeLedger(null, RECORD, T0), { ...RECORD, attempts: [], billing: { openrouter: { usage_before: 1.5, usage_after: 1.52, delta_usd: 0.02, verified: true } } }, T0);
+  const view = modelStatusView({ ledger, now: T0 + 60_000 });
+  const or = view.providers.find((p) => p.id === 'openrouter');
+  assert.equal(or.circuit, 'open');
+  assert.equal(or.circuit_reason, 'billing_risk');
+  const spoken = speakModelStatus(view);
+  assert.doesNotMatch(spoken, /verified at no cost for coding: [^.]*OpenRouter/);
+  assert.match(spoken, /OpenRouter: free, connection verified[^.]*, paused because a possible charge was detected/);
+});
+
 // ─── Status view ───
 test('the status view shows verified facts only: no balance the provider did not report, no connection without a check', () => {
   const empty = modelStatusView({ ledger: null, now: T0 });
