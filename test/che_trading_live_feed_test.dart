@@ -11,8 +11,9 @@ import 'package:http/http.dart' as http;
 const _base = String.fromEnvironment('CHE_LIVE_BASE_URL');
 
 void main() {
-  test('the live Worker chart answers with a verified feed and real bars', () async {
-    expect(_base, isNotEmpty, reason: 'Not run: pass --dart-define=CHE_LIVE_BASE_URL=https://<worker>. This check needs the real Worker.');
+  // Without the define this check is skipped (it cannot run in CI: no market data access), and the skip says why.
+  test('the live Worker chart answers with a verified feed and real bars', skip: _base.isEmpty ? 'Not run: pass --dart-define=CHE_LIVE_BASE_URL=https://<worker>. This check needs the real Worker.' : false, () async {
+    expect(_base, isNotEmpty);
     final uri = Uri.parse('$_base/api/trading/chart').replace(queryParameters: {'account': 'alpaca_paper', 'tf': '5m'});
     final r = await http.get(uri).timeout(const Duration(seconds: 25));
     expect(r.statusCode, 200, reason: 'The chart route answered ${r.statusCode}: ${r.body}');

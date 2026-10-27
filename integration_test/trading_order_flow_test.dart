@@ -74,8 +74,13 @@ Future<void> _waitForAndTap(WidgetTester tester, Finder finder, String name) asy
   await _tapFirst(tester, finder, name);
 }
 
-/// Taps the first match, or fails with the name of the control.
+/// Scrolls the first match into view, then taps it. Fails with the name of the control when it is not on screen at all.
+/// The order ticket sits below the fold on a phone, so the owner scrolls to it; this test does the same.
 Future<void> _tapFirst(WidgetTester tester, Finder finder, String name) async {
   expect(finder.evaluate().isNotEmpty, isTrue, reason: '$name is not on screen');
+  if (Scrollable.maybeOf(finder.first.evaluate().first) != null) {
+    await tester.ensureVisible(finder.first);
+    await tester.pump(const Duration(milliseconds: 200));
+  }
   await tester.tap(finder.first);
 }
