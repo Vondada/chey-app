@@ -11,7 +11,7 @@ export const READING_QUESTIONS = [
     must: [/\bfour\b|\b4\b/i, /3\s*p\.?\s*m|3 o'?clock|15:00/i, /noon/i], forbid: [] },
   { id: 'not-stated', paragraph: BLUE_OVEN,
     ask: "What is Blue Oven's yearly revenue?",
-    must: [/(doesn'?t|does not|do not|don'?t)\b[^.]*\b(say|state|give|mention|include|tell)|not (stated|given|in the text|in the paragraph|mentioned)|no (revenue|figure|number|information)/i],
+    must: [/(doesn'?t|does not|do not|don'?t)\b[^.]*\b(say|state|give|mention|include|tell)|not (stated|given|in the text|in the paragraph|mentioned)|no (revenue|figure|number|information)|(don'?t|do not) have (enough )?(information|data|figures|numbers)/i],
     forbid: [/\$\s?\d|\d+\s*(million|thousand)|\bdollars\b/i] },
   { id: 'cause', paragraph: 'The river rose 2 metres overnight. Heavy rain fell on the hills upstream, and the drain at the old mill was blocked with leaves, so the water had nowhere to go.',
     ask: 'What caused the flooding, and which cause was the main one?',
@@ -43,7 +43,9 @@ export const READING_QUESTIONS = [
 export function gradeReading(question, reply) {
   const text = String(reply || '');
   const missing = question.must.filter((re) => !re.test(text)).map((re) => String(re));
-  const forbidden = question.forbid.filter((re) => re.test(text)).map((re) => String(re));
+  // An internal mood label leaking into the reply (for example "Warmth 7/10:") fails every question.
+  const leaked = [/\b(?:warmth|mood|energy|humou?r|register)\s*\d+\s*\/\s*10\b/i];
+  const forbidden = [...question.forbid, ...leaked].filter((re) => re.test(text)).map((re) => String(re));
   return { pass: missing.length === 0 && forbidden.length === 0 && text.length > 0, missing, forbidden };
 }
 

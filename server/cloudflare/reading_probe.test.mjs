@@ -38,3 +38,11 @@ test('a causal claim the text does not make fails the fact-opinion question', ()
 test('an empty reply fails every question', () => {
   for (const item of READING_QUESTIONS) assert.equal(gradeReading(item, '').pass, false, item.id);
 });
+
+test('an honest "I don\'t have enough information" passes the not-stated question', () => {
+  assert.equal(gradeReading(q('not-stated'), "Sir, I don't have enough information to calculate Blue Oven's yearly revenue.").pass, true);
+});
+
+test('an internal mood label in the reply fails any question, even a correct answer', () => {
+  assert.equal(gradeReading(q('pronoun'), 'Warmth 7/10: Dev handed over the keys to Sam, and she was the one who left.').pass, false);
+});
