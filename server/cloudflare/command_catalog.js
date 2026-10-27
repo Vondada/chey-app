@@ -148,6 +148,22 @@ export const COMMANDS = Object.freeze([
     prompt: 'What have I told you about {input}?',
     produces: 'memories', evidence: 'Only owner-attested records; zero model calls.', keywords: ['remember', 'memory', 'recall', 'what did i say', 'confirmed'],
   }),
+  C('che-brain-record', 'intelligence', 'EXPLORE', 'Open a saved Brain record.', {
+    does: 'Shows the newest real Brain record, or the newest about a topic you name, with its title, kind, source, status, date and id. Says so when the Brain is empty, nothing matches, or the store cannot be read.',
+    needs: ['memory'], route: 'che_brain_record', handler: 'owner_recall.brainRecordIntent → speakBrainRecord',
+    input: null,
+    examples: ['Show a saved Brain record', 'Show a memory record about Sprite'],
+    prompt: 'Show a saved Brain record',
+    produces: 'record', evidence: 'The stored Brain record itself, with its id; zero model calls.', keywords: ['brain record', 'saved record', 'memory record', 'open record'],
+  }),
+  C('che-memory-inspect', 'intelligence', 'EXPLORE', 'Inspect CHE’s memory system.', {
+    does: 'Counts what each store holds (memory records, saved preferences, the Brain, and the phone notes sent with the message) and names any store it could not read. Zero model calls.',
+    needs: ['memory'], route: 'che_memory_inspection', handler: 'owner_recall.inspectMemory → speakMemoryInspection',
+    input: null,
+    examples: ['Inspect your memory system'],
+    prompt: 'Inspect your memory system',
+    produces: 'inspection', evidence: 'Real counts read from each store on this request; zero model calls.', keywords: ['inspect memory', 'memory system', 'memory status', 'what is in memory'],
+  }),
   C('che-brain-review', 'intelligence', 'EXPLORE', 'Hear the morning Brain review.', {
     does: 'Reads the latest daily review computed from your Brain’s own records: facts, inferences with their rules, hypotheses marked as such, recommendations, one interpretation, and what is unknown. Says so when there is none yet.',
     needs: ['memory'], route: 'che_brain_review', handler: 'brain_audit.brainReviewIntent → latestReview → speakReview',
@@ -155,6 +171,15 @@ export const COMMANDS = Object.freeze([
     examples: ['Read me my brain review', 'What did your audit find this morning?'],
     prompt: 'Read me my brain review',
     produces: 'review', evidence: 'Every line comes from the stored review record, computed from Brain records; zero model calls.', keywords: ['brain review', 'morning review', 'daily review', 'audit', 'conclusions'],
+  }),
+  C('che-performance', 'intelligence', 'EXPLORE', 'Hear how fast CHE is running, measured.', {
+    title: 'CHE performance',
+    does: 'Reads CHE’s own measured timings per route (typical and slowest 5 percent), compares them with her performance budget, and names the slowest step. Says so when nothing has been measured yet.',
+    needs: ['memory'], route: 'che_performance', handler: 'perf_watch.performanceIntent → performanceReport → speakPerformance',
+    input: null,
+    examples: ['Are you lagging?', 'Performance report', 'Why are you slow?'],
+    prompt: 'Performance report',
+    produces: 'report', evidence: 'Every number is a measured request timing from the live window; zero model calls.', keywords: ['performance', 'lag', 'lagging', 'slow', 'speed', 'latency'],
   }),
   C('che-flagstaff-import', 'intelligence', 'BUILD', 'Bring the Flagstaff mailbox history into the Brain.', {
     title: 'CHE Flagstaff import',
@@ -186,6 +211,15 @@ export const COMMANDS = Object.freeze([
   }),
   // Owner, 2026-10-19 ("Cancel that fake commit by Che"): the voice and typed route to the
   // owner-only POST /api/job/cancel. Cancelling a queued job deletes nothing, so it asks nothing first.
+  // Owner Improvements (owner, 2026-10-23): "this page is too cramped", "make the chart smaller", "undo that".
+  C('che-improve', 'intelligence', 'BUILD', 'Tell CHE what feels wrong; she fixes it or opens a coding task.', {
+    does: 'A supported layout or look change (layout density, chart size and shape, success color, text size) is stored, read back and applied on the iPhone with no new build, then marked Verified when the app confirms it; "undo that" puts it back. Anything else becomes a tracked task with acceptance criteria, sent to CHE\'s coding pipeline. Money, trading, security, credentials, deleting and publishing are never changed automatically.',
+    needs: [], route: 'che_owner_improvement', local: 'owner_improvement', handler: 'owner_improvements.improvementIntent → handleImprovement (coding through selfDevelopmentReply)',
+    input: { name: 'what', required: false, hint: 'What feels wrong, for example "the chart is too big"' },
+    examples: ['This page is too cramped', 'Make the chart smaller', 'Use chrome green for successful actions', 'Undo that', 'What improvements are open?'],
+    prompt: '{input}', produces: 'improvement task', evidence: 'The stored setting read back, and the value the iPhone reports it applied; for code, the coding job id the pipeline returned.',
+    cost: 'Free for settings: no AI engine is used. A coding task uses the coding pipeline.', keywords: ['improve', 'improvement', 'too cramped', 'too big', 'too small', 'fix this', 'owner improvements', 'undo that'],
+  }),
   C('che-cancel-job', 'intelligence', 'BUILD', 'Cancel a coding job that has not started.', {
     does: 'Cancels a queued coding job: by its id, or the one CHE last accepted. A running, finished or failed job is left alone and CHE says so. The job record is kept, marked cancelled with who cancelled it and when. Nothing is deleted.',
     needs: ['jobs'], route: 'che_coding_cancel', local: 'coding_cancel', handler: 'coding_cancel.cancelQueuedJob (shared with POST /api/job/cancel)',
@@ -212,6 +246,48 @@ export const COMMANDS = Object.freeze([
     prompt: 'Knowledge Atlas: {input}', produces: 'lesson',
     evidence: 'The card and revision it came from; trading figures only from journal or backtest records; zero model calls.',
     cost: 'Free: no AI engine is used.', keywords: ['learn', 'lesson', 'teach me', 'explain', 'formula', 'quiz', 'concept', 'beginner', 'expert', 'atlas'],
+  }),
+  // Manifestation Engine (owner, 2026-10-27): docs/CHE_MANIFESTATION_ENGINE.md.
+  C('manifest', 'intelligence', 'PLAN', 'Turn a goal into a spec, simulations and a verified plan.', {
+    title: 'Manifestation Engine',
+    does: 'Turns a goal into a structured spec, several candidate solutions, each classified (feasible now, expensive or impractical, plausible but unproven, unknown, or incompatible with physical constraints), real models with Monte Carlo ranges, a comparison under equal conditions and a Realization Plan. Models today: multirotor flight, business cash flow and job searches. Saves one record per idea with the source of every number; steps count as done only with evidence, and money, account, contract, deployment or device steps never start without your approval. Also: a spoken briefing, pause, resume or stop an idea, and a weekly review when you ask. Spends nothing.',
+    needs: [], route: 'che_manifest', handler: 'manifest_api.manifestChat → manifest_engine.startProject',
+    input: { name: 'goal', required: true, hint: 'Your goal, or status, briefing, pause 1, resume 1, stop 1, weekly review' },
+    examples: ['Manifest a drone that carries 1 kg for 25 minutes', 'Manifest a flying car for 2 people', 'Manifest a new job as a data analyst within 4 months', 'Manifestation status', 'Brief me on my manifestation projects', 'Pause manifestation project 2', 'Manifestation weekly review'],
+    prompt: 'Manifest {input}', produces: 'manifestation project',
+    evidence: 'Every number from a named model run (seed, inputs, equations); simulated results are labelled, never called measurements; zero model calls.',
+    cost: 'Free: no AI engine is used.', keywords: ['manifest', 'manifestation', 'goal', 'feasibility', 'simulate', 'realize', 'make it real', 'realization plan'],
+  }),
+  // Security Room visibility (owner, 2026-10-23): every count opens the exact entries behind it.
+  C('security-access', 'intelligence', 'EXPLORE', 'See who and what has access to CHE.', {
+    title: 'Security Access',
+    does: 'Opens Security on its access list: agents, tools, apps, devices, Face ID sessions and every granted permission, each with what it can do, its last activity and whether that access is more than it needs. Shows what was not checked. Changes nothing.',
+    needs: [], route: 'che_security', handler: 'security_intelligence.securityIntent → security_visibility.securityVisibility',
+    input: null,
+    examples: ['Open security access', 'Who has access to CHE?', 'What do you have access to?'],
+    prompt: 'Open security access', produces: 'access list',
+    evidence: 'Counts and lists come from the same registry query; token and credential values are never shown.',
+    cost: 'Free: no AI engine is used.', keywords: ['security', 'access', 'permissions', 'who has access', 'least privilege'],
+  }),
+  C('security-chief', 'intelligence', 'EXPLORE', 'Have Knox, the Security Chief, run a security check.', {
+    title: 'Security Chief Check',
+    does: 'Knox, the Office Security Chief who reports to CHE, runs CHE\'s real security checks (threats, access, paired devices, and dependencies and deployment when GitHub is connected). CHE then reports which checks ran, when, their findings, and what was not checked. Changes nothing.',
+    needs: [], route: 'che_security', handler: 'security_chief.securityChiefIntent → securityCoreCheck',
+    input: null,
+    examples: ['CHE, have Knox check security', 'Ask Knox to run a security check', 'Knox, check security'],
+    prompt: 'Have Knox check security', produces: 'security report',
+    evidence: 'Each check carries the time it ran; a check that did not run is reported as not checked.',
+    cost: 'Free: no AI engine is used.', keywords: ['knox', 'security chief', 'security check', 'security scan', 'security review'],
+  }),
+  C('security-findings', 'intelligence', 'EXPLORE', 'Read and open CHE\'s security findings.', {
+    title: 'Security Findings',
+    does: 'Opens Security on its findings: each with severity, the affected resource, when it happened, its evidence and the recommended action, plus which checks ran and which did not. Changes nothing; removing access always asks you first.',
+    needs: [], route: 'che_security', handler: 'security_intelligence.securityIntent → security_visibility.securityVisibility',
+    input: null,
+    examples: ['Show security findings', 'What are my security findings?'],
+    prompt: 'Show security findings', produces: 'findings',
+    evidence: 'Findings come from recorded security events and the access review; zero findings is not reported as all-clear unless every check ran.',
+    cost: 'Free: no AI engine is used.', keywords: ['security', 'findings', 'threats', 'risks', 'coverage'],
   }),
 
   // ── YouTube ───────────────────────────────────────────────────────────
@@ -345,6 +421,30 @@ export const COMMANDS = Object.freeze([
     input: null, examples: ['Show the growth experiments', 'How is the pilot doing?'],
     prompt: 'Show the growth experiments.', produces: 'growth report', evidence: 'Only statistics a platform returned.', keywords: ['audience growth', 'growth experiments', 'pilot views'],
   }),
+  // Film Studio (owner handoff 2026-10-22): long films from a sentence on free compute only, answered from
+  // film_studio.js / film_pipeline.js with no model for the plan and status. The plan states the real ETA and mix.
+  C('film-make', 'studio', 'BUILD', 'Make a film from one sentence, free.', {
+    does: 'Writes a screenplay, makes every shot with free compute (pictures and voices on Workers AI, moving clips on a connected free GPU farm) and assembles the film on GitHub Actions. Before starting CHE says the real ETA and the mix; a film is done only when its MP4 is stored and verified.',
+    needs: ['video_renderer'], route: 'che_film_studio', local: 'film_make', handler: 'film_studio.filmIntent → film_pipeline.startFilm (alarm passes) → che-film-render.yml',
+    input: { name: 'film', required: true, hint: 'Length and subject, for example "10-minute movie about a lighthouse keeper"' },
+    examples: ['Make me a 10-minute movie about a lighthouse keeper', 'Make me a 2-hour movie about a heist in Tokyo'],
+    prompt: 'Make me a {input}', produces: 'video', evidence: 'The MP4 read back from R2: length, frame size and codecs; shots that failed their checks are listed.',
+    cost: 'Free: Workers AI daily allowance, GitHub Actions free minutes, and free GPU quotas you connect. Hard caps; nothing paid.', keywords: ['movie', 'film', 'feature', 'film studio'],
+  }),
+  // The Recording Studio (owner, 2026-10-24): an app screen (lib/music/che_recording_studio.dart); this opens it.
+  C('music-studio', 'studio', 'BUILD', 'Open the Recording Studio: record, beats, mix, master, export.', {
+    title: 'Recording Studio',
+    does: 'Opens the Recording Studio on the iPhone: multitrack recording from the microphone or an audio interface, live monitoring through the effects on headphones, the Beat Maker, effects, mixer, mastering, WAV or M4A export and MP3, M4A or WAV import. Recording and audio formats need the newest app build.',
+    needs: [], route: 'che_recording_studio', local: 'recording_studio', handler: 'app: CheRecordingStudio (lib/music/che_recording_studio.dart)',
+    input: null, examples: ['Open the recording studio', 'Record my vocals'],
+    prompt: 'Open the recording studio.', produces: 'recording studio', evidence: 'The app opens the studio; nothing is recorded until the owner says record.', keywords: ['recording studio', 'record', 'beats', 'mix', 'master', 'vocals', 'song'],
+  }),
+  C('film-status', 'studio', 'EXPLORE', 'Film progress, ETA and the free render farm.', {
+    does: 'Says where the current film is (shots done, elapsed time against the estimate) and, when asked, which free GPUs are connected and how much free quota is left.',
+    needs: [], route: 'che_film_studio', local: 'film_status', handler: 'film_studio.speakStatus / speakFarm',
+    input: null, examples: ["How's my movie going?", 'Render farm status'],
+    prompt: "How's my movie going?", produces: 'film status', evidence: 'The stored film state and shot checks.', keywords: ['movie status', 'film progress', 'render farm'],
+  }),
 
   // ── Trading ───────────────────────────────────────────────────────────
   C('trade-open', 'trading', 'EXPLORE', 'New York session market briefing.', {
@@ -354,6 +454,13 @@ export const COMMANDS = Object.freeze([
     examples: ["What's NQ doing at the open?", 'Give me the New York open briefing'],
     prompt: 'Analyze the {input} chart for the New York open',
     produces: 'market read', evidence: 'Candle data with its source and time.', keywords: ['open', 'new york', 'nq', 'premarket', 'briefing', 'market'],
+  }),
+  // CHE PAPER ACCOUNT (owner, 2026-10-23): lives on the iPhone; the Worker opens it, the phone confirms any balance change.
+  C('trade-paper-account', 'trading', 'EXPLORE', 'CHE paper account: balance, positions and trade details.', {
+    does: "Opens CHE's simulated paper account on your iPhone: balance, open and closed CHE positions and each trade's detail. \"Set CHE paper balance to 500\" opens the change for you to confirm; nothing changes without your confirmation.",
+    needs: ['office'], route: 'che_trading_chart', handler: 'trading_chart.paperAccountIntent → phone ChePaperAccountPanel', input: null,
+    examples: ['Show CHE positions', 'Set CHE paper balance to 500', "Open CHE's paper account"],
+    prompt: 'Show CHE positions', produces: 'paper account view', evidence: 'The paper engine records on the phone; prices only from live Rithmic trades.', keywords: ['paper', 'balance', 'che positions', 'paper account'],
   }),
   C('trade-chart', 'trading', 'EXPLORE', 'Analyze NQ/MNQ market structure.', {
     does: 'Analyzes trend, swing highs and lows and candle patterns from real candles.',
@@ -368,6 +475,15 @@ export const COMMANDS = Object.freeze([
     input: { name: 'symbol', required: false, hint: 'NQ by default' },
     examples: ['Any entry points on NQ?', 'Find setups on MNQ'],
     prompt: 'Analyze {input} entry points on the chart', produces: 'setups', keywords: ['setup', 'entry', 'entries', 'signal'],
+  }),
+  // Signal Mode (owner, 2026-10-23): the Setup Progress Board the iPhone runs on live Rithmic candles.
+  C('trade-setups', 'trading', 'EXPLORE', 'Open the Setup Progress Board and its signals.', {
+    does: 'Opens the Setup Progress Board: every setup CHE follows on the live Rithmic candles on this iPhone, its stage, the conditions met, pending or failed, and the CHE PAPER ACCOUNT signals. Asking which are ready reads them. Places no order.',
+    needs: ['office'], route: 'che_trading_chart', handler: 'trading_chart.chartIntent (setups section)',
+    input: null,
+    examples: ['Show setups', 'What setups are ready?', 'Show the setup progress board'],
+    prompt: 'Show my setups', produces: 'setup board', evidence: 'Stages computed on this iPhone from real Rithmic candles; signals carry their data source and evidence sample size.',
+    keywords: ['setups', 'setup progress', 'signal mode', 'signals', 'ready setups'],
   }),
   C('trade-liquidity', 'trading', 'EXPLORE', 'Analyze VWAP, liquidity, order blocks, and key levels.', {
     does: 'Marks swing highs and lows (where liquidity rests) from real candles. VWAP and order-block math are not computed yet; CHE says so instead of guessing.',
@@ -412,6 +528,15 @@ export const COMMANDS = Object.freeze([
     prompt: '{input} the historical strategy study', produces: 'historical study', evidence: 'Stored tests with dataset checksums only.',
     keywords: ['historical', 'history', 'since 1999', 'walk forward', 'out of sample', 'regime', 'trading intelligence'],
   }),
+  // Timeframe backtest matrix (owner, 2026-10-22): backtest_matrix.js through its own chat route.
+  C('trade-matrix', 'trading', 'EXPLORE', 'Test every strategy on every timeframe and hour of day.', {
+    does: 'Backtests CHE\'s ten strategies on free delayed NQ history at every timeframe CHE has data for (1 minute about 7 days, 5 to 30 minutes about 60 days, 1 and 4 hours about 2 years, daily, weekly and monthly from Stooq), net of MNQ costs, and ranks strategy, timeframe and New York hour only where there are at least 30 trades. 15-second bars are reported as unavailable. Nothing is bought and no order is placed. Owner only.',
+    needs: ['market_data'], route: 'che_trading_matrix', handler: 'backtest_matrix.matrixIntent → runMatrix / readMatrix',
+    input: { name: 'question', required: false, hint: 'run, or ask which strategy is best' },
+    examples: ['Backtest every strategy on every timeframe', 'Which strategy works best on which timeframe?', 'What is the best time of day to trade NQ?'],
+    prompt: '{input} the timeframe backtest matrix for every strategy', produces: 'timeframe matrix', evidence: 'Stored results with bar counts, dates and costs only.',
+    keywords: ['timeframe', 'time frame', 'every timeframe', 'time of day', 'best hour', 'matrix'],
+  }),
   C('trade-journal', 'trading', 'EXPLORE', 'Document trades and outcomes.', {
     does: 'Reads your paper-trading book: open and closed trades and results.',
     needs: ['office'], route: 'che_trading', handler: 'trading_lab.speakBook',
@@ -426,13 +551,13 @@ export const COMMANDS = Object.freeze([
     examples: ['Any trade alerts?'],
     prompt: 'Any trade alerts?', produces: 'alerts', keywords: ['alert', 'notify', 'watch', 'alarm'],
   }),
-  C('trade-sim', 'trading', 'EXPLORE', 'Pause, resume or check the strategy simulation.', {
-    does: 'Pauses or resumes CHE\'s paper strategy simulation (ten rules on minute bars; no money, no model call), or reads its status. Owner only.',
+  C('trade-sim', 'trading', 'EXPLORE', 'Pause, resume, stop, reset or check the strategy simulation.', {
+    does: 'Pauses or resumes CHE\'s paper strategy simulation (ten rules on minute bars; no money, no model call); stops it (pause and cancel waiting signals, open positions kept); resets it after you say yes (the run is archived, never deleted); or reads its status. Owner only.',
     needs: ['office'], route: 'che_strategy_sim', handler: 'strategy_sim.strategySimIntent → setStrategySimPaused / strategySimView',
-    input: { name: 'action', required: false, hint: 'pause, resume or status' },
-    examples: ['Pause the strategy simulation', 'Resume the strategy simulation', 'Strategy simulation status'],
+    input: { name: 'action', required: false, hint: 'pause, resume, stop, reset or status' },
+    examples: ['Pause the strategy simulation', 'Resume the strategy simulation', 'Stop the strategy simulation', 'Reset the strategy simulation', 'Strategy simulation status'],
     prompt: 'Strategy simulation {input}', produces: 'simulation status', evidence: 'Stored simulation state and trades only.',
-    keywords: ['strategy simulation', 'simulation', 'pause simulation', 'resume simulation', 'paper strategies'],
+    keywords: ['strategy simulation', 'simulation', 'pause simulation', 'resume simulation', 'stop simulation', 'reset simulation', 'paper strategies'],
   }),
   // Strategy Control Center (owner, 2026-10-20): trading_controls.js through the desk's own intent parser.
   C('trade-controls', 'trading', 'EXPLORE', 'Read or change your paper strategy limits.', {
@@ -467,6 +592,50 @@ export const COMMANDS = Object.freeze([
     examples: ['What are my trading connections?', 'Which brokers are connected?'],
     prompt: 'What are my trading connections?', produces: 'connections', evidence: 'Each connection\'s stored state and its provider\'s own check; never a key.',
     keywords: ['connections', 'broker', 'brokers', 'alpaca', 'tradovate', 'connected'],
+  }),
+  // Visual trading evidence (owner, 2026-10-23): trading_visual.js through its own chat route. Read only.
+  C('trade-pnl', 'trading', 'EXPLORE', "Today's paper P&L, realized and open.", {
+    does: 'Reads today\'s forward paper P&L from the journal: realized from closed trades, unrealized marked at the last stored DELAYED bar, commissions and slippage, and the intraday P&L curve on the Trading page. No balance is assumed.',
+    needs: ['office'], route: 'che_trading_visual', handler: 'trading_visual.dailyPnl', input: null,
+    examples: ["Show today's P&L", 'How much am I up today?'],
+    prompt: "Show today's P&L.", produces: 'daily pnl', evidence: 'Closed journal trades and the last stored bar only.', keywords: ['p&l', 'pnl', 'profit and loss', 'today', 'daily pnl'],
+  }),
+  C('trade-leader', 'trading', 'EXPLORE', 'The best verified strategy, or why there is none.', {
+    does: 'Names the current leader only when one strategy and timeframe meets every written rule (30 forward paper trades, positive expectancy range after costs, profit factor above 1.2, and historical backing); otherwise says "No verified leader yet" and what each candidate is missing. Never by win rate alone.',
+    needs: ['office'], route: 'che_trading_visual', handler: 'trading_visual.currentLeader', input: null,
+    examples: ['Who is the current leader?', 'What is the best verified strategy?'],
+    prompt: 'Who is the current leader?', produces: 'leader', evidence: 'Forward paper and historical backtest records, ranked by the lower expectancy bound.', keywords: ['leader', 'best strategy', 'verified strategy', 'ranking'],
+  }),
+  C('trade-audit', 'trading', 'EXPLORE', 'Audit every stored trade record.', {
+    does: 'Counts the stored trade records by execution type and checks them for exact duplicates, entries shared across variants, look-ahead, fills that disagree with their own costs, missing labels and P&L that does not add up. Deeper checks: the simulation\'s R split into price moves and costs, trades whose costs exceeded their risk, open positions on retired feeds, P&L and R recomputed from prices, the research backtests\' data hashes, fixtures and look-ahead audits, and one day\'s P&L by New York date, UTC date and CME trade day. Changes nothing.',
+    needs: ['office'], route: 'che_trading_visual', handler: 'trading_visual.auditTrades', input: null,
+    examples: ['Audit the trades', 'Run a trade audit'],
+    prompt: 'Audit the trades.', produces: 'audit', evidence: 'Real counts from the stored records; nothing is altered.', keywords: ['audit', 'duplicates', 'look-ahead', 'trade audit'],
+  }),
+  // The trading P&L calendar (owner, 2026-10-24): che_calendars.js through its own chat route. Read only.
+  C('trade-calendar', 'trading', 'EXPLORE', 'The monthly P&L calendar, per record set.', {
+    title: 'Trading P&L Calendar',
+    does: 'Reads this month\'s closed trades day by day: net P&L, wins and losses, win rate, weekly subtotals and the month. Simulation (in R), forward paper and broker are separate and never added together. Tapping a day lists its trades, each opening its replay. Changes nothing.',
+    needs: ['office'], route: 'che_calendars', handler: 'che_calendars.tradingCalendar', input: null,
+    examples: ['Open my trading calendar', 'Show the P&L calendar for the simulation'],
+    prompt: 'Open my trading calendar.', produces: 'pnl calendar', evidence: 'Stored trade records only, one per trade ID; an empty month stays empty.', keywords: ['calendar', 'p&l calendar', 'pnl calendar', 'monthly', 'trading calendar'],
+  }),
+  // Orion's crypto desk (owner master mission, 2026-10-23): crypto_markets.js through its own chat route.
+  C('trade-crypto', 'trading', 'EXPLORE', "Orion: BTC and ETH research and paper trading, 24/7.", {
+    title: 'Orion Crypto Desk',
+    does: 'Reads, pauses or resumes Orion\'s crypto desk: BTC-USD and ETH-USD from Coinbase Exchange public candles (5-minute, 15-minute and hourly; Kraken cross-check), every CHE strategy paper traded on LIVE bars around the clock including weekends, net of 0.6% taker and 0.4% maker fees, journalled as crypto in the forward journal and judged by the strategy governor; plus volatility, liquidity and session research and an out-of-sample backtest. No model, no exchange account, no order.',
+    needs: ['market_data'], route: 'che_crypto', handler: 'crypto_markets.cryptoIntent → setCryptoPaper / cryptoView',
+    input: { name: 'action', required: false, hint: 'pause, resume or status' },
+    examples: ['Have Orion research BTC and ETH, compare strategies, and continue paper trading during the weekend.', 'Pause Orion crypto research', 'Resume Orion crypto research', 'How is the crypto paper trading going?'],
+    prompt: 'Orion crypto research {input}', produces: 'crypto desk status', evidence: 'Stored exchange bars, runs, budget counters and journal records only.',
+    keywords: ['crypto', 'bitcoin', 'btc', 'ethereum', 'eth', 'orion', 'weekend', '24/7'],
+  }),
+  C('trade-replay', 'trading', 'EXPLORE', "Replay one of CHE's trades on its own chart.", {
+    does: 'Opens a trade by its ID (or CHE\'s last forward paper trade) on the exact bars it was traded on: entry, exit, stop, target, times and outcome, labelled BACKTEST, SIMULATION, FORWARD PAPER or BROKER-CONFIRMED. Replay shows a bar only once it has closed. Without recorded bars it says so and draws nothing.',
+    needs: ['office'], route: 'che_trade_evidence', handler: 'trade_evidence.readTradeEvidence',
+    input: { name: 'trade', required: false, hint: 'A trade ID such as T0ABC…, or leave empty for the last trade' },
+    examples: ['Replay my last trade', 'Replay trade T0K3J9QW1ZX7A'],
+    prompt: 'Replay trade {input}', produces: 'trade replay', evidence: 'Stored trade records and stored bars only; nothing is invented.', keywords: ['replay', 'trade replay', 'last trade', 'trade evidence'],
   }),
 
   // ── Websites, Apps & AI ───────────────────────────────────────────────
@@ -829,6 +998,46 @@ export const COMMANDS = Object.freeze([
     examples: ['Tell the office to research barbershops in Phoenix'],
     prompt: 'Tell the office to {input}', produces: 'office jobs', evidence: 'Office job ids.', keywords: ['delegate', 'office task', 'assign'],
   }),
+  // The Office organisation and coordinated jobs (owner master mission, 2026-10-23).
+  C('office-org', 'office', 'EXPLORE', 'See who heads each Office department.', {
+    title: 'Office Departments',
+    does: 'Reads the Office roster: you lead, CHE reports to you, and the nine department heads (Nova, Atlas, Mira, Knox, Sage, Lyra, Orion, Iris, Vale) report to CHE, each with responsibilities, tools, permissions, work queue and recorded performance. Changes nothing.',
+    needs: ['office'], route: 'office:org', handler: 'office_org.officeOrg (LA_AGENCIA_ROLES departments)',
+    input: null,
+    examples: ['Who runs the Office departments?', 'Show me the Office org chart'],
+    prompt: 'Who runs the Office departments?', produces: 'org chart',
+    evidence: 'The roster and stored Office tasks only; tool status is configured, not configured or not checked.',
+    cost: 'Free: no AI engine is used.', keywords: ['org chart', 'departments', 'department heads', 'chain of command', 'who runs'],
+  }),
+  C('office-calendar', 'office', 'EXPLORE', 'What the Office did, day by day.', {
+    title: 'Office Calendar',
+    does: 'Reads each day\'s recorded work: completed jobs, active jobs, pending tasks, approvals, failures, milestones and who finished what, green, yellow or red. Tapping a day opens its jobs with their receipts. Changes nothing.',
+    needs: ['office'], route: 'che_calendars', handler: 'che_calendars.officeCalendar', input: null,
+    examples: ['Show the office calendar for September', 'What did we do yesterday?'],
+    prompt: 'Show the office calendar.', produces: 'office calendar',
+    evidence: 'Stored jobs, Office tasks, objectives, approvals and reliability counts only.',
+    cost: 'Free: no AI engine is used.', keywords: ['office calendar', 'what did we do', 'accomplished', 'work calendar'],
+  }),
+  C('office-coordinate', 'office', 'BUILD', 'Have Nova coordinate a multi-department job.', {
+    title: 'Coordinated Office Job',
+    does: 'Nova plans one job across departments (for example Iris design, Atlas engineering, Knox security review, then Vale verification), names one accountable owner, and hands each finished stage to the next with a recorded handoff the receiving head must accept. CHE reports the result only after Vale verifies it.',
+    needs: ['office'], route: 'office:job', handler: 'office_jobs.planOfficeJob → advanceOfficeJobs → agent_runtime tasks',
+    input: { name: 'task', required: true, hint: 'The work and which departments it involves' },
+    examples: ['Have Nova coordinate a cleaner Trading Room chart with design, engineering, security review and testing'],
+    prompt: 'Have Nova coordinate {input}', produces: 'office job',
+    evidence: 'Job id, stage task ids, every handoff with its acceptance checks, and Vale\'s verdict.',
+    keywords: ['coordinate', 'handoff', 'office job', 'departments', 'nova'],
+  }),
+  C('office-jobs', 'office', 'EXPLORE', 'Status of coordinated Office jobs.', {
+    title: 'Office Jobs',
+    does: 'Reads the latest coordinated Office job (or the one you name): its stages, who holds each, handoffs, blockers and whether Vale verified it. Changes nothing.',
+    needs: ['office'], route: 'office:jobStatus', handler: 'office_jobs.speakOfficeJob',
+    input: null,
+    examples: ['What is the status of the Office jobs?'],
+    prompt: 'What is the status of the Office jobs?', produces: 'job status',
+    evidence: 'The stored job record only.',
+    cost: 'Free: no AI engine is used.', keywords: ['office jobs', 'job status', 'handoffs'],
+  }),
   C('warroom', 'office', 'PLAN', 'Coordinate complex multi-agent work.', {
     does: 'Puts a hard question to Gemini, ChatGPT and Grok and gives each answer; an engine that cannot be reached is named, never faked.',
     needs: ['model'], route: 'che_consult', handler: 'ai_consult.consultIntent (peer engines)',
@@ -857,6 +1066,18 @@ export const COMMANDS = Object.freeze([
     examples: ['Check my keys'],
     prompt: 'Check my keys', produces: 'setup steps', keywords: ['connect', 'integration', 'keys', 'setup', 'api key'],
   }),
+  // Service onboarding (owner, 2026-10-25): one entry over service_onboarding.js.
+  C('connect-service', 'office', 'BUILD', 'Connect a service end to end and verify it.', {
+    title: 'Connect a Service',
+    does: 'Checks the connection CHE already has first and keeps it if it works. Otherwise creates a Hugging Face token with the fewest permissions in CHE\'s browser using your sign-in, or opens the page for guided providers. Stores it in the place CHE really reads and says "Connected" only after real checks pass.',
+    needs: [], route: 'che_onboarding', local: 'connect_service', handler: 'service_onboarding.startOnboarding / storeSecret / verifyOnboarding',
+    input: { name: 'service', required: true, hint: 'Hugging Face, Groq, Gemini…' },
+    examples: ['CHE, connect Hugging Face', 'Connect Hugging Face for film studio', 'Is Hugging Face connected?'],
+    prompt: 'Connect {input}', produces: 'connection status',
+    evidence: 'Three separate outcomes: token created, secret configured (where), connection verified (the provider\'s own checks). Fingerprints only, never a key.',
+    cost: 'Free. Verification makes no paid calls; nothing is bought.',
+    keywords: ['connect', 'hugging face', 'onboarding', 'token', 'connected', 'set up service'],
+  }),
   C('voice-test', 'office', 'EXPLORE', "Test CHE's actual voice systems.", {
     does: 'Checks which of CHE\'s voices answer right now (ElevenLabs, Fish) and reports real results. Hearing it on your phone is the final test.',
     needs: ['voice'], route: 'che_voice_test', local: 'voice_test', handler: 'voiceProbe (one real ElevenLabs call) + fishAudioKeyStatus',
@@ -870,6 +1091,97 @@ export const COMMANDS = Object.freeze([
     input: { name: 'project', required: true, hint: '3D game or item' },
     examples: ['Build a Roblox obby game'],
     prompt: 'Build a Roblox game: {input}', produces: 'office jobs', keywords: ['3d', 'roblox', 'game', 'model'],
+  }),
+  // Cloud Computer (owner, 2026-10-24): one Cloud Computer Manager over CHE's existing compute
+  // (cloud_computer.js). Each command is a fixed job template or a read; chat text never becomes a shell command.
+  C('cloud-open', 'office', 'EXPLORE', 'Open the Cloud Computer Room.', {
+    title: 'Cloud Computer',
+    does: 'Opens the Cloud Computer Room and says what each environment has: the Worker, the GitHub runners, the isolated browser and the film farm, with their real status, jobs, approvals and costs.',
+    needs: [], route: 'che_cloud_computer', local: 'cloud_open', handler: 'cloud_computer.cloudView + speakCloudSummary',
+    input: null, examples: ['Open your cloud computer'],
+    prompt: 'Open your cloud computer.', produces: 'cloud status', evidence: 'Provider checks from the Worker configuration and the stored job records.',
+    cost: 'Free: no AI engine is used.', keywords: ['cloud computer', 'environments', 'runners', 'compute'],
+  }),
+  // GPU on demand (owner, 2026-10-24; $0): CHE's render queue worked by the owner's Colab T4 while his notebook is open.
+  C('cloud-gpu', 'office', 'EXPLORE', 'Read my GPU render jobs.', {
+    title: 'GPU jobs',
+    does: 'Says how many GPU jobs are queued, rendering, paused, completed or failed, and whether your Colab T4 worker is online. With "pool" (or "which computers can build characters", "why is my character waiting") it reads the compute pool: each computer that can build characters, its status, cooldown and quota, and why a waiting character waits. The pictures are in the Creation Room. With "connect" ("Connect GPU", "start my GPU") the app opens your notebook in CHE\'s browser, hands you any Google sign-in or confirmation, and says GPU connected only when the Worker has a fresh heartbeat from the Colab GPU, then runs a small test job. It costs nothing; Colab works only while your notebook is open. With "budget" ("allow up to 20 dollars for GPUs", "limit GPUs to 5 dollars a month", "stop paid GPUs", "how long will my GPU money last", "what GPUs can CHE use") it sets or stops your paid-GPU cap, which is your spending approval, recorded with its time; paid prepaid GPUs (RunPod, Vast.ai) then run only for GPU jobs no free GPU can take, cheapest first, deleted after the job, never past the cap. CHE never pays or adds credit.',
+    needs: [], route: 'che_cloud_computer', local: 'cloud_gpu', handler: 'gpu_queue.GpuQueue.view + speakGpuSummary; compute_pool.poolView + speakPool; compute_pool.budgetCommand',
+    input: null, examples: ['What are my GPU jobs?', 'Which computers can build characters?', 'Why is my character waiting?', 'Connect GPU', 'How long will my GPU money last?', 'Allow up to 20 dollars for GPUs', 'Stop paid GPUs'],
+    prompt: 'What are my GPU jobs?', produces: 'GPU queue status', evidence: 'The queue and worker heartbeats stored in the Worker.',
+    cost: 'Free: no AI engine is used. Paid GPUs only within the GPU budget you set (default $0).', keywords: ['gpu', 'colab', 'render queue', 'face preview', 'compute pool', 'character waiting', 'connect gpu', 'gpu budget', 'runpod', 'paid gpu'],
+  }),
+  // CHE World population (owner, 2026-10-25): seeded character records over 288 shared base models (world_population.js).
+  C('world-population', 'office', 'EXPLORE', 'How many characters live in CHE World.', {
+    title: 'CHE World population',
+    does: 'Says how many character records CHE World holds (seeded descriptions, not models), how many of the 288 shared base models are really generated or building, and that the active on-screen count is known only while the world viewer is open. Nothing is built.',
+    needs: [], route: 'che_world_population', local: 'world_population', handler: 'world_population.populationAnswer',
+    input: null, examples: ['How many characters live in CHE World?'],
+    prompt: 'How many characters live in CHE World?', produces: 'population counts', evidence: 'The stored world range and the GPU queue job states of the bucket models.',
+    cost: 'Free: no AI engine is used.', keywords: ['che world', 'population', 'characters', 'crowd', 'residents'],
+  }),
+  C('cloud-blender', 'office', 'BUILD', 'Create a Blender animation on the cloud computer.', {
+    does: 'Checks every environment for Blender. None has it today, so CHE says so, names what she already has (the bpy character pipeline) and the smallest addition that would make it work. Nothing is started.',
+    needs: [], route: 'che_cloud_computer', local: 'cloud_blender', handler: 'cloud_computer.selectProvider (blender_render template)',
+    input: { name: 'animation', required: false, hint: 'What the animation shows' },
+    examples: ['Create a Blender animation', 'Make a Blender animation of a spinning logo'],
+    prompt: 'Create a Blender animation {input}', produces: 'plan', evidence: 'The provider capability list read from the workflow files.',
+    cost: 'Free: nothing runs.', keywords: ['blender', 'animation', '3d render', 'bpy'],
+  }),
+  C('cloud-render', 'office', 'EXPLORE', 'Plan a YouTube video render on the cloud computer.', {
+    does: 'Says where a video renders (the free che-video-render.yml path), and the real state of the latest render on record. A new render starts with "make a faceless video about…".',
+    needs: [], route: 'che_cloud_computer', local: 'cloud_render', handler: 'cloud_computer.selectProvider (video_render) + cloudJobs',
+    input: null, examples: ['Render my YouTube video'],
+    prompt: 'Render my YouTube video.', produces: 'render plan', evidence: 'The media index and dispatch records.',
+    cost: 'Free: nothing runs.', keywords: ['render video', 'youtube render', 'video render'],
+  }),
+  C('cloud-tests', 'office', 'BUILD', 'Run CHE\'s repository tests on the cloud computer.', {
+    does: 'Prepares a flutter-check.yml run (flutter analyze and flutter test) on a GitHub runner. GitHub minutes are not verified as free, so it waits for your approval; then CHE dispatches it, follows the run and reports pass or fail from GitHub.',
+    needs: ['github'], route: 'che_cloud_computer', local: 'cloud_tests', handler: 'cloud_computer.requestCloudWork → processJobs runCloudTask (gh dispatch)',
+    input: null, examples: ['Run your coding tests'],
+    prompt: 'Run your coding tests.', produces: 'test result', evidence: 'The GitHub run id and its conclusion.',
+    cost: 'GitHub Actions minutes; free usage for this repository is not verified, so it asks first.', keywords: ['run tests', 'coding tests', 'flutter tests', 'ci'],
+  }),
+  C('cloud-prs', 'office', 'EXPLORE', 'Check CHE\'s open pull requests.', {
+    does: 'Reads the open pull requests on CHE\'s repository from GitHub and lists them by number and title. Changes nothing.',
+    needs: ['github'], route: 'che_cloud_computer', local: 'cloud_prs', handler: 'cloud_computer.openPullRequests (coding_runtime.gh)',
+    input: null, examples: ['Check your open pull requests'],
+    prompt: 'Check your open pull requests.', produces: 'pull requests', evidence: 'GitHub\'s own pull request list.',
+    cost: 'Free: one GitHub read.', keywords: ['pull requests', 'open prs', 'prs'],
+  }),
+  C('cloud-install', 'office', 'EXPLORE', 'Ask for a free tool on the cloud computer.', {
+    does: 'Lists the software each environment already has. CHE never installs anything quietly: a new tool is a workflow change she opens as a pull request for your review.',
+    needs: [], route: 'che_cloud_computer', local: 'cloud_install', handler: 'cloud_computer.speakInstall + providerStatuses',
+    input: { name: 'tool', required: false, hint: 'The tool you want' },
+    examples: ['Install a compatible free tool', 'Install ImageMagick on your cloud computer'],
+    prompt: 'Which software does the cloud computer have for {input}', produces: 'software list', evidence: 'The software read from the workflow files.',
+    cost: 'Free: nothing is installed.', keywords: ['install', 'free tool', 'software', 'package'],
+  }),
+  C('cloud-agents', 'office', 'EXPLORE', 'Show what the agents are running.', {
+    does: 'Reads every cloud job that is waiting, queued or running, grouped by the agent that asked for it, and opens the Cloud Computer Room.',
+    needs: [], route: 'che_cloud_computer', local: 'cloud_agents', handler: 'cloud_computer.cloudJobs + speakAgentWork',
+    input: null, examples: ['Show me what your agents are working on'],
+    prompt: 'Show me what your agents are working on.', produces: 'job list', evidence: 'The stored job records only.',
+    cost: 'Free: no AI engine is used.', keywords: ['agents working', 'cloud jobs', 'what are agents doing'],
+  }),
+  C('cloud-control', 'office', 'BUILD', 'Approve, cancel, stop or retry a cloud job.', {
+    does: 'Approves a cloud job that waits for you, cancels one that has not been dispatched, stops a GitHub run, or retries a failed job, then reads back the real result.',
+    needs: ['jobs'], route: 'che_cloud_computer', local: 'cloud_control', handler: 'cloud_computer.approveCloudJob / cancelCloudJob / stopCloudJob / retryCloudJob',
+    input: { name: 'action', required: true, hint: 'approve, cancel, stop or retry, then the job id' },
+    examples: ['Approve the cloud job', 'Stop cloud job 1a2b3c4d', 'Retry cloud job 1a2b3c4d'],
+    prompt: 'Cloud job control: {input}', produces: 'status', evidence: 'The job record read back after the change.',
+    cost: 'Free; an approved test run uses GitHub Actions minutes.', keywords: ['approve cloud job', 'stop cloud job', 'retry cloud job'],
+  }),
+  // Master profile form fill (owner, 2026-10-25): runs ONLY on the iPhone (lib/browser/che_form_filler.dart).
+  // The Worker routes the command name; profile values and passwords never come here.
+  C('master-profile', 'office', 'BUILD', 'Fill the open form from your approved profiles.', {
+    title: 'Master Profile',
+    does: 'Fills the form open in CHE\'s iPhone browser from your approved Personal or CHE Office profile, remembered answers and the on-device password vault, then reads back each field. It never submits: say "submit it" separately, and paying needs your yes.',
+    needs: [], route: 'che_master_profile', local: 'master_profile', handler: 'app: CheFormFiller (lib/browser/che_form_filler.dart) + assets/browser/che_form_fill.js',
+    input: { name: 'profile', required: false, hint: 'personal, business, or everything for all pages' },
+    examples: ['CHE, use my master profile', 'Fill this with my business profile', 'Fill everything with my personal profile'],
+    prompt: 'Use my master profile {input}', produces: 'filled form', evidence: 'Each field\'s value read back from the page on the phone; the report names fields, never values.',
+    cost: 'Free. Runs on the iPhone; nothing is sent to a model.', keywords: ['master profile', 'fill this form', 'fill out the form', 'autofill', 'business profile', 'personal profile'],
   }),
 ]);
 

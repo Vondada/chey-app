@@ -1,80 +1,92 @@
 // Rithmic market data, set up on the phone. Read-only: prices only, no order controls.
 //
-// Passwords and the developer key are saved in the on-device vault (lib/security/che_password_vault.dart) and are
-// read here to connect. They are never sent to the Worker, a model or a log. The gateway address, system name and
-// app identity are not secret and are kept in preferences. Nothing connects until the owner presses Connect.
+// Routine use is a normal login: an account label, the username (trader code) and the password, then Connect. The
+// Rithmic system and gateway are discovered from Rithmic's bootstrap endpoint and the front-month contract is worked
+// out from the date (rithmic_client.dart). Advanced keeps manual overrides for debugging, hidden by default.
+//
+// The password is saved in the on-device vault (lib/security/che_password_vault.dart), and only after Rithmic accepted
+// it. It is never sent to the Worker, a model or a log. The label and Advanced overrides are not secret and are kept in
+// preferences. Nothing connects until the owner presses Connect the first time; after that the session comes back by
+// itself when CHE launches (rithmic_session.dart) until he presses Disconnect.
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/semantics.dart';
+import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../security/che_password_vault.dart';
 import 'rithmic_client.dart';
+import 'rithmic_live.dart';
+import 'rithmic_recorder.dart';
+import 'rithmic_session.dart';
 import 'rithmic_wire.dart';
 
-const kRithmicVaultSite = 'rithmic';
-const kRithmicKeySite = 'rithmic-developer-key';
-
-typedef RithmicFeedFactory = RithmicMarketFeed Function();
-
-/// Where the Rithmic login and developer key live: the on-device vault in the app, a fake in tests.
-abstract class RithmicCredentialStore {
-  Future<CheVaultEntry?> find(String site);
-  Future<void> save(CheVaultEntry entry);
-}
-
-class CheVaultCredentialStore implements RithmicCredentialStore {
-  const CheVaultCredentialStore();
-  @override
-  Future<CheVaultEntry?> find(String site) => CheVault.instance.find(site);
-  @override
-  Future<void> save(CheVaultEntry entry) => CheVault.instance.save(entry);
-}
+export 'rithmic_session.dart' show kRithmicVaultSite, RithmicFeedFactory, RithmicCredentialStore, CheVaultCredentialStore, RithmicCheck, cheRithmicDiagnose, cheRithmicDiagnosisText, cheRithmicDiagnoseCommand;
 
 class CheRithmicScreen extends StatefulWidget {
-  const CheRithmicScreen({super.key, this.feedFactory, this.store, this.preferences});
+  const CheRithmicScreen({super.key, this.feedFactory, this.routeFinder, this.store, this.preferences, this.now, this.live});
 
-  /// Tests inject a fake feed; the app uses the real RithmicClient over the phone's network.
+  /// Tests inject a fake feed and route finder; the app uses the real client over the phone's network.
   final RithmicFeedFactory? feedFactory;
+  final RithmicRouteFinder? routeFinder;
   final RithmicCredentialStore? store;
   final Future<SharedPreferences> Function()? preferences;
+  final DateTime Function()? now;
+
+  /// The shared live session the Trading Room chart draws from; tests pass their own.
+  final CheRithmicLive? live;
 
   @override
   State<CheRithmicScreen> createState() => _CheRithmicScreenState();
 }
 
 class _CheRithmicScreenState extends State<CheRithmicScreen> {
-  final _gateway = TextEditingController();
-  final _system = TextEditingController();
+  final _label = TextEditingController(text: 'FundYourEdge / Rithmic');
   final _login = TextEditingController();
   final _password = TextEditingController();
-  final _appName = TextEditingController(text: 'CHE');
-  final _appVersion = TextEditingController(text: '1.0');
-  final _symbol = TextEditingController(text: 'MNQZ6');
+  // Advanced (manual override and debugging). Blank means automatic.
+  final _gateway = TextEditingController();
+  final _system = TextEditingController();
+  final _symbol = TextEditingController();
   final _exchange = TextEditingController(text: 'CME');
-  final _devKey = TextEditingController();
+  final _appName = TextEditingController(text: kRithmicAppName);
+  final _appVersion = TextEditingController(text: kRithmicAppVersion);
 
   RithmicCredentialStore get _vault => widget.store ?? const CheVaultCredentialStore();
+  CheRithmicLive get _live => widget.live ?? CheRithmicLive.instance;
   RithmicMarketFeed? _feed;
   StreamSubscription<RithmicLastTrade>? _tradeSub;
   String _status = 'Not connected.';
+  List<String> _details = const [];
   String _error = '';
   String _savedNote = '';
   double? _lastPrice;
   bool _up = false;
   bool _busy = false;
 
+  List<TextEditingController> get _all => [_label, _login, _password, _gateway, _system, _symbol, _exchange, _appName, _appVersion];
+
+  String get _autoSymbol => rithmicFrontMonth('MNQ', (widget.now ?? DateTime.now)());
+
   @override
   void initState() {
     super.initState();
+    // A connection made earlier keeps streaming to the chart after this screen closes; coming back shows it.
+    if (_live.attached) {
+      _up = true;
+      _status = 'Connected.';
+      _details = ['Live data: ${_live.symbol} on ${_live.exchange}, streaming to the Trading Room chart.', 'Read-only prices. Balances and orders are not connected here.'];
+    }
     _load();
   }
 
   @override
   void dispose() {
     _tradeSub?.cancel();
-    _feed?.close();
-    for (final c in [_gateway, _system, _login, _password, _appName, _appVersion, _symbol, _exchange, _devKey]) {
+    // The connected feed belongs to the shared live session (the chart keeps using it); only an unhanded one closes.
+    if (_feed != null && !_live.attached) _feed?.close();
+    for (final c in _all) {
       c.dispose();
     }
     super.dispose();
@@ -85,88 +97,113 @@ class _CheRithmicScreenState extends State<CheRithmicScreen> {
     final entry = await _vault.find(kRithmicVaultSite);
     if (!mounted) return;
     setState(() {
+      _label.text = prefs.getString('che_rithmic_label') ?? _label.text;
       _gateway.text = prefs.getString('che_rithmic_gateway') ?? '';
       _system.text = prefs.getString('che_rithmic_system') ?? '';
+      _symbol.text = prefs.getString('che_rithmic_symbol_override') ?? '';
+      _exchange.text = prefs.getString('che_rithmic_exchange') ?? _exchange.text;
       _appName.text = prefs.getString('che_rithmic_app_name') ?? _appName.text;
       _appVersion.text = prefs.getString('che_rithmic_app_version') ?? _appVersion.text;
-      _symbol.text = prefs.getString('che_rithmic_symbol') ?? _symbol.text;
-      _exchange.text = prefs.getString('che_rithmic_exchange') ?? _exchange.text;
       _login.text = entry?.username ?? '';
-      _savedNote = entry == null ? 'No Rithmic login saved yet.' : 'Login and password are saved in the vault on this phone.';
+      _savedNote = entry == null ? 'No Rithmic login saved yet.' : 'Your login is saved in the vault on this phone.';
     });
   }
 
-  /// Saves the settings and the secrets. Blank password or key fields keep what is already saved.
-  Future<void> _save() async {
-    setState(() => _error = '');
-    try {
-      final prefs = await (widget.preferences?.call() ?? SharedPreferences.getInstance());
-      await prefs.setString('che_rithmic_gateway', _gateway.text.trim());
-      await prefs.setString('che_rithmic_system', _system.text.trim());
-      await prefs.setString('che_rithmic_app_name', _appName.text.trim());
-      await prefs.setString('che_rithmic_app_version', _appVersion.text.trim());
-      await prefs.setString('che_rithmic_symbol', _symbol.text.trim());
-      await prefs.setString('che_rithmic_exchange', _exchange.text.trim());
-      if (_login.text.trim().isNotEmpty && _password.text.isNotEmpty) {
-        await _vault.save(CheVaultEntry(site: kRithmicVaultSite, username: _login.text.trim(), password: _password.text));
-        _password.clear();
-      }
-      if (_devKey.text.isNotEmpty) {
-        await _vault.save(CheVaultEntry(site: kRithmicKeySite, password: _devKey.text));
-        _devKey.clear();
-      }
-      if (!mounted) return;
-      setState(() => _savedNote = 'Saved. The password and developer key stay in the vault on this phone.');
-    } catch (e) {
-      if (mounted) setState(() => _error = 'Could not save: $e');
+  /// Every action's result is shown, announced to VoiceOver and felt, so it is known without looking.
+  void _report(String said, {required bool ok}) {
+    if (ok) {
+      HapticFeedback.mediumImpact();
+    } else {
+      HapticFeedback.heavyImpact();
     }
+    unawaited(SemanticsService.sendAnnouncement(View.of(context), said, TextDirection.ltr));
   }
 
   Future<void> _connect() async {
     setState(() {
       _busy = true;
       _error = '';
+      _diagnosis = const [];
+      _details = const [];
       _status = 'Connecting to Rithmic…';
     });
+    RithmicMarketFeed? feed;
     try {
-      final gateway = _gateway.text.trim();
-      final uri = Uri.tryParse(gateway);
-      if (uri == null || uri.scheme != 'wss') {
-        throw const FormatException('The gateway address must start with wss://. Paste it from your Rithmic developer kit.');
-      }
-      final entry = await _vault.find(kRithmicVaultSite);
-      if (entry == null) throw StateError('No Rithmic login is saved. Enter the login and password, then press Save.');
-      final feed = widget.feedFactory?.call() ?? RithmicClient(uri: uri);
-      _feed = feed;
-      await feed.connect(
-        user: entry.username,
-        password: entry.password,
-        systemName: _system.text.trim(),
+      final saved = await _vault.find(kRithmicVaultSite);
+      final user = _login.text.trim().isNotEmpty ? _login.text.trim() : (saved?.username ?? '');
+      final typed = _password.text;
+      final password = typed.isNotEmpty ? typed : (saved != null && saved.username == user ? saved.password : '');
+      final settings = RithmicSettings(
+        label: _label.text.trim(),
+        gateway: _gateway.text.trim(),
+        system: _system.text.trim(),
+        symbolOverride: _symbol.text.trim(),
+        exchange: _exchange.text.trim(),
         appName: _appName.text.trim(),
         appVersion: _appVersion.text.trim(),
-        symbol: _symbol.text.trim(),
-        exchange: _exchange.text.trim(),
       );
-      _tradeSub = feed.trades.listen((t) {
+      final opened = await cheRithmicOpen(
+        user: user,
+        password: password,
+        settings: settings,
+        routeFinder: widget.routeFinder,
+        feedFactory: widget.feedFactory,
+        now: widget.now,
+        onFeed: (f) => _feed = feed = f,
+      );
+      final route = opened.route;
+      final symbol = opened.symbol;
+      final exchange = opened.exchange;
+      final connected = opened.feed;
+
+      // Rithmic accepted the login: only now is it saved, in the vault on this phone.
+      if (typed.isNotEmpty || saved?.username != user) {
+        await _vault.save(CheVaultEntry(site: kRithmicVaultSite, username: user, password: password));
+      }
+      _password.clear();
+      final prefs = await (widget.preferences?.call() ?? SharedPreferences.getInstance());
+      await settings.save(prefs, exchangeUsed: exchange);
+      // Signed in: CHE reconnects by itself on the next launch until the owner presses Disconnect.
+      await prefs.setBool(kRithmicAutoConnectKey, true);
+
+      _live.attach(connected, symbol: symbol, exchange: exchange);
+      _tradeSub = connected.trades.listen((t) {
         if (!mounted || t.price == null) return;
         setState(() => _lastPrice = t.price);
       });
       if (!mounted) return;
+      final live = connected.subscriptionConfirmed
+          ? 'Live data: $symbol on $exchange, confirmed by Rithmic.'
+          : 'Live data: $symbol on $exchange requested; Rithmic has not confirmed it yet.';
       setState(() {
         _up = true;
-        _status = 'Connected: live market data for ${_symbol.text.trim()} on ${_exchange.text.trim()}.';
+        _status = 'Connected.';
+        _details = [
+          'System: ${route.system}',
+          'Account: ${_label.text.trim().isEmpty ? 'Rithmic' : _label.text.trim()}',
+          live,
+          'The Trading Room MNQ PAPER chart now builds 1- and 5-minute candles from these trades.',
+          CheRithmicLive.backgroundNote,
+          CheRithmicRecorder.keptNote,
+          'Read-only prices. Balances and orders are not connected here.',
+        ];
+        _savedNote = 'Your login is saved in the vault on this phone. CHE reconnects by itself when it opens, until you press Disconnect.';
       });
+      _report('Rithmic connected on ${route.system}. $live', ok: true);
     } catch (e) {
       await _tradeSub?.cancel();
       _tradeSub = null;
-      await _feed?.close();
+      await (feed ?? _feed)?.close();
       _feed = null;
+      final said = e is RithmicException ? e.message : 'Rithmic did not connect: $e. Nothing was saved.';
+      _live.loginFailed(said);
       if (mounted) {
         setState(() {
           _up = false;
           _status = 'Not connected.';
-          _error = e is FormatException || e is StateError ? e.toString() : 'Rithmic did not connect: $e';
+          _error = said;
         });
+        _report(said, ok: false);
       }
     } finally {
       if (mounted) setState(() => _busy = false);
@@ -174,17 +211,52 @@ class _CheRithmicScreenState extends State<CheRithmicScreen> {
   }
 
   Future<void> _disconnect() async {
+    // Disconnect is the owner's sign-out: no automatic reconnect until he presses Connect again.
+    final prefs = await (widget.preferences?.call() ?? SharedPreferences.getInstance());
+    await prefs.setBool(kRithmicAutoConnectKey, false);
     // The subscription is dropped first; closing the feed is what stops the stream, so it is not held behind the cancel.
     unawaited(_tradeSub?.cancel());
     _tradeSub = null;
     final feed = _feed;
     _feed = null;
-    await feed?.close();
+    if (_live.attached) {
+      await _live.disconnect();
+    } else {
+      await feed?.close();
+    }
     if (mounted) {
       setState(() {
         _up = false;
+        _details = const [];
         _status = 'Disconnected. Nothing is streaming.';
       });
+      _report('Rithmic disconnected. Nothing is streaming.', ok: true);
+    }
+  }
+
+  List<RithmicCheck> _diagnosis = const [];
+
+  /// "Diagnose Rithmic": the four checks in order, shown, announced and felt. Changes nothing.
+  Future<void> _diagnose() async {
+    setState(() {
+      _busy = true;
+      _error = '';
+      _diagnosis = const [];
+    });
+    try {
+      final checks = await cheRithmicDiagnose(
+        live: _live,
+        store: _vault,
+        preferences: widget.preferences,
+        routeFinder: widget.routeFinder,
+        feedFactory: widget.feedFactory,
+        now: widget.now,
+      );
+      if (!mounted) return;
+      setState(() => _diagnosis = checks);
+      _report(cheRithmicDiagnosisText(checks), ok: checks.every((c) => c.ok != false));
+    } finally {
+      if (mounted) setState(() => _busy = false);
     }
   }
 
@@ -192,12 +264,13 @@ class _CheRithmicScreenState extends State<CheRithmicScreen> {
         textField: true,
         label: label,
         child: Padding(
-          padding: const EdgeInsets.only(bottom: 10),
+          padding: const EdgeInsets.only(bottom: 12),
           child: TextField(
             controller: c,
             obscureText: secret,
             autocorrect: false,
             enableSuggestions: !secret,
+            style: const TextStyle(fontSize: 18),
             decoration: InputDecoration(labelText: label, hintText: hint, border: const OutlineInputBorder()),
           ),
         ),
@@ -206,43 +279,78 @@ class _CheRithmicScreenState extends State<CheRithmicScreen> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    const big = Size.fromHeight(56);
     return Scaffold(
       appBar: AppBar(title: const Text('Rithmic market data')),
       body: ListView(
         padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
         children: [
-          Text('Read-only prices from your Rithmic account. Your password stays on this phone. CHE places no orders from here.',
-              style: theme.textTheme.bodyMedium),
-          const SizedBox(height: 12),
-          _field(_gateway, 'Gateway address (wss://…)', hint: 'from your Rithmic developer kit'),
-          _field(_system, 'System name', hint: 'e.g. the Rithmic system your broker gives you'),
-          _field(_login, 'Login'),
-          _field(_password, 'Password', secret: true, hint: 'leave blank to keep the saved one'),
-          _field(_appName, 'App name'),
-          _field(_appVersion, 'App version'),
-          _field(_symbol, 'Front-month contract (e.g. MNQZ6 or NQZ6)'),
-          _field(_exchange, 'Exchange'),
-          _field(_devKey, 'Developer key (optional)', secret: true, hint: 'leave blank to keep the saved one'),
-          Wrap(spacing: 10, runSpacing: 10, children: [
-            Semantics(
-              button: true,
-              label: 'Save Rithmic settings and login to the vault',
-              child: OutlinedButton(onPressed: _busy ? null : _save, child: const Text('Save')),
+          Text('Sign in with your Rithmic login for read-only prices. Your password stays on this phone. CHE places no orders from here.',
+              style: theme.textTheme.bodyLarge),
+          const SizedBox(height: 14),
+          _field(_label, 'Account label'),
+          _field(_login, 'Username or trader code'),
+          _field(_password, 'Password', secret: true, hint: 'leave blank to use the saved one'),
+          Semantics(
+            button: true,
+            label: 'Connect to Rithmic market data',
+            child: FilledButton(
+              style: FilledButton.styleFrom(minimumSize: big, textStyle: const TextStyle(fontSize: 18)),
+              onPressed: _busy || _up ? null : _connect,
+              child: Text(_busy ? 'Connecting…' : 'Connect'),
             ),
-            Semantics(
-              button: true,
-              label: 'Connect Rithmic market data',
-              child: FilledButton(onPressed: _busy || _up ? null : _connect, child: const Text('Connect')),
+          ),
+          const SizedBox(height: 10),
+          Semantics(
+            button: true,
+            label: 'Disconnect from Rithmic',
+            child: OutlinedButton(
+              style: OutlinedButton.styleFrom(minimumSize: big, textStyle: const TextStyle(fontSize: 18)),
+              onPressed: _up ? _disconnect : null,
+              child: const Text('Disconnect'),
             ),
-            Semantics(
-              button: true,
-              label: 'Disconnect Rithmic',
-              child: OutlinedButton(onPressed: _up ? _disconnect : null, child: const Text('Disconnect')),
+          ),
+          const SizedBox(height: 10),
+          Semantics(
+            button: true,
+            label: 'Diagnose Rithmic: check the saved login, the automatic reconnect, the connection and the login answer',
+            child: OutlinedButton(
+              key: const ValueKey('rithmic-diagnose'),
+              style: OutlinedButton.styleFrom(minimumSize: big, textStyle: const TextStyle(fontSize: 18)),
+              onPressed: _busy ? null : _diagnose,
+              child: const Text('Diagnose Rithmic'),
             ),
-          ]),
+          ),
+          if (_diagnosis.isNotEmpty)
+            Semantics(
+              liveRegion: true,
+              label: cheRithmicDiagnosisText(_diagnosis),
+              child: Padding(
+                padding: const EdgeInsets.only(top: 10),
+                child: Column(
+                  key: const ValueKey('rithmic-diagnosis'),
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    for (final c in _diagnosis)
+                      Text('${c.ok == null ? '–' : c.ok! ? '✓' : '✗'} ${c.step}: ${c.detail}',
+                          style: theme.textTheme.bodyLarge?.copyWith(color: c.ok == false ? theme.colorScheme.error : null)),
+                  ],
+                ),
+              ),
+            ),
           const SizedBox(height: 16),
-          Semantics(liveRegion: true, label: 'Rithmic status: $_status', child: Text(_status, style: theme.textTheme.titleSmall)),
-          if (_lastPrice != null) Text('Last trade: ${_lastPrice!.toStringAsFixed(2)}', style: theme.textTheme.bodyLarge),
+          Semantics(
+            liveRegion: true,
+            label: 'Rithmic status: $_status ${_details.join(' ')}',
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(_status, style: theme.textTheme.titleMedium),
+                for (final line in _details) Text(line, style: theme.textTheme.bodyLarge),
+              ],
+            ),
+          ),
+          if (_lastPrice != null) Text('Last trade: ${_lastPrice!.toStringAsFixed(2)}', style: theme.textTheme.titleMedium),
           if (_error.isNotEmpty)
             Semantics(
               liveRegion: true,
@@ -253,7 +361,24 @@ class _CheRithmicScreenState extends State<CheRithmicScreen> {
               ),
             ),
           const SizedBox(height: 12),
-          Text(_savedNote, style: theme.textTheme.bodySmall),
+          Text(_savedNote, style: theme.textTheme.bodyMedium),
+          const SizedBox(height: 12),
+          Semantics(
+            label: 'Advanced Rithmic settings, for manual override and debugging',
+            child: ExpansionTile(
+              title: const Text('Advanced'),
+              subtitle: Text('Found automatically. Contract now: $_autoSymbol'),
+              childrenPadding: const EdgeInsets.only(top: 8),
+              children: [
+                _field(_gateway, 'Gateway address override (wss://…)', hint: 'blank: found automatically'),
+                _field(_system, 'System name override', hint: 'blank: found automatically'),
+                _field(_symbol, 'Contract override', hint: 'blank: $_autoSymbol, rolled automatically'),
+                _field(_exchange, 'Exchange'),
+                _field(_appName, 'App name'),
+                _field(_appVersion, 'App version'),
+              ],
+            ),
+          ),
         ],
       ),
     );

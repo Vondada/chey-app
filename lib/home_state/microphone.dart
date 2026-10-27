@@ -6,6 +6,17 @@ extension _CheHomeMicrophone on _CHEHomeState {
   /// connection is cancelled, and any failure resets the mic state, is shown
   /// in Voice diagnostics and on screen, and leaves typing and navigation working.
   Future<void> toggleListening() async {
+    // Measured from the Talk tap to the end of the handler, on every path (realtime, native, web and local speech),
+    // so the sample is recorded when the owner's Talk starts listening, whichever exit it takes.
+    final talk = CheLatency.begin(CheLatency.voiceStart);
+    try {
+      await _toggleListeningGuarded();
+    } finally {
+      if (openConversation) talk.end();
+    }
+  }
+
+  Future<void> _toggleListeningGuarded() async {
     if (_realtimeConnecting) {
       HapticFeedback.lightImpact();
       _realtimeCancelRequested = true;
@@ -106,6 +117,8 @@ extension _CheHomeMicrophone on _CHEHomeState {
         if (started) {
           _localVoice.goListening();
           debugPrint('CHE voice: mic listening');
+        } else {
+          _reportPrivateMicRefusal();
         }
       }
       return;
@@ -169,6 +182,7 @@ extension _CheHomeMicrophone on _CHEHomeState {
     // An explicit tap on the mic is already the "wake me up" action.
     cheSleeping = false;
     if (mounted) _set(() {});
+    // Measured until the microphone call returns: the owner's Talk tap to a live microphone (or its failure).
     await _mic.runStart('mic button', _startListening);
   }
 
@@ -522,6 +536,13 @@ extension _CheHomeMicrophone on _CHEHomeState {
             return;
           }
 
+          // A finished sentence that lands while CHE is still answering is
+          // held for the next turn instead of being ignored (see voice.dart).
+          if (result.finalResult && !_autoSentCurrentTurn && _isSending) {
+            if (!_isSleepPhrase(spokenWords)) _holdSpokenWhileSending(spokenWords);
+            return;
+          }
+
           if (result.finalResult && !_autoSentCurrentTurn && !_isSending) {
             _autoSentCurrentTurn = true;
             _heldSpeech = '';
@@ -554,6 +575,10 @@ extension _CheHomeMicrophone on _CHEHomeState {
           cancelOnError: true,
           autoPunctuation: true,
           listenMode: stt.ListenMode.dictation,
+          // Private voice: Apple's on-device recognizer only. The plugin
+          // reports an error instead of using Apple's servers when the iPhone
+          // cannot recognize this language on the phone.
+          onDevice: ChePrivateVoice.isOn,
           // Longer end-of-speech tolerance so mid-thought pauses are not cut.
           // Trailing fillers ("um", "and", "so...") still hold the turn open
           // via cheSoundsUnfinished; one turn can still run five minutes.

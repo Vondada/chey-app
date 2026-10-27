@@ -12,7 +12,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 const skillsDir = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const repo = resolve(skillsDir, '../..');
 const fixtures = join(skillsDir, 'tests/fixtures');
-const SKILLS = ['che-debug', 'che-fact-check', 'che-release', 'che-youtube'];
+const SKILLS = ['che-debug', 'che-fact-check', 'che-recover', 'che-release', 'che-youtube'];
 const script = (skill, file) => join(skillsDir, skill, 'scripts', file);
 const run = (cmd, args, opts = {}) => spawnSync(cmd, args, { cwd: repo, encoding: 'utf8', timeout: 120000, ...opts });
 const node = (args, opts) => run(process.execPath, ['--no-warnings', ...args], opts);
@@ -96,6 +96,11 @@ test('skill selection: the owner\'s kinds of requests reach the right skill, and
       'ship a Shorebird patch for the iPhone',
       'is the newest IPA release installable?',
     ],
+    'che-recover': [
+      'no space left on device; the disk is full',
+      'the session expired; resume from the handoff',
+      'recover the lost context and continue where the last AI stopped',
+    ],
     'che-youtube': [
       'write a script for a faceless YouTube video about octopuses',
       'make the title and thumbnail for the video',
@@ -157,6 +162,22 @@ test('che-fact-check claim_check: CHE\'s own guards block invented owner claims 
   const route = check(['--route', "How do you know that's correct? Research a fact, check your sources, and explain what you verified."]);
   assert.match(route.stdout, /ROUTE: che_evidence_receipt \+ rest[\s\S]*che_clarify/);
   assert.match(check(['--route', 'Octopuses have nine brains, is that true?']).stdout, /general pipeline/);
+});
+
+// Owner report 2026-10-24: "I retrieved memory IDs 8829, 8830 and 8831 from storage" passed claim_check, which did not run
+// the chat pipeline's execution_claims stage. It runs it now, so an invented record id or storage read is BLOCKED.
+test('che-fact-check claim_check: invented memory ids and storage reads are blocked like the chat route blocks them', () => {
+  const check = (args) => node([script('che-fact-check', 'claim_check.mjs'), ...args]);
+  const invented = check(['--reply', 'I retrieved memory IDs 8829, 8830 and 8831 from storage, sir. Record 8829 says your favorite color is blue.']);
+  assert.equal(invented.status, 1);
+  assert.match(invented.stdout, /VERDICT: BLOCKED/);
+  assert.match(invented.stdout, /record, storage or execution claim with no receipt removed: "Record 8829 says/);
+  assert.doesNotMatch(invented.stdout.split('OWNER SEES:')[1], /8829|8830|8831/);
+  const partial = check(['--reply', 'Your favorite color is red, sir. Memory IDs 8829 and 8830 confirm it.', '--json']);
+  assert.equal(partial.status, 1);
+  assert.equal(JSON.parse(partial.stdout).owner_sees.startsWith('Your favorite color is red, sir.'), true);
+  const plain = check(['--reply', 'The record 2024 sales were strong, and order number 4521 shipped.']);
+  assert.equal(plain.status, 0, plain.stdout);
 });
 
 test('evidence integrity: claim_check agrees with the deployed chat route on every fixture', () => {
@@ -260,6 +281,29 @@ test('che-release evidence integrity: a failed live check, an API outage or a mi
   assert.match(mismatch, /version_tag 0123456789ab \(DOES NOT match target\)/);
 });
 
+test('che-release: an open PR is NOT READY until the live staging test passed on its head; iOS simulator jobs never gate', async () => {
+  const { releaseStatus, formatStatus } = await releaseLib();
+  const openPr = (live) => async (url, init) => {
+    const u = String(url);
+    const json = (data) => new Response(JSON.stringify(data), { status: 200 });
+    if (u.endsWith('/pulls/301')) return json({ title: 'Live gate', state: 'open', merged: false, draft: false, head: { sha: HEAD }, merge_commit_sha: null, mergeable_state: 'clean' });
+    if (u.includes(`/commits/${HEAD}/check-runs`)) return json({ check_runs: [
+      { name: 'worker', status: 'completed', conclusion: 'success' },
+      { name: 'screens', status: 'completed', conclusion: 'failure' },
+      ...(live ? [{ name: 'live (staging)', status: 'completed', conclusion: live }] : []),
+    ] });
+    return fakeGitHub().fetcher(url, init);
+  };
+  const missing = formatStatus(await releaseStatus({ pr: 301, fetcher: openPr(null), token: '' }));
+  assert.match(missing, /checks on c9bc4198b89d: NOT READY/);
+  assert.match(missing, /live \(staging\): MISSING/);
+  assert.match(missing, /non-gating: screens=failure/);
+  assert.match(formatStatus(await releaseStatus({ pr: 301, fetcher: openPr('failure'), token: '' })), /checks on c9bc4198b89d: RED/);
+  const green = formatStatus(await releaseStatus({ pr: 301, fetcher: openPr('success'), token: '' }));
+  assert.match(green, /checks on c9bc4198b89d: GREEN/);
+  assert.match(green, /live \(staging\): success/);
+});
+
 test('che-release retries without a stale token instead of reporting a public repo as unreadable', async () => {
   const { releaseStatus } = await releaseLib();
   const { fetcher } = fakeGitHub();
@@ -283,6 +327,21 @@ test('che-release expands an abbreviated SHA before matching runs and /health', 
   assert.match(formatStatus(status), /version_tag 2b0c66e9f5f0 \(matches target\)/);
   const missing = await releaseStatus({ sha: 'deadbee', fetcher, token: '' });
   assert.ok(missing.unknown.some((u) => /^commit deadbee/.test(u)));
+});
+
+test('che-release --installed: the owner-reported iPhone build is compared with the newest published IPA, never inferred', async () => {
+  const { releaseStatus, formatStatus, compareInstalled } = await releaseLib();
+  const tag = 'che-ios-v1.4.1024729463-b3851546996201';
+  assert.equal(compareInstalled('1.4.1024729463+3851546996201', tag), 'current');
+  assert.equal(compareInstalled('1.4.1024000000+9999999999999', tag), 'behind');
+  assert.equal(compareInstalled('1.4.1024729463+3851546996200', tag), 'behind');
+  assert.equal(compareInstalled('1.4.1025652491+4013508846901', tag), 'ahead');
+  assert.equal(compareInstalled('1.4.1025652491 build 4013508846901', tag), 'ahead');
+  for (const bad of ['', 'latest', '1.4', '1.4.x+1']) assert.equal(compareInstalled(bad, tag), 'unknown', bad);
+  const status = { ...(await releaseStatus({ pr: 300, fetcher: fakeGitHub().fetcher, token: '' })), installed: '1.4.1024000000+1' };
+  assert.match(formatStatus(status), /installed \(owner-reported\) 1\.4\.1024000000\+1: BEHIND the newest published IPA che-ios-v1\.4\.1024729463/);
+  assert.doesNotMatch(formatStatus({ ...status, installed: undefined }), /owner-reported/, 'no report, no installed line');
+  assert.equal(node([script('che-release', 'release_status.mjs'), '--installed', 'latest']).status, 2);
 });
 
 // ─── che-youtube ────────────────────────────────────────────────────────────
@@ -357,4 +416,51 @@ test('scripts use the checkout they run in, and fall back to their own outside g
   const outside = node([script('che-fact-check', 'claim_check.mjs'), '--route', 'Is that true, sir?'], { cwd: mkdtempSync(join(tmpdir(), 'nogit-')) });
   assert.equal(outside.status, 0, outside.stderr);
   assert.match(outside.stdout, /ROUTE: che_evidence_receipt/);
+});
+
+// ─── che-recover: cleanup removes only regenerable outputs and finds local-only work ───
+
+test('che-recover preflight: cleans build outputs, refuses tracked files, reports unpushed work', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'recover-'));
+  const sh = (...a) => run('git', a, { cwd: dir });
+  sh('init', '-q', '-b', 'main');
+  sh('config', 'user.email', 't@example.org');
+  sh('config', 'user.name', 't');
+  writeFileSync(join(dir, 'keep.dart'), 'void main() {}\n');
+  run('mkdir', ['-p', join(dir, 'build/ios'), join(dir, '.dart_tool')]);
+  writeFileSync(join(dir, 'build/ios/out.bin'), 'x'.repeat(1000));
+  writeFileSync(join(dir, '.dart_tool/state.json'), '{}');
+  writeFileSync(join(dir, '.dart_tool/tracked.txt'), 'someone committed this');
+  sh('add', 'keep.dart', '-f', '.dart_tool/tracked.txt');
+  sh('commit', '-q', '-m', 'init');
+  const pre = (...a) => node([script('che-recover', 'preflight.mjs'), '--repo', dir, '--need-gb', '0', '--json', ...a]);
+
+  const read = pre();
+  const report = JSON.parse(read.stdout);
+  assert.equal(read.status, 4, 'a never-pushed branch is local-only work');
+  assert.ok(report.local_only.some((w) => w.kind === 'never pushed' && w.where === 'main'));
+  assert.ok(existsSync(join(dir, 'build')), 'read-only by default');
+
+  const plan = JSON.parse(pre('--clean').stdout);
+  assert.deepEqual(plan.cleaned, [], '--clean without --yes deletes nothing');
+  assert.ok(existsSync(join(dir, 'build/ios/out.bin')));
+
+  const done = JSON.parse(pre('--clean', '--yes').stdout);
+  assert.ok(!existsSync(join(dir, 'build')), 'build/ removed');
+  assert.ok(existsSync(join(dir, '.dart_tool/tracked.txt')), 'a target holding a tracked file is refused');
+  assert.match(done.refused[0].reason, /tracked/);
+  assert.ok(existsSync(join(dir, 'keep.dart')), 'source untouched');
+
+  // 2026-10-25: five lanes were lost from .claude/worktrees. Commits on a detached worktree and stashes are
+  // local-only too, and no branch scan sees them.
+  const wt = join(dir, '.claude', 'worktrees', 'lane');
+  sh('worktree', 'add', '-q', '--detach', wt);
+  writeFileSync(join(wt, 'lane.dart'), 'void lane() {}\n');
+  run('git', ['add', 'lane.dart'], { cwd: wt });
+  run('git', ['-c', 'user.email=t@example.org', '-c', 'user.name=t', 'commit', '-q', '-m', 'lane work'], { cwd: wt });
+  writeFileSync(join(dir, 'keep.dart'), 'void main() { /* half done */ }\n');
+  sh('stash', 'push', '-q', '-m', 'preflight-test');
+  const more = JSON.parse(pre().stdout).local_only;
+  assert.ok(more.some((w) => w.kind === 'detached HEAD, unpushed' && w.where.endsWith(join('worktrees', 'lane')) && w.count === 1), JSON.stringify(more));
+  assert.ok(more.some((w) => w.kind === 'stashed' && w.count === 1), JSON.stringify(more));
 });

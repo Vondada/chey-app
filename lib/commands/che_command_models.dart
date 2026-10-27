@@ -332,15 +332,36 @@ class CheMissionStep {
       );
 }
 
+/// The saved result of a finished workflow run: a report stored on CHE with its SHA-256 and a receipt.
+class CheMissionArtifact {
+  const CheMissionArtifact({required this.sha256, required this.bytes, required this.verified, required this.spoken});
+  final String sha256;
+  final int bytes;
+  final bool verified;
+  final String spoken;
+
+  static CheMissionArtifact? fromJson(Object? j) {
+    if (j is! Map || _s(j['sha256']).isEmpty) return null;
+    final bytes = j['bytes'];
+    return CheMissionArtifact(
+      sha256: _s(j['sha256']),
+      bytes: bytes is num ? bytes.toInt() : 0,
+      verified: j['verified'] == true,
+      spoken: _s(j['spoken']),
+    );
+  }
+}
+
 /// A workflow run on CHE's objective graph.
 class CheMission {
-  const CheMission({required this.id, required this.name, required this.status, required this.paused, required this.steps, required this.spoken});
+  const CheMission({required this.id, required this.name, required this.status, required this.paused, required this.steps, required this.spoken, this.artifact});
   final String id;
   final String name;
   final String status;
   final bool paused;
   final List<CheMissionStep> steps;
   final String spoken;
+  final CheMissionArtifact? artifact;
 
   bool get finished => status == 'complete' || status == 'cancelled';
 
@@ -351,6 +372,7 @@ class CheMission {
         paused: j['paused'] == true,
         steps: [for (final s in _maps(j['steps'])) CheMissionStep.fromJson(s)],
         spoken: _s(j['spoken']),
+        artifact: CheMissionArtifact.fromJson(j['artifact']),
       );
 }
 

@@ -55,6 +55,21 @@ export function inventionIntent(message) {
   return kind ? { kind, subject: text } : null;
 }
 
+// A follow-up (cost, sourcing, assembly, reality, plan, open) reopens the saved invention only when it names the
+// invention, or continues the owner's immediately preceding invention turn. Generic words ("step by step", "break it
+// down", "is it realistic") never reach back to an old project, and words from another domain win outright.
+const EXPLICIT = /\b(?:invention|inventions|prototype|concept\s+design|my\s+design|the\s+design)\b/i;
+const OTHER_DOMAIN = /\b(?:backtest\w*|trad(?:e|es|ing|er)|futures|nasdaq|nq|mnq|es\s+futures|s&p|stocks?|shares|strateg(?:y|ies)|markets?|charts?|candles?|brokers?|alpaca|rithmic|tradovate|portfolio|p&l|pnl|win\s+rate|drawdown|profit\s+factor|e-?mails?|gmail|inbox|calendar|repo(?:sitory)?|pull\s+request|commits?|codebase|office|videos?|youtube|songs?|music|album|memor(?:y|ies)|remember)\b/i;
+
+/** May this follow-up reopen the saved invention? `continuing`: the owner's previous turn was the invention turn. */
+export function inventionFollowUpAllowed(message, { continuing = false } = {}) {
+  const text = String(message || '');
+  const named = EXPLICIT.test(text) || SUBJECT.test(text);
+  if (named) return true;
+  if (OTHER_DOMAIN.test(text)) return false;
+  return continuing === true;
+}
+
 /** The project template a request names. Ambiguous requests are read as the safe engineering concept of the nearest kind. */
 export function templateFor(request = '') {
   const text = String(request);

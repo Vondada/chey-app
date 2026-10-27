@@ -172,3 +172,29 @@ test('an existing video task finalizes once with a verified media ID, no duplica
   assert.equal(again.item.id, first.item.id);
   assert.equal(starts, 0, 'finalizing never starts a second video');
 });
+
+test('a failed free picture engine reports its own error, not the paid-switch message', async () => {
+  // Owner (2026-10-22): "Picture 1 failed: HD image generation is connected but disabled" while the free engine had run.
+  const result = await generateImage(
+    { AI: { run: async () => { throw new Error('workers ai unavailable'); } }, OPENAI_API_KEY: 'test-key' },
+    memoryStorage(),
+    { prompt: 'A futuristic blue sports car in New Orleans at night' },
+    async () => { throw new Error('paid provider must not be called'); },
+  );
+  assert.equal(result.status, 502);
+  assert.match(result.detail, /workers ai unavailable/);
+  assert.doesNotMatch(result.detail, /disabled until/);
+  assert.equal(result.requires_owner_confirmation, false);
+});
+
+test('no free engine and a paid key present still asks the owner to enable paid media', async () => {
+  const result = await generateImage(
+    { OPENAI_API_KEY: 'test-key' },
+    memoryStorage(),
+    { prompt: 'A cinematic CHE portrait' },
+    async () => { throw new Error('should not call paid provider'); },
+  );
+  assert.equal(result.status, 402);
+  assert.equal(result.requires_owner_confirmation, true);
+  assert.match(result.detail, /owner explicitly enables paid media/i);
+});

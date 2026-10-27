@@ -10,6 +10,7 @@
 import { cleanText, NPM_NAME } from './rea_evidence.js';
 import { fetchPublicPage, readablePublicUrl } from './library.js';
 import { reusableLicense } from './code_scout.js';
+import { inspectArtifacts } from './security_intelligence.js';
 import { REA_ROBOTS_AGENTS, robotsVerdict } from './rea_web_evidence.js';
 
 const UA = 'CHE-REA';
@@ -309,6 +310,9 @@ export async function inspectGithubRepo(env, fullName, { feature = '' } = {}, fe
     }
   }
   facts.routes = facts.routes.slice(0, 40);
+  // Security Intelligence: every repository CHE reads gets a static safety and licence review. Nothing is executed.
+  const review = await inspectArtifacts({ source: full, files: texts.filter(([, text]) => text).map(([path, text]) => ({ path, text })), license: facts.license_name, paths });
+  facts.security = { verdict: review.verdict, license: review.license, issues: review.issues.filter((i) => i.severity !== 'info').slice(0, 8).map((i) => i.what), executed: false };
   if (feature) facts.feature_hits = await findFeatureInRepo(env, full, sha, paths, feature, fetcher);
   return facts;
 }

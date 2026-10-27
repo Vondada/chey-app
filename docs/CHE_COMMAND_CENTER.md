@@ -54,6 +54,10 @@ A ninth category, **Creator Studio**, holds six commands over `server/cloudflare
 - **Growth** reports only YouTube's own counters for a posted pilot. Anything else is "no data".
 - The phone's Creator Studio room shows the same view (`GET /api/studio`, `lib/rooms/che_series_studio.dart`). It loads silently, and its buttons ask CHE in chat.
 
+## Cloud Computer (owner, 2026-10-24)
+
+Eight Office commands sit over `server/cloudflare/cloud_computer.js`, each answering with no model (`done.source = che_cloud_computer`): `/cloud-open`, `/cloud-blender`, `/cloud-render`, `/cloud-tests`, `/cloud-prs`, `/cloud-install`, `/cloud-agents` and `/cloud-control`. Their spoken forms reach the same commands through `cloudIntent`. Repository tests wait for an approval record before anything is dispatched, because GitHub Actions free usage is not verified. See `docs/CHE_CLOUD_COMPUTER.md`.
+
 ## How it works (no second assistant)
 
 | Piece | Where | Reuses |
@@ -91,7 +95,7 @@ What each command needs:
 
 | Needs | Commands |
 |---|---|
-| Nothing beyond CHE | che, che-plan, learn, che-cancel-job, che-research, che-verify, che-memory, che-brain-review, che-recover, che-status, yt-ideas, yt-research, yt-script, yt-seo, yt-batch, yt-grow, trade-open, trade-chart, trade-setup, trade-liquidity, trade-backtest, trade-journal, trade-alert, trade-risk (account limits need NinjaTrader), trade-connections (reads each connection's own state; it never connects, removes keys or goes live), site-build, site-redesign, site-audit, site-publish, app-build, ai-build, all money commands, all client commands, all marketing commands, office-status, office-delegate, warroom, automate, skill-learn, connect, create-3d |
+| Nothing beyond CHE | che, che-plan, learn, che-cancel-job, che-research, che-verify, che-memory, che-brain-review, che-recover, che-status, yt-ideas, yt-research, yt-script, yt-seo, yt-batch, yt-grow, trade-open, trade-chart, trade-setup, trade-liquidity, trade-backtest, trade-journal, trade-alert, trade-risk (account limits need NinjaTrader), trade-connections (reads each connection's own state; it never connects, removes keys or goes live),  trade-pnl, trade-leader, trade-audit (read-only views of the stored trade records), site-build, site-redesign, site-audit, site-publish, app-build, ai-build, all money commands, all client commands, all marketing commands, office-status, office-delegate, warroom, automate, skill-learn, connect, create-3d |
 | GitHub secrets | che-explore, che-build, app-fix, code-review, che-release, iphone-update |
 | Video renderer | yt-video, yt-voice (also a voice key) |
 | Image engine | yt-thumbnail |
@@ -104,6 +108,10 @@ Honest limits:
 - `/yt-analytics` has no view or subscriber analytics yet.
 - `/invoices`, `/lead-outreach` and `/lead-followup` draft only; nothing is charged or sent from them.
 - `/automate` designs saved workflows; unattended schedules stay off by the owner's rule.
+
+## Manifestation Engine (`/manifest`, owner 2026-10-27)
+
+One entry in the Intelligence category, over `manifest_api.js` (route `che_manifest`, zero model calls). "Manifest a drone that carries 1 kg for 25 minutes", "manifest a flying car for 2 people" or `/manifest <goal>` creates a project. It holds the spec, classified candidates, seeded Monte Carlo runs, a comparison under equal conditions and a Realization Plan. "Manifestation status" reads the newest five. Nothing is bought, sent or signed, and a step is verified only with evidence. See `docs/CHE_MANIFESTATION_ENGINE.md`.
 
 ## Knowledge Atlas (`/learn`, issue #346)
 

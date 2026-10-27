@@ -15,13 +15,63 @@ import '../che_app_portal.dart' show cheAppForName, cheIsTradeSeaUrl, cheTradeSe
 import '../security/che_password_vault.dart';
 import '../security/che_vault_auth.dart';
 import 'che_embedded_app_shell.dart';
+import 'che_form_filler.dart';
 import 'che_tradesea_check.dart';
 
 typedef ChePageCallback = Future<void> Function(String title, String url, String pageText);
 
+bool cheGoogleSignInUrl(String url) => Uri.tryParse(url)?.host.toLowerCase() == 'accounts.google.com';
+
+// Retain the real WebViews, including notebook state, when the GPU room is closed.
+final _retainedBrowserTabs = <String, List<_BrowserTab>>{};
+final _retainedBrowserActive = <String, int>{};
+
+// GPU Connect (owner, 2026-10-25; additive): CHE reads and drives one named session, on screen or retained off
+// screen, without disposing it, so the notebook stays available while the owner moves between CHE's screens.
+final _liveBrowserSessions = <String, _CheBrowserScreenState>{};
+
+_BrowserTab? _sessionTab(String key) {
+  final live = _liveBrowserSessions[key];
+  if (live != null && live._tabs.isNotEmpty) return live._tab;
+  final kept = _retainedBrowserTabs[key];
+  if (kept == null || kept.isEmpty) return null;
+  return kept[(_retainedBrowserActive[key] ?? 0).clamp(0, kept.length - 1)];
+}
+
+/// Whether the named session (e.g. 'creation-gpu') has a page, open or retained.
+bool cheBrowserSessionExists(String key) => _sessionTab(key) != null;
+
+/// The named session's current page address, or null when it has no page.
+String? cheBrowserSessionUrl(String key) => _sessionTab(key)?.url;
+
+/// Runs [js] in the named session's active page and returns its result as text; null without a page or on error.
+Future<String?> cheBrowserSessionEval(String key, String js) async {
+  final tab = _sessionTab(key);
+  if (tab == null) return null;
+  try {
+    var text = (await tab.controller.runJavaScriptReturningResult(js)).toString();
+    try {
+      final decoded = jsonDecode(text);
+      if (decoded is String) text = decoded;
+    } catch (_) {}
+    return text;
+  } catch (_) {
+    return null;
+  }
+}
+
+/// Loads [url] in the named session's active page; false when the session has no page.
+Future<bool> cheBrowserSessionLoad(String key, String url) async {
+  final tab = _sessionTab(key);
+  if (tab == null) return false;
+  await tab.load(url);
+  return true;
+}
+
 /// App-level hooks the browser uses to reach CHE. Set once by the app.
 class CheBrowserActions {
   CheBrowserActions._();
+  static Future<void> Function(String)? openUrl;
 
   /// "Teach CHE this page" → learn into owner context.
   static ChePageCallback? learn;
@@ -138,7 +188,7 @@ const _fileExtensions = ['.pdf', '.zip', '.dmg', '.pkg', '.ipa', '.apk', '.mp3',
 typedef ChePageDialog = Future<bool> Function(String site, String message, {required bool confirm});
 
 class _BrowserTab {
-  _BrowserTab(this.url, {required this.onChanged, this.onDialog}) {
+  _BrowserTab(this.url, {required this.onChanged, this.onDialog, this.googleSignInInPage = false}) {
     _desktopAgent = cheIsTradeSeaUrl(url);
     controller = WebViewController()
       ..setBackgroundColor(const Color(0xFF060B11))
@@ -180,13 +230,22 @@ class _BrowserTab {
           title = (await controller.getTitle())?.trim() ?? title;
           if (title.isEmpty) title = Uri.tryParse(u)?.host ?? u;
           unawaited(CheBrowserStore.instance.visit(u, title));
-          unawaited(controller.runJavaScript(_loginCaptureJs));
-          unawaited(_autoFill(controller, u));
+          if (!cheGoogleSignInUrl(u)) {
+            unawaited(controller.runJavaScript(_loginCaptureJs));
+            unawaited(_autoFill(controller, u));
+          }
           onChanged();
         },
         onNavigationRequest: (request) {
           final uri = Uri.tryParse(request.url);
           if (uri == null) return NavigationDecision.prevent;
+          // Google's sign-in policy forbids embedded user agents. Do not spoof a user agent or copy cookies.
+          // A session opened with googleSignInInPage (GPU Connect only) lets Google's own page load here, unchanged,
+          // so Google itself decides; CHE detects Google's refusal and falls back to Safari (che_gpu_connect.dart).
+          if (request.isMainFrame && cheGoogleSignInUrl(request.url) && !googleSignInInPage) {
+            unawaited(launchUrl(uri, mode: LaunchMode.inAppBrowserView));
+            return NavigationDecision.prevent;
+          }
           final path = uri.path.toLowerCase();
           // File handoff: downloads go to iOS (Files / share sheet / viewer).
           if (_fileExtensions.any(path.endsWith)) {
@@ -322,8 +381,9 @@ if(user&&u&&!user.value)set(user,u);set(pw,p);})($u,$p)''');
   }
 
   bool _desktopAgent = false;
-  final VoidCallback onChanged;
-  final ChePageDialog? onDialog;
+  VoidCallback onChanged;
+  ChePageDialog? onDialog;
+  final bool googleSignInInPage;
   // TradeSea check state (issue #342): failures by site and code, whether iOS stopped the page,
   // and whether the owner's check is watching this page.
   final List<String> siteIssues = [];
@@ -341,9 +401,19 @@ class CheBrowserScreen extends StatefulWidget {
     required this.initialUrl,
     this.title,
     this.appMode = true,
+    this.sessionKey,
+    this.historyOnlyBack = false,
+    this.onClose,
+    this.googleSignInInPage = false,
   });
   final String initialUrl;
+
+  /// GPU Connect only: Google's sign-in page loads in this session unchanged instead of the system sheet.
+  final bool googleSignInInPage;
   final String? title;
+  final String? sessionKey;
+  final bool historyOnlyBack;
+  final Future<void> Function()? onClose;
 
   /// App cards open in app mode: CHE header only, no address bar or browser nav.
   final bool appMode;
@@ -366,8 +436,24 @@ class _CheBrowserScreenState extends State<CheBrowserScreen> {
     super.initState();
     unawaited(CheBrowserStore.instance.load());
     _showBrowserControls = !widget.appMode;
-    _openTab(widget.initialUrl);
+    final saved = _retainedBrowserTabs.remove(widget.sessionKey);
+    if (saved != null && saved.isNotEmpty) {
+      _tabs.addAll(saved);
+      _active = (_retainedBrowserActive.remove(widget.sessionKey) ?? 0).clamp(0, _tabs.length - 1);
+      for (final tab in _tabs) {
+        tab.onChanged = _changed;
+        tab.onDialog = _pageDialog;
+      }
+      _syncAddress();
+    } else {
+      _openTab(widget.initialUrl);
+    }
     CheBrowserActions.voice = _voiceCommand;
+    CheBrowserActions.openUrl = _loadUrl;
+    final key = widget.sessionKey;
+    if (key != null) _liveBrowserSessions[key] = this;
+    // "Use my master profile" (che_form_filler.dart): Chat calls this before anything can reach the Worker.
+    CheFormFillVoice.handler = _formFiller.handle;
     _addressFocus.addListener(() {
       if (!_addressFocus.hasFocus) _syncAddress();
       if (mounted) setState(() {});
@@ -376,13 +462,38 @@ class _CheBrowserScreenState extends State<CheBrowserScreen> {
 
   @override
   void dispose() {
+    if (CheBrowserActions.openUrl == _loadUrl) CheBrowserActions.openUrl = null;
+    final key = widget.sessionKey;
+    if (key != null && _liveBrowserSessions[key] == this) _liveBrowserSessions.remove(key);
+    if (key != null) {
+      _retainedBrowserTabs[key] = List.of(_tabs);
+      _retainedBrowserActive[key] = _active;
+      for (final tab in _tabs) {
+        tab.onChanged = () {};
+        tab.onDialog = null;
+      }
+    }
     if (CheBrowserActions.voice == _voiceCommand) CheBrowserActions.voice = null;
+    if (CheFormFillVoice.handler == _formFiller.handle) CheFormFillVoice.handler = null;
     _address.dispose();
     _addressFocus.dispose();
     super.dispose();
   }
 
+  // ─── Master profile form fill (on-device; additive) ─────────────────────
+  CheFormPage get _formPage => _BrowserFormPage(this);
+  static String? _formEngineCache;
+  static Future<String> _formEngine() async =>
+      _formEngineCache ??= await rootBundle.loadString('assets/browser/che_form_fill.js');
+  late final CheFormFiller _formFiller = CheFormFiller(
+    page: _formPage,
+    engineSource: _formEngine,
+    // Reuses a valid Face ID vault session (CheVaultAuth.sessionTtl), like "sign me in".
+    unlockVault: (reason) => CheVaultAuth.instance.ensureUnlocked(reason: reason),
+  );
+
   // ─── Voice navigation (voice-first use) ─────────────────────────────────
+  Future<void> _loadUrl(String url) => _tab.load(url);
   static const _ordinals = {
     'first': 1, 'one': 1, '1st': 1, 'second': 2, 'two': 2, '2nd': 2, 'third': 3, 'three': 3, '3rd': 3,
     'fourth': 4, 'four': 4, '4th': 4, 'fifth': 5, 'five': 5, '5th': 5, 'sixth': 6, 'six': 6, '6th': 6,
@@ -578,7 +689,8 @@ if(!best)return '';var label=(best.getAttribute('aria-label')||best.innerText||'
       return 'This is the first page.';
     }
     if (RegExp(r'^(go )?forward$').hasMatch(w)) {
-      if (await _tab.controller.canGoForward()) await _tab.controller.goForward();
+      if (!await _tab.controller.canGoForward()) return 'There is no page ahead.';
+      await _tab.controller.goForward();
       return 'Going forward.';
     }
     if (RegExp(r'^(reload|refresh)( (the )?page)?$').hasMatch(w)) {
@@ -594,7 +706,7 @@ if(!best)return '';var label=(best.getAttribute('aria-label')||best.innerText||'
       return 'Playing.';
     }
     if (RegExp(r'^(close|exit|leave)( the)?( browser| app| this)?$').hasMatch(w)) {
-      Navigator.of(context).maybePop();
+      _closeApp();
       return 'Closed.';
     }
     if (RegExp(r'^(show|open)( the)? browser controls$').hasMatch(w)) {
@@ -720,7 +832,7 @@ if(!best)return '';var label=(best.getAttribute('aria-label')||best.innerText||'
   void _syncAddress() => _address.text = _tabs.isEmpty ? '' : _tab.url;
 
   void _openTab(String url) {
-    _tabs.add(_BrowserTab(url, onChanged: _changed, onDialog: _pageDialog));
+    _tabs.add(_BrowserTab(url, onChanged: _changed, onDialog: _pageDialog, googleSignInInPage: widget.googleSignInInPage));
     _active = _tabs.length - 1;
     _syncAddress();
     setState(() {});
@@ -1105,12 +1217,16 @@ if(!best)return '';var label=(best.getAttribute('aria-label')||best.innerText||'
       unawaited(_refreshHistory());
       return;
     }
-    _closeApp();
+    if (!widget.historyOnlyBack) _closeApp();
   }
 
   void _closeApp() {
     FocusManager.instance.primaryFocus?.unfocus();
-    if (mounted) Navigator.of(context).maybePop();
+    if (widget.onClose != null) {
+      unawaited(widget.onClose!());
+    } else if (mounted) {
+      Navigator.of(context).maybePop();
+    }
   }
 
   Future<void> _onMore(String v) async {
@@ -1357,4 +1473,14 @@ class _ReaderScreen extends StatelessWidget {
       ),
     );
   }
+}
+
+/// The open tab as a [CheFormPage] for the master profile filler.
+class _BrowserFormPage implements CheFormPage {
+  _BrowserFormPage(this._state);
+  final _CheBrowserScreenState _state;
+  @override
+  String get url => _state._tabs.isEmpty ? '' : _state._tab.url;
+  @override
+  Future<String> eval(String js) => _state._js(js);
 }

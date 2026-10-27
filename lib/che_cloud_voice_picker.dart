@@ -6,6 +6,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
+import 'security/che_session_store.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'che_native_voice.dart';
@@ -68,7 +69,7 @@ class _CheCloudVoicePickerState extends State<CheCloudVoicePicker> {
       final prefs = await SharedPreferences.getInstance();
       _base = (prefs.getString('che_agent_base_url') ??
         const String.fromEnvironment('CHE_AGENT_URL', defaultValue: 'https://chey-app.henryjavoni.workers.dev')).replaceAll(RegExp(r'/+$'), '');
-      _token = prefs.getString('che_agent_device_token') ?? '';
+      _token = (await CheSessionStore.instance.deviceToken()) ?? '';
       if (_token.isEmpty) throw StateError('Pair this iPhone with CHE before changing the cloud voice.');
       final r = await _client.get(Uri.parse('$_base/api/voice/choices'),
         headers: {'authorization': 'Bearer $_token'}).timeout(const Duration(seconds: 20));

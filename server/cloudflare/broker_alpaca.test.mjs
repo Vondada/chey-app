@@ -98,9 +98,10 @@ test('trading connections: each card says its real state; nothing reads connecte
   assert.equal(view.cards[1].blocked_by.length, 4);
   assert.equal(view.permissions.live_orders, 'off');
   assert.match(speakConnections(view), /^Your trading connections, sir: 1, CHE Paper: on, delayed Yahoo Finance chart \(public\) MNQ=F data\. 2, Tradovate \(NinjaTrader\): not set up\. 3, Alpaca \(stock paper\): not set up\. 4, FundYourEdge \(Rithmic\): not supported\. Trading mode: PAPER\. Live orders are off\.$/);
-  // Live orders open only with live mode, a signed-in broker, limits and a chosen account.
+  // The live kill switch: live orders read off even with live mode, a signed-in broker, limits and a chosen account.
   const live = tradingConnections({ desk: { mode: 'live', account: { sim: '', live: 'L1' }, risk_limits: { maxContracts: 1, maxRiskDollars: 100 } }, tradovate: { configured: true, conn: { connected: true } }, alpaca: null });
-  assert.equal(live.permissions.live_orders, 'each order needs your approval of that exact order');
+  assert.equal(live.permissions.live_orders, 'off');
+  assert.match(speakConnections(live), /Live orders are off\.$/);
   assert.equal(tradingConnections({ desk: { mode: 'live', account: { sim: '', live: 'L1' }, risk_limits: null }, tradovate: { configured: true, conn: { connected: true } } }).permissions.live_orders, 'off');
 });
 

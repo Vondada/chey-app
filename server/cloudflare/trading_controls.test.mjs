@@ -94,7 +94,7 @@ test('every strategy starts at 30 entries a day; lowering applies at once, raisi
 });
 
 test('the ICT group is the strategies whose rules are ICT concepts', () => {
-  assert.deepEqual(scopeIds('family:ICT').sort(), ['fvg-retest-5m', 'order-block-5m', 'pdhl-sweep-5m', 'silver-bullet-5m', 'sweep-mss-5m', 'sweep-reclaim-5m']);
+  assert.deepEqual(scopeIds('family:ICT').sort(), ['fvg-retest-5m', 'order-block-5m', 'p2p86-style-5m', 'pdhl-sweep-5m', 'silver-bullet-5m', 'sweep-mss-5m', 'sweep-reclaim-5m']);
   assert.ok(!scopeIds('family:ICT').includes('ema-pullback-5m'));
   assert.deepEqual(scopeIds('nope'), []);
 });
@@ -135,7 +135,7 @@ test('a daily maximum of 0 blocks the entry; pausing the ICT group pauses every 
   assert.match(pf.skips.at(-1).reason, /daily maximum of 0 entries was reached/);
   const ict = await applyControlChange(storage, { kind: 'pause', scope: 'family:ICT' });
   assert.equal(ict.ok, true);
-  assert.equal(ict.record.effect.length, 6);
+  assert.equal(ict.record.effect.length, 7);
   assert.ok(scopeIds('family:ICT').every((id) => ict.controls.strategies[id].paused));
   assert.equal(ict.controls.strategies['ema-pullback-5m'].paused, false);
 });

@@ -95,6 +95,10 @@ info['NSLocalNetworkUsageDescription'] = 'CHE uses the local network only to con
 info['NSAppleMusicUsageDescription'] = 'CHE accesses your media library only for owner-authorized music actions.'
 info['NSLocationWhenInUseUsageDescription'] = 'CHE uses your location only while you are using location-aware features.'
 info['CFBundleURLTypes'] = [{'CFBundleURLName': 'CHE', 'CFBundleURLSchemes': ['che']}]
+# che:// links (such as che://broker/tradovate after Tradovate's sign-in) are read by the app_links
+# plugin. Flutter's own deep linking would push the link's path as a Navigator route instead, so it
+# is turned off, as app_links' iOS setup requires.
+info['FlutterDeepLinkingEnabled'] = False
 # CHE can hand a verified IPA URL directly to SideStore. This only declares
 # the URL scheme for canOpenURL; it does not grant SideStore any CHE data.
 schemes = set(info.get('LSApplicationQueriesSchemes', []))
@@ -120,6 +124,7 @@ if [[ -f ios/Runner/AppDelegate.swift ]]; then
 import Flutter
 import UIKit
 import AVFoundation
+import AudioToolbox
 import Speech
 import AppIntents
 import LocalAuthentication
@@ -590,6 +595,65 @@ struct CHEAppShortcuts: AppShortcutsProvider {
             clip: true,
             result: result
           )
+
+        case "recordStart":
+          // Music Studio (owner, 2026-10-24): one take from the microphone or
+          // audio interface to a 16-bit WAV. CHE's own listening pauses for it.
+          let rate = ((call.arguments as? [String: Any])?["sample_rate"] as? NSNumber)?.doubleValue ?? 44100
+          self.startTake(sampleRate: rate, result: result)
+
+        case "recordStop":
+          self.stopTake(result: result)
+
+        case "recordLevel":
+          self.takeLevel(result: result)
+
+        case "studioMonitorStart":
+          // Live monitoring: the owner hears the microphone through the
+          // take's effects while it records. Headphones only, unless he says
+          // otherwise: through the speaker the microphone hears itself and howls.
+          self.startMonitor((call.arguments as? [String: Any]) ?? [:], result: result)
+
+        case "studioMonitorUpdate":
+          self.updateMonitor((call.arguments as? [String: Any]) ?? [:])
+          result(["monitoring": self.monitorEngine != nil])
+
+        case "studioMonitorStop":
+          self.stopMonitor()
+          result(["monitoring": false])
+
+        case "studioEncodeM4A":
+          // Export: the rendered WAV becomes an AAC .m4a (Apple's own encoder).
+          guard
+            let args = call.arguments as? [String: Any],
+            let typed = args["wav"] as? FlutterStandardTypedData
+          else {
+            result(FlutterError(code: "encode_failed", message: "There was no audio to encode.", details: nil))
+            return
+          }
+          let bitrate = (args["bitrate"] as? NSNumber)?.intValue ?? 256000
+          DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self else { return }
+            let out = self.encodeM4A(typed.data, bitrate: bitrate)
+            DispatchQueue.main.async { result(out) }
+          }
+
+        case "studioDecodeAudio":
+          // Import: an MP3, M4A, AAC, AIFF or CAF file becomes a 16-bit WAV
+          // the studio reads like any other.
+          guard
+            let args = call.arguments as? [String: Any],
+            let typed = args["bytes"] as? FlutterStandardTypedData
+          else {
+            result(FlutterError(code: "decode_failed", message: "There was no file to read.", details: nil))
+            return
+          }
+          let ext = ((args["ext"] as? String) ?? "m4a").lowercased()
+          DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self else { return }
+            let out = self.decodeToWav(typed.data, ext: ext)
+            DispatchQueue.main.async { result(out) }
+          }
 
         case "audioRoute":
           result(self.routeSummary())
@@ -1080,6 +1144,16 @@ struct CHEAppShortcuts: AppShortcutsProvider {
 
     if assistantSpeaking && !bargeInDetected {
       return
+    }
+
+    // Live words (handoff 8f): the owner sees what he is saying while he says it. Sent only after the speaking guard,
+    // so CHE's own voice heard by the microphone is never shown; only changed text reaches here (latestTranscript).
+    if !result.isFinal {
+      voiceStreamHandler.emit([
+        "type": "partial",
+        "text": transcript,
+        "final": false,
+      ])
     }
 
     utteranceTimer?.invalidate()
@@ -1575,6 +1649,347 @@ struct CHEAppShortcuts: AppShortcutsProvider {
     if let pending = pendingSpeechResult {
       pendingSpeechResult = nil
       pending(false)
+    }
+  }
+
+  // Music Studio takes. The WAV comes back to Dart with the measured input
+  // and output latencies, which the studio uses to line the take up with the beat.
+  private var takeRecorder: AVAudioRecorder?
+  private var takeURL: URL?
+  private var resumeListeningAfterTake = false
+
+  private func latencyInfo() -> [String: Any] {
+    let session = AVAudioSession.sharedInstance()
+    return [
+      "input_latency": session.inputLatency,
+      "output_latency": session.outputLatency,
+      "io_buffer": session.ioBufferDuration,
+      "sample_rate": session.sampleRate,
+      "route": routeKind(session.currentRoute),
+      "input": session.currentRoute.inputs.first?.portName ?? "",
+      "input_type": session.currentRoute.inputs.first?.portType.rawValue ?? "",
+    ]
+  }
+
+  private func startTake(sampleRate: Double, result: @escaping FlutterResult) {
+    if let old = takeRecorder {
+      old.stop()
+      takeRecorder = nil
+    }
+    resumeListeningAfterTake = false
+    guard configureAudioSession() else {
+      result(FlutterError(code: "audio_route_failed", message: "CHE could not open the microphone.", details: nil))
+      return
+    }
+    let url = FileManager.default.temporaryDirectory.appendingPathComponent("che-take-\(UUID().uuidString).wav")
+    let settings: [String: Any] = [
+      AVFormatIDKey: Int(kAudioFormatLinearPCM),
+      AVSampleRateKey: sampleRate,
+      AVNumberOfChannelsKey: 1,
+      AVLinearPCMBitDepthKey: 16,
+      AVLinearPCMIsFloatKey: false,
+      AVLinearPCMIsBigEndianKey: false,
+    ]
+    do {
+      let recorder = try AVAudioRecorder(url: url, settings: settings)
+      recorder.isMeteringEnabled = true
+      // CHE keeps listening while a take records, so "stop" still works by
+      // voice. Only if the microphone refuses a second listener does her
+      // listening pause for the take (and come back after it).
+      var started = recorder.prepareToRecord() && recorder.record()
+      if !started && nativeVoiceRunning {
+        resumeListeningAfterTake = true
+        stopNativeRecognition()
+        started = recorder.prepareToRecord() && recorder.record()
+      }
+      guard started else {
+        if resumeListeningAfterTake {
+          resumeListeningAfterTake = false
+          startNativeRecognition(result: { _ in })
+        }
+        result(FlutterError(code: "record_failed", message: "The microphone did not start. Check that CHE has microphone access in Settings.", details: nil))
+        return
+      }
+      takeRecorder = recorder
+      takeURL = url
+      var info = latencyInfo()
+      info["recording"] = true
+      result(info)
+    } catch {
+      result(FlutterError(code: "record_failed", message: "The microphone did not start.", details: error.localizedDescription))
+    }
+  }
+
+  private func stopTake(result: @escaping FlutterResult) {
+    guard let recorder = takeRecorder, let url = takeURL else {
+      result(nil)
+      return
+    }
+    let seconds = recorder.currentTime
+    recorder.stop()
+    takeRecorder = nil
+    takeURL = nil
+    let data = try? Data(contentsOf: url)
+    try? FileManager.default.removeItem(at: url)
+    if resumeListeningAfterTake {
+      resumeListeningAfterTake = false
+      startNativeRecognition(result: { _ in })
+    }
+    guard let data else {
+      result(FlutterError(code: "record_failed", message: "The take could not be read back.", details: nil))
+      return
+    }
+    var info = latencyInfo()
+    info["wav"] = FlutterStandardTypedData(bytes: data)
+    info["seconds"] = seconds
+    result(info)
+  }
+
+  private func takeLevel(result: @escaping FlutterResult) {
+    guard let recorder = takeRecorder else {
+      result(["recording": false])
+      return
+    }
+    recorder.updateMeters()
+    result([
+      "recording": true,
+      "seconds": recorder.currentTime,
+      "db": Double(recorder.averagePower(forChannel: 0)),
+      "peak_db": Double(recorder.peakPower(forChannel: 0)),
+    ])
+  }
+
+  // Live monitoring: microphone -> EQ -> compressor -> delay -> reverb -> the
+  // owner's headphones. Its own engine, so CHE's listening engine is untouched.
+  private var monitorEngine: AVAudioEngine?
+  private var monitorEQ: AVAudioUnitEQ?
+  private var monitorDynamics: AVAudioUnitEffect?
+  private var monitorDelay: AVAudioUnitDelay?
+  private var monitorReverb: AVAudioUnitReverb?
+
+  private func outputIsPrivate(_ route: AVAudioSessionRouteDescription) -> Bool {
+    // Outputs the microphone cannot hear: headphones, Bluetooth audio, USB or line out.
+    for output in route.outputs {
+      switch output.portType {
+      case .headphones, .bluetoothA2DP, .bluetoothHFP, .bluetoothLE, .usbAudio, .lineOut:
+        return true
+      default:
+        continue
+      }
+    }
+    return false
+  }
+
+  private func startMonitor(_ args: [String: Any], result: @escaping FlutterResult) {
+    stopMonitor()
+    guard configureAudioSession() else {
+      result(FlutterError(code: "audio_route_failed", message: "CHE could not open the microphone.", details: nil))
+      return
+    }
+    let session = AVAudioSession.sharedInstance()
+    let route = session.currentRoute
+    let allowSpeaker = (args["allow_speaker"] as? Bool) ?? false
+    guard outputIsPrivate(route) || allowSpeaker else {
+      result([
+        "monitoring": false,
+        "reason": "speaker",
+        "route": routeKind(route),
+        "message": "Live monitoring is off because sound is coming from the iPhone speaker: the microphone would hear it and howl. Plug in headphones, or connect Bluetooth headphones, then turn monitoring on.",
+      ])
+      return
+    }
+    let engine = AVAudioEngine()
+    let input = engine.inputNode
+    let format = input.outputFormat(forBus: 0)
+    guard format.sampleRate > 0, format.channelCount > 0 else {
+      result(FlutterError(code: "monitor_failed", message: "The microphone gave no audio to monitor.", details: nil))
+      return
+    }
+    let eq = AVAudioUnitEQ(numberOfBands: 2)
+    eq.bands[0].filterType = .lowShelf
+    eq.bands[0].frequency = 200
+    eq.bands[0].bypass = false
+    eq.bands[1].filterType = .highShelf
+    eq.bands[1].frequency = 6000
+    eq.bands[1].bypass = false
+    let dynamics = AVAudioUnitEffect(audioComponentDescription: AudioComponentDescription(
+      componentType: kAudioUnitType_Effect,
+      componentSubType: kAudioUnitSubType_DynamicsProcessor,
+      componentManufacturer: kAudioUnitManufacturer_Apple,
+      componentFlags: 0,
+      componentFlagsMask: 0
+    ))
+    let delay = AVAudioUnitDelay()
+    let reverb = AVAudioUnitReverb()
+    reverb.loadFactoryPreset(.mediumRoom)
+    for node in [eq, dynamics, delay, reverb] as [AVAudioNode] {
+      engine.attach(node)
+    }
+    engine.connect(input, to: eq, format: format)
+    engine.connect(eq, to: dynamics, format: format)
+    engine.connect(dynamics, to: delay, format: format)
+    engine.connect(delay, to: reverb, format: format)
+    engine.connect(reverb, to: engine.mainMixerNode, format: format)
+    monitorEngine = engine
+    monitorEQ = eq
+    monitorDynamics = dynamics
+    monitorDelay = delay
+    monitorReverb = reverb
+    updateMonitor(args)
+    do {
+      engine.prepare()
+      try engine.start()
+    } catch {
+      stopMonitor()
+      result(FlutterError(code: "monitor_failed", message: "Live monitoring did not start.", details: error.localizedDescription))
+      return
+    }
+    var info = latencyInfo()
+    info["monitoring"] = true
+    info["private_output"] = outputIsPrivate(route)
+    result(info)
+  }
+
+  /// The take's effects, 0 to 1 each (the same numbers the studio's effects use).
+  private func updateMonitor(_ args: [String: Any]) {
+    func amount(_ key: String) -> Float {
+      max(0, min(1, (args[key] as? NSNumber)?.floatValue ?? 0))
+    }
+    if let eq = monitorEQ {
+      // The track's own EQ in dB (low and high shelves), at most 12 dB either way.
+      eq.bands[0].gain = max(-12, min(12, (args["eq_low"] as? NSNumber)?.floatValue ?? 0))
+      eq.bands[1].gain = max(-12, min(12, (args["eq_high"] as? NSNumber)?.floatValue ?? 0))
+    }
+    if let dynamics = monitorDynamics {
+      let compress = amount("compress")
+      dynamics.bypass = compress <= 0
+      // Threshold from -10 to -30 dB as the compressor goes from light to heavy.
+      AudioUnitSetParameter(dynamics.audioUnit, AudioUnitParameterID(kDynamicsProcessorParam_Threshold), kAudioUnitScope_Global, 0, -10 - 20 * compress, 0)
+      AudioUnitSetParameter(dynamics.audioUnit, AudioUnitParameterID(kDynamicsProcessorParam_HeadRoom), kAudioUnitScope_Global, 0, 5 + 10 * compress, 0)
+    }
+    if let delay = monitorDelay {
+      let mix = amount("delay")
+      delay.bypass = mix <= 0
+      delay.delayTime = (args["delay_seconds"] as? NSNumber)?.doubleValue ?? 0.3
+      delay.feedback = 30
+      delay.wetDryMix = mix * 50
+    }
+    if let reverb = monitorReverb {
+      let mix = amount("reverb")
+      reverb.bypass = mix <= 0
+      reverb.wetDryMix = mix * 60
+    }
+    // The monitor level is the chain's own EQ gain in dB (0 to 1 maps to -96 to 0 dB), never the iPhone's volume.
+    // (AVAudioUnitReverb has no `volume`; that broke the iOS compile check on PR #524.)
+    let level = max(0, min(1, (args["volume"] as? NSNumber)?.floatValue ?? 1.0))
+    monitorEQ?.globalGain = level > 0.0000158 ? 20 * log10(level) : -96
+  }
+
+  private func stopMonitor() {
+    guard let engine = monitorEngine else { return }
+    engine.stop()
+    monitorEngine = nil
+    monitorEQ = nil
+    monitorDynamics = nil
+    monitorDelay = nil
+    monitorReverb = nil
+  }
+
+  /// A WAV in, an AAC .m4a out (Apple's encoder), or a FlutterError.
+  private func encodeM4A(_ wav: Data, bitrate: Int) -> Any {
+    let folder = FileManager.default.temporaryDirectory
+    let source = folder.appendingPathComponent("che-export-\(UUID().uuidString).wav")
+    let output = folder.appendingPathComponent("che-export-\(UUID().uuidString).m4a")
+    defer {
+      try? FileManager.default.removeItem(at: source)
+      try? FileManager.default.removeItem(at: output)
+    }
+    do {
+      try wav.write(to: source, options: .atomic)
+      let file = try AVAudioFile(forReading: source)
+      let format = file.processingFormat
+      guard
+        file.length > 0,
+        let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(file.length))
+      else {
+        return FlutterError(code: "encode_failed", message: "The mix was empty.", details: nil)
+      }
+      try file.read(into: buffer)
+      let settings: [String: Any] = [
+        AVFormatIDKey: kAudioFormatMPEG4AAC,
+        AVSampleRateKey: format.sampleRate,
+        AVNumberOfChannelsKey: format.channelCount,
+        AVEncoderBitRateKey: bitrate,
+      ]
+      // The writer is closed (and the file finished) when it goes out of scope.
+      do {
+        let written = try AVAudioFile(
+          forWriting: output,
+          settings: settings,
+          commonFormat: format.commonFormat,
+          interleaved: format.isInterleaved
+        )
+        try written.write(from: buffer)
+      }
+      let data = try Data(contentsOf: output)
+      return [
+        "m4a": FlutterStandardTypedData(bytes: data),
+        "seconds": Double(file.length) / format.sampleRate,
+        "bitrate": bitrate,
+      ]
+    } catch {
+      return FlutterError(code: "encode_failed", message: "The M4A could not be written.", details: error.localizedDescription)
+    }
+  }
+
+  /// Any file AVAudioFile reads (MP3, M4A, AAC, AIFF, CAF, WAV) in, a 16-bit WAV out, or a FlutterError.
+  private func decodeToWav(_ bytes: Data, ext: String) -> Any {
+    let folder = FileManager.default.temporaryDirectory
+    let safe = ["mp3", "m4a", "aac", "aif", "aiff", "caf", "wav"].contains(ext) ? ext : "m4a"
+    let source = folder.appendingPathComponent("che-import-\(UUID().uuidString).\(safe)")
+    let output = folder.appendingPathComponent("che-import-\(UUID().uuidString).wav")
+    defer {
+      try? FileManager.default.removeItem(at: source)
+      try? FileManager.default.removeItem(at: output)
+    }
+    do {
+      try bytes.write(to: source, options: .atomic)
+      let file = try AVAudioFile(forReading: source)
+      let format = file.processingFormat
+      guard
+        file.length > 0,
+        let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(file.length))
+      else {
+        return FlutterError(code: "decode_failed", message: "That file has no audio.", details: nil)
+      }
+      try file.read(into: buffer)
+      let settings: [String: Any] = [
+        AVFormatIDKey: kAudioFormatLinearPCM,
+        AVSampleRateKey: format.sampleRate,
+        AVNumberOfChannelsKey: format.channelCount,
+        AVLinearPCMBitDepthKey: 16,
+        AVLinearPCMIsFloatKey: false,
+        AVLinearPCMIsBigEndianKey: false,
+        AVLinearPCMIsNonInterleaved: false,
+      ]
+      do {
+        let written = try AVAudioFile(
+          forWriting: output,
+          settings: settings,
+          commonFormat: format.commonFormat,
+          interleaved: format.isInterleaved
+        )
+        try written.write(from: buffer)
+      }
+      let data = try Data(contentsOf: output)
+      return [
+        "wav": FlutterStandardTypedData(bytes: data),
+        "seconds": Double(file.length) / format.sampleRate,
+        "sample_rate": format.sampleRate,
+        "channels": Int(format.channelCount),
+      ]
+    } catch {
+      return FlutterError(code: "decode_failed", message: "CHE could not read that audio file.", details: error.localizedDescription)
     }
   }
 

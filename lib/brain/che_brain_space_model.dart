@@ -13,7 +13,9 @@ import 'dart:ui' show Offset, Size;
 
 import 'package:vector_math/vector_math.dart' as vm;
 
-import '../home/che_memory_brain.dart' show CheMemoryDot, cheRelatedMemoryEdges;
+import '../home/che_memory_brain.dart' show CheMemoryDot, cheRelatedMemoryEdgesTyped;
+import 'che_brain_regions.dart';
+import 'che_brain_sections.dart';
 
 /// Fixed category order: each gets its own lobe (direction) in the brain.
 const List<String> cheBrainCategories = [
@@ -40,6 +42,9 @@ const List<(double, double, double, double, double, double)> _brainVolumes = [
   (-5.4, -3.9, 0, 2.9, 1.9, 3.4), // cerebellum
   (-2.2, -6.0, 0, 1.1, 2.6, 1.1), // brainstem
 ];
+
+/// The brain's volumes (centre x, y, z and radii x, y, z), for the renderer's luminous body.
+const List<(double, double, double, double, double, double)> cheBrainVolumes = _brainVolumes;
 
 /// < 1 inside the brain, 1 on its surface.
 double cheBrainShape(vm.Vector3 p) {
@@ -76,9 +81,17 @@ String cheBrainCategoryKey(String category) {
 
 /// One memory placed in the brain.
 class CheBrainNode {
-  CheBrainNode({required this.dot, required this.home, required this.cluster, required this.size});
+  CheBrainNode({required this.dot, required this.home, required this.cluster, required this.size})
+      : region = cheBrainRegionOf(dot),
+        verified = cheBrainIsVerifiedRecord(dot);
 
   final CheMemoryDot dot;
+
+  /// The owner's colour region (memories blue, trading orange, errors red ...), worked out once per layout.
+  final CheBrainRegion region;
+
+  /// Verified with proof (drawn with a white core; links between two verified records are strong).
+  final bool verified;
 
   /// Layout position (world units).
   final vm.Vector3 home;
@@ -128,13 +141,16 @@ double _rand(String id, int salt) => (_hash('$id#$salt') % 100000) / 100000.0;
 
 /// The laid-out brain: real memories, their lobes and relationships.
 class CheBrainLayout {
-  CheBrainLayout._(this.nodes, this.clusters, this.edges, this.byId);
+  CheBrainLayout._(this.nodes, this.clusters, this.edges, this.byId, this.edgeStrength);
 
   final List<CheBrainNode> nodes;
   final Map<String, CheBrainCluster> clusters;
 
   /// Index pairs into [nodes].
   final List<(int, int)> edges;
+
+  /// Per edge (same index): how strong the connection is, from recorded relationships and verification only.
+  final List<CheBrainLinkStrength> edgeStrength;
   final Map<String, int> byId;
 
   static const double radius = 10;
@@ -179,10 +195,16 @@ class CheBrainLayout {
       cluster.members.add(node);
     }
     final edges = <(int, int)>[];
-    for (final e in cheRelatedMemoryEdges(dots, brainLinks: brainLinks)) {
+    final strength = <CheBrainLinkStrength>[];
+    for (final e in cheRelatedMemoryEdgesTyped(dots, brainLinks: brainLinks)) {
       final a = byId[e.$1], b = byId[e.$2];
       if (a == null || b == null) continue;
       edges.add((a, b));
+      strength.add(!e.$3
+          ? CheBrainLinkStrength.weak
+          : nodes[a].verified && nodes[b].verified
+          ? CheBrainLinkStrength.verified
+          : CheBrainLinkStrength.developing);
       nodes[a].degree++;
       nodes[b].degree++;
     }
@@ -190,7 +212,7 @@ class CheBrainLayout {
       c.expanded = c.members.length <= collapseAbove;
     }
     clusters.removeWhere((_, c) => c.members.isEmpty);
-    return CheBrainLayout._(nodes, clusters, edges, byId);
+    return CheBrainLayout._(nodes, clusters, edges, byId, strength);
   }
 
   CheBrainNode? node(String id) {
@@ -373,6 +395,11 @@ enum CheBrainAction {
   open, inside, overview, backOut, filter, clearFilter, find, openSelected, expand, collapse, agentStatus,
   // Navigation (same controller, by touch or by voice).
   zoomIn, zoomOut, fit, back, centerChe, centerSelected, openWorker, lens,
+  // The searchable list (owner, 2026-10-23) and back to the neural view.
+  list, space,
+  // The eleven regions (lane brain-visual, 2026-10-25): fly to one, read them as a numbered list, open one's records,
+  // and turn the brain by voice as a drag does.
+  region, regions, openRegion, rotate,
 }
 
 /// Which brain is in view and what is shown of it: the owner's place in the
@@ -515,7 +542,7 @@ class CheBrainLens {
 }
 
 class CheBrainCommand {
-  const CheBrainCommand(this.action, {this.category, this.query, this.agent, this.worker, this.lens});
+  const CheBrainCommand(this.action, {this.category, this.query, this.agent, this.worker, this.lens, this.section, this.region, this.direction});
   final CheBrainAction action;
   final String? category;
   final String? query;
@@ -528,6 +555,27 @@ class CheBrainCommand {
 
   /// A facet to show ("show verified memories only").
   final CheBrainLens? lens;
+
+  /// A list section ("show the brain's actions").
+  final CheBrainSection? section;
+
+  /// One of the eleven regions ("go to the memory region", "open region 4").
+  final CheBrainRegion? region;
+
+  /// left, right, up or down ("rotate the brain left").
+  final String? direction;
+
+  static const Map<String, CheBrainSection> _sectionWords = {
+    'conversations': CheBrainSection.conversations,
+    'conversation': CheBrainSection.conversations,
+    'research': CheBrainSection.research,
+    'knowledge': CheBrainSection.knowledge,
+    'memory': CheBrainSection.memory,
+    'memories': CheBrainSection.memory,
+    'actions': CheBrainSection.actions,
+    'action': CheBrainSection.actions,
+    'completed actions': CheBrainSection.actions,
+  };
 
   /// CHE plus the Office roster, matched against live agent-task sources.
   static const List<String> crew = ['che', 'nova', 'atlas', 'mira', 'knox', 'sage', 'lyra', 'iris'];
@@ -573,7 +621,33 @@ class CheBrainCommand {
     if (RegExp(r'^(?:show|see) (?:me )?(?:the |my |your )?(?:whole|entire|full) brain$|^(?:brain )?overview$|^reset (?:the )?(?:brain|view)$').hasMatch(t)) {
       return const CheBrainCommand(CheBrainAction.overview);
     }
+    // The list view: "show the brain list", "show the brain's actions", "show my actions in the brain".
+    if (RegExp(r'^(?:show|open|switch to) (?:me )?(?:the |my |your )?brain (?:as a )?list(?: view)?$|^(?:show|open|switch to) (?:the |my |your )?list view$').hasMatch(t)) {
+      return const CheBrainCommand(CheBrainAction.list);
+    }
+    final sectionAsked = RegExp(r"^(?:show|open|list) (?:me )?(?:my |your |the )?brain(?:['’]s)? (completed actions|conversations|research|knowledge|memories|memory|actions)$|^(?:show|open|list) (?:me )?(?:my |your |the )?(completed actions|conversations|research|knowledge|memories|memory|actions) (?:in|from) (?:the |my |your )?brain$").firstMatch(t);
+    if (sectionAsked != null) {
+      return CheBrainCommand(CheBrainAction.list, section: _sectionWords[sectionAsked.group(1) ?? sectionAsked.group(2)!]);
+    }
+    if (RegExp(r'^(?:show|open|switch to|back to) (?:the |my |your )?(?:neural|3d|brain|orb) view$').hasMatch(t)) return const CheBrainCommand(CheBrainAction.space);
     if (RegExp(r'^(?:back out|go back out|pull back)$').hasMatch(t)) return const CheBrainCommand(CheBrainAction.backOut);
+    // The regions: "list the brain regions", "go to the memory region", "fly to region 3", "open the trading region",
+    // "rotate the brain left". A name that is not one of the eleven is not a region command.
+    if (RegExp(r'^(?:list|read|name|say) (?:me )?(?:the |all |my |your )?(?:brain |eleven )?regions$|^(?:what|which) (?:brain )?regions (?:are there|do you have|does (?:the|my|your) brain have)$|^what are (?:the |my |your )?(?:brain )?regions$').hasMatch(t)) {
+      return const CheBrainCommand(CheBrainAction.regions);
+    }
+    final openRegion = RegExp(r'^(?:open|list|read)(?: me)? (?:the )?(?:records|memories) (?:in|of|from) (?:the |my )?(.+?)(?: region| lobe)?$|^(?:open|list) (?:the |my )?(.+? region|region (?:number )?\w+)(?: records)?$').firstMatch(t);
+    if (openRegion != null) {
+      final r = cheBrainRegionFromWords(openRegion.group(1) ?? openRegion.group(2)!);
+      if (r != null) return CheBrainCommand(CheBrainAction.openRegion, region: r);
+    }
+    final flyRegion = RegExp(r'^(?:go|fly|take me|move|zoom|jump|travel|head|navigate)(?: in| me)? (?:to|into) (?:the |my )?(.+? (?:region|lobe)|region (?:number )?\w+)$|^(?:show me|show|focus on|center on|centre on) (?:the |my )?(.+? region|region (?:number )?\w+)$').firstMatch(t);
+    if (flyRegion != null) {
+      final r = cheBrainRegionFromWords(flyRegion.group(1) ?? flyRegion.group(2)!);
+      if (r != null) return CheBrainCommand(CheBrainAction.region, region: r);
+    }
+    final turn = RegExp(r'^(?:rotate|turn|spin)(?: the brain| my brain| your brain| it)?(?: to the| to)? (left|right|up|down)$|^(?:rotate|turn|spin) (?:the |my |your )?brain$').firstMatch(t);
+    if (turn != null) return CheBrainCommand(CheBrainAction.rotate, direction: turn.group(1) ?? 'right');
     if (RegExp(r'^(?:zoom out|zoom out a bit|farther|further out|move (?:back|away))$').hasMatch(t)) return const CheBrainCommand(CheBrainAction.zoomOut);
     if (RegExp(r'^(?:zoom in|zoom in a bit|closer|move closer|come closer)$').hasMatch(t)) return const CheBrainCommand(CheBrainAction.zoomIn);
     if (RegExp(r'^(?:go back|back|previous view|take me back|return to (?:the )?previous view)$').hasMatch(t)) return const CheBrainCommand(CheBrainAction.back);

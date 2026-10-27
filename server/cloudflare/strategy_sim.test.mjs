@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, unlinkSync, writeFileSync } from 'node:fs';
-import { SIM_STRATEGIES, MINUTE_FEEDS, NOT_SIMULATED, minuteFeedFor, strategySimTick, nextStrategySimTickAt, readSimState, storeTrades, readStoredTrades, summarize, profitLabel, leaderboard, setStrategySimPaused, setStrategySimCeiling, chargeSpend, assertSpend, closedBars, sessionOf, strategySimView, strategySimIntent, speakStrategySim, TICK_MS, MIN_SAMPLE, TRADE_CAP, OOS_SHARE, HEARTBEAT_MS, STATE_KEY } from './strategy_sim.js';
+import { SIM_STRATEGIES, MINUTE_FEEDS, NOT_SIMULATED, minuteFeedFor, strategySimTick as tickWithGate, MAX_COST_R, roundTripCost, stopStrategySim, resetStrategySim, ARCHIVE_INDEX, nextStrategySimTickAt, readSimState, storeTrades, readStoredTrades, summarize, profitLabel, leaderboard, setStrategySimPaused, setStrategySimCeiling, chargeSpend, assertSpend, closedBars, sessionOf, strategySimView, strategySimIntent, speakStrategySim, TICK_MS, MIN_SAMPLE, TRADE_CAP, OOS_SHARE, HEARTBEAT_MS, STATE_KEY } from './strategy_sim.js';
 import { loadCandles, prepareSession, OPENING_MINUTES, SKILL_IDS, strategyById, readBook } from './trading_lab.js';
 import { ENVIRONMENTS } from './trading_environments.js';
 import { wilsonInterval } from './trading_evidence.js';
@@ -20,6 +20,10 @@ try { mod = await import(generated.href + '?t=' + Date.now()); } finally { try {
 const { default: worker, CheState } = mod;
 
 // ─── Fixtures: synthetic minute bars only, no network ────────────────────
+
+// The fill, exit and storage tests below use hand-built bars at a price of 100 whose stops are far smaller than
+// Coinbase's real costs, so they run without the cost gate; the gate has its own tests at the end of this file.
+const strategySimTick = (storage, opts = {}) => tickWithGate(storage, { maxCostR: Infinity, ...opts });
 
 const T_START = Date.UTC(2026, 9, 19, 0, 0);
 const iso = (ms) => new Date(ms).toISOString();
@@ -65,7 +69,7 @@ function memStorage(saved = new Map(), alarms = []) {
 // Every symbol has an explicit loader, so no test reads the shared 60-second cache of trading_lab.js.
 // Only BTC has bars in the hand-built fixtures; the rest report no feed.
 const noFeed = async () => ({ error: 'no feed in this test' });
-const onlyBtc = (candles) => ({ BTCUSDT: async () => ({ candles, status: 'LIVE', source: 'fixture' }), ETHUSDT: noFeed, MNQ: noFeed, NQ: noFeed });
+const onlyBtc = (candles) => ({ 'BTC-USD': async () => ({ candles, status: 'LIVE', source: 'fixture' }), 'ETH-USD': noFeed, MNQ: noFeed, NQ: noFeed });
 const noNetwork = async () => { throw new Error('the tests make no network call'); };
 const nowAfter = (bars) => Date.parse(bars[bars.length - 1].t) + TICK_MS;
 
@@ -97,11 +101,11 @@ test('the hourly learning set is unchanged: the intraday rules stay out of SKILL
   assert.ok(SKILL_IDS.every((id) => !/^(vwap-reclaim|opening-range)\|/.test(id)));
 });
 
-test('minute bars exist only for Binance crypto and the delayed Yahoo futures; ES and MES have none', () => {
-  assert.deepEqual(Object.keys(MINUTE_FEEDS).sort(), ['BTCUSDT', 'ETHUSDT', 'MNQ']);
+test('minute bars exist only for Coinbase crypto and the delayed Yahoo futures; ES and MES have none', () => {
+  assert.deepEqual(Object.keys(MINUTE_FEEDS).sort(), ['BTC-USD', 'ETH-USD', 'MNQ']);
   assert.equal(minuteFeedFor('ES'), null);
   assert.equal(minuteFeedFor('MES'), null);
-  assert.equal(minuteFeedFor('BTCUSDT').kind, 'binance');
+  assert.equal(minuteFeedFor('BTC-USD').kind, 'coinbase');
   assert.equal(minuteFeedFor('MNQ').kind, 'yahoo');
   // NQ is the same front month as MNQ: one feed per underlying, so it is not a second feed.
   assert.equal(minuteFeedFor('NQ'), null);
@@ -167,13 +171,13 @@ test('a channel breakout fills at the next open, exits at the target, and record
   // Independent arithmetic: 0.02% slippage per fill, 0.10% commission per side, risk from the open.
   const entry = 101 + 101 * 0.0002;
   const exitPx = 103.4 - 103.4 * 0.0002;
-  const fees = (entry + exitPx) * 0.001;
+  const fees = (entry + exitPx) * 0.006;
   const risk = 101 - 99.8;
   assert.ok(Math.abs(t.entry - entry) < 1e-9);
   assert.ok(Math.abs(t.exit - exitPx) < 1e-9);
   assert.ok(Math.abs(t.r_gross - 2) < 1e-9, 'gross R is the target distance over the risk');
   assert.ok(Math.abs(t.r - (exitPx - entry - fees) / risk) < 1e-9, 'net R after costs');
-  assert.ok(t.r > 1.79 && t.r < 1.80, `net R ${t.r}`);
+  assert.ok(t.r > 0.94 && t.r < 0.95, `net R ${t.r}: a 2R target nets under 1R after Coinbase taker fees`);
   assert.ok(Math.abs(t.cost_r - (t.r_gross - t.r)) < 1e-12);
 });
 
@@ -187,7 +191,7 @@ test('a stop-out is recorded at the stop plus costs, so its net R is below -1', 
   assert.ok(Math.abs(t.r_gross - -1) < 1e-9, 'gross R is exactly -1 at the stop');
   const exitPx = 99.8 - 99.8 * 0.0002;
   const entry = 101 + 101 * 0.0002;
-  const r = (exitPx - entry - (entry + exitPx) * 0.001) / (101 - 99.8);
+  const r = (exitPx - entry - (entry + exitPx) * 0.006) / (101 - 99.8);
   assert.ok(Math.abs(t.r - r) < 1e-9);
   assert.ok(t.r < -1, 'costs make a stop-out worse than -1R');
 });
@@ -267,7 +271,7 @@ test('leaderboard numbers equal an independent recomputation from the stored tra
   const storage = memStorage(saved);
   await strategySimTick(storage, {
     now: nowAfter(bars), fetcher: noNetwork,
-    loaders: { BTCUSDT: async () => ({ candles: bars, status: 'LIVE' }), ETHUSDT: async () => ({ candles: eth, status: 'LIVE' }) },
+    loaders: { 'BTC-USD': async () => ({ candles: bars, status: 'LIVE' }), 'ETH-USD': async () => ({ candles: eth, status: 'LIVE' }) },
   });
   const state = await readSimState(storage);
   const trades = await readStoredTrades(storage, state.trades);
@@ -311,7 +315,7 @@ test('leaderboard numbers equal an independent recomputation from the stored tra
 function trades(n, winRate, winR) {
   return Array.from({ length: n }, (_, i) => {
     const won = Math.floor((i + 1) * winRate) > Math.floor(i * winRate);
-    return { id: `t${i}`, symbol: 'BTCUSDT', strategy: 'x', r: won ? winR : -1, entry_t: iso(T_START + i * 60000), exit_t: iso(T_START + i * 60000 + 30000) };
+    return { id: `t${i}`, symbol: 'BTC-USD', strategy: 'x', r: won ? winR : -1, entry_t: iso(T_START + i * 60000), exit_t: iso(T_START + i * 60000 + 30000) };
   });
 }
 
@@ -329,7 +333,7 @@ test('a small sample is "not proven yet", even with a strong edge', () => {
 
 test('a Wilson lower bound below break-even is "not proven yet", with the reason', () => {
   // 20 wins of +1R and 16 losses of -1R: expectancy is positive, but break-even is 50%.
-  const fixture = [...Array.from({ length: 20 }, () => 1), ...Array.from({ length: 16 }, () => -1)].map((r, i) => ({ id: `w${i}`, symbol: 'BTCUSDT', strategy: 'x', r, entry_t: iso(T_START + i * 60000), exit_t: iso(T_START + i * 60000 + 30000) }));
+  const fixture = [...Array.from({ length: 20 }, () => 1), ...Array.from({ length: 16 }, () => -1)].map((r, i) => ({ id: `w${i}`, symbol: 'BTC-USD', strategy: 'x', r, entry_t: iso(T_START + i * 60000), exit_t: iso(T_START + i * 60000 + 30000) }));
   const oos = summarize(fixture);
   assert.ok(oos.expectancy_r > 0);
   assert.ok(oos.wilson_low < oos.break_even_win_rate);
@@ -351,9 +355,9 @@ test('break-even win rate is the average loss over the average win plus loss, af
 });
 
 test('the out-of-sample flag starts at the frozen cut: 70% of the first window is in sample', () => {
-  const symbols = { BTCUSDT: { first_t: iso(T_START), last_t: iso(T_START + 1000 * 60000), oos_from: iso(T_START + 700 * 60000), bars: 1000 } };
+  const symbols = { 'BTC-USD': { first_t: iso(T_START), last_t: iso(T_START + 1000 * 60000), oos_from: iso(T_START + 700 * 60000), bars: 1000 } };
   const cut = T_START + (1 - OOS_SHARE) * 1000 * 60000; // minute 700
-  const mk = (id, minute) => ({ id, symbol: 'BTCUSDT', strategy: 'channel-20|any|2', r: 1, entry_t: iso(T_START + minute * 60000), exit_t: iso(T_START + (minute + 1) * 60000) });
+  const mk = (id, minute) => ({ id, symbol: 'BTC-USD', strategy: 'channel-20|any|2', r: 1, entry_t: iso(T_START + minute * 60000), exit_t: iso(T_START + (minute + 1) * 60000) });
   const list = [mk('a', 600), mk('b', 699), mk('c', 700), mk('d', 800), mk('e', 900)];
   assert.equal(cut, T_START + 700 * 60000);
   const row = leaderboard(list, symbols).find((r) => r.id === 'channel-20|any|2');
@@ -387,7 +391,7 @@ test('kill switch: a paused tick does nothing and records a marker; resume runs 
   const saved = new Map();
   const storage = memStorage(saved);
   let reads = 0;
-  const loaders = { BTCUSDT: async () => { reads += 1; return { candles: bars, status: 'LIVE' }; } };
+  const loaders = { 'BTC-USD': async () => { reads += 1; return { candles: bars, status: 'LIVE' }; } };
   await setStrategySimPaused(storage, true, nowAfter(bars));
   const paused = await strategySimTick(storage, { now: nowAfter(bars), fetcher: noNetwork, loaders });
   assert.equal(paused.paused, true);
@@ -409,9 +413,9 @@ test('daily spend ceiling is read and enforced at every tick, and it resets each
   const now = nowAfter(bars);
   const saved = new Map();
   const storage = memStorage(saved);
-  const loaders = { BTCUSDT: async () => ({ candles: bars, status: 'LIVE' }) };
+  const loaders = { 'BTC-USD': async () => ({ candles: bars, status: 'LIVE' }) };
   let reads = 0;
-  const counting = { BTCUSDT: async (s) => { reads += 1; return loaders.BTCUSDT(s); } };
+  const counting = { 'BTC-USD': async (s) => { reads += 1; return loaders.BTC-USD(s); } };
   saved.set('strategy_sim_state', { spend: { ceiling_usd: 0.25, day: new Date(now).toISOString().slice(0, 10), spent_usd: 0.5 } });
   const blocked = await strategySimTick(storage, { now, fetcher: noNetwork, loaders: counting });
   assert.match(blocked.blocked, /daily spend ceiling/);
@@ -438,7 +442,7 @@ test('the owner ceiling input is validated', async () => {
 
 // ─── Paper only: zero broker and zero model calls ────────────────────────
 
-test('a tick makes zero broker and zero model calls and only reads Binance and Yahoo', async () => {
+test('a tick makes zero broker and zero model calls and only reads Coinbase, Kraken and Yahoo', async () => {
   const calls = [];
   const fetcher = async (url) => {
     calls.push(String(url));
@@ -448,8 +452,8 @@ test('a tick makes zero broker and zero model calls and only reads Binance and Y
   await strategySimTick(memStorage(saved), { now: Date.now(), fetcher });
   const hosts = [...new Set(calls.map((u) => new URL(u).hostname))];
   assert.ok(calls.length >= 4, `the tick did read its feeds (${calls.length} requests)`);
-  assert.ok(hosts.includes('api.binance.com') && hosts.includes('query1.finance.yahoo.com'), 'Binance and Yahoo were the feeds');
-  for (const host of hosts) assert.ok(['api.binance.com', 'query1.finance.yahoo.com', 'query2.finance.yahoo.com'].includes(host), `unexpected host ${host}`);
+  assert.ok(hosts.includes('api.exchange.coinbase.com') && hosts.includes('api.kraken.com') && hosts.includes('query1.finance.yahoo.com'), 'Coinbase (then Kraken as fallback) and Yahoo were the feeds');
+  for (const host of hosts) assert.ok(['api.exchange.coinbase.com', 'api.kraken.com', 'query1.finance.yahoo.com', 'query2.finance.yahoo.com'].includes(host), `unexpected host ${host}`);
   assert.ok(!calls.some((u) => /anthropic|openai|workers\.ai|alpaca|tradovate|ninjatrader|rithmic|stripe|twilio/i.test(u)));
   assert.equal(ENVIRONMENTS.paper.submitsOrders, false);
   assert.equal(ENVIRONMENTS.paper.moneyAtRisk, false);
@@ -458,7 +462,7 @@ test('a tick makes zero broker and zero model calls and only reads Binance and Y
 test('the simulation module imports no broker or model code and holds no URL of its own', () => {
   const source = readFileSync(new URL('./strategy_sim.js', import.meta.url), 'utf8');
   const imports = [...source.matchAll(/^import .* from '([^']+)';/gm)].map((m) => m[1]);
-  assert.deepEqual(imports.sort(), ['./market_feed.js', './trading_environments.js', './trading_evidence.js', './trading_lab.js']);
+  assert.deepEqual(imports.sort(), ['./market_feed.js', './market_universe.js', './trading_environments.js', './trading_evidence.js', './trading_lab.js']);
   assert.doesNotMatch(source, /https?:\/\//, 'URLs live in the existing market paths only');
 });
 
@@ -480,6 +484,10 @@ const worldBars = walk(1000, { start: T0 - 1000 * TICK_MS, seed: 4 });
 function worldFetch(url) {
   const u = String(url);
   const bodyJson = (rows) => new Response(JSON.stringify(rows), { status: 200, headers: { 'Content-Type': 'application/json' } });
+  if (u.includes('api.exchange.coinbase.com') && u.includes('granularity=60')) {
+    // Coinbase rows: [time in seconds, low, high, open, close, volume], newest first.
+    return bodyJson([...worldBars].reverse().map((b) => [Date.parse(b.t) / 1000, b.l, b.h, b.o, b.c, b.v]));
+  }
   if (u.includes('api.binance.com') && u.includes('interval=1m')) {
     return bodyJson(worldBars.map((b) => [Date.parse(b.t), b.o, b.h, b.l, b.c, b.v]));
   }
@@ -519,11 +527,11 @@ test('alarm: the minute tick and the hourly learning tick both run, and both sta
     assert.ok(Object.keys((await readBook(storage)).lab).length > 0, 'the hourly learning step ran');
     await state.scheduleWork();
     assert.equal(alarms.at(-1), T0 + TICK_MS, 'the alarm waits for the next minute');
-    // Both real feed paths produced minute bars offline: Binance live, Yahoo futures delayed.
+    // Both real feed paths produced minute bars offline: Coinbase live, Yahoo futures delayed.
     const sim = await readSimState(storage);
-    assert.equal(sim.symbols.BTCUSDT.feed.status, 'LIVE');
+    assert.equal(sim.symbols['BTC-USD'].feed.status, 'LIVE');
     assert.equal(sim.symbols.MNQ.feed.status, 'DELAYED');
-    assert.ok(sim.symbols.BTCUSDT.bars > 500 && sim.symbols.MNQ.bars > 500, `minute bars processed: BTC ${sim.symbols.BTCUSDT.bars}, MNQ ${sim.symbols.MNQ.bars}`);
+    assert.ok(sim.symbols['BTC-USD'].bars > 500 && sim.symbols.MNQ.bars > 500, `minute bars processed: BTC ${sim.symbols['BTC-USD'].bars}, MNQ ${sim.symbols.MNQ.bars}`);
 
     // One minute later: the minute tick runs again; the hourly tick is not due yet.
     await state.tradingTick({ now: T0 + TICK_MS });
@@ -657,11 +665,11 @@ test('a pause that lands during a feed load stops the pass: no trade opens after
   const saved = new Map();
   const storage = memStorage(saved);
   const loaders = {
-    BTCUSDT: async () => {
+    'BTC-USD': async () => {
       await setStrategySimPaused(storage, true, nowAfter(bars));
       return { candles: bars, status: 'LIVE' };
     },
-    ETHUSDT: noFeed,
+    'ETH-USD': noFeed,
     MNQ: noFeed,
   };
   const run = await strategySimTick(storage, { now: nowAfter(bars), fetcher: noNetwork, loaders });
@@ -671,7 +679,7 @@ test('a pause that lands during a feed load stops the pass: no trade opens after
   assert.deepEqual(state.open, {}, 'no open position');
   assert.deepEqual(state.pending, {}, 'no pending order');
   assert.equal(state.trades.stored, 0);
-  assert.equal(state.symbols.BTCUSDT.bars, 0, 'the paused feed was not used');
+  assert.equal(state.symbols['BTC-USD'].bars, 0, 'the paused feed was not used');
   assert.match(state.last_paused_marker.note, /during a pass/);
 });
 
@@ -681,8 +689,8 @@ test('a pause between two feeds keeps what finished before it and reads nothing 
   const storage = memStorage(saved);
   let mnqReads = 0;
   const loaders = {
-    BTCUSDT: async () => ({ candles: bars, status: 'LIVE' }),
-    ETHUSDT: async () => {
+    'BTC-USD': async () => ({ candles: bars, status: 'LIVE' }),
+    'ETH-USD': async () => {
       await setStrategySimPaused(storage, true, nowAfter(bars));
       return { candles: walk(200, { seed: 5 }), status: 'LIVE' };
     },
@@ -693,19 +701,19 @@ test('a pause between two feeds keeps what finished before it and reads nothing 
   assert.equal(mnqReads, 0, 'no feed is read after the pause');
   const state = await readSimState(storage);
   assert.ok(state.trades.stored >= 1, 'the BTC trade that closed before the pause is kept');
-  assert.equal(state.symbols.ETHUSDT.bars, 0);
+  assert.equal(state.symbols['ETH-USD'].bars, 0);
 });
 
 test('MNQ and NQ are one front month: NQ is never read, and identical bars are never counted twice', async () => {
   const bars = walk(1200, { seed: 17 });
   const feedMNQ = async () => ({ candles: bars, status: 'DELAYED', source: 'fixture' });
   const solo = new Map();
-  await strategySimTick(memStorage(solo), { now: nowAfter(bars), fetcher: noNetwork, loaders: { BTCUSDT: noFeed, ETHUSDT: noFeed, MNQ: feedMNQ } });
+  await strategySimTick(memStorage(solo), { now: nowAfter(bars), fetcher: noNetwork, loaders: { 'BTC-USD': noFeed, 'ETH-USD': noFeed, MNQ: feedMNQ } });
   const soloStore = memStorage(solo);
   const soloTrades = await readStoredTrades(soloStore, (await readSimState(soloStore)).trades);
   let nqReads = 0;
   const both = new Map();
-  await strategySimTick(memStorage(both), { now: nowAfter(bars), fetcher: noNetwork, loaders: { BTCUSDT: noFeed, ETHUSDT: noFeed, MNQ: feedMNQ, NQ: async () => { nqReads += 1; return feedMNQ(); } } });
+  await strategySimTick(memStorage(both), { now: nowAfter(bars), fetcher: noNetwork, loaders: { 'BTC-USD': noFeed, 'ETH-USD': noFeed, MNQ: feedMNQ, NQ: async () => { nqReads += 1; return feedMNQ(); } } });
   const bothStore = memStorage(both);
   const bothTrades = await readStoredTrades(bothStore, (await readSimState(bothStore)).trades);
   assert.ok(soloTrades.length > 0, 'the fixture trades');
@@ -757,7 +765,7 @@ test('spend is charged to the day ledger, and a tick is blocked once the day pas
   assert.equal(big.spent_usd, 0.6);
   assert.equal(big.within_ceiling, false);
   let reads = 0;
-  const blocked = await strategySimTick(storage, { now, fetcher: noNetwork, loaders: { BTCUSDT: async () => { reads += 1; return { candles: bars, status: 'LIVE' }; }, ETHUSDT: noFeed, MNQ: noFeed } });
+  const blocked = await strategySimTick(storage, { now, fetcher: noNetwork, loaders: { 'BTC-USD': async () => { reads += 1; return { candles: bars, status: 'LIVE' }; }, 'ETH-USD': noFeed, MNQ: noFeed } });
   assert.match(blocked.blocked, /daily spend ceiling/);
   assert.equal(reads, 0, 'no bars read over the ceiling');
   assert.equal((await chargeSpend(storage, -1, now)).ok, false);
@@ -780,7 +788,7 @@ test('typed and spoken requests: pause and resume need the command or an imperat
   assert.equal(strategySimIntent('backtest bitcoin'), null);
   // Plain speech, with no slash command.
   for (const [words, kind] of [
-    ['stop the simulation', 'pause'], ['Stop the simulation.', 'pause'], ['CHE, pause the simulation', 'pause'],
+    ['stop the simulation', 'stop'], ['Stop the simulation.', 'stop'], ['CHE, pause the simulation', 'pause'],
     ['resume the simulation', 'resume'], ['start the strategy simulation', 'resume'], ['continue the simulation', 'resume'],
     ['how is the simulation doing?', 'status'], ["how's the simulation", 'status'], ['simulation status', 'status'],
     ['what is my simulation doing', 'status'], ['status of the simulation', 'status'],
@@ -793,6 +801,97 @@ test('typed and spoken requests: pause and resume need the command or an imperat
   const text = speakStrategySim(await strategySimView(memStorage()));
   assert.match(text, /The strategy simulation is running/);
   assert.match(text, /profitable: 0 of 10/);
+});
+
+// ─── Trading audit (owner, 2026-10-24): cost gate, stop and reset ─────────
+
+test('cost gate: a 1-minute BTC stop smaller than Coinbase\'s round-trip costs is not taken, and is counted', async () => {
+  const feed = MINUTE_FEEDS['BTC-USD'];
+  // 0.6% a side plus 0.02% slippage a fill: 1.24% of the price for a round trip.
+  assert.ok(Math.abs(roundTripCost(feed, 100) - 1.24) < 1e-9);
+  const bars = flatThen([{ ...BREAK }, FILL, TARGET_BAR, TAIL, TAIL]);
+  const saved = new Map();
+  await tickWithGate(memStorage(saved), { now: nowAfter(bars), fetcher: noNetwork, loaders: onlyBtc(bars) });
+  const state = await readSimState(memStorage(saved));
+  const trades = await readStoredTrades(memStorage(saved), state.trades);
+  assert.equal(tradesOf(trades, CHANNEL).length, 0, 'a 1.2-point stop against 1.24 points of costs is not traded');
+  assert.ok(state.counts.too_costly >= 1, 'the skipped signal is counted, not hidden');
+  const view = await strategySimView(memStorage(saved));
+  assert.equal(view.cost_gate.max_cost_r, MAX_COST_R);
+  assert.ok(view.notes.some((n) => /Cost gate/.test(n)));
+  // MNQ: $1 a side and one tick of slippage on a $2 point is 1.5 points; a 6-point stop passes, a 5-point stop does not.
+  assert.equal(roundTripCost(MINUTE_FEEDS.MNQ, 20000), 1.5);
+  assert.ok(roundTripCost(MINUTE_FEEDS.MNQ, 20000) <= MAX_COST_R * 6);
+  assert.ok(roundTripCost(MINUTE_FEEDS.MNQ, 20000) > MAX_COST_R * 5);
+});
+
+test('stop pauses, cancels waiting signals and keeps open positions as they are', async () => {
+  const storage = memStorage();
+  const state = await readSimState(storage);
+  state.pending['x|BTC-USD'] = { strategy: 'x', symbol: 'BTC-USD', signal_t: minuteAt(1), stop: 99, target: 102 };
+  state.open['y|MNQ'] = { strategy: 'y', symbol: 'MNQ', entry_t: minuteAt(2), entry: 20000, stop: 19990, target: 20020 };
+  const out = await stopStrategySim(storage, T_START + 10 * TICK_MS);
+  assert.equal(out.cancelled_signals, 1);
+  assert.equal(out.open_positions.length, 1);
+  const after = await readSimState(storage);
+  assert.equal(after.paused, true);
+  assert.deepEqual(after.pending, {});
+  assert.ok(after.open['y|MNQ'], 'the open position is never closed at an invented price');
+  assert.deepEqual(strategySimIntent('Stop the strategy simulation'), { kind: 'stop' });
+  assert.deepEqual(strategySimIntent('Strategy simulation stop'), { kind: 'stop' });
+});
+
+test('reset asks first, then archives every trade before starting over; nothing is deleted without a verified copy', async () => {
+  const bars = flatThen([{ ...BREAK }, FILL, TARGET_BAR, TAIL, TAIL]);
+  const saved = new Map();
+  const storage = memStorage(saved);
+  await strategySimTick(storage, { now: nowAfter(bars), fetcher: noNetwork, loaders: onlyBtc(bars) });
+  const before = await readStoredTrades(storage, (await readSimState(storage)).trades);
+  assert.ok(before.length >= 1);
+  const asked = await resetStrategySim(storage, { now: nowAfter(bars) });
+  assert.equal(asked.needs_confirmation, true);
+  assert.equal(asked.would_archive.trades, before.length);
+  assert.equal((await readStoredTrades(storage, (await readSimState(storage)).trades)).length, before.length, 'nothing changed without confirmation');
+  const done = await resetStrategySim(storage, { confirm: true, now: nowAfter(bars) });
+  assert.equal(done.ok, true);
+  const index = saved.get(ARCHIVE_INDEX);
+  assert.equal(index.length, 1);
+  assert.equal(index[0].trades, before.length);
+  const archived = [...saved.entries()].filter(([k]) => k.startsWith(`strategy_sim_archive:${done.archive}:trades:`)).flatMap(([, v]) => v);
+  assert.deepEqual(archived, before, 'the archive holds exactly the trades that were live');
+  const fresh = await readSimState(storage);
+  assert.equal(fresh.paused, true, 'a reset simulation waits for resume');
+  assert.equal(fresh.trades.stored, 0);
+  assert.equal((await readStoredTrades(storage, fresh.trades)).length, 0);
+  assert.equal((await strategySimView(storage)).archives.length, 1);
+  assert.deepEqual(strategySimIntent('Reset the strategy simulation'), { kind: 'reset', confirm: false });
+  assert.deepEqual(strategySimIntent('Yes, reset the strategy simulation'), { kind: 'reset', confirm: true });
+  assert.deepEqual(strategySimIntent('confirm reset the simulation'), { kind: 'reset', confirm: true });
+});
+
+test('a reset while a pass waits on its feed: the old pass never writes over the fresh run (review of #523)', async () => {
+  const bars = flatThen([{ ...BREAK }, FILL, TARGET_BAR, TAIL, TAIL]);
+  const saved = new Map();
+  const storage = memStorage(saved);
+  await strategySimTick(storage, { now: nowAfter(bars), fetcher: noNetwork, loaders: onlyBtc(bars) });
+  const more = flatThen([{ ...BREAK }, FILL, TARGET_BAR, TAIL, TAIL, TAIL, TAIL]);
+  let release;
+  const gate = new Promise((r) => { release = r; });
+  const slow = { ...onlyBtc(more), 'BTC-USD': async () => { await gate; return { candles: more, status: 'LIVE', source: 'fixture' }; } };
+  const pass = strategySimTick(storage, { now: nowAfter(more), fetcher: noNetwork, loaders: slow, force: true });
+  await new Promise((r) => setTimeout(r, 0));
+  const done = await resetStrategySim(storage, { confirm: true, now: nowAfter(more) });
+  assert.equal(done.ok, true);
+  release();
+  const out = await pass;
+  assert.equal(out.ran, false, JSON.stringify(out));
+  const stored = saved.get(STATE_KEY);
+  assert.equal(stored.paused, true, 'the fresh run stays paused');
+  assert.equal(stored.ticks, 0);
+  assert.deepEqual(stored.open, {});
+  assert.equal(stored.trades.stored, 0, 'no metadata pointing at the archived (deleted) chunks');
+  assert.equal(await readSimState(storage), await readSimState(storage));
+  assert.equal((await readSimState(storage)).ticks, 0);
 });
 
 // ─── Owner routes: read and the kill switch are owner-only ───────────────
@@ -851,9 +950,9 @@ test('the simulation view says what each minute bar is, and what it is not', asy
   assert.match(view.basis, /1-minute bars/);
   assert.equal(view.leaderboard[0].bars, '1-minute bars');
   const byName = Object.fromEntries(view.minute_bars.map((b) => [b.symbol, b]));
-  assert.match(byName.BTCUSDT.source, /Binance/);
+  assert.match(byName['BTC-USD'].source, /Coinbase/);
   assert.match(byName.MNQ.source, /Yahoo/);
-  assert.equal(byName.BTCUSDT.bars, '1-minute bars');
+  assert.equal(byName['BTC-USD'].bars, '1-minute bars');
   assert.ok(!view.minute_bars.some((b) => /ES|MES/.test(b.symbol)), 'no ES or MES minute row');
   assert.match(view.not_simulated.find((x) => x.symbols.includes('ES')).why, /daily only/);
   assert.ok(view.notes.some((n) => /Paper only/.test(n)));

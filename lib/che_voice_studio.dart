@@ -8,6 +8,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
+import 'security/che_session_store.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'che_native_voice.dart';
@@ -19,7 +20,7 @@ Future<({String base, String token})> _studioConnection() async {
   final prefs = await SharedPreferences.getInstance();
   final base = (prefs.getString('che_agent_base_url') ??
       const String.fromEnvironment('CHE_AGENT_URL', defaultValue: _studioFallbackBase)).replaceAll(RegExp(r'/+$'), '');
-  return (base: base, token: prefs.getString('che_agent_device_token') ?? '');
+  return (base: base, token: (await CheSessionStore.instance.deviceToken()) ?? '');
 }
 
 List<Map<String, dynamic>> _maps(Object? value) => value is List

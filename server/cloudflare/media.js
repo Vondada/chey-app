@@ -2,6 +2,7 @@
 import { moneyPrinterVideo, moneyPrinterStatus, verifyVideoMedia } from './moneyprinter.js';
 import { createFacelessVideo } from './faceless_video.js';
 import { githubVideoConfigured, startGithubVideo, githubVideoStatus, githubVideoFile } from './github_video_renderer.js';
+import { mediaStore } from './che_media_store.js';
 //   - Owner image connector (CHE_IMAGE_GEN_URL) wins when configured.
 //   - Otherwise Workers AI FLUX.1 [schnell] generates the image on the CHE
 //     server itself (highest step count unless the owner picks draft).
@@ -61,10 +62,20 @@ async function storeBlob(env, storage, id, base64, mimeType = 'image/jpeg', kind
     return { blob: 'r2', blob_key: key };
   }
   if (kind === 'video') {
-    throw new Error('Generated video storage needs CHE_DATA_BUCKET (R2).');
+    // Videos go to CHE's own store (or R2 when bound, above): the same quota and checks as film files.
+    const key = `media/${id}.${extensionForMime(mimeType)}`;
+    const saved = await mediaStore(env, storage).put(key, b64ToBytes(base64), { contentType: mimeType });
+    if (!saved.ok) throw new Error(saved.error);
+    return { blob: 'che_store', blob_key: key };
   }
   await storage.put(`media:${id}`, base64);
   return { blob: 'do' };
+}
+
+// CHE's own store holds the bytes: blob 'che_store', or an older Film Studio record that said 'r2' while no bucket was
+// bound (saveFilmVideo always wrote 'r2' until 2026-10-25, but mediaStore had put the film in CHE's own store).
+function inOwnStore(env, item) {
+  return item.blob === 'che_store' || (item.blob === 'r2' && !env.CHE_DATA_BUCKET && Boolean(item.blob_key));
 }
 
 export async function readBlob(env, storage, item) {
@@ -81,6 +92,10 @@ export async function readBlob(env, storage, item) {
     } catch {
       return null; // Expired artifact or unavailable GitHub download.
     }
+  }
+  if (inOwnStore(env, item)) {
+    const object = await mediaStore(env, storage).get(item.blob_key || `media/${item.id}.mp4`);
+    return object ? object.body : null;
   }
   if (item.blob === 'r2' && env.CHE_DATA_BUCKET) {
     const key = item.blob_key || `media/${item.id}.jpg`;
@@ -104,7 +119,12 @@ export async function verifyMediaFile(env, storage, item) {
   let head;
   let size;
   try {
-    if (item.blob === 'r2') {
+    if (inOwnStore(env, item)) {
+      const object = await mediaStore(env, storage).get(item.blob_key || `media/${item.id}.mp4`, { length: 32 });
+      if (!object) return { ok: false, status: 'missing', reason: 'its file is not in my storage' };
+      head = bytesToBase64(object.body.slice(0, 32));
+      size = Number(object.size) || object.body.length;
+    } else if (item.blob === 'r2') {
       if (!env.CHE_DATA_BUCKET || !item.blob_key) return { ok: false, status: 'missing', reason: 'its file is not in the R2 bucket' };
       const object = await env.CHE_DATA_BUCKET.get(item.blob_key, { range: { offset: 0, length: 32 } });
       if (!object) return { ok: false, status: 'missing', reason: 'its file is not in the R2 bucket' };
@@ -295,6 +315,26 @@ export async function saveOwnerFile(env, storage, { name = '', media_type = '', 
   }
 }
 
+/** A picture CHE made with her own renderer (internal_renderer.js): stored like any other picture, labelled procedural. */
+export async function saveRenderedImage(env, storage, { bytes, title = 'Scene', prompt = '', width = 0, height = 0, provenance = '', engine = '', parent_id = null, recipe = null, source = 'che_internal_renderer', mode = null } = {}) {
+  const id = crypto.randomUUID();
+  let text = '';
+  for (let i = 0; i < bytes.length; i += 0x8000) text += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  const stored = await storeBlob(env, storage, id, btoa(text), 'image/png', 'image');
+  const item = { id, root_id: parent_id || id, parent_id, kind: 'image', mode: mode || (parent_id ? 'variation' : 'procedural'), mime_type: 'image/png', title: String(title).slice(0, 120), prompt: String(prompt).slice(0, 500), width, height, provenance, engine, recipe, created_at: now(), source, ...stored };
+  await saveIndex(storage, [item, ...(await listMedia(storage))]);
+  return item;
+}
+
+/** A Film Studio film already stored in R2 and verified from the file (film_render.verifyFilmObject). */
+// [blob] is the store that holds the bytes: mediaStore(env).provider ('r2' with a bucket bound, else 'che_store').
+export async function saveFilmVideo(storage, { key, title = 'Film', prompt = '', seconds = 0, width = 0, height = 0, bytes = 0, film_id = '', blob = 'r2' } = {}) {
+  const id = crypto.randomUUID();
+  const item = { id, root_id: id, parent_id: null, kind: 'video', mode: 'film', mime_type: 'video/mp4', title: String(title).slice(0, 120), prompt: String(prompt).slice(0, 500), width, height, seconds, bytes, film_id, blob: blob === 'che_store' ? 'che_store' : 'r2', blob_key: key, durable: true, verified: true, duration_verified: true, created_at: now(), source: 'che_film_studio' };
+  await saveIndex(storage, [item, ...(await listMedia(storage))]);
+  return item;
+}
+
 // mode: new | variation | refine. parent_id links versions of one piece.
 export async function generateImage(env, storage, body, fetcher = fetch) {
   const prompt = String(body.prompt || '').trim().slice(0, 2000);
@@ -321,16 +361,20 @@ export async function generateImage(env, storage, body, fetcher = fetch) {
     version: parent ? items.filter((item) => (item.root_id || item.id) === (parent.root_id || parent.id)).length + 1 : 1,
     created_at: now(),
   };
+  // Internal-only mode (capability_engine.js): no external connector and no paid service; only the image model in the
+  // owner's own Cloudflare account. Read from Security Intelligence's egress policy, the one internal-only switch.
+  let internalOnly = false;
+  try { internalOnly = (await storage.get('che:egress_policy'))?.internal_only === true; } catch (_) { internalOnly = false; }
   const engines = [];
-  if (env.CHE_IMAGE_GEN_URL) engines.push({ id: 'Your image connector', run: async () => ({ url: await connectorImage(env, finalPrompt, fetcher) }) });
-  if (paidMediaEnabled(env) && openAiKey(env)) engines.push({ id: draft ? 'openai-gpt-image-fast' : 'openai-gpt-image-hd', run: async () => openAiImage(env, finalPrompt, draft, fetcher) });
+  if (env.CHE_IMAGE_GEN_URL && !internalOnly) engines.push({ id: 'Your image connector', run: async () => ({ url: await connectorImage(env, finalPrompt, fetcher) }) });
+  if (!internalOnly && paidMediaEnabled(env) && openAiKey(env)) engines.push({ id: draft ? 'openai-gpt-image-fast' : 'openai-gpt-image-hd', paid: true, run: async () => openAiImage(env, finalPrompt, draft, fetcher) });
   // CHE_AI_BOUND is false when the Worker has no AI binding (routedEnv always exposes an AI member).
   if (env.AI && env.CHE_AI_BOUND !== false) engines.push({ id: draft ? 'CHE image engine (draft)' : 'CHE image engine', run: async () => {
     const result = await env.AI.run(IMAGE_MODEL, { prompt: finalPrompt.slice(0, 2048), steps: draft ? 4 : 8, seed: Math.floor(Math.random() * 2 ** 31) });
     if (!result?.image) throw new Error('The image model returned no image.');
     return { base64: result.image, mime_type: 'image/jpeg' };
   } });
-  if (paidMediaEnabled(env) && env.GEMINI_API_KEY) engines.push({ id: 'gemini-image', run: async () => {
+  if (!internalOnly && paidMediaEnabled(env) && env.GEMINI_API_KEY) engines.push({ id: 'gemini-image', paid: true, run: async () => {
     const model = env.CHE_GEMINI_IMAGE_MODEL || 'gemini-3.1-flash-image';
     const response = await fetcher(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
       method: 'POST', signal: AbortSignal.timeout(60000),
@@ -353,7 +397,10 @@ export async function generateImage(env, storage, body, fetcher = fetch) {
     catch (error) { errors.push(`${engine.id}: ${error.message}`); console.log('CHE image error:', engine.id, error.message); }
   }
   if (!generated) {
-    const paidReady = Boolean(openAiKey(env) || env.GEMINI_API_KEY) && !paidMediaEnabled(env);
+    // The free engines' own errors are what the owner needs. The paid-switch message is only true when no free engine
+    // ran; before, it hid a failed free engine behind "HD disabled" whenever paid keys were present (owner, 2026-10-22).
+    const freeTried = engines.some((engine) => !engine.paid);
+    const paidReady = Boolean(openAiKey(env) || env.GEMINI_API_KEY) && !paidMediaEnabled(env) && !freeTried;
     return {
       status: engines.length ? 502 : paidReady ? 402 : 503,
       detail: paidReady
@@ -541,7 +588,10 @@ export async function generateVideo(env, storage, body, fetcher = fetch) {
       return { pending: true, task_id: result.task_id, topic };
     } });
   }
-  if (paidMediaEnabled(env) && env.GEMINI_API_KEY && !storyboard) {
+  // Internal-only mode: the paid external video model is skipped; the free renderer on the owner's GitHub runs.
+  let videoInternalOnly = false;
+  try { videoInternalOnly = (await storage.get?.('che:egress_policy'))?.internal_only === true; } catch (_) { videoInternalOnly = false; }
+  if (!videoInternalOnly && paidMediaEnabled(env) && env.GEMINI_API_KEY && !storyboard) {
     engines.push({ id: 'gemini-omni-video', run: async () => geminiVideo(env, prompt, fetcher) });
   }
   const errors = [];

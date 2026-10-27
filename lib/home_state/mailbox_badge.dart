@@ -1,11 +1,16 @@
 part of '../main.dart';
 
 // Mailbox badge (iOS-style unread count) and the keyboard on/off switch.
+
+/// One badge request at a time: the poll timer, app resume and security refresh can all ask at once.
+bool _cheBadgeInFlight = false;
+
 extension _CheMailboxBadge on _CHEHomeState {
   /// Checks CHE's server for unread mailbox messages and letters. When the
   /// count goes up, CHE taps the phone and shows a banner, like iOS Mail.
   Future<void> _refreshMailboxBadge({bool announce = true}) async {
-    if (_deviceToken == null) return;
+    if (_deviceToken == null || _cheBadgeInFlight) return;
+    _cheBadgeInFlight = true;
     try {
       final response = await http
           .get(Uri.parse('$cheAgentBaseUrl/api/mailbox/badge'), headers: _authHeaders)
@@ -14,20 +19,30 @@ extension _CheMailboxBadge on _CHEHomeState {
       final data = jsonDecode(response.body);
       if (data is! Map) return;
       final count = (data['unread'] as num?)?.toInt() ?? 0;
+      final latest = [
+        for (final m in (data['latest'] as List? ?? const []))
+          if (m is Map) CheFlagstaffGist(id: '${m['id'] ?? ''}', from: '${m['from'] ?? ''}', text: '${m['text'] ?? ''}'),
+      ];
       final previous = _mailboxUnread;
-      if (count == previous) return;
-      _updateHomeState(() => _mailboxUnread = count);
+      if (count == previous && !cheGistChanged(latest, _mailboxLatest)) return;
+      _updateHomeState(() {
+        _mailboxUnread = count;
+        _mailboxLatest = latest;
+      });
       if (!announce || count <= previous) return;
       final fresh = count - previous;
       HapticFeedback.mediumImpact();
-      ScaffoldMessenger.maybeOf(context)?.showSnackBar(
-        SnackBar(
-          behavior: SnackBarBehavior.floating,
-          content: Text(fresh == 1 ? 'New message in your Mailbox' : '$fresh new messages in your Mailbox'),
-          action: SnackBarAction(label: 'Open', onPressed: () => _openMailbox()),
-        ),
+      if (!mounted) return;
+      showCheFlagstaffBanner(
+        context,
+        title: fresh == 1 ? 'New message in Flagstaff' : '$fresh new messages in Flagstaff',
+        detail: latest.isEmpty ? null : '${latest.first.from}: ${latest.first.text}',
+        onOpen: () => _openMailbox(),
       );
-    } catch (_) {}
+    } catch (_) {
+    } finally {
+      _cheBadgeInFlight = false;
+    }
   }
 
   Future<void> _openMailbox({int tab = 0}) async {
@@ -39,7 +54,8 @@ extension _CheMailboxBadge on _CHEHomeState {
         initialTab: tab,
       ),
     ));
-    await _refreshMailboxBadge(announce: false);
+    // Returning from the mailbox never waits on the network.
+    unawaited(_refreshMailboxBadge(announce: false));
   }
 
   Future<void> _loadTypingPref() async {

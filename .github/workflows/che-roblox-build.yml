@@ -1,0 +1,64 @@
+name: CHE Roblox build
+
+# Builds CHE's Roblox games (roblox/<game>) into .rbxlx place files Roblox Studio opens with File > Open, and
+# compiles every Luau script with the official Luau compiler. Free: GitHub-hosted runner, open-source tools
+# (Rojo, MPL-2.0; Luau, MIT) pinned by version and SHA-256. Nothing is uploaded to Roblox: publishing stays the
+# owner's step in Studio. A green run means the place builds and every script compiles, not that it was playtested.
+on:
+  pull_request:
+    paths: ['roblox/**', 'tools/roblox_check.mjs', '.github/workflows/che-roblox-build.yml']
+  push:
+    branches: [main]
+    paths: ['roblox/**']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      ROJO_URL: https://github.com/rojo-rbx/rojo/releases/download/v7.4.4/rojo-7.4.4-linux-x86_64.zip
+      ROJO_SHA256: 784e2cd42af3d565826c4910df94f45080fc7ed6206eb6808dbc79b516323652
+      LUAU_URL: https://github.com/luau-lang/luau/releases/download/0.650/luau-ubuntu.zip
+      LUAU_SHA256: 1ea724f8ffb24efb30212657b576825d0dcb856413545627dbdf72469d375947
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Structural check (project file, paths, JSON, Luau blocks)
+        run: for g in roblox/*/; do node tools/roblox_check.mjs "$g"; done
+      - name: Install Rojo and Luau (pinned, checksum-verified)
+        run: |
+          mkdir -p "$RUNNER_TEMP/rbx" && cd "$RUNNER_TEMP/rbx"
+          curl -fsSL -o rojo.zip "$ROJO_URL" && echo "$ROJO_SHA256  rojo.zip" | sha256sum -c -
+          curl -fsSL -o luau.zip "$LUAU_URL" && echo "$LUAU_SHA256  luau.zip" | sha256sum -c -
+          unzip -q rojo.zip && unzip -q luau.zip && chmod +x rojo luau-compile
+          echo "$RUNNER_TEMP/rbx" >> "$GITHUB_PATH"
+      - name: Compile every Luau script
+        run: |
+          n=0
+          while IFS= read -r f; do
+            luau-compile --binary "$f" > /dev/null || { echo "::error file=$f::Luau compile failed"; exit 1; }
+            n=$((n+1))
+          done < <(find roblox -name '*.luau' -o -name '*.lua')
+          echo "::notice title=Roblox Luau compile::$n scripts compiled with luau-compile 0.650"
+      - name: Build the place files with Rojo
+        run: |
+          mkdir -p roblox-places
+          for g in roblox/*/; do
+            name=$(basename "$g")
+            rojo build "$g" -o "roblox-places/$name.rbxlx"
+            scripts=$(grep -o 'class="\(Script\|LocalScript\|ModuleScript\)"' "roblox-places/$name.rbxlx" | wc -l)
+            sha=$(sha256sum "roblox-places/$name.rbxlx" | cut -c1-16)
+            [ "$scripts" -gt 0 ] || { echo "::error::$name.rbxlx has no scripts"; exit 1; }
+            echo "::notice title=Roblox place built::$name.rbxlx, $(stat -c %s "roblox-places/$name.rbxlx") bytes, $scripts scripts, sha256 $sha…; not playtested (open it in Roblox Studio to play)"
+          done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: roblox-places
+          path: roblox-places/
+          retention-days: 30

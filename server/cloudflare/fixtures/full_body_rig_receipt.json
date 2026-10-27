@@ -1,0 +1,211 @@
+{
+ "ok": true,
+ "failures": [],
+ "bones": 53,
+ "skins": 1,
+ "required_bones_missing": [],
+ "vertices": 12899,
+ "skinned_vertices": 12899,
+ "max_joint_influences": 4,
+ "weighted_fraction": 1.0,
+ "morphs": [
+  "blink_l",
+  "blink_r",
+  "mouth_open",
+  "smile",
+  "brows_up"
+ ],
+ "clips": {
+  "idle": {
+   "duration_s": 2.0,
+   "channels": 160,
+   "keyframes": 61,
+   "paths": [
+    "rotation",
+    "scale",
+    "translation",
+    "weights"
+   ]
+  },
+  "walk": {
+   "duration_s": 1.0,
+   "channels": 159,
+   "keyframes": 31,
+   "paths": [
+    "rotation",
+    "scale",
+    "translation"
+   ],
+   "ground_speed_mps": 1.0
+  },
+  "run": {
+   "duration_s": 0.667,
+   "channels": 159,
+   "keyframes": 21,
+   "paths": [
+    "rotation",
+    "scale",
+    "translation"
+   ],
+   "ground_speed_mps": 2.9605
+  },
+  "wave": {
+   "duration_s": 2.0,
+   "channels": 160,
+   "keyframes": 61,
+   "paths": [
+    "rotation",
+    "scale",
+    "translation",
+    "weights"
+   ]
+  },
+  "talk": {
+   "duration_s": 3.0,
+   "channels": 160,
+   "keyframes": 91,
+   "paths": [
+    "rotation",
+    "scale",
+    "translation",
+    "weights"
+   ]
+  }
+ },
+ "motion": {
+  "idle": {
+   "lowest_vertex_m": 0.0,
+   "morph_range": {
+    "blink_l": 1.0,
+    "blink_r": 1.0
+   },
+   "lowest_foot_joint_m": 0.0112,
+   "hand_r_travel_m": 0.013,
+   "hand_r_above_head_m": -0.65,
+   "foot_l_travel_m": 0.0,
+   "foot_l_lift_m": 0.0,
+   "foot_l_stance_slide_m": 0.0,
+   "foot_l_stance_travel_m": 0.0,
+   "foot_l_stance_height_jitter_m": 0.0,
+   "foot_l_stance_frames": 61,
+   "foot_r_travel_m": 0.0,
+   "foot_r_lift_m": 0.0,
+   "foot_r_stance_slide_m": 0.0,
+   "foot_r_stance_travel_m": 0.0,
+   "foot_r_stance_height_jitter_m": 0.0,
+   "foot_r_stance_frames": 61,
+   "frames": 61
+  },
+  "walk": {
+   "lowest_vertex_m": -0.0,
+   "morph_range": {},
+   "lowest_foot_joint_m": 0.0112,
+   "hand_r_travel_m": 0.323,
+   "hand_r_above_head_m": -0.596,
+   "foot_l_travel_m": 0.622,
+   "foot_l_lift_m": 0.109,
+   "foot_l_stance_slide_m": 0.0,
+   "foot_l_stance_travel_m": 0.6,
+   "foot_l_stance_height_jitter_m": 0.0,
+   "foot_l_stance_frames": 20,
+   "foot_r_travel_m": 0.622,
+   "foot_r_lift_m": 0.109,
+   "foot_r_stance_slide_m": 0.0,
+   "foot_r_stance_travel_m": 0.6,
+   "foot_r_stance_height_jitter_m": 0.0,
+   "foot_r_stance_frames": 20,
+   "frames": 31
+  },
+  "run": {
+   "lowest_vertex_m": -0.0,
+   "morph_range": {},
+   "lowest_foot_joint_m": 0.0112,
+   "hand_r_travel_m": 0.486,
+   "hand_r_above_head_m": -0.278,
+   "foot_l_travel_m": 0.861,
+   "foot_l_lift_m": 0.299,
+   "foot_l_stance_slide_m": 0.0,
+   "foot_l_stance_travel_m": 0.691,
+   "foot_l_stance_height_jitter_m": 0.0,
+   "foot_l_stance_frames": 9,
+   "foot_r_travel_m": 0.861,
+   "foot_r_lift_m": 0.299,
+   "foot_r_stance_slide_m": 0.0,
+   "foot_r_stance_travel_m": 0.691,
+   "foot_r_stance_height_jitter_m": 0.0,
+   "foot_r_stance_frames": 8,
+   "frames": 21
+  },
+  "wave": {
+   "lowest_vertex_m": 0.0,
+   "morph_range": {
+    "blink_l": 1.0,
+    "blink_r": 1.0,
+    "smile": 0.5
+   },
+   "lowest_foot_joint_m": 0.0112,
+   "hand_r_travel_m": 0.843,
+   "hand_r_above_head_m": 0.109,
+   "foot_l_travel_m": 0.0,
+   "foot_l_lift_m": 0.0,
+   "foot_l_stance_slide_m": 0.0,
+   "foot_l_stance_travel_m": 0.0,
+   "foot_l_stance_height_jitter_m": 0.0,
+   "foot_l_stance_frames": 61,
+   "foot_r_travel_m": 0.0,
+   "foot_r_lift_m": 0.0,
+   "foot_r_stance_slide_m": 0.0,
+   "foot_r_stance_travel_m": 0.0,
+   "foot_r_stance_height_jitter_m": 0.0,
+   "foot_r_stance_frames": 61,
+   "frames": 61
+  },
+  "talk": {
+   "lowest_vertex_m": 0.0,
+   "morph_range": {
+    "blink_l": 0.907,
+    "blink_r": 0.907,
+    "mouth_open": 0.743,
+    "brows_up": 0.2
+   },
+   "lowest_foot_joint_m": 0.0112,
+   "hand_r_travel_m": 0.017,
+   "hand_r_above_head_m": -0.647,
+   "foot_l_travel_m": 0.0,
+   "foot_l_lift_m": 0.0,
+   "foot_l_stance_slide_m": 0.0,
+   "foot_l_stance_travel_m": 0.0,
+   "foot_l_stance_height_jitter_m": 0.0,
+   "foot_l_stance_frames": 91,
+   "foot_r_travel_m": 0.0,
+   "foot_r_lift_m": 0.0,
+   "foot_r_stance_slide_m": 0.0,
+   "foot_r_stance_travel_m": 0.0,
+   "foot_r_stance_height_jitter_m": 0.0,
+   "foot_r_stance_frames": 91,
+   "frames": 91
+  }
+ },
+ "bpy_import": {
+  "armatures": 1,
+  "bones": 53,
+  "actions": [
+   "idle",
+   "run",
+   "talk",
+   "walk",
+   "wave"
+  ],
+  "shape_keys": [
+   "blink_l",
+   "blink_r",
+   "mouth_open",
+   "smile",
+   "brows_up"
+  ],
+  "meshes": 5
+ },
+ "sha256": "a2bfbe081ddf571cd7d2265d0a59fb7d25baee8723283e4bc3f45a6729742229",
+ "bytes": 1141472,
+ "notes": "walk and run are in-place cycles (no root motion) that declare their ground speed (clips.*.ground_speed_mps, glTF animation extras, forward +Z): the engine moves the character at that speed. stance_slide_m is how far a planted foot slides on the ground with that speed added back; stance_travel_m is its raw travel in the clip"
+}

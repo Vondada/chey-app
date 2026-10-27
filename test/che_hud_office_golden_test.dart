@@ -106,7 +106,16 @@ void main() {
     ));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 100));
-    await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 50)));
+    // CHE's avatar (Image.asset) decodes asynchronously. A fixed 50 ms was not always enough under a loaded full-suite
+    // run, and the golden caught the empty ring (PR #524 CI). Wait for every picture in real time; the animation clock
+    // does not move during runAsync, so the frame is the same one the golden was made from.
+    final pictures = find.byType(Image).evaluate().toList();
+    await tester.runAsync(() async {
+      for (final e in pictures) {
+        await precacheImage((e.widget as Image).image, e);
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+    });
     await tester.pump(const Duration(milliseconds: 400));
 
     // The room still says what it did before: the header, the crew and the readable controls.

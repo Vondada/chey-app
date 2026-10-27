@@ -176,7 +176,7 @@ test('the simulation and the journal are counted separately, each with its own n
   assert.equal(simL.best.win_rate, simL.by_strategy[0].win_rate);
   assert.ok(simL.best.win_rate > 1 && simL.best.win_rate <= 100);
   assert.ok(simL.by_strategy.filter((r) => r.trades === 0).every((r) => r.win_rate === null && r.expectancy_r === null));
-  assert.deepEqual(simL.feeds.map((f) => f.symbol), ['BTCUSDT', 'ETHUSDT', 'MNQ']);
+  assert.deepEqual(simL.feeds.map((f) => f.symbol), ['BTC-USD', 'ETH-USD', 'MNQ']);
   assert.equal(journal.equity.unit, '$');
   assert.equal(journal.equity.trades, 81);
   assert.ok(journal.by_strategy[0].trades === 81 && journal.by_strategy[0].name);

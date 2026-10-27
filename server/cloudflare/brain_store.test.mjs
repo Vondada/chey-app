@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { BRAIN_REGIONS, CheBrainStore, RELATIONSHIP_TYPES, VERIFICATION_STATES, assessSignificance, backfillConversations, contentHash, displayCopy, fnv1a32, isSafeText, normalizeLinks, normalizeRecord, projectLegacyState, rememberExchange, sameDisplayCopy } from './brain_store.js';
+import { BRAIN_REGIONS, CheBrainStore, RELATIONSHIP_TYPES, VERIFICATION_STATES, assessSignificance, backfillConversations, contentHash, forgetBrainSchema, displayCopy, fnv1a32, isSafeText, normalizeLinks, normalizeRecord, projectLegacyState, rememberExchange, sameDisplayCopy } from './brain_store.js';
 
 async function sqlStorage() {
   let DatabaseSync;
@@ -387,4 +387,23 @@ test('a broker key is refused by put and by reconcile, and search never returns 
   assert.equal(store.put(task('task:paper-2', 'Result: the paper trade filled at the planned price.')).outcome, 'created');
   assert.deepEqual(store.search(key, { limit: 10 }).map((r) => r.id), []);
   assert.deepEqual(store.search('Paper trade result', { limit: 10 }).map((r) => r.id), ['task:paper-2']);
+});
+
+// Stability mission (2026-10-23): every new store re-ran the nine schema statements; the schema is now made once per
+// storage, and made again after storage.deleteAll() drops it.
+test('the Brain schema is created once per storage, not once per store, and again after a reset', async () => {
+  const { DatabaseSync } = await import('node:sqlite');
+  const db = new DatabaseSync(':memory:');
+  let creates = 0;
+  const sql = { exec: (q, ...p) => { if (/^\s*CREATE/i.test(q)) creates++; const st = db.prepare(q); return /^\s*SELECT/i.test(q) ? st.all(...p) : (st.run(...p), []); } };
+  const storage = { sql };
+  new CheBrainStore(storage).init();
+  const once = creates;
+  assert.ok(once >= 8);
+  new CheBrainStore(storage).init();
+  new CheBrainStore(storage).init();
+  assert.equal(creates, once, 'later stores reuse the schema');
+  forgetBrainSchema(storage);
+  new CheBrainStore(storage).init();
+  assert.equal(creates, once * 2, 'a reset storage gets its schema again');
 });

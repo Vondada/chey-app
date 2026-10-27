@@ -10,7 +10,7 @@ import 'package:chey/che_ui/che_hud.dart';
 import 'package:chey/che_ui/che_palette_theme.dart';
 import 'package:chey/che_ui/che_palettes.dart';
 import 'package:chey/che_world_hub.dart';
-import 'package:chey/create_gallery_scene.dart';
+import 'package:chey/create/che_creative_studio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -33,6 +33,16 @@ Future<void> _shoot(WidgetTester tester, Widget room, String golden) async {
     home: CheHudBackdrop(child: room),
   ));
   await tester.pump(const Duration(milliseconds: 400));
+  // Asset pictures (the Creation Room tiles) decode asynchronously: wait for them so the golden shows the real tiles.
+  final pictures = find.byType(Image).evaluate().toList();
+  if (pictures.isNotEmpty) {
+    await tester.runAsync(() async {
+      for (final e in pictures) {
+        await precacheImage((e.widget as Image).image, e);
+      }
+    });
+    await tester.pump(const Duration(milliseconds: 100));
+  }
   await expectLater(find.byType(MaterialApp), matchesGoldenFile('goldens/$golden.png'));
   await tester.pumpWidget(const SizedBox());
 }
@@ -52,27 +62,36 @@ void main() {
     await _shoot(tester, CheWorldHubScreen(onOpenTab: (_) {}), 'hud_world_hub');
   });
 
-  testWidgets('Create room in HUD glass', (tester) async {
+  // Create is the Creative Studio (owner, 2026-10-24): its own black, silver and teal look on every palette.
+  testWidgets('Create room: Creative Studio', (tester) async {
     await _shoot(
       tester,
       Scaffold(
-        body: CreateGalleryScene(
-          active: true,
-          projects: [
+        body: CheCreativeStudio(
+          projects: const [
             {'id': 'p1', 'title': 'Arc reactor lamp', 'type': 'invention', 'status': 'idle', 'updated_at': '2026-10-20T10:00:00Z'},
             {'id': 'p2', 'title': 'Night city poster', 'type': 'art', 'status': 'idle', 'updated_at': '2026-10-21T10:00:00Z'},
           ],
           vaultCount: 3,
-          researchConnected: true,
           imageConnected: true,
-          videoConnected: false,
-          onNewProject: () {},
-          onOpenProject: (_) async {},
-          onVault: () {},
-          onResearch: () {},
-          onImage: () {},
-          onVideo: () {},
-          onShowroom: () {},
+          actions: CheStudioActions(
+            onOpenFilmStudio: () {},
+            onNewVideo: () {},
+            onOpenTheater: () {},
+            onOpenMusic: () {},
+            onNewSong: () {},
+            onNewApp: () {},
+            onOpenCommandCenter: () {},
+            onOpenOffice: () {},
+            onCharacterGenerator: () {},
+            onOpenArtStudio: () {},
+            onNewImage: () {},
+            onNewProject: () {},
+            onOpenProject: (_) async {},
+            onVault: () {},
+            onResearch: () {},
+            onShowroom: () {},
+          ),
           creations: const CheCreationsTiles(
             items: [
               {'id': 'v1', 'kind': 'video', 'title': 'Launch teaser'},

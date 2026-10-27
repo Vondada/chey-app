@@ -6,6 +6,8 @@
 // returned to the phone, never logged, never spoken beyond the last 4).
 
 // ─── Provider catalog: official pages only ───────────────────────────────
+export const MODAL_PASTE_REFUSAL = 'Modal is connected by the CHE Modal deploy workflow, so there is nothing to paste. Use Check Connection to test CHE\'s own Modal app.';
+
 export const KEY_PROVIDERS = {
   groq: { name: 'Groq', env: 'GROQ_API_KEY', page: 'https://console.groq.com/keys', test: 'https://api.groq.com/openai/v1/models', accounts: 'one account per person' },
   gemini: { name: 'Google AI Studio (Gemini)', env: 'GEMINI_API_KEY', page: 'https://aistudio.google.com/apikey', test: 'https://generativelanguage.googleapis.com/v1beta/openai/models', accounts: 'uses your Google account' },
@@ -16,7 +18,15 @@ export const KEY_PROVIDERS = {
   sambanova: { name: 'SambaNova', env: 'SAMBANOVA_API_KEY', page: 'https://cloud.sambanova.ai/apis', test: 'https://api.sambanova.ai/v1/models', accounts: 'one account per person' },
   openai: { name: 'OpenAI (Codex)', env: 'CHE_OPENAI_API_KEY', page: 'https://platform.openai.com/api-keys', test: 'https://api.openai.com/v1/models', accounts: 'uses your OpenAI account (paid, separate from a ChatGPT subscription)' },
   xai: { name: 'xAI (Grok)', env: 'XAI_API_KEY', page: 'https://console.x.ai', test: 'https://api.x.ai/v1/models', accounts: 'uses your X/xAI account' },
-  huggingface: { name: 'Hugging Face', env: 'HF_TOKEN', page: 'https://huggingface.co/settings/tokens', test: 'https://huggingface.co/api/whoami-v2', accounts: 'one account per person' },
+  huggingface: { name: 'Hugging Face', env: 'HF_TOKEN', page: 'https://huggingface.co/settings/tokens', test: 'https://huggingface.co/api/whoami-v2', accounts: 'one account per person; Film Studio needs write access to create its free ZeroGPU Space' },
+  // Film Studio's free GPU farm. Pasted as username:token; the test reads the real weekly GPU quota (a call that needs auth).
+  kaggle: { name: 'Kaggle (free GPU for Film Studio)', env: 'KAGGLE_API_TOKEN', page: 'https://www.kaggle.com/settings/api', test: 'https://api.kaggle.com/v1/kernels.KernelsApiService/GetAcceleratorQuotaStatistics', method: 'POST', accounts: 'paste as username:token; GPU sessions with internet need a phone-verified Kaggle account' },
+  // Prepaid GPU providers for the compute pool (compute_pool.js + compute_budget.js). The test is a free read; a paid
+  // GPU is never started by a key alone: the owner must also set a GPU budget ("allow up to $20 for GPUs").
+  runpod: { name: 'RunPod (prepaid GPUs)', env: 'RUNPOD_API_KEY', page: 'https://www.runpod.io/console/user/settings', test: 'https://api.runpod.io/graphql', method: 'POST', body: '{"query":"query { myself { id } }"}', accounts: 'one account per person; you add prepaid credit yourself; CHE never pays' },
+  vast: { name: 'Vast.ai (prepaid GPUs)', env: 'VAST_API_KEY', page: 'https://cloud.vast.ai/manage-keys/', test: 'https://console.vast.ai/api/v0/users/current/', accounts: 'one account per person; you add prepaid credit yourself; CHE never pays' },
+  // Modal: connected by the CHE Modal deploy workflow (modal_gpu.js); the authenticated /health check is the verification.
+  modal: { name: 'Modal (GPU functions)', env: 'MODAL_TOKEN', page: 'https://modal.com/settings', test: null, accounts: 'connected by the CHE Modal deploy workflow, so there is nothing to paste; Check Connection tests CHE\'s own Modal app with a read-only health call' },
   youtube: { name: 'YouTube · @Cognitive.Horizon.Engine', env: 'YOUTUBE_GOOGLE_SIGNIN', page: 'https://console.cloud.google.com/apis/credentials', test: null, accounts: 'connected with Google sign-in (Connect YouTube), not a pasted key' },
 };
 
@@ -41,6 +51,10 @@ export function providerByName(text) {
   if (/\bgithub\b/.test(t)) return 'github';
   if (/\bsamba ?nova\b/.test(t)) return 'sambanova';
   if (/\bhugging ?face\b/.test(t)) return 'huggingface';
+  if (/\bkaggle\b/.test(t)) return 'kaggle';
+  if (/\brun ?pod\b/.test(t)) return 'runpod';
+  if (/\bvast(?:\.ai| ai)?\b/.test(t)) return 'vast';
+  if (/\bmodal\b/.test(t)) return 'modal';
   if (/\b(?:codex|openai|open ai|chat ?gpt)\b/.test(t)) return 'openai';
   if (/\b(?:grok|x\.?ai)\b/.test(t)) return 'xai';
   if (/\byou ?tube\b|cognitive\.horizon\.engine/i.test(t)) return 'youtube';
@@ -64,11 +78,22 @@ export async function setStoredKeys(storage, changes) {
   return keys;
 }
 
+// Names whose stored key wins over a Worker secret of the same name. Only
+// service onboarding sets one, after the Worker secret failed verification and
+// the stored replacement passed (service_onboarding.js), so a dead deploy-time
+// secret can never shadow a verified key the owner just connected.
+export const STORED_KEY_WINS = 'CHE_STORED_KEY_WINS';
+export function storedKeyWins(keys) {
+  const list = keys?.[STORED_KEY_WINS];
+  return new Set(Array.isArray(list) ? list.filter((n) => typeof n === 'string') : []);
+}
+
 export function withStoredKeys(env, keys) {
   if (!keys || !Object.keys(keys).length) return env;
   const merged = Object.create(env);
+  const wins = storedKeyWins(keys);
   for (const [name, value] of Object.entries(keys)) {
-    if (!env[name] && typeof value === 'string' && value) merged[name] = value;
+    if ((!env[name] || wins.has(name)) && typeof value === 'string' && value) merged[name] = value;
   }
   // A memory database the owner connected through CHE replaces the Worker
   // secret pair, so switching databases really switches where memories go.
@@ -79,15 +104,27 @@ export function withStoredKeys(env, keys) {
   return merged;
 }
 
+// Kaggle accepts "username:token": a new API token goes as Bearer, a legacy 32-hex key as Basic with the username.
+function authHeader(provider, key) {
+  if (provider !== 'kaggle') return `Bearer ${key}`;
+  const at = key.indexOf(':');
+  const user = at > 0 ? key.slice(0, at) : '';
+  const secret = at > 0 ? key.slice(at + 1) : key;
+  return /^[a-f0-9]{32}$/i.test(secret) && user ? `Basic ${btoa(`${user}:${secret}`)}` : `Bearer ${secret}`;
+}
+
 // Minimal authenticated request (model list / whoami): proves the key works
 // without spending inference allowance.
 export async function testKey(provider, key, fetcher = fetch) {
   const p = KEY_PROVIDERS[provider];
   if (!p || !key) return { status: 'missing' };
+  if (!p.test) return { status: 'unverifiable' };
   const started = Date.now();
   try {
     const response = await fetcher(p.test, {
-      headers: { Authorization: `Bearer ${key}`, Accept: 'application/json' },
+      method: p.method || 'GET',
+      headers: { Authorization: authHeader(provider, key), Accept: 'application/json', ...(p.method === 'POST' ? { 'Content-Type': 'application/json' } : {}) },
+      ...(p.method === 'POST' ? { body: p.body || '{}' } : {}),
       signal: AbortSignal.timeout(8000),
     });
     const ms = Date.now() - started;
@@ -101,6 +138,8 @@ export async function testKey(provider, key, fetcher = fetch) {
 }
 
 export async function saveKey(storage, provider, key, fetcher = fetch) {
+  // Modal connects through the CHE Modal deploy workflow (modal_gpu.js), never a pasted key (owner, 2026-10-25).
+  if (provider === 'modal') return { ok: false, detail: MODAL_PASTE_REFUSAL };
   const p = KEY_PROVIDERS[provider];
   const clean = String(key || '').trim();
   if (!p) return { ok: false, detail: 'Unknown provider.' };
@@ -130,6 +169,8 @@ export async function removeKey(storage, provider) {
   const keys = await storedKeys(storage);
   const had = Boolean(keys[p.env]);
   delete keys[p.env];
+  const wins = storedKeyWins(keys);
+  if (wins.delete(p.env)) keys[STORED_KEY_WINS] = [...wins];
   await put(storage, STORED_KEYS, keys);
   const health = await get(storage, HEALTH, {});
   delete health[provider];
@@ -247,8 +288,9 @@ export async function checkAllKeys(env, storage, fetcher = fetch) {
   const keys = await storedKeys(storage);
   const before = await get(storage, HEALTH, {});
   const health = {};
+  const wins = storedKeyWins(keys);
   for (const [id, p] of Object.entries(KEY_PROVIDERS)) {
-    const key = env?.[p.env] || keys[p.env];
+    const key = (wins.has(p.env) && keys[p.env]) || env?.[p.env] || keys[p.env];
     if (!key) continue;
     const test = await testKey(id, key, fetcher);
     health[id] = { status: test.status, code: test.code || null, at: Date.now(), latency_ms: test.latency_ms || null, last4: last4(key) };

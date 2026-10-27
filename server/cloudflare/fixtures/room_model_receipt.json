@@ -1,0 +1,201 @@
+{
+ "job_id": "room-15ea393ae4bb",
+ "kind": "room_model",
+ "created_at": "2026-10-24T19:12:58Z",
+ "creation_code_sha256": "c23d9a05664664ede1fe46b7c749dbeccfe6d13fd76a9b2a6a893d189f0cea32",
+ "spec": {
+  "type": "office",
+  "width": 4.0,
+  "depth": 3.6,
+  "height": 2.7,
+  "wall_color": "#c9ccc8",
+  "floor": "concrete",
+  "lighting": "warm",
+  "style": "industrial",
+  "furniture": [
+   "desk",
+   "chair",
+   "lamp",
+   "shelf",
+   "plant",
+   "mug",
+   "rug"
+  ]
+ },
+ "samples": 64,
+ "long_edge_px": 640,
+ "views": {
+  "0": {
+   "status": "ok",
+   "name": "front",
+   "file": "view_00.png",
+   "sha256": "3f997aa0ac2a9d4721c841af2e5c41446cf14096eb378480b76b339b251a2a85",
+   "render_seconds": 9.3,
+   "device": "DEVICE CPU ['CPU'] 640x480",
+   "rendered_at": "2026-10-24T19:13:10Z"
+  },
+  "45": {
+   "status": "ok",
+   "name": "three-quarter",
+   "file": "view_45.png",
+   "sha256": "62077d69a4caebc9e968c1235d871f8d3c41cd9a798539dc96470529853f0a4e",
+   "render_seconds": 7.5,
+   "device": "DEVICE CPU ['CPU'] 640x480",
+   "rendered_at": "2026-10-24T19:13:18Z"
+  },
+  "90": {
+   "status": "ok",
+   "name": "side",
+   "file": "view_90.png",
+   "sha256": "1b4f75d0460058613e8b3f41e40fea986b3ed4f831680a7b07d42e2472e37e75",
+   "render_seconds": 10.5,
+   "device": "DEVICE CPU ['CPU'] 640x480",
+   "rendered_at": "2026-10-24T19:13:28Z"
+  }
+ },
+ "resumed_at": null,
+ "nvidia_smi": "unavailable: [Errno 2] No such file or directory: 'nvidia-smi'",
+ "blender_version": "Blender 5.0.1",
+ "device": "CPU",
+ "cycles_gpus": "",
+ "cores": 4,
+ "threads": 4,
+ "stage_seconds": {
+  "model": 1.0,
+  "verify": 0.8,
+  "render": 28.0
+ },
+ "last_run": {
+  "at": "2026-10-24T19:12:59Z",
+  "model": "exported",
+  "rendered": [
+   0,
+   45,
+   90
+  ],
+  "reused": []
+ },
+ "model": {
+  "status": "ok",
+  "mode": "room",
+  "file": "model.glb",
+  "sha256": "324621f8e5cdee0898262f860f46a5af46cb38d0028b4a38da512aa9a540fba3",
+  "bytes": 283504,
+  "vertices": 3504,
+  "exported_at": "2026-10-24T19:13:00Z",
+  "source": "built",
+  "contents": "procedural industrial office 4 x 3.6 m, 2.7 m high, concrete floor, walls #c9ccc8, warm light, furniture: desk, chair, lamp, shelf, plant, mug, rug",
+  "layout": {
+   "placed": [
+    {
+     "item": "desk",
+     "x": 1.38,
+     "y": 1.49,
+     "rot_deg": 0
+    },
+    {
+     "item": "chair",
+     "x": 1.38,
+     "y": 0.86,
+     "rot_deg": 180
+    },
+    {
+     "item": "lamp",
+     "x": 0.93,
+     "y": 1.54,
+     "rot_deg": 0,
+     "on": "desk"
+    },
+    {
+     "item": "shelf",
+     "x": -0.78,
+     "y": 1.63,
+     "rot_deg": 0
+    },
+    {
+     "item": "plant",
+     "x": -1.7,
+     "y": -1.5,
+     "rot_deg": 0
+    },
+    {
+     "item": "mug",
+     "x": 1.53,
+     "y": 1.49,
+     "rot_deg": 0,
+     "on": "desk"
+    },
+    {
+     "item": "rug",
+     "x": 0,
+     "y": 0,
+     "rot_deg": 0
+    }
+   ],
+   "skipped": []
+  },
+  "verify": {
+   "ok": true,
+   "failures": [],
+   "meshes": 71,
+   "primitives": 71,
+   "vertices": 6259,
+   "triangles": 6712,
+   "materials": [
+    "Book 1",
+    "Book 2",
+    "Book 3",
+    "Book 4",
+    "Book 5",
+    "Book 6",
+    "Bulb",
+    "Chair (industrial)",
+    "Dark metal",
+    "Floor (concrete)",
+    "Lamp shade (industrial)",
+    "Leaves",
+    "Mug glaze (industrial)",
+    "Rug (industrial)",
+    "Shelf (industrial)",
+    "Steel",
+    "Table (industrial)",
+    "Walls",
+    "Walnut",
+    "Window light"
+   ],
+   "primitives_without_material": 0,
+   "bbox_m": {
+    "min": [
+     -2.1,
+     -0.008,
+     -1.9
+    ],
+    "max": [
+     2.0,
+     2.7,
+     1.8
+    ],
+    "size": [
+     4.1,
+     2.708,
+     3.7
+    ]
+   },
+   "expected_bbox_m": [
+    4.1,
+    2.7,
+    3.7
+   ],
+   "tolerance": 0.08,
+   "bpy_import": {
+    "mesh_objects": 71,
+    "armatures": 0
+   },
+   "sha256": "324621f8e5cdee0898262f860f46a5af46cb38d0028b4a38da512aa9a540fba3",
+   "bytes": 283504
+  }
+ },
+ "render_device_line": "DEVICE CPU ['CPU'] 640x480",
+ "status": "complete",
+ "finished_at": "2026-10-24T19:13:28Z"
+}

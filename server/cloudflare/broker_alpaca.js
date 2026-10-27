@@ -16,6 +16,10 @@ export const ALPACA_DATA = 'https://data.alpaca.markets';
 export const ALPACA_KEY_ENV = 'CHE_ALPACA_PAPER_KEY_ID';
 export const ALPACA_SECRET_ENV = 'CHE_ALPACA_PAPER_SECRET';
 const ORDERS = 'alpaca_paper_orders';
+// Alpaca PAPER fills, as Alpaca's FILL activities returned them, kept so the broker calendar has a P&L by day.
+// Read only from Alpaca's paper API; a fill is stored once by its own id and never edited.
+export const FILLS_KEY = 'alpaca_paper_fills';
+export const MAX_STORED_FILLS = 5000;
 const last4 = (value) => String(value || '').slice(-4);
 
 export function alpacaKeys(env) {
@@ -472,10 +476,10 @@ function fillOf(a = {}) {
     cum_qty: money(a.cum_qty), leaves_qty: money(a.leaves_qty), order_status: String(a.order_status || ''),
   };
 }
-// Realized P&L from the fills Alpaca returned, first in first out per symbol. Labelled as computed
-// from those fills: a position opened before the oldest returned fill is not in it.
-export function realizedFromFills(fills) {
-  const lots = {}; let realized = 0; let closes = 0; let wins = 0; let losses = 0;
+// Each closing match of the fills, first in first out per symbol: which fill closed how much of which lot, at what
+// P&L. A position opened before the oldest fill given is not in it (its closing fill then opens a new lot instead).
+export function realizedClosesFromFills(fills) {
+  const lots = {}; const out = [];
   for (const f of [...fills].filter((x) => x.qty > 0 && x.price > 0).sort((a, b) => String(a.time).localeCompare(String(b.time)))) {
     const book = (lots[f.symbol] ||= []);
     const sign = f.side === 'buy' ? 1 : -1;
@@ -484,19 +488,46 @@ export function realizedFromFills(fills) {
       const lot = book[0];
       const take = Math.min(qty, Math.abs(lot.qty));
       const pnl = (f.price - lot.price) * take * (lot.qty > 0 ? 1 : -1);
-      realized += pnl; closes += 1; if (pnl > 0) wins += 1; else if (pnl < 0) losses += 1;
+      out.push({ fill_id: f.id, order_id: f.order_id, symbol: f.symbol, side: lot.qty > 0 ? 'long' : 'short', qty: take, entry_price: lot.price, entry_time: lot.time, exit_price: f.price, exit_time: f.time, pnl: Math.round(pnl * 100) / 100 });
       lot.qty += sign * take; qty -= take;
       if (lot.qty === 0) book.shift();
     }
-    if (qty > 0) book.push({ qty: sign * qty, price: f.price });
+    if (qty > 0) book.push({ qty: sign * qty, price: f.price, time: f.time });
   }
-  return { realized_pl: Math.round(realized * 100) / 100, closing_fills: closes, winning_closes: wins, losing_closes: losses };
+  return out;
+}
+
+// Realized P&L from the fills Alpaca returned, first in first out per symbol. Labelled as computed
+// from those fills: a position opened before the oldest returned fill is not in it.
+export function realizedFromFills(fills) {
+  const closes = realizedClosesFromFills(fills);
+  const realized = closes.reduce((sum, c) => sum + (f2(c.pnl)), 0);
+  return { realized_pl: Math.round(realized * 100) / 100, closing_fills: closes.length, winning_closes: closes.filter((c) => c.pnl > 0).length, losing_closes: closes.filter((c) => c.pnl < 0).length };
+}
+const f2 = (x) => (Number.isFinite(x) ? x : 0);
+
+/** Keep the paper fills Alpaca returned: each once, by its own id, newest MAX_STORED_FILLS. Returns how many were new. */
+export async function storeAlpacaFills(storage, fills, { now = Date.now() } = {}) {
+  if (!storage || !Array.isArray(fills) || !fills.length) return { added: 0 };
+  const have = (await storage.get(FILLS_KEY).catch(() => null)) || [];
+  const seen = new Set(have.map((f) => f.id));
+  const fresh = fills.filter((f) => f.id && !seen.has(f.id)).map((f) => ({ ...f, recorded_at: new Date(now).toISOString(), account: 'alpaca_paper' }));
+  if (!fresh.length) return { added: 0, total: have.length };
+  const all = [...have, ...fresh].sort((a, b) => String(a.time).localeCompare(String(b.time))).slice(-MAX_STORED_FILLS);
+  await storage.put(FILLS_KEY, all);
+  return { added: fresh.length, total: all.length };
+}
+
+/** The stored paper fills, oldest first. */
+export async function readAlpacaFills(storage) {
+  const list = (await storage.get(FILLS_KEY).catch(() => null)) || [];
+  return Array.isArray(list) ? list : [];
 }
 
 // The chart's timeframes: Alpaca's name for each and how many days back to read.
 const BAR_FRAMES = { '1m': ['1Min', 1], '5m': ['5Min', 5], '15m': ['15Min', 10], '1h': ['1Hour', 30], '1d': ['1Day', 365] };
 
-export async function alpacaPaperDashboard(env, { symbol = '', fetcher = fetch, now = Date.now(), timeframe = '5m' } = {}) {
+export async function alpacaPaperDashboard(env, { symbol = '', fetcher = fetch, now = Date.now(), timeframe = '5m', storage = null } = {}) {
   const keys = alpacaKeys(env);
   const base = { provider: 'alpaca', mode: 'paper', source: 'Alpaca PAPER stock account', fetched_at: new Date(now).toISOString(), money_at_risk: false };
   if (!keys) return { ...base, state: 'not_configured' };
@@ -512,6 +543,8 @@ export async function alpacaPaperDashboard(env, { symbol = '', fetcher = fetch, 
   const orderList = (orders.ok && Array.isArray(orders.data) ? orders.data : []).flatMap((o) => [o, ...(Array.isArray(o.legs) ? o.legs : [])])
     .map((o) => { const r = receipt(o); return { ...r, status_group: orderStatusGroup(r.status), canceled_at: o.canceled_at || null, expired_at: o.expired_at || null, failed_at: o.failed_at || null, stop_price: money(o.stop_price), time_in_force: String(o.time_in_force || '') }; });
   const fillList = (fills.ok && Array.isArray(fills.data) ? fills.data : []).map(fillOf).filter((f) => f.order_id && f.price != null && f.qty > 0);
+  // The broker calendar's P&L comes from these: every read of Alpaca's paper fills keeps the new ones.
+  if (storage && fills.ok) await storeAlpacaFills(storage, fillList, { now }).catch(() => null);
   const positionList = (positions.ok && Array.isArray(positions.data) ? positions.data : []).map(positionOf);
   const h = history.ok ? history.data || {} : {};
   const curve = (Array.isArray(h.timestamp) ? h.timestamp : []).map((t, i) => ({ t: new Date(Number(t) * 1000).toISOString(), equity: money(h.equity?.[i]), profit_loss: money(h.profit_loss?.[i]) })).filter((p) => p.equity != null);

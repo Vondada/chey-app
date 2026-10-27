@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en-US"><head><meta charset="utf-8"><title>Checkout - Example Store</title></head>
+<body>
+<h1>Checkout</h1>
+<p>Order total: $42.00</p>
+<form id="f" onsubmit="event.preventDefault(); window.__submitted = (window.__submitted || 0) + 1;">
+  <fieldset><legend>Shipping</legend>
+    <input aria-label="Full name" autocomplete="shipping name">
+    <input aria-label="Address" autocomplete="shipping street-address">
+    <input aria-label="City" autocomplete="shipping address-level2">
+    <select aria-label="State" autocomplete="shipping address-level1">
+      <option value="">--</option><option>Alabama</option><option>Arizona</option><option>Texas</option>
+    </select>
+    <input aria-label="Postal code" autocomplete="shipping postal-code">
+    <select aria-label="Country" autocomplete="shipping country">
+      <option value="">--</option><option value="USA">United States of America</option><option value="CAN">Canada</option>
+    </select>
+    <input type="tel" aria-label="Phone" autocomplete="shipping tel" maxlength="10" pattern="\d{10}">
+  </fieldset>
+  <fieldset><legend>Date of birth (for age check)</legend>
+    <select name="dob_month" aria-label="Birth month"><option value="">Month</option><option value="1">January</option><option value="2">February</option><option value="3">March</option><option value="4">April</option><option value="5">May</option><option value="6">June</option><option value="7">July</option><option value="8">August</option><option value="9">September</option><option value="10">October</option><option value="11">November</option><option value="12">December</option></select>
+    <select name="dob_day" aria-label="Birth day"><option value="">Day</option></select>
+    <select name="dob_year" aria-label="Birth year"><option value="">Year</option></select>
+  </fieldset>
+  <label>Delivery date <input name="delivery_date" placeholder="MM/DD/YYYY"></label>
+  <label>Gift message <textarea name="gift"></textarea></label>
+  <div id="sameorigin"><iframe id="inner" srcdoc="<label>Email for receipt <input type='email' name='receipt_email'></label>"></iframe></div>
+  <label>Card number <input name="cardnumber" autocomplete="cc-number"></label>
+  <iframe id="stripe" title="Secure card payment input frame"></iframe>
+  <button type="submit" id="place">Place order</button>
+</form>
+<script>
+var d = document.querySelector('[name=dob_day]'), y = document.querySelector('[name=dob_year]');
+for (var i = 1; i <= 31; i++) d.add(new Option(String(i).padStart(2, '0'), String(i)));
+for (var j = 2010; j >= 1920; j--) y.add(new Option(String(j), String(j)));
+var port = Number(location.port) + 1;
+document.getElementById('stripe').src = location.protocol + '//127.0.0.1:' + port + '/card_frame.html';
+</script>
+</body></html>

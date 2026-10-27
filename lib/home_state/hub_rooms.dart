@@ -6,10 +6,7 @@ extension _CheHomeHubRooms on _CHEHomeState {
     return ListView(
       padding: const EdgeInsets.all(18),
       children: [
-        Text(
-          title,
-          style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w700),
-        ),
+        Text(title, style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w700)),
         const SizedBox(height: 4),
         Text(subtitle, style: const TextStyle(color: Colors.white54)),
         const SizedBox(height: 16),
@@ -22,29 +19,49 @@ extension _CheHomeHubRooms on _CHEHomeState {
   Widget _hubBrainTab(bool active) {
     return CheTwoBrainsView(
       live: CheInsightsRoom(
-      brain: _brain,
-      log: _brainLog,
-      onOpenCloudLogs: _deviceToken == null
-          ? null
-          : () => Navigator.of(context).push(MaterialPageRoute<void>(
-                builder: (_) => CheCloudLogsScreen(
-                  baseUrl: () => cheAgentBaseUrl,
-                  headers: () => _authHeaders,
+        brain: _brain,
+        log: _brainLog,
+        onOpenCloudLogs: _deviceToken == null
+            ? null
+            : () => Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (_) => CheCloudLogsScreen(baseUrl: () => cheAgentBaseUrl, headers: () => _authHeaders),
                 ),
-              )),
-      map: CheMemoryBrainRoom(
+              ),
+        map: _brainOverview(active),
+        chipsBottomInset: cheBrainOverviewChipsInset,
+      ),
+      offline: CheOfflineBrainPanel(compact: true, replicaLine: _brainReplicaLine()),
+    );
+  }
+
+  /// The Brain Room (owner, 2026-10-24, his original reference): the neural Brain framed by the sidebar,
+  /// Real-Time Learning from the Brain Ledger and the dashboard cards. Both Brain screens use this one builder.
+  Widget _brainOverview(bool active) {
+    final dots = cheBuildMemoryDots(
+      savedMemories: savedMemories,
+      memoryRecords: memoryRecords,
+      memoryNotes: memoryNotes,
+      learnedPersonality: learnedPersonality,
+      learnedKnowledge: learnedKnowledge,
+      brainLinks: brainLinks,
+      suggestions: suggestions,
+      conversationMemories: conversationMemories,
+      brainRecords: _brainReplicaRecords(),
+    );
+    final ledger = _deviceToken == null ? null : CheBrainLedgerClient(baseUrl: cheAgentBaseUrl, headers: () => _authHeaders);
+    return CheBrainOverview(
+      active: active,
+      dots: dots,
+      brainLinks: brainLinks,
+      loadLearning: ledger?.overview,
+      onReadAloud: (t) => speakText(t, record: false, readOnDemand: true),
+      onOpenEvidence: _openBrainEvidence,
+      onOpenSource: _openBrainSource,
+      onOpenLedger: () => unawaited(_openBrainLedger()),
+      brain: CheMemoryBrainRoom(
         active: active,
-        dots: cheBuildMemoryDots(
-          savedMemories: savedMemories,
-          memoryRecords: memoryRecords,
-          memoryNotes: memoryNotes,
-          learnedPersonality: learnedPersonality,
-          learnedKnowledge: learnedKnowledge,
-          brainLinks: brainLinks,
-          suggestions: suggestions,
-          conversationMemories: conversationMemories,
-          brainRecords: _brainReplicaRecords(),
-        ),
+        dots: dots,
         brainLinks: brainLinks,
         roster: team,
         loading: _brainSyncing,
@@ -54,37 +71,36 @@ extension _CheHomeHubRooms on _CHEHomeState {
         onReadAloud: (t) => speakText(t, record: false, readOnDemand: true),
         onRefresh: () => _loadAgentState(silent: true),
         onOpenAgent: (name) => _openOfficeFloor(agentName: name),
+        onOpenEvidence: _openBrainEvidence,
       ),
-      ),
-      offline: CheOfflineBrainPanel(compact: true, replicaLine: _brainReplicaLine()),
     );
   }
 
-  Widget _integrationCard(
-    IconData icon,
-    String title,
-    String description,
-    bool connected, {
-    VoidCallback? onTap,
-  }) {
-    return Card(
-      child: ListTile(
-        onTap: onTap,
-        leading: Icon(icon),
-        title: Text(title),
-        subtitle: Text(description),
-        trailing: Text(
-          connected ? 'CONNECTED' : (onTap != null ? 'SET UP' : 'NOT CONNECTED'),
-          style: TextStyle(
-            color: connected
-                ? CheColors.accent
-                : (onTap != null ? Colors.amberAccent : Colors.white38),
-            fontSize: 10,
-            fontWeight: FontWeight.bold,
-          ),
-        ),
-      ),
-    );
+  /// Brain Room → Memory Details → Source screen: opens the screen a record came from, through the routes the app
+  /// already has (the trade replay, the project editor, the agent's Office desk, the conversations list). Returns
+  /// false when the record names something CHE cannot open (an unknown project), so the details page says so.
+  Future<bool> _openBrainSource(CheBrainSourceLink link) async {
+    if (!mounted) return false;
+    switch (link.kind) {
+      case CheBrainSourceKind.trade:
+        return _openBrainEvidence(CheBrainEvidence(CheEvidenceKind.replay, link.label, id: link.id));
+      case CheBrainSourceKind.agentDesk:
+        _openOfficeFloor(agentName: link.id);
+        return true;
+      case CheBrainSourceKind.conversation:
+        _openConversations();
+        return true;
+      case CheBrainSourceKind.project:
+        bool same(Map<String, dynamic> p) => '${p['id']}' == link.id || '${p['title'] ?? p['name'] ?? ''}'.toLowerCase() == link.id.toLowerCase();
+        var project = projects.where(same).firstOrNull;
+        if (project == null) {
+          await _loadAgentState(silent: true);
+          project = projects.where(same).firstOrNull;
+        }
+        if (project == null || !mounted) return false;
+        await _openProjectEditor(project);
+        return true;
+    }
   }
 
   void _runHubPrompt(String prompt) {
@@ -102,12 +118,22 @@ extension _CheHomeHubRooms on _CHEHomeState {
     HapticFeedback.selectionClick();
     Navigator.of(context).push(
       MaterialPageRoute<void>(
-        builder: (_) => CheEmbeddedAppScreen(
-          app: app,
-          onLearnPage: _learnFromBrowserPage,
-        ),
+        builder: (_) => CheEmbeddedAppScreen(app: app, onLearnPage: _learnFromBrowserPage),
       ),
     );
+  }
+
+  /// Opens one Trading Room section for a desk card and says so aloud (the owner pressed it).
+  void _openTradingTool(String section, String spoken) {
+    if (!mounted) return;
+    unawaited(Navigator.of(context).push(CheTradingRoomPage.route(
+      baseUrl: () => cheAgentBaseUrl,
+      headers: () => _authHeaders,
+      onAsk: _runHubPrompt,
+      onRead: (words) { speakText(words, record: false, readOnDemand: true); },
+      chart: {'section': section},
+    )));
+    unawaited(speakText(spoken, record: false));
   }
 
   Widget _hubMarketsTab() {
@@ -115,7 +141,9 @@ extension _CheHomeHubRooms on _CHEHomeState {
       baseUrl: () => cheAgentBaseUrl,
       headers: () => _authHeaders,
       onAsk: _runHubPrompt,
-      onRead: (words) { speakText(words, record: false, readOnDemand: true); },
+      onRead: (words) {
+        speakText(words, record: false, readOnDemand: true);
+      },
       onOpenTradingApp: _openTradingApp,
       actions: [
         CheDeskAction(
@@ -142,35 +170,34 @@ extension _CheHomeHubRooms on _CHEHomeState {
           connectorName: '',
           onRun: () => _runHubPrompt('How are the trades doing?'),
         ),
+        // CHE's own engines (owner, 2026-10-24): the state comes from /api/trading/capabilities, and each card opens
+        // its tool in the Trading Room rather than asking for an external URL.
         CheDeskAction(
           icon: Icons.candlestick_chart,
           title: 'Analyze Markets',
           body: 'Stocks, futures and crypto structure, catalysts, volatility and risk.',
-          connected: integrations['market_data'] == true,
-          connectorName: 'Live market data (CHE_MARKET_DATA_URL)',
-          onRun: () => _runHubPrompt(
-            'Analyze the market I am focused on right now. Use any connected live market and research tools, separate live facts from assumptions, and give me structure, catalysts, invalidation and risk.',
-          ),
+          connected: true,
+          connectorName: '',
+          capability: 'analyze_markets',
+          onRun: () => _openTradingTool('chart', 'Opened the Trading Room chart. CHE\'s market analysis runs on the bars it shows; ask "analyze this market" for the structure read.'),
         ),
         CheDeskAction(
           icon: Icons.science_outlined,
           title: 'Backtesting Lab',
           body: 'Strategy tests with sample size, drawdown and out-of-sample checks.',
-          connected: integrations['backtesting'] == true,
-          connectorName: 'Backtest engine (CHE_BACKTEST_URL)',
-          onRun: () => _runHubPrompt(
-            'Open a backtesting task with me. Help me define the setup, rules, timeframe, data needed, sample size, drawdown and out-of-sample validation. Use the connected backtest system if available.',
-          ),
+          connected: true,
+          connectorName: '',
+          capability: 'backtesting_lab',
+          onRun: () => _openTradingTool('strategies', 'Opened the Strategy Lab: the research results by strategy and timeframe, with sample size, drawdown and out-of-sample checks.'),
         ),
         CheDeskAction(
           icon: Icons.functions,
           title: 'Custom Indicators',
           body: 'Indicator and scanner logic (VWAP, order blocks, custom rules).',
-          connected: integrations['backtesting'] == true,
-          connectorName: 'Historical data / backtest engine',
-          onRun: () => _runHubPrompt(
-            'Help me build a custom trading indicator or scanner. Ask only for the missing rules, then produce the logic and a validation plan.',
-          ),
+          connected: true,
+          connectorName: '',
+          capability: 'custom_indicators',
+          onRun: () => _openTradingTool('chart', 'Opened the Trading Room chart. Its Indicators menu has VWAP, EMA 9, 20, 50 and 200, RSI, Bollinger Bands, the session range and the opening range.'),
         ),
         CheDeskAction(
           icon: Icons.menu_book_rounded,
@@ -207,106 +234,140 @@ extension _CheHomeHubRooms on _CHEHomeState {
   }
 
   Widget _hubBusinessTab() {
-    return _hubList(
-      'Business',
-      'Run planning and operations now; connected services unlock live records, leads and payments.',
-      [
-        _integrationCard(
-          Icons.groups_rounded,
-          'Business War Room',
-          'Convene CHE’s agents on a business goal: they draft, cross-check each other and CHE delivers the plan.',
-          true,
-          onTap: () {
-            Navigator.of(context).pop();
-            _openOfficeFloor();
-          },
+    // Business is a set of things to do. Each row says what it does, whether it is connected, and gives one button.
+    // Real counts come from the Projects board (businesses and pipeline deals), never from text.
+    final board = _boardItems();
+    // Deals carry the "Business / pipeline" label too, so businesses exclude them to avoid counting each deal twice.
+    final businesses = board
+        .where((i) => i.kind != CheBoardKind.deal && i.typeLabel.toLowerCase().contains('business'))
+        .toList();
+    final deals = board.where((i) => i.kind == CheBoardKind.deal).toList();
+    // The same stages the Worker's pipelineSummary calls needs_you (proposal and review) need the owner.
+    final attention = [...businesses, ...deals].where((i) {
+      final s = i.statusLabel.toLowerCase();
+      return s.contains('block') || s.contains('fail') || s == 'proposal' || s == 'review';
+    }).length;
+    final paymentsOn = integrations['payments'] == true;
+    return _hubList('Business', 'What you can do here, and what is connected.', [
+      Card(
+        child: Padding(
+          padding: const EdgeInsets.all(14),
+          child: Text(
+            businesses.isEmpty && deals.isEmpty
+                ? 'No business or deals yet. Start one below and it appears here.'
+                : '${businesses.length} ${businesses.length == 1 ? 'business' : 'businesses'} · ${deals.length} ${deals.length == 1 ? 'deal' : 'deals'} · ${attention == 0 ? 'nothing waiting on you' : '$attention waiting on you'}',
+            style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+          ),
         ),
-        _integrationCard(
-          Icons.handshake_outlined,
-          'Client Pipeline',
-          'Leads → proposals → builds → Stripe payment links. CHE drafts and builds; you approve and send.',
-          true,
-          onTap: () {
-            Navigator.of(context).push(
-              MaterialPageRoute<void>(
-                builder: (_) => ChePipelineRoom(
-                  baseUrl: () => cheAgentBaseUrl,
-                  headers: () => _authHeaders,
-                  onAsk: (prompt) {
-                    Navigator.of(context).pop();
-                    _runHubPrompt(prompt);
-                  },
-                ),
+      ),
+      _businessRow(
+        icon: Icons.groups_rounded,
+        title: 'Plan with the team',
+        what: 'Agents draft a business goal, check each other, and CHE brings you the plan.',
+        status: 'Opens chat',
+        action: 'Start',
+        onTap: () {
+          Navigator.of(context).pop();
+          _openOfficeFloor();
+        },
+      ),
+      _businessRow(
+        icon: Icons.handshake_outlined,
+        title: 'Clients and deals',
+        what: 'Track leads, proposals and builds. You approve every send.',
+        status: deals.isEmpty ? 'No deals yet' : '${deals.length} in the pipeline',
+        action: 'Open',
+        onTap: () {
+          Navigator.of(context).push(
+            MaterialPageRoute<void>(
+              builder: (_) => ChePipelineRoom(
+                baseUrl: () => cheAgentBaseUrl,
+                headers: () => _authHeaders,
+                onAsk: (prompt) {
+                  Navigator.of(context).pop();
+                  _runHubPrompt(prompt);
+                },
               ),
-            );
-          },
-        ),
-        _integrationCard(
-          Icons.storefront_outlined,
-          'CHE Studio Store',
-          'Products and classes you approve, sold through Stripe payment links. Real sales only.',
-          integrations['payments'] == true,
-          onTap: () {
-            Navigator.of(context).push(
-              MaterialPageRoute<void>(
-                builder: (_) => CheStoreRoom(
-                  baseUrl: () => cheAgentBaseUrl,
-                  headers: () => _authHeaders,
-                  onAsk: (prompt) {
-                    Navigator.of(context).pop();
-                    _runHubPrompt(prompt);
-                  },
-                ),
+            ),
+          );
+        },
+      ),
+      _businessRow(
+        icon: Icons.storefront_outlined,
+        title: 'Sell a product or class',
+        what: 'Products you approve, sold through Stripe payment links. Only real sales are counted.',
+        status: paymentsOn ? 'Stripe connected' : 'Needs Stripe',
+        action: paymentsOn ? 'Open' : 'Set up',
+        onTap: () {
+          Navigator.of(context).push(
+            MaterialPageRoute<void>(
+              builder: (_) => CheStoreRoom(
+                baseUrl: () => cheAgentBaseUrl,
+                headers: () => _authHeaders,
+                onAsk: (prompt) {
+                  Navigator.of(context).pop();
+                  _runHubPrompt(prompt);
+                },
               ),
-            );
-          },
+            ),
+          );
+        },
+      ),
+      _businessRow(
+        icon: Icons.account_balance_wallet_outlined,
+        title: 'Money and cash flow',
+        what: 'Budget, runway and forecast from numbers you give CHE. No revenue is shown until a payment connector confirms it.',
+        status: paymentsOn ? 'Payments connected' : 'No revenue connected',
+        action: 'Ask CHE',
+        onTap: () => _runHubPrompt(
+          'Help me work through my business cash flow. Ask for only the numbers you actually need, then build the budget, runway and forecast.',
         ),
-        _integrationCard(
-          Icons.dashboard_customize_outlined,
-          'Business Operations',
-          'Plans, workflows, CRM, scheduling, fulfillment and operating systems.',
-          integrations['business'] == true,
-          onTap: () => _runHubPrompt(
-            'Start a business operations task with me. Help me turn the goal into an efficient plan, workflow, responsibilities, metrics and next actions.',
-          ),
+      ),
+      _businessRow(
+        icon: Icons.person_search_outlined,
+        title: 'Find leads',
+        what: 'Public or professional prospects from a connected lead source. No sensitive personal targeting.',
+        status: integrations['leads'] == true ? 'Connected' : 'Needs a lead source',
+        action: 'Ask CHE',
+        onTap: () => _runHubPrompt(
+          'Find and organize lawful public or professional leads for my business using connected lead and research tools. Do not use sensitive personal targeting.',
         ),
-        _integrationCard(
-          Icons.account_balance_wallet_outlined,
-          'Cash Flow',
-          'Budgets, runway, forecasts, invoices and reconciliations.',
-          integrations['business'] == true,
-          onTap: () => _runHubPrompt(
-            'Help me work through my business cash flow. Ask for only the numbers you actually need, then build the budget, runway and forecast.',
-          ),
+      ),
+      _businessRow(
+        icon: Icons.add_circle_outline_rounded,
+        title: 'Start a business',
+        what: 'Name the business, its first offer and the next three steps. Nothing is published or paid.',
+        status: 'Opens chat',
+        action: 'Start',
+        onTap: () => _runHubPrompt(
+          'Start a business plan with me. Help me pick the first offer, the customer, and the next three steps. Do not publish, charge or buy anything.',
         ),
-        _integrationCard(
-          Icons.person_search_outlined,
-          'Lead Discovery',
-          'Lawful public/professional prospect research through a connected source.',
-          integrations['leads'] == true,
-          onTap: () => _runHubPrompt(
-            'Find and organize lawful public or professional leads for my business using connected lead and research tools. Do not use sensitive personal targeting.',
-          ),
+      ),
+    ]);
+  }
+
+  /// One Business action: what it is, what is connected, and the one thing the button does.
+  Widget _businessRow({
+    required IconData icon,
+    required String title,
+    required String what,
+    required String status,
+    required String action,
+    required VoidCallback onTap,
+  }) {
+    return Card(
+      child: ListTile(
+        onTap: onTap,
+        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        leading: Icon(icon),
+        title: Text(title, style: const TextStyle(fontWeight: FontWeight.w700)),
+        subtitle: Padding(
+          padding: const EdgeInsets.only(top: 4),
+          child: Text('$what\n$status', style: const TextStyle(height: 1.35)),
         ),
-        _integrationCard(
-          Icons.payments_outlined,
-          'Payments + Billing',
-          'Authorized invoicing and payment actions with explicit customer terms.',
-          integrations['payments'] == true,
-          onTap: () => _runHubPrompt(
-            'Help me set up CHE payments and billing. Do not charge anyone unless the payment connector confirms authorization, pricing and customer terms.',
-          ),
-        ),
-        _integrationCard(
-          Icons.manage_search_outlined,
-          'Public Records',
-          'Research records that are lawfully public through an authorized source.',
-          integrations['public_records'] == true,
-          onTap: () => _runHubPrompt(
-            'Help me research lawful public records. Use a connected public-record or research source if available and clearly separate confirmed records from anything unverified.',
-          ),
-        ),
-      ],
+        isThreeLine: true,
+        trailing: FilledButton.tonal(onPressed: onTap, child: Text(action)),
+      ),
     );
   }
 
@@ -335,15 +396,11 @@ extension _CheHomeHubRooms on _CHEHomeState {
       if (job is Map && job['id'] is String) cheWatchedJobId.value = job['id'] as String;
       await _loadAgentState(silent: true);
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('$title is rendering in the cloud.')),
-        );
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$title is rendering in the cloud.')));
       }
     } catch (_) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Could not start the cloud job.')),
-        );
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Could not start the cloud job.')));
       }
     }
   }
@@ -359,8 +416,7 @@ extension _CheHomeHubRooms on _CHEHomeState {
         child: ListView(
           padding: const EdgeInsets.fromLTRB(20, 0, 20, 32),
           children: [
-            Text('${job['title'] ?? 'Job'}',
-                style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w800)),
+            Text('${job['title'] ?? 'Job'}', style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w800)),
             const SizedBox(height: 4),
             Text('${job['status'] ?? ''}', style: const TextStyle(color: Colors.white54)),
             const SizedBox(height: 16),
@@ -368,8 +424,8 @@ extension _CheHomeHubRooms on _CHEHomeState {
               '${job['result'] ?? ''}'.isNotEmpty
                   ? '${job['result']}'
                   : '${job['error'] ?? ''}'.isNotEmpty
-                      ? '${job['error']}'
-                      : 'Still working. This keeps going on the CHE server.',
+                  ? '${job['error']}'
+                  : 'Still working. This keeps going on the CHE server.',
               style: const TextStyle(height: 1.45),
             ),
             if ('${job['result'] ?? ''}'.isNotEmpty) ...[
@@ -386,30 +442,19 @@ extension _CheHomeHubRooms on _CHEHomeState {
     );
   }
 
-  // Office agents who are in this room walk across the bottom of the tab.
-  Widget _withVisitors(Widget scene, Set<String> rooms) {
-    _ensureOfficeRuntime();
-    return Stack(children: [
-      Positioned.fill(child: scene),
-      Positioned(
-        left: 0,
-        right: 0,
-        bottom: 96,
-        child: CheRoomVisitors(runtime: _officeRuntime, rooms: rooms, onOpenOffice: _openOfficeFloor),
-      ),
-    ]);
-  }
-
-  Widget _hubMusicTab(bool active) => _withVisitors(_hubMusicScene(active), const {'music', 'studio'});
+  // No crew walks across the screen: agents appear where they do work (Office), not as decoration on Music.
+  Widget _hubMusicTab(bool active) => _hubMusicScene(active);
 
   Widget _hubMusicScene(bool active) {
     final musicReady = integrations['music'] == true;
     final voiceReady = integrations['natural_voice'] == true;
     return CheCreatorStudio(
       speaking: _isSpeaking,
-      jobs: backgroundJobs,
+      jobs: [
+        for (final j in backgroundJobs)
+          if (!cheIsCodingJob(j)) j,
+      ],
       onOpenJob: (job) => unawaited(_openJob(job)),
-      seriesPanel: CheSeriesStudioPanel(baseUrl: () => cheAgentBaseUrl, headers: () => _authHeaders, onAsk: _runHubPrompt),
       musicScene: MusicStudioScene(
         active: active,
         musicConnected: musicReady,
@@ -417,11 +462,18 @@ extension _CheHomeHubRooms on _CHEHomeState {
         onMusic: () => _runHubPrompt(
           'Help me connect and control my music through CHE. Use the authorized music integration if connected.',
         ),
-        onCar: () => _runHubPrompt(
-          'Help me connect my car audio to CHE. Use only supported authorized audio controls.',
-        ),
+        onCar: () =>
+            _runHubPrompt('Help me connect my car audio to CHE. Use only supported authorized audio controls.'),
       ),
       actions: [
+        CheStudioAction(
+          icon: Icons.mic_rounded,
+          title: 'Recording Studio',
+          body: 'Record vocals, layer tracks, build beats, add effects, mix, master and export WAV, on this iPhone.',
+          connected: true,
+          connectorName: '',
+          onRun: () => unawaited(_openRecordingStudio()),
+        ),
         CheStudioAction(
           icon: Icons.music_note_rounded,
           title: 'Make music',
@@ -438,7 +490,9 @@ extension _CheHomeHubRooms on _CHEHomeState {
           body: 'Voiceovers and narration in natural voices.',
           connected: voiceReady,
           connectorName: 'Natural voice (CHE_OPENAI_API_KEY or CHE_VOICE_URL)',
-          onRun: () => _runHubPrompt('Help me record a voiceover. Ask for the script and tone, then produce it with the connected voice engine.'),
+          onRun: () => _runHubPrompt(
+            'Help me record a voiceover. Ask for the script and tone, then produce it with the connected voice engine.',
+          ),
         ),
         CheStudioAction(
           icon: Icons.podcasts_rounded,
@@ -447,10 +501,56 @@ extension _CheHomeHubRooms on _CHEHomeState {
           connected: true,
           connectorName: '',
           background: true,
-          onRun: () => unawaited(_startCloudJob(
-            'Podcast episode draft',
-            'Write a complete podcast episode package for the owner: working title, hook, segment outline, full conversational script, show notes and chapter markers. Base it on the owner\'s saved projects and interests if relevant; label assumptions.',
-          )),
+          onRun: () => unawaited(
+            _startCloudJob(
+              'Podcast episode draft',
+              'Write a complete podcast episode package for the owner: working title, hook, segment outline, full conversational script, show notes and chapter markers. Base it on the owner\'s saved projects and interests if relevant; label assumptions.',
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// The Music room's own recording workspace (lib/music/che_recording_studio.dart). [tab] opens a section (0 Record,
+  /// 1 My Songs, 2 Beat Maker, 3 Mixer, 4 Effects, 5 Master); [say] runs the owner's words there ("record my vocals").
+  Future<void> _openRecordingStudio({int tab = 0, String? say}) async {
+    HapticFeedback.selectionClick();
+    await Navigator.of(context).push(CheRecordingStudio.route(
+      initialTab: tab,
+      say: say,
+      onAsk: (prompt) async {
+        if (mounted) Navigator.of(context).pop();
+        _runHubPrompt(prompt);
+      },
+      onSpeak: (text) => speakText(text, record: false, readOnDemand: true),
+    ));
+  }
+
+  /// Film Studio's video series panel (Street Smart Explainers), moved out of the Music room on 2026-10-24.
+  Widget _filmSeriesPanel() => CheSeriesStudioPanel(
+        baseUrl: () => cheAgentBaseUrl,
+        headers: () => _authHeaders,
+        onAsk: _runHubPrompt,
+      );
+
+  /// Film Studio's video tools, moved out of the Music room on 2026-10-24 (same handlers as before).
+  List<CheStudioAction> _filmTools() => [
+        CheStudioAction(
+          icon: Icons.auto_awesome_rounded,
+          title: 'Visual Studio',
+          body: 'Edit photos and videos: adjust, crop, text, layers, timeline, captions, music and templates.',
+          connected: true,
+          connectorName: '',
+          onRun: () => unawaited(
+            Navigator.of(context).push(
+              MaterialPageRoute<void>(
+                builder: (_) => CheVisualStudio(
+                  client: CheVisualClient(baseUrl: () => cheAgentBaseUrl, headers: () => _authHeaders),
+                ),
+              ),
+            ),
+          ),
         ),
         CheStudioAction(
           icon: Icons.movie_creation_outlined,
@@ -458,7 +558,9 @@ extension _CheHomeHubRooms on _CHEHomeState {
           body: 'Scenes, shot list and storyboard frames for video.',
           connected: true,
           connectorName: '',
-          onRun: () => _runHubPrompt('Let\'s write a video script and storyboard. Ask for the idea and length, then give me scenes, a shot list and frame-by-frame storyboard notes.'),
+          onRun: () => _runHubPrompt(
+            'Let\'s write a video script and storyboard. Ask for the idea and length, then give me scenes, a shot list and frame-by-frame storyboard notes.',
+          ),
         ),
         CheStudioAction(
           icon: Icons.slideshow_rounded,
@@ -466,7 +568,9 @@ extension _CheHomeHubRooms on _CHEHomeState {
           body: 'Slide-by-slide deck with speaker notes.',
           connected: true,
           connectorName: '',
-          onRun: () => _runHubPrompt('Build a presentation with me. Ask for the audience and goal, then produce slide-by-slide content with speaker notes.'),
+          onRun: () => _runHubPrompt(
+            'Build a presentation with me. Ask for the audience and goal, then produce slide-by-slide content with speaker notes.',
+          ),
         ),
         CheStudioAction(
           icon: Icons.videocam_rounded,
@@ -474,21 +578,360 @@ extension _CheHomeHubRooms on _CHEHomeState {
           body: 'Video clips from a prompt or storyboard.',
           connected: integrations['video_generation'] == true,
           connectorName: 'Video generator (CHE_VIDEO_GEN_URL)',
-          onRun: () => _runHubPrompt('Create a video for me. Ask only for any essential missing detail, then use the connected CHE video generator if available.'),
+          onRun: () => _runHubPrompt(
+            'Create a video for me. Ask only for any essential missing detail, then use the connected CHE video generator if available.',
+          ),
         ),
-      ],
+      ];
+
+  Widget _hubCreateTab(bool active) => _hubCreateScene(active);
+
+  /// Create → Creative Studio, managed by Vale (lib/create/che_creative_studio.dart): one vertically scrolling page
+  /// with Create New, the Film, Music, Code and Art & Character studios, and Projects. Every button is an existing
+  /// handler; activity rows come only from real backend states.
+  Widget _hubCreateScene(bool active, {CheStudioSection? section}) {
+    _ensureOfficeRuntime();
+    return AnimatedBuilder(
+      animation: _officeRuntime,
+      builder: (context, _) {
+        final job = _officeRuntime.codingJob;
+        return CheCreativeStudio(
+          key: _creativeStudioKey,
+          initialSection: section,
+          active: active,
+          projects: projects,
+          vaultCount: vaultItems.length,
+          imageConnected: integrations['image_generation'] == true,
+          videoConnected: integrations['video_generation'] == true,
+          activity: [
+            if (job != null && job.active && job.label.isNotEmpty)
+              CheStudioActivity(title: 'Coding job', status: job.label, detail: job.speech, onTap: _openOfficeFloor),
+          ],
+          // Creation projects, the Creation Engine's state and which kinds are built (creation_studio.js). GPU jobs and
+          // Pair Colab moved to Settings, Connections, Cloud Computer.
+          loadCreations: _loadCreations,
+          saveEngineSettings: _saveEngineSettings,
+          creations: CheCreationsStrip(baseUrl: cheAgentBaseUrl, headers: _authHeaders, active: active),
+          onRead: (text) => speakText(text, record: false, readOnDemand: true),
+          actions: CheStudioActions(
+            // Every studio button opens its own workspace, never Home or Chat (owner, 2026-10-24).
+            onOpenFilmStudio: () => unawaited(_openFilmStudio()),
+            onNewVideo: () => unawaited(_openFilmStudio()),
+            onOpenTheater: () => _switchHubRoom(8),
+            onOpenMusic: _openMusicWorkspace,
+            onNewSong: _openMusicWorkspace,
+            onNewApp: _openCodeWorkspace,
+            onOpenCodeWorkspace: _openCodeWorkspace,
+            onOpenProjectManager: _openProjectManager,
+            onOpenCommandCenter: () => unawaited(_openCommandCenter()),
+            onOpenOffice: _openOfficeFloor,
+            onCharacterGenerator: _openCharacterGenerator,
+            onOpenArtStudio: _openArtStudio,
+            onNewImage: _openArtStudio,
+            onNewProject: () => unawaited(_createProjectDialog()),
+            onOpenProject: _openProjectEditor,
+            onVault: () => unawaited(_openVault()),
+            onResearch: () => _runHubPrompt(
+              'Help me research the novelty and feasibility of the project I am working on. Use connected live research if available and clearly separate confirmed facts from assumptions.',
+            ),
+            onInventions: () => unawaited(
+              Navigator.of(context).push(CheInventionStudioPage.route(baseUrl: cheAgentBaseUrl, headers: _authHeaders)),
+            ),
+            onShowroom: _openShowroom,
+            loadPeople: _loadCreationPeople,
+            onCreatePerson: (base) => unawaited(_createPerson(base)),
+            onCreateThing: _createThing,
+            onCreateAnimation: () => unawaited(
+              Navigator.of(context).push(
+                CheLiveStudio.route(
+                  baseUrl: cheAgentBaseUrl,
+                  headers: _authHeaders,
+                  mode: CheLiveStudioMode.animation,
+                  onRead: (text) => speakText(text, record: false, readOnDemand: true),
+                  onSpeak: (text) => unawaited(speakText(text, record: false)),
+                ),
+              ),
+            ),
+            onOpenCreation: (id) => unawaited(_openCreation(id)),
+            onConnectEngine: _connectCreationEngine,
+            onContinueCreating: _continueCreating,
+          ),
+        );
+      },
     );
   }
 
-  Widget _hubCreateTab(bool active) => _withVisitors(_hubCreateScene(active), const {'gallery'});
+  /// GET /api/creations for the Creation Room (owner device token). Null when CHE cannot be reached.
+  /// Creation Engine settings by voice (Creation Room): the Worker's own answer is what CHE reports.
+  Future<String> _saveEngineSettings(Map<String, Object> change) async {
+    try {
+      final r = await http
+          .post(
+            Uri.parse('$cheAgentBaseUrl/api/creations/engine/settings'),
+            headers: {..._authHeaders, 'Content-Type': 'application/json'},
+            body: jsonEncode(change),
+          )
+          .timeout(const Duration(seconds: 15));
+      final d = jsonDecode(r.body);
+      final said = '${d is Map ? d['spoken'] ?? d['detail'] ?? '' : ''}'.trim();
+      if (said.isNotEmpty) return said;
+      return r.statusCode == 200 ? 'Saved.' : 'The Creation Engine setting was not saved.';
+    } catch (_) {
+      return 'Could not reach CHE, so the Creation Engine setting was not saved.';
+    }
+  }
 
-  Widget _hubCreateScene(bool active) {
-    return CheRoomSegments(
-      labels: const ['Projects', 'Art Studio'],
-      icons: const [Icons.collections_bookmark_outlined, Icons.palette_outlined],
-      children: [
-        () => _createProjectsScene(active),
-        () => CheArtStudio(
+  Future<Map<String, dynamic>?> _loadCreations() async {
+    try {
+      final r = await http
+          .get(Uri.parse('$cheAgentBaseUrl/api/creations'), headers: _authHeaders)
+          .timeout(const Duration(seconds: 12));
+      if (r.statusCode != 200) return null;
+      final d = jsonDecode(r.body);
+      return d is Map ? Map<String, dynamic>.from(d) : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// The characters Create Person can start from: the Worker's built-in identity presets (CHE and the crew).
+  Future<List<(String, String, String)>> _loadCreationPeople() async {
+    final r = await http
+        .get(Uri.parse('$cheAgentBaseUrl/api/gpu/identities'), headers: _authHeaders)
+        .timeout(const Duration(seconds: 12));
+    final d = jsonDecode(r.body);
+    if (r.statusCode != 200 || d is! Map) return const [];
+    return [
+      for (final p in (d['presets'] as List? ?? const []))
+        if (p is Map && '${p['id'] ?? ''}'.isNotEmpty && '${p['base'] ?? ''}'.isEmpty)
+          ('${p['id']}', '${p['name'] ?? p['id']}', '${p['role'] ?? ''}'),
+    ];
+  }
+
+  /// Create Person: a new creation project from [base] on the Worker, opened in the Live Studio.
+  Future<void> _createPerson(String base) async {
+    try {
+      final r = await http
+          .post(
+            Uri.parse('$cheAgentBaseUrl/api/creations'),
+            headers: {..._authHeaders, 'Content-Type': 'application/json'},
+            body: jsonEncode({'kind': 'person', 'base': base}),
+          )
+          .timeout(const Duration(seconds: 15));
+      final d = jsonDecode(r.body);
+      final id = d is Map && d['project'] is Map ? '${(d['project'] as Map)['id'] ?? ''}' : '';
+      if (id.isEmpty) throw StateError('${d is Map ? d['detail'] ?? r.statusCode : r.statusCode}');
+      HapticFeedback.mediumImpact();
+      await _openCreation(id);
+    } catch (e) {
+      HapticFeedback.heavyImpact();
+      if (mounted) {
+        ScaffoldMessenger.maybeOf(context)?.showSnackBar(SnackBar(content: Text('Could not start the creation: $e')));
+      }
+    }
+  }
+
+  /// Create Object / Create Room: a new project of [kind] from [base] on the Worker, opened in the Live Studio. Returns
+  /// the Worker's own answer (or the real failure), shown as a banner with a haptic and spoken unless a voice route
+  /// speaks it ([viaVoice]).
+  Future<String> _createThing(String kind, String base, bool viaVoice) async {
+    String said;
+    var ok = false;
+    String? id;
+    try {
+      final r = await http
+          .post(
+            Uri.parse('$cheAgentBaseUrl/api/creations'),
+            headers: {..._authHeaders, 'Content-Type': 'application/json'},
+            // `describe:<words>`: an object in the owner's own words (creation_freeform.js on the Worker).
+            body: jsonEncode(base.startsWith('describe:') ? {'kind': kind, 'description': base.substring(9)} : {'kind': kind, 'base': base}),
+          )
+          .timeout(const Duration(seconds: 15));
+      final d = jsonDecode(r.body);
+      id = d is Map && d['project'] is Map ? '${(d['project'] as Map)['id'] ?? ''}' : '';
+      ok = r.statusCode < 300 && id.isNotEmpty;
+      said = ok
+          ? '${d['spoken'] ?? 'Started.'} Opening it in the Live Studio.'
+          : 'That did not work: ${d is Map ? d['detail'] ?? 'CHE answered ${r.statusCode}.' : 'CHE answered ${r.statusCode}.'}';
+    } catch (e) {
+      said = 'That did not work: CHE could not be reached.';
+    }
+    if (ok) {
+      HapticFeedback.mediumImpact();
+    } else {
+      HapticFeedback.heavyImpact();
+    }
+    if (mounted) {
+      ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+        SnackBar(content: Text(said, style: const TextStyle(fontSize: 18)), duration: const Duration(seconds: 6)),
+      );
+    }
+    if (!viaVoice) unawaited(speakText(said, record: false));
+    if (ok && id != null && mounted) unawaited(_openCreation(id));
+    return said;
+  }
+
+  Future<void> _openCreation(String id) async {
+    await Navigator.of(context).push(
+      CheLiveStudio.route(
+        baseUrl: cheAgentBaseUrl,
+        headers: _authHeaders,
+        projectId: id,
+        onRead: (text) => speakText(text, record: false, readOnDemand: true),
+        onSpeak: (text) => unawaited(speakText(text, record: false)),
+        onOpenEngineSettings: _openCreationEngine,
+      ),
+    );
+    // Back in the room: refresh My Creations and the engine state.
+    unawaited(_creativeStudioKey.currentState?.loadCreations());
+  }
+
+  void _openCreationEngine() {
+    HapticFeedback.selectionClick();
+    unawaited(
+      Navigator.of(context).push(
+        CheCreationEnginePage.route(
+          baseUrl: cheAgentBaseUrl,
+          headers: _authHeaders,
+          onRead: (text) => speakText(text, record: false, readOnDemand: true),
+        ),
+      ),
+    );
+  }
+
+  /// Connect (owner, 2026-10-24: no website in ordinary use): the Cloud Computer starts its own workers, so a ready
+  /// engine needs nothing; when no worker can run, this opens Settings, Connections, Cloud Computer inside CHE.
+  void _connectCreationEngine(CheCreationEngine engine) {
+    HapticFeedback.selectionClick();
+    if (!engine.ready) _openCreationEngine();
+  }
+
+  /// "Continue creating": the creation with a job still waiting or building, else the newest one, in its live 3D view.
+  /// Leaving Create never cancelled anything: the job, its saved stages and its files live on the Worker.
+  Future<String> _continueCreating() async {
+    final d = await _loadCreations();
+    if (d == null) return 'I could not reach CHE to find your creations, so nothing was opened.';
+    final list = [
+      for (final p in (d['projects'] as List? ?? const []))
+        if (p is Map) Map<String, dynamic>.from(p),
+    ];
+    if (list.isEmpty) return 'You have no creations yet. Say create a person to start one.';
+    bool active(Map<String, dynamic> p) =>
+        p['job'] is Map && const {'queued', 'rendering', 'paused'}.contains('${(p['job'] as Map)['state']}');
+    final pick = list.firstWhere(active, orElse: () => list.first);
+    unawaited(_openCreation('${pick['id']}'));
+    final job = pick['job'] is Map ? Map<String, dynamic>.from(pick['job'] as Map) : null;
+    final state = switch ('${job?['state'] ?? ''}') {
+      'rendering' => 'it is building now, ${job?['pct'] ?? 0} percent',
+      'queued' => 'it is waiting for a worker',
+      'paused' => 'it is paused with its finished stages kept, and resumes on the next worker',
+      'completed' => 'its 3D model is ready',
+      'failed' => 'its last build failed; say generate to try again',
+      _ => 'it has no build yet; say generate',
+    };
+    return 'Opening ${pick['title']}: $state.';
+  }
+
+  /// Opens Create (the Creative Studio) and, once it is built, scrolls to [section] or opens Create New.
+  void _openCreativeStudio({CheStudioSection? section, bool createNew = false, String? say}) {
+    void act() {
+      final studio = _creativeStudioKey.currentState;
+      if (studio == null) return;
+      // A spoken Create action from another screen ("create a person"): run it through the room's own voice route.
+      if (say != null) {
+        final handler = CheCreativeStudio.voiceHandler;
+        if (handler != null) {
+          unawaited(handler(say).then((reply) {
+            if (reply != null && reply.isNotEmpty) unawaited(speakText(reply, record: false));
+          }));
+        }
+        return;
+      }
+      if (createNew) {
+        unawaited(studio.showCreateNew());
+      } else if (section != null) {
+        studio.scrollTo(section);
+      }
+    }
+
+    if (_assistantHubOpen && _selectedTab == 5 && _creativeStudioKey.currentState != null) {
+      act();
+      return;
+    }
+    if (_assistantHubOpen) Navigator.of(context).pop();
+    Future<void>.delayed(Duration(milliseconds: _assistantHubOpen ? 180 : 0), () {
+      if (!mounted) return;
+      _openAssistantHub(tab: 5);
+      Future<void>.delayed(const Duration(milliseconds: 450), act);
+    });
+  }
+
+  /// Another room of the rooms sheet (Music 4, Theater 8): the sheet closes and reopens on that room, as the Workshop does.
+  void _switchHubRoom(int tab) {
+    HapticFeedback.selectionClick();
+    Navigator.of(context).pop();
+    Future<void>.delayed(const Duration(milliseconds: 180), () {
+      if (mounted) _openAssistantHub(tab: tab);
+    });
+  }
+
+  /// Music Studio's one entry point: the Music room (hub tab 4). The recording workspace replaces it here, in one place.
+  void _openMusicWorkspace() => _switchHubRoom(4);
+
+  /// Code Studio: the coding workspace (lib/create/che_code_workspace.dart) over the real coding jobs.
+  void _openCodeWorkspace() {
+    HapticFeedback.selectionClick();
+    unawaited(
+      Navigator.of(context).push(
+        CheCodeWorkspace.route(
+          baseUrl: cheAgentBaseUrl,
+          headers: () => _authHeaders,
+          loadJobs: () async {
+            await _loadAgentState(silent: true);
+            return backgroundJobs;
+          },
+          onSpeak: (text) => unawaited(speakText(text, record: false, readOnDemand: true)),
+          onOpenOffice: _openOfficeFloor,
+          onOpenCommandCenter: () => unawaited(_openCommandCenter()),
+        ),
+      ),
+    );
+  }
+
+  /// Active Projects: the project manager (lib/create/che_project_manager.dart) over /api/projects/library.
+  void _openProjectManager() {
+    HapticFeedback.selectionClick();
+    unawaited(
+      Navigator.of(context)
+          .push(
+            CheProjectManager.route(
+              baseUrl: cheAgentBaseUrl,
+              headers: () => _authHeaders,
+              onOpenProject: (id) async {
+                var p = projects.where((x) => '${x['id']}' == id).firstOrNull;
+                if (p == null) {
+                  await _loadAgentState(silent: true);
+                  p = projects.where((x) => '${x['id']}' == id).firstOrNull;
+                }
+                if (p != null) await _openProjectEditor(p);
+              },
+              onOpenCreation: (id) => unawaited(_openCreation(id)),
+              onSpeak: (text) => unawaited(speakText(text, record: false, readOnDemand: true)),
+            ),
+          )
+          .then((_) => _loadAgentState(silent: true)),
+    );
+  }
+
+  /// The Art Studio (pieces, engine, upscaler, save to vault) as its own page, opened from Art & Character Studio.
+  void _openArtStudio() {
+    HapticFeedback.selectionClick();
+    unawaited(
+      Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (_) => Scaffold(
+            appBar: AppBar(title: const Text('Art Studio')),
+            body: CheArtStudio(
               baseUrl: () => cheAgentBaseUrl,
               headers: () => _authHeaders,
               onSaveToVault: (name, content) async {
@@ -496,18 +939,46 @@ extension _CheHomeHubRooms on _CHEHomeState {
                 await _loadAgentState(silent: true);
               },
             ),
-      ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// The Character Generator (lib/avatar/che_character_generator.dart). Opening it speaks nothing.
+  void _openCharacterGenerator() {
+    HapticFeedback.selectionClick();
+    unawaited(
+      Navigator.of(context).push(
+        CheCharacterGenerator.route(
+          baseUrl: cheAgentBaseUrl,
+          headers: _authHeaders,
+          onRead: (text) => speakText(text, record: false, readOnDemand: true),
+        ),
+      ),
+    );
+  }
+
+  /// CHE World population (lib/world/che_world_population_panel.dart): records, generated models, active now. Opening
+  /// it speaks nothing; Read aloud speaks the counts.
+  Future<void> _openWorldPopulation() async {
+    HapticFeedback.selectionClick();
+    await Navigator.of(context).push(
+      CheWorldPopulationPanel.route(
+        baseUrl: cheAgentBaseUrl,
+        headers: _authHeaders,
+        onRead: (text) => speakText(text, record: false, readOnDemand: true),
+      ),
     );
   }
 
   /// The Capability Showroom's real states, from the Worker (owner device token; nothing is spoken).
   /// The Capability Showroom, reachable from the Creation Room and More. Opening it speaks nothing.
   void _openShowroom() {
-    unawaited(Navigator.of(context).push(CheShowroomPage.route(
-      load: _loadShowroom,
-      onStart: _runHubPrompt,
-      onOpenRecent: _openShowroomRecent,
-    )));
+    unawaited(
+      Navigator.of(context)
+          .push(CheShowroomPage.route(load: _loadShowroom, onStart: _runHubPrompt, onOpenRecent: _openShowroomRecent)),
+    );
   }
 
   Future<Map<String, dynamic>> _loadShowroom() async {
@@ -522,62 +993,35 @@ extension _CheHomeHubRooms on _CHEHomeState {
     final id = '${recent['id'] ?? ''}';
     if (id.isEmpty) return;
     final route = switch ('${recent['kind'] ?? ''}') {
-      'invention' => CheInventionStudioPage.route(baseUrl: cheAgentBaseUrl, headers: _authHeaders),
+      'invention' => CheInventionStudioPage.route(baseUrl: cheAgentBaseUrl, headers: _authHeaders, openId: id, onSpeak: (text) => speakText(text, record: false)),
       'video' || 'image' => MaterialPageRoute<void>(
-          builder: (_) => CheCreationViewer(
-            item: {'id': id, 'kind': recent['kind'], 'title': '${recent['title'] ?? 'Creation'}'},
-            baseUrl: cheAgentBaseUrl,
-            headers: _authHeaders,
-          ),
+        builder: (_) => CheCreationViewer(
+          item: {'id': id, 'kind': recent['kind'], 'title': '${recent['title'] ?? 'Creation'}'},
+          baseUrl: cheAgentBaseUrl,
+          headers: _authHeaders,
         ),
+      ),
       _ => null,
     };
     if (route != null) unawaited(Navigator.of(context).push(route));
   }
 
-  Widget _createProjectsScene(bool active) {
-    return CreateGalleryScene(
-      active: active,
-      projects: projects,
-      vaultCount: vaultItems.length,
-      researchConnected: integrations['web_research'] == true,
-      imageConnected: integrations['image_generation'] == true,
-      videoConnected: integrations['video_generation'] == true,
-      creations: CheCreationsStrip(baseUrl: cheAgentBaseUrl, headers: _authHeaders, active: active),
-      onInventions: () => unawaited(Navigator.of(context).push(CheInventionStudioPage.route(baseUrl: cheAgentBaseUrl, headers: _authHeaders))),
-      onShowroom: _openShowroom,
-      onNewProject: () {
-        unawaited(_createProjectDialog());
-      },
-      onOpenProject: _openProjectEditor,
-      onVault: () {
-        unawaited(_openVault());
-      },
-      onResearch: () => _runHubPrompt(
-        'Help me research the novelty and feasibility of the project I am working on. Use connected live research if available and clearly separate confirmed facts from assumptions.',
-      ),
-      onImage: () => _runHubPrompt(
-        'Create an image for me. Ask only for any essential missing detail, then use the connected CHE image generator if available.',
-      ),
-      onVideo: () => _runHubPrompt(
-        'Create a video for me. Ask only for any essential missing detail, then use the connected CHE video generator if available.',
-      ),
-    );
-  }
-
   void _openOfficeFloor({String? agentName}) {
     HapticFeedback.selectionClick();
-    Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (_) => CheOfficeFloorScreen(
-          client: _agentRuntime,
-          onSpeak: (text) => speakText(text, record: false, readOnDemand: true),
-          initialAgentName: agentName,
-          // Tapping CHE's desk returns to the conversation.
-          onTalkToChe: () => Navigator.of(context).popUntil((route) => route.isFirst),
-        ),
-      ),
-    ).then((_) => _loadAgentState(silent: true));
+    Navigator.of(context)
+        .push(
+          MaterialPageRoute<void>(
+            builder: (_) => CheOfficeFloorScreen(
+              client: _agentRuntime,
+              runtime: _officeRuntime,
+              onSpeak: (text) => speakText(text, record: false, readOnDemand: true),
+              initialAgentName: agentName,
+              // Tapping CHE's desk returns to the conversation.
+              onTalkToChe: () => Navigator.of(context).popUntil((route) => route.isFirst),
+            ),
+          ),
+        )
+        .then((_) => _loadAgentState(silent: true));
   }
 
   Widget _hubOfficeTab(bool active) {
@@ -585,10 +1029,10 @@ extension _CheHomeHubRooms on _CHEHomeState {
     // War Room, with read-aloud on every summary.
     return CheOfficeFloorScreen(
       client: _agentRuntime,
+      runtime: _officeRuntime,
       embedded: true,
       onSpeak: (text) => speakText(text, record: false, readOnDemand: true),
       onTalkToChe: () => Navigator.of(context).popUntil((route) => route.isFirst),
     );
   }
-
 }

@@ -1,0 +1,9 @@
+{
+  "about": "Owner said 'Disable the 86 model' and CHE answered that she cannot. The control route must answer instead of the model.",
+  "owner": true,
+  "model": "I don't have direct access to the 86 model.",
+  "turns": [
+    { "message": "Disable the 86 model", "expect": { "route": "che_trading_controls", "model_calls": 0, "not": "don't have direct access" } },
+    { "message": "Enable the 86 model", "expect": { "route": "che_trading_controls", "model_calls": 0, "not": "don't have direct access" } }
+  ]
+}

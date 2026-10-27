@@ -12,6 +12,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../che_ui/che_hud.dart';
 import '../che_ui/che_theme.dart';
 import '../platform/che_platform_screens.dart';
+import 'che_mail_time.dart';
 import 'che_message_split.dart';
 
 class CheMailboxScreen extends StatefulWidget {
@@ -144,6 +145,24 @@ class _CheMailboxScreenState extends State<CheMailboxScreen> {
     _say('Letter deleted.');
   }
 
+  /// Modal is connected by the CHE Modal deploy workflow, so there is no key to paste. This runs CHE's own
+  /// authenticated /health check through the server and says what it found. No secret is sent or shown.
+  Future<void> _checkModal() async {
+    _say('Checking the Modal connection. CHE tests her own Modal app with one read-only health check.');
+    try {
+      final res = await http.post(
+        Uri.parse('${widget.baseUrl}/api/onboarding/modal/verify'),
+        headers: {...widget.headers(), 'Content-Type': 'application/json'},
+        body: jsonEncode(<String, Object?>{}),
+      );
+      final body = jsonDecode(res.body);
+      final map = body is Map ? body : const {};
+      _say(cheModalCheckSpeech(map, httpStatus: res.statusCode));
+    } catch (_) {
+      _say('The Modal check could not reach CHE. Nothing was changed.');
+    }
+  }
+
   Future<void> _addKey(Map<String, dynamic> provider) async {
     if (provider['readonly'] == true) {
       _say(_serverKeyStatusSpeech(provider));
@@ -251,7 +270,7 @@ class _CheMailboxScreenState extends State<CheMailboxScreen> {
         children: [
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-            child: Text('$who · ${_when(m['at'])}', style: CheType.caption),
+            child: Text('$who · ${cheMailWhen(m)}', style: CheType.caption),
           ),
           for (var i = 0; i < parts.length; i++) _bubble(m, fromChe, parts[i], i, parts.length),
         ],
@@ -296,27 +315,17 @@ class _CheMailboxScreenState extends State<CheMailboxScreen> {
   /// Messages grouped into one conversation per AI, newest conversation first.
   Map<String, List<Map>> _threads(List<Map> messages) {
     final out = <String, List<Map>>{};
-    for (final m in messages) {
+    for (final m in cheSortMail(messages)) {
       final from = '${m['from']}';
       final peer = from == 'che' ? '${m['to']}' : from;
       out.putIfAbsent(peer, () => []).add(m);
     }
     final ordered = out.entries.toList()
-      ..sort((a, b) => '${b.value.last['at']}'.compareTo('${a.value.last['at']}'));
+      ..sort((a, b) => cheMailCompare(b.value.last, a.value.last));
     return {for (final e in ordered) e.key: e.value};
   }
 
   String _nice(String peer) => peer.isEmpty ? 'Unknown' : '${peer[0].toUpperCase()}${peer.substring(1)}';
-
-  String _when(Object? at) {
-    final t = DateTime.tryParse('$at')?.toLocal();
-    if (t == null) return '';
-    final now = DateTime.now();
-    final h = t.hour % 12 == 0 ? 12 : t.hour % 12;
-    final clock = '$h:${t.minute.toString().padLeft(2, '0')} ${t.hour < 12 ? 'AM' : 'PM'}';
-    if (t.year == now.year && t.month == now.month && t.day == now.day) return clock;
-    return '${t.month}/${t.day}';
-  }
 
   Widget _flagstaffTab() {
     final open = _flag['open'] == true;
@@ -394,7 +403,7 @@ class _CheMailboxScreenState extends State<CheMailboxScreen> {
                 overflow: TextOverflow.ellipsis,
                 style: CheType.caption,
               ),
-              trailing: Text(_when(entry.value.last['at']), style: CheType.caption),
+              trailing: Text(cheMailWhen(entry.value.last), style: CheType.caption),
               onTap: () => setState(() => _openThread = entry.key),
             )),
           ),
@@ -479,9 +488,9 @@ class _CheMailboxScreenState extends State<CheMailboxScreen> {
         const SizedBox(height: 8),
         for (final session in _archive)
           Builder(builder: (_) {
-            final messages = (session['messages'] as List?)?.whereType<Map>().toList() ?? const <Map>[];
-            final when = '${session['locked_at'] ?? ''}'.replaceFirst('T', ' ');
-            final shown = when.length > 16 ? when.substring(0, 16) : when;
+            final messages = cheSortMail((session['messages'] as List?)?.whereType<Map>() ?? const <Map>[]);
+            // locked_at is UTC; the title shows it in the device's zone.
+            final shown = cheMailStamp(session['locked_at']);
             return Card(
               color: cheHudActive ? null : CheColors.surface,
               child: ExpansionTile(
@@ -752,7 +761,7 @@ class _CheMailboxScreenState extends State<CheMailboxScreen> {
                           trailing: Icon(readonly
                               ? Icons.lock_outline_rounded
                               : Icons.add_rounded),
-                          onTap: () => _addKey(p),
+                          onTap: () => p['check'] == 'modal' ? _checkModal() : _addKey(p),
                         ),
                       ),
                     );
@@ -1159,4 +1168,21 @@ class _AiNeuralPainter extends CustomPainter {
   @override
   bool shouldRepaint(covariant _AiNeuralPainter oldDelegate) =>
       oldDelegate.positions.length != positions.length || oldDelegate.weights.toString() != weights.toString();
+}
+
+/// What Check Connection says for CHE's Modal verify reply: the result, its failure category, the plain reason and the
+/// check's request ID, so a failure can be traced. Secrets never reach this reply (the server redacts it).
+String cheModalCheckSpeech(Map<dynamic, dynamic> map, {int httpStatus = 200}) {
+  String text(Object? v) => v == null ? '' : '$v'.trim();
+  final checks = map['checks'] is List ? map['checks'] as List : const [];
+  final failure = map['failure'] is Map ? map['failure'] as Map : const {};
+  final firstCheck = checks.isNotEmpty && checks.first is Map ? text((checks.first as Map)['detail']) : '';
+  final found = [text(map['detail']), text(failure['detail']), firstCheck].firstWhere((d) => d.isNotEmpty, orElse: () => '');
+  final detail = found.isEmpty || RegExp(r'[.!?]$').hasMatch(found) ? found : '$found.';
+  final category = text(map['category']).replaceAll('_', ' ');
+  final id = text(map['request_id']);
+  final trace = id.isEmpty ? '' : ' Check ID $id.';
+  if (map['ok'] == true) return 'Modal is connected. $detail$trace'.trim();
+  final reason = detail.isNotEmpty ? detail : 'CHE answered HTTP $httpStatus with no reason.';
+  return 'Modal is not connected${category.isEmpty ? '' : ' ($category)'}. $reason$trace';
 }

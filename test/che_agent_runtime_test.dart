@@ -261,8 +261,7 @@ void main() {
       client: _backend(seen),
     );
     await tester.pumpWidget(MaterialApp(home: CheOfficeFloorScreen(client: client)));
-    await _pumpUntilFound(tester, find.text('Flat floor plan'));
-    await tester.tap(find.text('Flat floor plan'));
+    await _pumpUntilFound(tester, find.textContaining('Agents working:'));
     await tester.pump();
 
     expect(find.text('Nova'), findsWidgets);
@@ -321,11 +320,10 @@ void main() {
         onTalkToChe: () => talked = true,
       ),
     ));
-    await _pumpUntilFound(tester, find.text('Flat floor plan'));
-    await tester.tap(find.text('Flat floor plan'));
+    await _pumpUntilFound(tester, find.textContaining('Agents working:'));
     await tester.pump();
 
-    // CHE's desk remains available through the accessible flat-plan fallback.
+    // CHE's desk is on the Office floor plan.
     await tester.tap(find.bySemanticsLabel(RegExp(r"CHE.*Open to talk or send a request")));
     await _pumpUntilFound(tester, find.text('CURRENT JOB'));
     // The desk sheet now lists job, capabilities, skills and limits first.
@@ -370,7 +368,7 @@ void main() {
       client: _backend([]),
     );
     await tester.pumpWidget(MaterialApp(home: CheOfficeFloorScreen(client: client)));
-    await _pumpUntilFound(tester, find.text('Flat floor plan'));
+    await _pumpUntilFound(tester, find.textContaining('Agents working:'));
     final officeScroll = find.byType(Scrollable).first;
     await tester.scrollUntilVisible(
       find.text('Plan the launch'),
@@ -411,8 +409,7 @@ void main() {
         body: CheOfficeFloorScreen(client: client, embedded: true, onSpeak: (t) async => spoken.add(t)),
       ),
     ));
-    await _pumpUntilFound(tester, find.text('Flat floor plan'));
-    await tester.tap(find.text('Flat floor plan'));
+    await _pumpUntilFound(tester, find.textContaining('Agents working:'));
     await tester.pump();
     expect(find.text('Nova'), findsWidgets);
     expect(find.textContaining('Agents working:'), findsOneWidget);

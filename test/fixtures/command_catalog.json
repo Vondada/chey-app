@@ -348,6 +348,75 @@
    "optional_missing": []
   },
   {
+   "id": "che-brain-record",
+   "category": "intelligence",
+   "title": "Che Brain Record",
+   "summary": "Open a saved Brain record.",
+   "does": "Shows the newest real Brain record, or the newest about a topic you name, with its title, kind, source, status, date and id. Says so when the Brain is empty, nothing matches, or the store cannot be read.",
+   "mode": "EXPLORE",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": null,
+   "examples": [
+    "Show a saved Brain record",
+    "Show a memory record about Sprite"
+   ],
+   "needs": [
+    "memory"
+   ],
+   "optional": [],
+   "handler": "owner_recall.brainRecordIntent → speakBrainRecord",
+   "route": "che_brain_record",
+   "produces": "record",
+   "evidence": "The stored Brain record itself, with its id; zero model calls.",
+   "cost": "Free engines only, unless you turned paid AI on.",
+   "keywords": [
+    "brain record",
+    "saved record",
+    "memory record",
+    "open record"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
+   "id": "che-memory-inspect",
+   "category": "intelligence",
+   "title": "Che Memory Inspect",
+   "summary": "Inspect CHE’s memory system.",
+   "does": "Counts what each store holds (memory records, saved preferences, the Brain, and the phone notes sent with the message) and names any store it could not read. Zero model calls.",
+   "mode": "EXPLORE",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": null,
+   "examples": [
+    "Inspect your memory system"
+   ],
+   "needs": [
+    "memory"
+   ],
+   "optional": [],
+   "handler": "owner_recall.inspectMemory → speakMemoryInspection",
+   "route": "che_memory_inspection",
+   "produces": "inspection",
+   "evidence": "Real counts read from each store on this request; zero model calls.",
+   "cost": "Free engines only, unless you turned paid AI on.",
+   "keywords": [
+    "inspect memory",
+    "memory system",
+    "memory status",
+    "what is in memory"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
    "id": "che-brain-review",
    "category": "intelligence",
    "title": "Che Brain Review",
@@ -378,6 +447,44 @@
     "daily review",
     "audit",
     "conclusions"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
+   "id": "che-performance",
+   "category": "intelligence",
+   "title": "CHE performance",
+   "summary": "Hear how fast CHE is running, measured.",
+   "does": "Reads CHE’s own measured timings per route (typical and slowest 5 percent), compares them with her performance budget, and names the slowest step. Says so when nothing has been measured yet.",
+   "mode": "EXPLORE",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": null,
+   "examples": [
+    "Are you lagging?",
+    "Performance report",
+    "Why are you slow?"
+   ],
+   "needs": [
+    "memory"
+   ],
+   "optional": [],
+   "handler": "perf_watch.performanceIntent → performanceReport → speakPerformance",
+   "route": "che_performance",
+   "produces": "report",
+   "evidence": "Every number is a measured request timing from the live window; zero model calls.",
+   "cost": "Free engines only, unless you turned paid AI on.",
+   "keywords": [
+    "performance",
+    "lag",
+    "lagging",
+    "slow",
+    "speed",
+    "latency"
    ],
    "status": "available",
    "missing": [],
@@ -505,6 +612,50 @@
    "optional_missing": []
   },
   {
+   "id": "che-improve",
+   "category": "intelligence",
+   "title": "Che Improve",
+   "summary": "Tell CHE what feels wrong; she fixes it or opens a coding task.",
+   "does": "A supported layout or look change (layout density, chart size and shape, success color, text size) is stored, read back and applied on the iPhone with no new build, then marked Verified when the app confirms it; \"undo that\" puts it back. Anything else becomes a tracked task with acceptance criteria, sent to CHE's coding pipeline. Money, trading, security, credentials, deleting and publishing are never changed automatically.",
+   "mode": "BUILD",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": {
+    "name": "what",
+    "required": false,
+    "hint": "What feels wrong, for example \"the chart is too big\""
+   },
+   "examples": [
+    "This page is too cramped",
+    "Make the chart smaller",
+    "Use chrome green for successful actions",
+    "Undo that",
+    "What improvements are open?"
+   ],
+   "needs": [],
+   "optional": [],
+   "handler": "owner_improvements.improvementIntent → handleImprovement (coding through selfDevelopmentReply)",
+   "route": "che_owner_improvement",
+   "produces": "improvement task",
+   "evidence": "The stored setting read back, and the value the iPhone reports it applied; for code, the coding job id the pipeline returned.",
+   "cost": "Free for settings: no AI engine is used. A coding task uses the coding pipeline.",
+   "keywords": [
+    "improve",
+    "improvement",
+    "too cramped",
+    "too big",
+    "too small",
+    "fix this",
+    "owner improvements",
+    "undo that"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
    "id": "che-cancel-job",
    "category": "intelligence",
    "title": "Che Cancel Job",
@@ -623,6 +774,156 @@
     "beginner",
     "expert",
     "atlas"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
+   "id": "manifest",
+   "category": "intelligence",
+   "title": "Manifestation Engine",
+   "summary": "Turn a goal into a spec, simulations and a verified plan.",
+   "does": "Turns a goal into a structured spec, several candidate solutions, each classified (feasible now, expensive or impractical, plausible but unproven, unknown, or incompatible with physical constraints), real models with Monte Carlo ranges, a comparison under equal conditions and a Realization Plan. Models today: multirotor flight, business cash flow and job searches. Saves one record per idea with the source of every number; steps count as done only with evidence, and money, account, contract, deployment or device steps never start without your approval. Also: a spoken briefing, pause, resume or stop an idea, and a weekly review when you ask. Spends nothing.",
+   "mode": "PLAN",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": {
+    "name": "goal",
+    "required": true,
+    "hint": "Your goal, or status, briefing, pause 1, resume 1, stop 1, weekly review"
+   },
+   "examples": [
+    "Manifest a drone that carries 1 kg for 25 minutes",
+    "Manifest a flying car for 2 people",
+    "Manifest a new job as a data analyst within 4 months",
+    "Manifestation status",
+    "Brief me on my manifestation projects",
+    "Pause manifestation project 2",
+    "Manifestation weekly review"
+   ],
+   "needs": [],
+   "optional": [],
+   "handler": "manifest_api.manifestChat → manifest_engine.startProject",
+   "route": "che_manifest",
+   "produces": "manifestation project",
+   "evidence": "Every number from a named model run (seed, inputs, equations); simulated results are labelled, never called measurements; zero model calls.",
+   "cost": "Free: no AI engine is used.",
+   "keywords": [
+    "manifest",
+    "manifestation",
+    "goal",
+    "feasibility",
+    "simulate",
+    "realize",
+    "make it real",
+    "realization plan"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
+   "id": "security-access",
+   "category": "intelligence",
+   "title": "Security Access",
+   "summary": "See who and what has access to CHE.",
+   "does": "Opens Security on its access list: agents, tools, apps, devices, Face ID sessions and every granted permission, each with what it can do, its last activity and whether that access is more than it needs. Shows what was not checked. Changes nothing.",
+   "mode": "EXPLORE",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": null,
+   "examples": [
+    "Open security access",
+    "Who has access to CHE?",
+    "What do you have access to?"
+   ],
+   "needs": [],
+   "optional": [],
+   "handler": "security_intelligence.securityIntent → security_visibility.securityVisibility",
+   "route": "che_security",
+   "produces": "access list",
+   "evidence": "Counts and lists come from the same registry query; token and credential values are never shown.",
+   "cost": "Free: no AI engine is used.",
+   "keywords": [
+    "security",
+    "access",
+    "permissions",
+    "who has access",
+    "least privilege"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
+   "id": "security-chief",
+   "category": "intelligence",
+   "title": "Security Chief Check",
+   "summary": "Have Knox, the Security Chief, run a security check.",
+   "does": "Knox, the Office Security Chief who reports to CHE, runs CHE's real security checks (threats, access, paired devices, and dependencies and deployment when GitHub is connected). CHE then reports which checks ran, when, their findings, and what was not checked. Changes nothing.",
+   "mode": "EXPLORE",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": null,
+   "examples": [
+    "CHE, have Knox check security",
+    "Ask Knox to run a security check",
+    "Knox, check security"
+   ],
+   "needs": [],
+   "optional": [],
+   "handler": "security_chief.securityChiefIntent → securityCoreCheck",
+   "route": "che_security",
+   "produces": "security report",
+   "evidence": "Each check carries the time it ran; a check that did not run is reported as not checked.",
+   "cost": "Free: no AI engine is used.",
+   "keywords": [
+    "knox",
+    "security chief",
+    "security check",
+    "security scan",
+    "security review"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
+   "id": "security-findings",
+   "category": "intelligence",
+   "title": "Security Findings",
+   "summary": "Read and open CHE's security findings.",
+   "does": "Opens Security on its findings: each with severity, the affected resource, when it happened, its evidence and the recommended action, plus which checks ran and which did not. Changes nothing; removing access always asks you first.",
+   "mode": "EXPLORE",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": null,
+   "examples": [
+    "Show security findings",
+    "What are my security findings?"
+   ],
+   "needs": [],
+   "optional": [],
+   "handler": "security_intelligence.securityIntent → security_visibility.securityVisibility",
+   "route": "che_security",
+   "produces": "findings",
+   "evidence": "Findings come from recorded security events and the access review; zero findings is not reported as all-clear unless every check ran.",
+   "cost": "Free: no AI engine is used.",
+   "keywords": [
+    "security",
+    "findings",
+    "threats",
+    "risks",
+    "coverage"
    ],
    "status": "available",
    "missing": [],
@@ -1324,6 +1625,121 @@
    ]
   },
   {
+   "id": "film-make",
+   "category": "studio",
+   "title": "Film Make",
+   "summary": "Make a film from one sentence, free.",
+   "does": "Writes a screenplay, makes every shot with free compute (pictures and voices on Workers AI, moving clips on a connected free GPU farm) and assembles the film on GitHub Actions. Before starting CHE says the real ETA and the mix; a film is done only when its MP4 is stored and verified.",
+   "mode": "BUILD",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": {
+    "name": "film",
+    "required": true,
+    "hint": "Length and subject, for example \"10-minute movie about a lighthouse keeper\""
+   },
+   "examples": [
+    "Make me a 10-minute movie about a lighthouse keeper",
+    "Make me a 2-hour movie about a heist in Tokyo"
+   ],
+   "needs": [
+    "video_renderer"
+   ],
+   "optional": [],
+   "handler": "film_studio.filmIntent → film_pipeline.startFilm (alarm passes) → che-film-render.yml",
+   "route": "che_film_studio",
+   "produces": "video",
+   "evidence": "The MP4 read back from R2: length, frame size and codecs; shots that failed their checks are listed.",
+   "cost": "Free: Workers AI daily allowance, GitHub Actions free minutes, and free GPU quotas you connect. Hard caps; nothing paid.",
+   "keywords": [
+    "movie",
+    "film",
+    "feature",
+    "film studio"
+   ],
+   "status": "setup_required",
+   "missing": [
+    {
+     "id": "video_renderer",
+     "label": "Video renderer",
+     "state": "not_connected",
+     "setup": "Needs CHE_VIDEO_RENDER_URL, or CHE_GITHUB_TOKEN with CHE_GITHUB_REPO for the free GitHub renderer.",
+     "detail": "No video renderer is configured."
+    }
+   ],
+   "optional_missing": []
+  },
+  {
+   "id": "music-studio",
+   "category": "studio",
+   "title": "Recording Studio",
+   "summary": "Open the Recording Studio: record, beats, mix, master, export.",
+   "does": "Opens the Recording Studio on the iPhone: multitrack recording from the microphone or an audio interface, live monitoring through the effects on headphones, the Beat Maker, effects, mixer, mastering, WAV or M4A export and MP3, M4A or WAV import. Recording and audio formats need the newest app build.",
+   "mode": "BUILD",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": null,
+   "examples": [
+    "Open the recording studio",
+    "Record my vocals"
+   ],
+   "needs": [],
+   "optional": [],
+   "handler": "app: CheRecordingStudio (lib/music/che_recording_studio.dart)",
+   "route": "che_recording_studio",
+   "produces": "recording studio",
+   "evidence": "The app opens the studio; nothing is recorded until the owner says record.",
+   "cost": "Free engines only, unless you turned paid AI on.",
+   "keywords": [
+    "recording studio",
+    "record",
+    "beats",
+    "mix",
+    "master",
+    "vocals",
+    "song"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
+   "id": "film-status",
+   "category": "studio",
+   "title": "Film Status",
+   "summary": "Film progress, ETA and the free render farm.",
+   "does": "Says where the current film is (shots done, elapsed time against the estimate) and, when asked, which free GPUs are connected and how much free quota is left.",
+   "mode": "EXPLORE",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": null,
+   "examples": [
+    "How's my movie going?",
+    "Render farm status"
+   ],
+   "needs": [],
+   "optional": [],
+   "handler": "film_studio.speakStatus / speakFarm",
+   "route": "che_film_studio",
+   "produces": "film status",
+   "evidence": "The stored film state and shot checks.",
+   "cost": "Free engines only, unless you turned paid AI on.",
+   "keywords": [
+    "movie status",
+    "film progress",
+    "render farm"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
    "id": "trade-open",
    "category": "trading",
    "title": "Trade Open",
@@ -1359,6 +1775,42 @@
     "premarket",
     "briefing",
     "market"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
+   "id": "trade-paper-account",
+   "category": "trading",
+   "title": "Trade Paper Account",
+   "summary": "CHE paper account: balance, positions and trade details.",
+   "does": "Opens CHE's simulated paper account on your iPhone: balance, open and closed CHE positions and each trade's detail. \"Set CHE paper balance to 500\" opens the change for you to confirm; nothing changes without your confirmation.",
+   "mode": "EXPLORE",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": null,
+   "examples": [
+    "Show CHE positions",
+    "Set CHE paper balance to 500",
+    "Open CHE's paper account"
+   ],
+   "needs": [
+    "office"
+   ],
+   "optional": [],
+   "handler": "trading_chart.paperAccountIntent → phone ChePaperAccountPanel",
+   "route": "che_trading_chart",
+   "produces": "paper account view",
+   "evidence": "The paper engine records on the phone; prices only from live Rithmic trades.",
+   "cost": "Free engines only, unless you turned paid AI on.",
+   "keywords": [
+    "paper",
+    "balance",
+    "che positions",
+    "paper account"
    ],
    "status": "available",
    "missing": [],
@@ -1439,6 +1891,43 @@
     "entry",
     "entries",
     "signal"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
+   "id": "trade-setups",
+   "category": "trading",
+   "title": "Trade Setups",
+   "summary": "Open the Setup Progress Board and its signals.",
+   "does": "Opens the Setup Progress Board: every setup CHE follows on the live Rithmic candles on this iPhone, its stage, the conditions met, pending or failed, and the CHE PAPER ACCOUNT signals. Asking which are ready reads them. Places no order.",
+   "mode": "EXPLORE",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": null,
+   "examples": [
+    "Show setups",
+    "What setups are ready?",
+    "Show the setup progress board"
+   ],
+   "needs": [
+    "office"
+   ],
+   "optional": [],
+   "handler": "trading_chart.chartIntent (setups section)",
+   "route": "che_trading_chart",
+   "produces": "setup board",
+   "evidence": "Stages computed on this iPhone from real Rithmic candles; signals carry their data source and evidence sample size.",
+   "cost": "Free engines only, unless you turned paid AI on.",
+   "keywords": [
+    "setups",
+    "setup progress",
+    "signal mode",
+    "signals",
+    "ready setups"
    ],
    "status": "available",
    "missing": [],
@@ -1671,6 +2160,48 @@
    "optional_missing": []
   },
   {
+   "id": "trade-matrix",
+   "category": "trading",
+   "title": "Trade Matrix",
+   "summary": "Test every strategy on every timeframe and hour of day.",
+   "does": "Backtests CHE's ten strategies on free delayed NQ history at every timeframe CHE has data for (1 minute about 7 days, 5 to 30 minutes about 60 days, 1 and 4 hours about 2 years, daily, weekly and monthly from Stooq), net of MNQ costs, and ranks strategy, timeframe and New York hour only where there are at least 30 trades. 15-second bars are reported as unavailable. Nothing is bought and no order is placed. Owner only.",
+   "mode": "EXPLORE",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": {
+    "name": "question",
+    "required": false,
+    "hint": "run, or ask which strategy is best"
+   },
+   "examples": [
+    "Backtest every strategy on every timeframe",
+    "Which strategy works best on which timeframe?",
+    "What is the best time of day to trade NQ?"
+   ],
+   "needs": [
+    "market_data"
+   ],
+   "optional": [],
+   "handler": "backtest_matrix.matrixIntent → runMatrix / readMatrix",
+   "route": "che_trading_matrix",
+   "produces": "timeframe matrix",
+   "evidence": "Stored results with bar counts, dates and costs only.",
+   "cost": "Free engines only, unless you turned paid AI on.",
+   "keywords": [
+    "timeframe",
+    "time frame",
+    "every timeframe",
+    "time of day",
+    "best hour",
+    "matrix"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
    "id": "trade-journal",
    "category": "trading",
    "title": "Trade Journal",
@@ -1743,8 +2274,8 @@
    "id": "trade-sim",
    "category": "trading",
    "title": "Trade Sim",
-   "summary": "Pause, resume or check the strategy simulation.",
-   "does": "Pauses or resumes CHE's paper strategy simulation (ten rules on minute bars; no money, no model call), or reads its status. Owner only.",
+   "summary": "Pause, resume, stop, reset or check the strategy simulation.",
+   "does": "Pauses or resumes CHE's paper strategy simulation (ten rules on minute bars; no money, no model call); stops it (pause and cancel waiting signals, open positions kept); resets it after you say yes (the run is archived, never deleted); or reads its status. Owner only.",
    "mode": "EXPLORE",
    "approval": {
     "required": false,
@@ -1753,11 +2284,13 @@
    "input": {
     "name": "action",
     "required": false,
-    "hint": "pause, resume or status"
+    "hint": "pause, resume, stop, reset or status"
    },
    "examples": [
     "Pause the strategy simulation",
     "Resume the strategy simulation",
+    "Stop the strategy simulation",
+    "Reset the strategy simulation",
     "Strategy simulation status"
    ],
    "needs": [
@@ -1774,6 +2307,8 @@
     "simulation",
     "pause simulation",
     "resume simulation",
+    "stop simulation",
+    "reset simulation",
     "paper strategies"
    ],
    "status": "available",
@@ -1933,6 +2468,232 @@
     "alpaca",
     "tradovate",
     "connected"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
+   "id": "trade-pnl",
+   "category": "trading",
+   "title": "Trade Pnl",
+   "summary": "Today's paper P&L, realized and open.",
+   "does": "Reads today's forward paper P&L from the journal: realized from closed trades, unrealized marked at the last stored DELAYED bar, commissions and slippage, and the intraday P&L curve on the Trading page. No balance is assumed.",
+   "mode": "EXPLORE",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": null,
+   "examples": [
+    "Show today's P&L",
+    "How much am I up today?"
+   ],
+   "needs": [
+    "office"
+   ],
+   "optional": [],
+   "handler": "trading_visual.dailyPnl",
+   "route": "che_trading_visual",
+   "produces": "daily pnl",
+   "evidence": "Closed journal trades and the last stored bar only.",
+   "cost": "Free engines only, unless you turned paid AI on.",
+   "keywords": [
+    "p&l",
+    "pnl",
+    "profit and loss",
+    "today",
+    "daily pnl"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
+   "id": "trade-leader",
+   "category": "trading",
+   "title": "Trade Leader",
+   "summary": "The best verified strategy, or why there is none.",
+   "does": "Names the current leader only when one strategy and timeframe meets every written rule (30 forward paper trades, positive expectancy range after costs, profit factor above 1.2, and historical backing); otherwise says \"No verified leader yet\" and what each candidate is missing. Never by win rate alone.",
+   "mode": "EXPLORE",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": null,
+   "examples": [
+    "Who is the current leader?",
+    "What is the best verified strategy?"
+   ],
+   "needs": [
+    "office"
+   ],
+   "optional": [],
+   "handler": "trading_visual.currentLeader",
+   "route": "che_trading_visual",
+   "produces": "leader",
+   "evidence": "Forward paper and historical backtest records, ranked by the lower expectancy bound.",
+   "cost": "Free engines only, unless you turned paid AI on.",
+   "keywords": [
+    "leader",
+    "best strategy",
+    "verified strategy",
+    "ranking"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
+   "id": "trade-audit",
+   "category": "trading",
+   "title": "Trade Audit",
+   "summary": "Audit every stored trade record.",
+   "does": "Counts the stored trade records by execution type and checks them for exact duplicates, entries shared across variants, look-ahead, fills that disagree with their own costs, missing labels and P&L that does not add up. Deeper checks: the simulation's R split into price moves and costs, trades whose costs exceeded their risk, open positions on retired feeds, P&L and R recomputed from prices, the research backtests' data hashes, fixtures and look-ahead audits, and one day's P&L by New York date, UTC date and CME trade day. Changes nothing.",
+   "mode": "EXPLORE",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": null,
+   "examples": [
+    "Audit the trades",
+    "Run a trade audit"
+   ],
+   "needs": [
+    "office"
+   ],
+   "optional": [],
+   "handler": "trading_visual.auditTrades",
+   "route": "che_trading_visual",
+   "produces": "audit",
+   "evidence": "Real counts from the stored records; nothing is altered.",
+   "cost": "Free engines only, unless you turned paid AI on.",
+   "keywords": [
+    "audit",
+    "duplicates",
+    "look-ahead",
+    "trade audit"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
+   "id": "trade-calendar",
+   "category": "trading",
+   "title": "Trading P&L Calendar",
+   "summary": "The monthly P&L calendar, per record set.",
+   "does": "Reads this month's closed trades day by day: net P&L, wins and losses, win rate, weekly subtotals and the month. Simulation (in R), forward paper and broker are separate and never added together. Tapping a day lists its trades, each opening its replay. Changes nothing.",
+   "mode": "EXPLORE",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": null,
+   "examples": [
+    "Open my trading calendar",
+    "Show the P&L calendar for the simulation"
+   ],
+   "needs": [
+    "office"
+   ],
+   "optional": [],
+   "handler": "che_calendars.tradingCalendar",
+   "route": "che_calendars",
+   "produces": "pnl calendar",
+   "evidence": "Stored trade records only, one per trade ID; an empty month stays empty.",
+   "cost": "Free engines only, unless you turned paid AI on.",
+   "keywords": [
+    "calendar",
+    "p&l calendar",
+    "pnl calendar",
+    "monthly",
+    "trading calendar"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
+   "id": "trade-crypto",
+   "category": "trading",
+   "title": "Orion Crypto Desk",
+   "summary": "Orion: BTC and ETH research and paper trading, 24/7.",
+   "does": "Reads, pauses or resumes Orion's crypto desk: BTC-USD and ETH-USD from Coinbase Exchange public candles (5-minute, 15-minute and hourly; Kraken cross-check), every CHE strategy paper traded on LIVE bars around the clock including weekends, net of 0.6% taker and 0.4% maker fees, journalled as crypto in the forward journal and judged by the strategy governor; plus volatility, liquidity and session research and an out-of-sample backtest. No model, no exchange account, no order.",
+   "mode": "EXPLORE",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": {
+    "name": "action",
+    "required": false,
+    "hint": "pause, resume or status"
+   },
+   "examples": [
+    "Have Orion research BTC and ETH, compare strategies, and continue paper trading during the weekend.",
+    "Pause Orion crypto research",
+    "Resume Orion crypto research",
+    "How is the crypto paper trading going?"
+   ],
+   "needs": [
+    "market_data"
+   ],
+   "optional": [],
+   "handler": "crypto_markets.cryptoIntent → setCryptoPaper / cryptoView",
+   "route": "che_crypto",
+   "produces": "crypto desk status",
+   "evidence": "Stored exchange bars, runs, budget counters and journal records only.",
+   "cost": "Free engines only, unless you turned paid AI on.",
+   "keywords": [
+    "crypto",
+    "bitcoin",
+    "btc",
+    "ethereum",
+    "eth",
+    "orion",
+    "weekend",
+    "24/7"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
+   "id": "trade-replay",
+   "category": "trading",
+   "title": "Trade Replay",
+   "summary": "Replay one of CHE's trades on its own chart.",
+   "does": "Opens a trade by its ID (or CHE's last forward paper trade) on the exact bars it was traded on: entry, exit, stop, target, times and outcome, labelled BACKTEST, SIMULATION, FORWARD PAPER or BROKER-CONFIRMED. Replay shows a bar only once it has closed. Without recorded bars it says so and draws nothing.",
+   "mode": "EXPLORE",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": {
+    "name": "trade",
+    "required": false,
+    "hint": "A trade ID such as T0ABC…, or leave empty for the last trade"
+   },
+   "examples": [
+    "Replay my last trade",
+    "Replay trade T0K3J9QW1ZX7A"
+   ],
+   "needs": [
+    "office"
+   ],
+   "optional": [],
+   "handler": "trade_evidence.readTradeEvidence",
+   "route": "che_trade_evidence",
+   "produces": "trade replay",
+   "evidence": "Stored trade records and stored bars only; nothing is invented.",
+   "cost": "Free engines only, unless you turned paid AI on.",
+   "keywords": [
+    "replay",
+    "trade replay",
+    "last trade",
+    "trade evidence"
    ],
    "status": "available",
    "missing": [],
@@ -3756,6 +4517,149 @@
    "optional_missing": []
   },
   {
+   "id": "office-org",
+   "category": "office",
+   "title": "Office Departments",
+   "summary": "See who heads each Office department.",
+   "does": "Reads the Office roster: you lead, CHE reports to you, and the nine department heads (Nova, Atlas, Mira, Knox, Sage, Lyra, Orion, Iris, Vale) report to CHE, each with responsibilities, tools, permissions, work queue and recorded performance. Changes nothing.",
+   "mode": "EXPLORE",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": null,
+   "examples": [
+    "Who runs the Office departments?",
+    "Show me the Office org chart"
+   ],
+   "needs": [
+    "office"
+   ],
+   "optional": [],
+   "handler": "office_org.officeOrg (LA_AGENCIA_ROLES departments)",
+   "route": "office:org",
+   "produces": "org chart",
+   "evidence": "The roster and stored Office tasks only; tool status is configured, not configured or not checked.",
+   "cost": "Free: no AI engine is used.",
+   "keywords": [
+    "org chart",
+    "departments",
+    "department heads",
+    "chain of command",
+    "who runs"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
+   "id": "office-calendar",
+   "category": "office",
+   "title": "Office Calendar",
+   "summary": "What the Office did, day by day.",
+   "does": "Reads each day's recorded work: completed jobs, active jobs, pending tasks, approvals, failures, milestones and who finished what, green, yellow or red. Tapping a day opens its jobs with their receipts. Changes nothing.",
+   "mode": "EXPLORE",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": null,
+   "examples": [
+    "Show the office calendar for September",
+    "What did we do yesterday?"
+   ],
+   "needs": [
+    "office"
+   ],
+   "optional": [],
+   "handler": "che_calendars.officeCalendar",
+   "route": "che_calendars",
+   "produces": "office calendar",
+   "evidence": "Stored jobs, Office tasks, objectives, approvals and reliability counts only.",
+   "cost": "Free: no AI engine is used.",
+   "keywords": [
+    "office calendar",
+    "what did we do",
+    "accomplished",
+    "work calendar"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
+   "id": "office-coordinate",
+   "category": "office",
+   "title": "Coordinated Office Job",
+   "summary": "Have Nova coordinate a multi-department job.",
+   "does": "Nova plans one job across departments (for example Iris design, Atlas engineering, Knox security review, then Vale verification), names one accountable owner, and hands each finished stage to the next with a recorded handoff the receiving head must accept. CHE reports the result only after Vale verifies it.",
+   "mode": "BUILD",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": {
+    "name": "task",
+    "required": true,
+    "hint": "The work and which departments it involves"
+   },
+   "examples": [
+    "Have Nova coordinate a cleaner Trading Room chart with design, engineering, security review and testing"
+   ],
+   "needs": [
+    "office"
+   ],
+   "optional": [],
+   "handler": "office_jobs.planOfficeJob → advanceOfficeJobs → agent_runtime tasks",
+   "route": "office:job",
+   "produces": "office job",
+   "evidence": "Job id, stage task ids, every handoff with its acceptance checks, and Vale's verdict.",
+   "cost": "Free engines only, unless you turned paid AI on.",
+   "keywords": [
+    "coordinate",
+    "handoff",
+    "office job",
+    "departments",
+    "nova"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
+   "id": "office-jobs",
+   "category": "office",
+   "title": "Office Jobs",
+   "summary": "Status of coordinated Office jobs.",
+   "does": "Reads the latest coordinated Office job (or the one you name): its stages, who holds each, handoffs, blockers and whether Vale verified it. Changes nothing.",
+   "mode": "EXPLORE",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": null,
+   "examples": [
+    "What is the status of the Office jobs?"
+   ],
+   "needs": [
+    "office"
+   ],
+   "optional": [],
+   "handler": "office_jobs.speakOfficeJob",
+   "route": "office:jobStatus",
+   "produces": "job status",
+   "evidence": "The stored job record only.",
+   "cost": "Free: no AI engine is used.",
+   "keywords": [
+    "office jobs",
+    "job status",
+    "handoffs"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
    "id": "warroom",
    "category": "office",
    "title": "Warroom",
@@ -3907,6 +4811,46 @@
    "optional_missing": []
   },
   {
+   "id": "connect-service",
+   "category": "office",
+   "title": "Connect a Service",
+   "summary": "Connect a service end to end and verify it.",
+   "does": "Checks the connection CHE already has first and keeps it if it works. Otherwise creates a Hugging Face token with the fewest permissions in CHE's browser using your sign-in, or opens the page for guided providers. Stores it in the place CHE really reads and says \"Connected\" only after real checks pass.",
+   "mode": "BUILD",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": {
+    "name": "service",
+    "required": true,
+    "hint": "Hugging Face, Groq, Gemini…"
+   },
+   "examples": [
+    "CHE, connect Hugging Face",
+    "Connect Hugging Face for film studio",
+    "Is Hugging Face connected?"
+   ],
+   "needs": [],
+   "optional": [],
+   "handler": "service_onboarding.startOnboarding / storeSecret / verifyOnboarding",
+   "route": "che_onboarding",
+   "produces": "connection status",
+   "evidence": "Three separate outcomes: token created, secret configured (where), connection verified (the provider's own checks). Fingerprints only, never a key.",
+   "cost": "Free. Verification makes no paid calls; nothing is bought.",
+   "keywords": [
+    "connect",
+    "hugging face",
+    "onboarding",
+    "token",
+    "connected",
+    "set up service"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
    "id": "voice-test",
    "category": "office",
    "title": "Voice Test",
@@ -3981,6 +4925,413 @@
     "roblox",
     "game",
     "model"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
+   "id": "cloud-open",
+   "category": "office",
+   "title": "Cloud Computer",
+   "summary": "Open the Cloud Computer Room.",
+   "does": "Opens the Cloud Computer Room and says what each environment has: the Worker, the GitHub runners, the isolated browser and the film farm, with their real status, jobs, approvals and costs.",
+   "mode": "EXPLORE",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": null,
+   "examples": [
+    "Open your cloud computer"
+   ],
+   "needs": [],
+   "optional": [],
+   "handler": "cloud_computer.cloudView + speakCloudSummary",
+   "route": "che_cloud_computer",
+   "produces": "cloud status",
+   "evidence": "Provider checks from the Worker configuration and the stored job records.",
+   "cost": "Free: no AI engine is used.",
+   "keywords": [
+    "cloud computer",
+    "environments",
+    "runners",
+    "compute"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
+   "id": "cloud-gpu",
+   "category": "office",
+   "title": "GPU jobs",
+   "summary": "Read my GPU render jobs.",
+   "does": "Says how many GPU jobs are queued, rendering, paused, completed or failed, and whether your Colab T4 worker is online. With \"pool\" (or \"which computers can build characters\", \"why is my character waiting\") it reads the compute pool: each computer that can build characters, its status, cooldown and quota, and why a waiting character waits. The pictures are in the Creation Room. With \"connect\" (\"Connect GPU\", \"start my GPU\") the app opens your notebook in CHE's browser, hands you any Google sign-in or confirmation, and says GPU connected only when the Worker has a fresh heartbeat from the Colab GPU, then runs a small test job. It costs nothing; Colab works only while your notebook is open. With \"budget\" (\"allow up to 20 dollars for GPUs\", \"limit GPUs to 5 dollars a month\", \"stop paid GPUs\", \"how long will my GPU money last\", \"what GPUs can CHE use\") it sets or stops your paid-GPU cap, which is your spending approval, recorded with its time; paid prepaid GPUs (RunPod, Vast.ai) then run only for GPU jobs no free GPU can take, cheapest first, deleted after the job, never past the cap. CHE never pays or adds credit.",
+   "mode": "EXPLORE",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": null,
+   "examples": [
+    "What are my GPU jobs?",
+    "Which computers can build characters?",
+    "Why is my character waiting?",
+    "Connect GPU",
+    "How long will my GPU money last?",
+    "Allow up to 20 dollars for GPUs",
+    "Stop paid GPUs"
+   ],
+   "needs": [],
+   "optional": [],
+   "handler": "gpu_queue.GpuQueue.view + speakGpuSummary; compute_pool.poolView + speakPool; compute_pool.budgetCommand",
+   "route": "che_cloud_computer",
+   "produces": "GPU queue status",
+   "evidence": "The queue and worker heartbeats stored in the Worker.",
+   "cost": "Free: no AI engine is used. Paid GPUs only within the GPU budget you set (default $0).",
+   "keywords": [
+    "gpu",
+    "colab",
+    "render queue",
+    "face preview",
+    "compute pool",
+    "character waiting",
+    "connect gpu",
+    "gpu budget",
+    "runpod",
+    "paid gpu"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
+   "id": "world-population",
+   "category": "office",
+   "title": "CHE World population",
+   "summary": "How many characters live in CHE World.",
+   "does": "Says how many character records CHE World holds (seeded descriptions, not models), how many of the 288 shared base models are really generated or building, and that the active on-screen count is known only while the world viewer is open. Nothing is built.",
+   "mode": "EXPLORE",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": null,
+   "examples": [
+    "How many characters live in CHE World?"
+   ],
+   "needs": [],
+   "optional": [],
+   "handler": "world_population.populationAnswer",
+   "route": "che_world_population",
+   "produces": "population counts",
+   "evidence": "The stored world range and the GPU queue job states of the bucket models.",
+   "cost": "Free: no AI engine is used.",
+   "keywords": [
+    "che world",
+    "population",
+    "characters",
+    "crowd",
+    "residents"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
+   "id": "cloud-blender",
+   "category": "office",
+   "title": "Cloud Blender",
+   "summary": "Create a Blender animation on the cloud computer.",
+   "does": "Checks every environment for Blender. None has it today, so CHE says so, names what she already has (the bpy character pipeline) and the smallest addition that would make it work. Nothing is started.",
+   "mode": "BUILD",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": {
+    "name": "animation",
+    "required": false,
+    "hint": "What the animation shows"
+   },
+   "examples": [
+    "Create a Blender animation",
+    "Make a Blender animation of a spinning logo"
+   ],
+   "needs": [],
+   "optional": [],
+   "handler": "cloud_computer.selectProvider (blender_render template)",
+   "route": "che_cloud_computer",
+   "produces": "plan",
+   "evidence": "The provider capability list read from the workflow files.",
+   "cost": "Free: nothing runs.",
+   "keywords": [
+    "blender",
+    "animation",
+    "3d render",
+    "bpy"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
+   "id": "cloud-render",
+   "category": "office",
+   "title": "Cloud Render",
+   "summary": "Plan a YouTube video render on the cloud computer.",
+   "does": "Says where a video renders (the free che-video-render.yml path), and the real state of the latest render on record. A new render starts with \"make a faceless video about…\".",
+   "mode": "EXPLORE",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": null,
+   "examples": [
+    "Render my YouTube video"
+   ],
+   "needs": [],
+   "optional": [],
+   "handler": "cloud_computer.selectProvider (video_render) + cloudJobs",
+   "route": "che_cloud_computer",
+   "produces": "render plan",
+   "evidence": "The media index and dispatch records.",
+   "cost": "Free: nothing runs.",
+   "keywords": [
+    "render video",
+    "youtube render",
+    "video render"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
+   "id": "cloud-tests",
+   "category": "office",
+   "title": "Cloud Tests",
+   "summary": "Run CHE's repository tests on the cloud computer.",
+   "does": "Prepares a flutter-check.yml run (flutter analyze and flutter test) on a GitHub runner. GitHub minutes are not verified as free, so it waits for your approval; then CHE dispatches it, follows the run and reports pass or fail from GitHub.",
+   "mode": "BUILD",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": null,
+   "examples": [
+    "Run your coding tests"
+   ],
+   "needs": [
+    "github"
+   ],
+   "optional": [],
+   "handler": "cloud_computer.requestCloudWork → processJobs runCloudTask (gh dispatch)",
+   "route": "che_cloud_computer",
+   "produces": "test result",
+   "evidence": "The GitHub run id and its conclusion.",
+   "cost": "GitHub Actions minutes; free usage for this repository is not verified, so it asks first.",
+   "keywords": [
+    "run tests",
+    "coding tests",
+    "flutter tests",
+    "ci"
+   ],
+   "status": "setup_required",
+   "missing": [
+    {
+     "id": "github",
+     "label": "GitHub connection",
+     "state": "not_connected",
+     "setup": "Add CHE_GITHUB_TOKEN and CHE_GITHUB_REPO as Worker secrets.",
+     "detail": "GitHub is not connected."
+    }
+   ],
+   "optional_missing": []
+  },
+  {
+   "id": "cloud-prs",
+   "category": "office",
+   "title": "Cloud Prs",
+   "summary": "Check CHE's open pull requests.",
+   "does": "Reads the open pull requests on CHE's repository from GitHub and lists them by number and title. Changes nothing.",
+   "mode": "EXPLORE",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": null,
+   "examples": [
+    "Check your open pull requests"
+   ],
+   "needs": [
+    "github"
+   ],
+   "optional": [],
+   "handler": "cloud_computer.openPullRequests (coding_runtime.gh)",
+   "route": "che_cloud_computer",
+   "produces": "pull requests",
+   "evidence": "GitHub's own pull request list.",
+   "cost": "Free: one GitHub read.",
+   "keywords": [
+    "pull requests",
+    "open prs",
+    "prs"
+   ],
+   "status": "setup_required",
+   "missing": [
+    {
+     "id": "github",
+     "label": "GitHub connection",
+     "state": "not_connected",
+     "setup": "Add CHE_GITHUB_TOKEN and CHE_GITHUB_REPO as Worker secrets.",
+     "detail": "GitHub is not connected."
+    }
+   ],
+   "optional_missing": []
+  },
+  {
+   "id": "cloud-install",
+   "category": "office",
+   "title": "Cloud Install",
+   "summary": "Ask for a free tool on the cloud computer.",
+   "does": "Lists the software each environment already has. CHE never installs anything quietly: a new tool is a workflow change she opens as a pull request for your review.",
+   "mode": "EXPLORE",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": {
+    "name": "tool",
+    "required": false,
+    "hint": "The tool you want"
+   },
+   "examples": [
+    "Install a compatible free tool",
+    "Install ImageMagick on your cloud computer"
+   ],
+   "needs": [],
+   "optional": [],
+   "handler": "cloud_computer.speakInstall + providerStatuses",
+   "route": "che_cloud_computer",
+   "produces": "software list",
+   "evidence": "The software read from the workflow files.",
+   "cost": "Free: nothing is installed.",
+   "keywords": [
+    "install",
+    "free tool",
+    "software",
+    "package"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
+   "id": "cloud-agents",
+   "category": "office",
+   "title": "Cloud Agents",
+   "summary": "Show what the agents are running.",
+   "does": "Reads every cloud job that is waiting, queued or running, grouped by the agent that asked for it, and opens the Cloud Computer Room.",
+   "mode": "EXPLORE",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": null,
+   "examples": [
+    "Show me what your agents are working on"
+   ],
+   "needs": [],
+   "optional": [],
+   "handler": "cloud_computer.cloudJobs + speakAgentWork",
+   "route": "che_cloud_computer",
+   "produces": "job list",
+   "evidence": "The stored job records only.",
+   "cost": "Free: no AI engine is used.",
+   "keywords": [
+    "agents working",
+    "cloud jobs",
+    "what are agents doing"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
+   "id": "cloud-control",
+   "category": "office",
+   "title": "Cloud Control",
+   "summary": "Approve, cancel, stop or retry a cloud job.",
+   "does": "Approves a cloud job that waits for you, cancels one that has not been dispatched, stops a GitHub run, or retries a failed job, then reads back the real result.",
+   "mode": "BUILD",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": {
+    "name": "action",
+    "required": true,
+    "hint": "approve, cancel, stop or retry, then the job id"
+   },
+   "examples": [
+    "Approve the cloud job",
+    "Stop cloud job 1a2b3c4d",
+    "Retry cloud job 1a2b3c4d"
+   ],
+   "needs": [
+    "jobs"
+   ],
+   "optional": [],
+   "handler": "cloud_computer.approveCloudJob / cancelCloudJob / stopCloudJob / retryCloudJob",
+   "route": "che_cloud_computer",
+   "produces": "status",
+   "evidence": "The job record read back after the change.",
+   "cost": "Free; an approved test run uses GitHub Actions minutes.",
+   "keywords": [
+    "approve cloud job",
+    "stop cloud job",
+    "retry cloud job"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
+   "id": "master-profile",
+   "category": "office",
+   "title": "Master Profile",
+   "summary": "Fill the open form from your approved profiles.",
+   "does": "Fills the form open in CHE's iPhone browser from your approved Personal or CHE Office profile, remembered answers and the on-device password vault, then reads back each field. It never submits: say \"submit it\" separately, and paying needs your yes.",
+   "mode": "BUILD",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": {
+    "name": "profile",
+    "required": false,
+    "hint": "personal, business, or everything for all pages"
+   },
+   "examples": [
+    "CHE, use my master profile",
+    "Fill this with my business profile",
+    "Fill everything with my personal profile"
+   ],
+   "needs": [],
+   "optional": [],
+   "handler": "app: CheFormFiller (lib/browser/che_form_filler.dart) + assets/browser/che_form_fill.js",
+   "route": "che_master_profile",
+   "produces": "filled form",
+   "evidence": "Each field's value read back from the page on the phone; the report names fields, never values.",
+   "cost": "Free. Runs on the iPhone; nothing is sent to a model.",
+   "keywords": [
+    "master profile",
+    "fill this form",
+    "fill out the form",
+    "autofill",
+    "business profile",
+    "personal profile"
    ],
    "status": "available",
    "missing": [],

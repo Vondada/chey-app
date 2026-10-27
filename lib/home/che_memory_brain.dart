@@ -8,6 +8,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../brain/che_brain_list.dart';
 import '../brain/che_brain_navigation.dart';
 import '../brain/che_brain_space.dart';
 import '../brain/che_brain_space_model.dart';
@@ -37,6 +38,7 @@ class CheMemoryDot {
     this.workers = const [],
     this.project = '',
     this.archived = false,
+    this.sourceInfo = const {},
   });
 
   final String id;
@@ -72,6 +74,10 @@ class CheMemoryDot {
 
   /// Historical or archived: no longer live work.
   final bool archived;
+
+  /// The unified Brain record's `source` map as stored (its kind, refs, URLs, status), or empty.
+  /// The Brain list reads evidence only from here and the record's own text.
+  final Map<dynamic, dynamic> sourceInfo;
 
   bool get isVerified => verification == 'owner_attested' || verification == 'verified_source';
 
@@ -316,6 +322,7 @@ List<CheMemoryDot> cheBuildMemoryDots({
         workers: workers,
         project: region == 'Projects and Proposals' ? path : '${src['project'] ?? ''}',
         archived: src['archived'] == true || path == 'Historical' || path.toLowerCase().contains('archive'),
+        sourceInfo: src,
       ),
     );
     drawn.add(id);
@@ -331,14 +338,20 @@ String _shortTitle(String text) {
 }
 
 /// Worker brain_graph.links + same-cluster + token overlap → edge pairs for paint.
-List<(String, String)> cheRelatedMemoryEdges(List<CheMemoryDot> dots, {List<Map<String, dynamic>> brainLinks = const []}) {
+List<(String, String)> cheRelatedMemoryEdges(List<CheMemoryDot> dots, {List<Map<String, dynamic>> brainLinks = const []}) =>
+    [for (final (a, b, _) in cheRelatedMemoryEdgesTyped(dots, brainLinks: brainLinks)) (a, b)];
+
+/// The same edges, each marked explicit (a recorded relationship: a Worker brain link, the record's own links, a
+/// shared ML cluster) or not (only shared words connect them).
+List<(String, String, bool)> cheRelatedMemoryEdgesTyped(List<CheMemoryDot> dots, {List<Map<String, dynamic>> brainLinks = const []}) {
   final ids = {for (final d in dots) d.id};
-  final edges = <(String, String)>[];
+  final edges = <(String, String, bool)>[];
   final seen = <String>{};
+  var explicit = true;
   void add(String a, String b) {
     if (a == b || !ids.contains(a) || !ids.contains(b)) return;
     final key = a.compareTo(b) < 0 ? '$a|$b' : '$b|$a';
-    if (seen.add(key)) edges.add((a, b));
+    if (seen.add(key)) edges.add((a, b, explicit));
   }
 
   for (final link in brainLinks) {
@@ -359,7 +372,8 @@ List<(String, String)> cheRelatedMemoryEdges(List<CheMemoryDot> dots, {List<Map<
     if (prev != null) add(prev, d.id);
     lastInCluster[cid] = d.id;
   }
-  // Token overlap fallback
+  // Token overlap fallback: not a recorded relationship.
+  explicit = false;
   final byToken = <String, List<CheMemoryDot>>{};
   for (final d in dots) {
     for (final tok in d.tokens.take(8)) {
@@ -384,19 +398,20 @@ List<String> _tokens(String text) {
   return text.toLowerCase().split(RegExp(r'[^a-z0-9]+')).where((w) => w.length > 2).toSet().take(24).toList();
 }
 
-// The brain's palette: green, teal, cyan, blue, violet and white.
+// The brain's palette, the owner's colour key (2026-10-24, his original Brain Room reference): blue memories,
+// cyan conversations, purple knowledge, yellow agents (see che_brain_regions.dart for the ten regions).
 Color cheMemoryCategoryColor(String category) => switch (category.toLowerCase()) {
-  'memory' => const Color(0xFF3EE6C9),
-  'conversations' => const Color(0xFF52E89A),
-  'learning' => const Color(0xFF4FB8FF),
-  'ml learning' => const Color(0xFFA77BFF),
-  'research' => const Color(0xFF7CF0FF),
-  'about you' => const Color(0xFFC79BFF),
-  'knowledge' => const Color(0xFF6E8CFF),
-  'suggestion' => const Color(0xFF9DF7C9),
-  'translation' => const Color(0xFFEAF6FF),
-  'agents' => const Color(0xFFFFB54D),
-  'knowledge atlas' => const Color(0xFF8FE3FF),
+  'memory' => const Color(0xFF3D7BFF),
+  'about you' => const Color(0xFF6E9BFF),
+  'conversations' => const Color(0xFF22E4F2),
+  'learning' => const Color(0xFFB57BFF),
+  'ml learning' => const Color(0xFF8E5BFF),
+  'research' => const Color(0xFF9A7BFF),
+  'knowledge' => const Color(0xFFA35BFF),
+  'suggestion' => const Color(0xFFC9A3FF),
+  'translation' => const Color(0xFFD6C8FF),
+  'agents' => const Color(0xFFFFD23F),
+  'knowledge atlas' => const Color(0xFFC07BFF),
   _ => CheColors.accent,
 };
 
@@ -432,9 +447,14 @@ class CheMemoryBrainRoom extends StatefulWidget {
     this.offline = false,
     this.pendingSync = 0,
     this.error,
+    this.onOpenEvidence,
   });
 
   final List<CheMemoryDot> dots;
+
+  /// Opens in-app evidence from the list view (a trade, its replay, a coding job); null shows those
+  /// items as "evidence not available yet".
+  final CheOpenBrainEvidence? onOpenEvidence;
 
   /// Related links from Worker `/api/state` brain_graph (clustering + similarity).
   final List<Map<String, dynamic>> brainLinks;
@@ -466,6 +486,9 @@ class CheMemoryBrainRoom extends StatefulWidget {
 enum _BrainPanel { none, search, filters, brains, view }
 
 class _CheMemoryBrainRoomState extends State<CheMemoryBrainRoom> {
+  /// The searchable list (owner, 2026-10-23) instead of the neural view; kept on the controller so
+  /// voice ("show the brain's actions") and touch switch the same view.
+  bool get _list => _space.listMode;
   late final CheBrainSpaceController _space;
   final _search = TextEditingController();
   _BrainPanel _panel = _BrainPanel.none;
@@ -637,16 +660,22 @@ class _CheMemoryBrainRoomState extends State<CheMemoryBrainRoom> {
                         ),
                       ),
                     ),
+                    _iconButton(_list ? Icons.view_in_ar_rounded : Icons.menu_book_rounded, _list ? 'Show the neural view' : 'Show the searchable list: conversations, research, knowledge, memory and actions', () {
+                      setState(() => _panel = _BrainPanel.none);
+                      _list ? _space.showSpace() : _space.showList();
+                    }, on: _list),
+                    if (!_list) ...[
                     _iconButton(Icons.search_rounded, _panel == _BrainPanel.search ? 'Hide memory search' : 'Find a memory', () => _toggle(_BrainPanel.search), on: _panel == _BrainPanel.search),
                     _iconButton(Icons.tune_rounded, _panel == _BrainPanel.filters ? 'Hide filters' : 'Filter the brain', () => _toggle(_BrainPanel.filters), on: _panel == _BrainPanel.filters || c.filter.isNotEmpty || !c.lens.isEmpty),
                     _iconButton(Icons.hub_outlined, _panel == _BrainPanel.brains ? 'Hide the brain switcher' : 'Switch brain: CHE or an Office worker', () => _toggle(_BrainPanel.brains), on: _panel == _BrainPanel.brains || c.scope != null),
                     _iconButton(Icons.zoom_in_map_rounded, _panel == _BrainPanel.view ? 'Hide view controls' : 'View controls: zoom, fit, center, inside, back', () => _toggle(_BrainPanel.view), on: _panel == _BrainPanel.view),
+                    ],
                     if (widget.onRefresh != null) _iconButton(Icons.refresh_rounded, 'Refresh memories', () => widget.onRefresh!()),
                     const SizedBox(width: 4),
                   ],
                 ),
               ),
-              CheBrainContextBar(controller: c, onSpeak: _say),
+              if (!_list) CheBrainContextBar(controller: c, onSpeak: _say),
               if (_panel == _BrainPanel.search)
                 Padding(
                   padding: const EdgeInsets.fromLTRB(CheSpace.gutter, 2, CheSpace.gutter, 6),
@@ -702,7 +731,20 @@ class _CheMemoryBrainRoomState extends State<CheMemoryBrainRoom> {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         chrome,
-        Expanded(child: space),
+        Expanded(
+          child: ValueListenableBuilder<int>(
+            valueListenable: _space.state,
+            builder: (context, _, _) => _list
+                ? CheBrainList(
+                    key: ValueKey(_space.listSection),
+                    dots: widget.dots,
+                    initialSection: _space.listSection,
+                    onReadAloud: widget.onReadAloud,
+                    onOpenEvidence: widget.onOpenEvidence,
+                  )
+                : space,
+          ),
+        ),
       ],
     );
     // HUD glass: the room is clear, so the navy HUD backdrop behind every page shows through.

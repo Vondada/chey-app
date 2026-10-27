@@ -771,7 +771,8 @@ test('chat: a coding request is durably accepted before engines run; an outage r
     // Only the words the owner sees/hears (the metadata carries a random job id).
     const text = (await res.text()).trim().split('\n').map((l) => JSON.parse(l)).filter((l) => l.type === 'delta').map((l) => l.delta).join('');
     assert.equal(res.status, 200);
-    assert.doesNotMatch(text, /429|503|groq|gemini|diagnostic|token|provide the source|filename/i);
+    // The random hex job id can itself contain "503" or "429" (b50301d9): leave it out of the check.
+    assert.doesNotMatch(text.replace(/\bjob [0-9a-f]{8}\b/gi, 'job <id>'), /429|503|groq|gemini|diagnostic|token|provide the source|filename/i);
     assert.match(text, /accepted coding job/i);
     assert.match(text, /queued, not running yet/i);
     assert.doesNotMatch(text, /engine/i, 'no engine talk to the owner');
@@ -899,7 +900,7 @@ test('end-to-end: "make one small real improvement" → recover → review → a
     await state.processJobs();
     const proposal = saved.get('che').jobs.find((j) => j.kind === 'self_development')?.owner_message || '';
     assert.doesNotMatch(proposal, /```|export default/);
-    assert.doesNotMatch(proposal, /provide|paste|filename|not provided|cannot inspect|503/i);
+    assert.doesNotMatch(proposal.replace(/\b[0-9a-f]{7,40}\b/gi, '<id>'), /provide|paste|filename|not provided|cannot inspect|503/i);
     // 2. Full autonomy: after independent review CHE opens the draft PR
     //    herself and reports the real PR; merging stays the owner's.
     assert.match(proposal, /independently reviewed[\s\S]*Real draft PR #77 is open[\s\S]*say "merge"/, proposal);
@@ -1004,7 +1005,7 @@ test('one-button "Update CHE": one approval → PR → merge after CI → verifi
     const proposal = saved.get('che').jobs.find((j) => j.kind === 'self_development')?.owner_message || '';
     assert.match(proposal, /Real draft PR #77 is open/, proposal);
     assert.doesNotMatch(proposal, /```|export default/);
-    assert.doesNotMatch(proposal, /provide|paste|filename|not provided|cannot inspect|503/i);
+    assert.doesNotMatch(proposal.replace(/\b[0-9a-f]{7,40}\b/gi, '<id>'), /provide|paste|filename|not provided|cannot inspect|503/i);
     // 2. One owner approval: PR opens and the merge is authorized together.
     const shipped = await replyOf(await chat('Update CHE'));
     // The PR is already open (CHE opened it); "Update CHE" is the merge approval.
@@ -2385,26 +2386,26 @@ test('trading desk through chat: switch modes, connect, alerts said first, take 
   const env = { CHE_PAIR_CODE: '123456', CHE_DISABLE_KEYLESS_AI: '1', CHE_TRADOVATE_OAUTH_CLIENT_ID: '123', CHE_TRADOVATE_OAUTH_CLIENT_SECRET: 'sec' };
   const { chat } = await pairedChat(env, saved);
   const say = async (m) => replyFromNdjson(await (await chat(m)).text());
-  // Going live takes two steps: the first says the broker, account and limits and changes nothing.
-  assert.match(await say('CHE, switch to live trading'), /^Before I switch to LIVE, sir: that is real money on Tradovate, no live account chosen yet\. Your live limits: not set.*not connected yet.*approve that exact order.*say "confirm live trading" within two minutes\. Nothing changed yet\.$/s);
-  assert.equal(saved.get('trading_desk').mode, 'paper', 'asking to go live does not switch');
-  assert.match(await say('confirm live trading'), /Switched from paper trading.*to your NinjaTrader LIVE account, real money.*take the trade.*not connected yet/s);
-  assert.equal(saved.get('trading_desk').mode, 'live');
-  assert.match(await say('confirm live trading'), /no live switch waiting to be confirmed/, 'a second confirm without a new request changes nothing');
+  // Live kill switch: going live is refused in code, said truthfully, and the mode stays paper.
+  assert.equal(await say('CHE, switch to live trading'), "Live trading is turned off in CHE's code until you separately approve it and it is verified, sir. You stay on paper trading (CHE's own journal, no account). Nothing changed.");
+  assert.equal(saved.get('trading_desk')?.mode ?? 'paper', 'paper', 'asking to go live does not switch');
+  assert.match(await say('confirm live trading'), /^Live trading is turned off in CHE's code.*Nothing changed\.$/);
+  assert.equal(saved.get('trading_desk')?.mode ?? 'paper', 'paper');
+  assert.match(await say('switch to sim trading'), /to your NinjaTrader simulated account/);
   const connect = await say('connect my NinjaTrader account');
   assert.match(connect, /https:\/\/trader\.tradovate\.com\/oauth\?/);
   assert.match(connect, /password goes only to Tradovate/);
   // An entry CHE found is said before the reply to whatever the owner says next.
   saved.set('trading_desk', { ...saved.get('trading_desk'), alerts: [{ id: 'a1', paper_id: 'p1', at: new Date().toISOString(), expires_at: new Date(Date.now() + 3600_000).toISOString(), root: 'MES', qty: 1, entry: 5820, stop: 5805, target: 5850, status: 'pending', announced: false, mode: 'live' }] });
+  // A live alert saved by an older build is said as not placeable, and the yes places nothing anywhere.
   const next = await say("what's my trading mode");
-  assert.match(next, /^Trade alert, sir, good entry on your LIVE account: buy 1 MES at 5820.*take the trade[\s\S]*You are on your NinjaTrader LIVE account/);
+  assert.match(next, /^Trade alert, sir: buy 1 MES at 5820.*It was for your live account, and live trading is off in CHE's code\. Nothing was placed\.[\s\S]*You are on your NinjaTrader simulated account/);
   assert.doesNotMatch(await say("what's my trading mode"), /Trade alert/, 'said once');
-  // No live account chosen: the yes is answered honestly and nothing is placed.
   assert.match(await say('take the trade'), /^Nothing was placed, sir\. To place this trade, say "yes, take the trade"/, 'a bare take phrase is answered with the phrase to say');
-  assert.match(await say('yes, take the trade'), /Which live account.*Nothing was placed/);
+  assert.match(await say('yes, take the trade'), /^That alert was for your live account, sir, and live trading is off in CHE's code\. Nothing was placed\.$/);
   assert.equal(saved.get('trading_desk').alerts[0].status, 'pending');
   // Reading accounts needs the sign-in; CHE says so instead of guessing.
-  assert.match(await say('list my trading accounts'), /could not read your live accounts.*not connected/);
+  assert.match(await say('list my trading accounts'), /could not read your simulated accounts.*not connected/);
   assert.match(await say('switch to paper trading'), /to paper trading/);
 });
 
@@ -2470,12 +2471,13 @@ test('memory-first: a verified owner fact is answered with zero AI engine calls'
   globalThis.fetch = async () => { providerCalls += 1; return new Response('{}', { status: 500 }); };
   try {
     // Remembering a fact that contains a URL saves it (it is not fetched as a page).
-    assert.equal(replyFromNdjson(await (await chat('Remember that my Worker URL is https://che.example.workers.dev')).text()), 'I’ll remember that, sir.');
+    assert.match(replyFromNdjson(await (await chat('Remember that my Worker URL is https://che.example.workers.dev')).text()), /^I’ll remember that, sir\. Saved \"[^\"]+\" as record [\w-]+ on \d{4}-\d{2}-\d{2} at \d{2}:\d{2} UTC, and read it back from storage\.$/);
     assert.equal(aiCalls + providerCalls, 0, 'remembering a plain fact costs no AI either');
     aiCalls = 0;
     providerCalls = 0;
     const reply = replyFromNdjson(await (await chat("What's my Worker URL?")).text());
-    assert.equal(reply, 'Your worker url is https://che.example.workers.dev, sir.');
+    // The dated owner record answers (personal_recall.js), so "when did I tell you that?" has a date to cite.
+    assert.match(reply, /^Your Worker URL is https:\/\/che\.example\.workers\.dev\. You told me that on \w+ \d+, \d{4}\.$/);
     assert.equal(aiCalls, 0, 'no Workers AI call');
     assert.equal(providerCalls, 0, 'no external provider call');
     const ledger = saved.get('che_reliability_ledger');
@@ -3879,8 +3881,9 @@ test('B1 regression: a bare "place it" with a live alert pending places nothing;
     }
     assert.equal(tradovateCalls(o).length, 0, 'a bare "place it" reaches no broker, live or demo');
     assert.equal(o.saved.get('trading_desk').alerts[0].status, 'pending', 'the live alert stays open, unplaced');
-    await o.say('yes, take the trade');
-    assert.ok(tradovateCalls(o).some((c) => c.url.startsWith('https://live.tradovateapi.com')), 'the explicit yes is the one that may reach live');
+    const yes = await o.say('yes, take the trade');
+    assert.match(yes.reply, /live trading is off in CHE's code\. Nothing was placed/i);
+    assert.equal(tradovateCalls(o).filter((c) => c.url.startsWith('https://live.tradovateapi.com')).length, 0, 'live kill switch: even the explicit yes reaches no live host');
   } finally {
     o.restore();
   }
@@ -3890,7 +3893,8 @@ test('blocker 1: "place it" then "yes, place it" places no live order; so do "ye
   const o = await stockOwner({ broker: tradovateAnswers });
   const placeoso = () => o.calls.filter((c) => c.method === 'POST' && /\/order\/placeoso$/.test(c.url));
   try {
-    o.saved.set('trading_desk', deskFor('live'));
+    // Live trading is off in code, so the same yes-gating runs on a simulated alert (demo server).
+    o.saved.set('trading_desk', deskFor('sim'));
     o.saved.set('tradovate_auth', tradovateSignedIn());
     // The two-turn chain from the review: the bare "place it" is answered, then "yes, place it" is refused.
     const bare = await o.say('place it');
@@ -3912,6 +3916,7 @@ test('blocker 1: "place it" then "yes, place it" places no live order; so do "ye
     assert.equal(placeoso().length, 1, 'the live approval places one order');
     await o.say('yes, take the trade');
     assert.equal(placeoso().length, 1, 'a repeated approval places no second order');
+    assert.ok(placeoso().every((c) => c.url.startsWith('https://demo.tradovateapi.com')), 'only the demo server took an order');
   } finally {
     o.restore();
   }
@@ -4002,8 +4007,9 @@ test('B5 (reviewer blocker 1): a trade phrase with no explicit yes places nothin
     }
     assert.equal(o.calls.filter((c) => c.method === 'POST').length, 0, 'no bare trade phrase sends any order, live or demo');
     assert.equal(o.saved.get('trading_desk').alerts[0].status, 'pending', 'the live alert stays open, unplaced');
-    await o.say('yes, take the trade');
-    assert.ok(tradovateCalls(o).some((c) => c.url.startsWith('https://live.tradovateapi.com') && c.url.endsWith('/order/placeoso')), 'the explicit yes is the one that may reach live');
+    const yes = await o.say('yes, take the trade');
+    assert.match(yes.reply, /live trading is off in CHE's code\. Nothing was placed/i);
+    assert.equal(tradovateCalls(o).filter((c) => c.url.startsWith('https://live.tradovateapi.com')).length, 0, 'live kill switch: even the explicit yes reaches no live host');
   } finally {
     o.restore();
   }
@@ -4051,9 +4057,10 @@ test('the rule when an Alpaca paper read-back and a live alert are both pending:
     assert.match(third.reply, /nothing live was placed/i);
     assert.equal(tradovateCalls(o).length, 0, 'the stale paper record takes the yes, not the live alert');
     assert.equal(o.saved.get('trading_desk').stock_order ?? null, null, 'the paper record is cleared');
-    // 4. A later explicit yes is the live alert's own approval.
-    await o.say('yes, take the trade');
-    assert.ok(tradovateCalls(o).some((c) => c.url.startsWith('https://live.tradovateapi.com') && c.url.endsWith('/order/placeoso')), 'a later explicit yes places the live alert');
+    // 4. A later explicit yes would be the live alert's own approval; the live kill switch refuses it and sends nothing.
+    const yes = await o.say('yes, take the trade');
+    assert.match(yes.reply, /live trading is off in CHE's code\. Nothing was placed/i);
+    assert.equal(tradovateCalls(o).filter((c) => c.url.startsWith('https://live.tradovateapi.com')).length, 0, 'live kill switch: even the explicit yes reaches no live host');
   } finally {
     o.restore();
   }
@@ -4187,4 +4194,20 @@ test('a real outage mixed with size skips is still the busy path, never "too lon
   } finally {
     globalThis.fetch = original;
   }
+});
+
+// The owner's objectives (mission plans and step outputs) are not readable from a family/guest device on the same store.
+test('objectives list: the owner reads it; a family device gets 403', async () => {
+  const saved = new Map();
+  const env = { CHE_PAIR_CODE: '123456', CHE_DISABLE_KEYLESS_AI: '1', AI: { run: async () => ({ response: 'ok' }) } };
+  const { send, owner, family } = await ownerAndFamily(env, saved);
+  const data = saved.get('che');
+  data.objectives = [{ id: 'obj-1', objective: 'Owner private plan', status: 'running', nodes: [] }];
+  saved.set('che', data);
+  const denied = await send('/api/objectives', {}, family);
+  assert.equal(denied.status, 403);
+  assert.doesNotMatch(await denied.text(), /Owner private plan/);
+  const mine = await send('/api/objectives', {}, owner);
+  assert.equal(mine.status, 200);
+  assert.equal((await mine.json()).objectives[0].objective, 'Owner private plan');
 });

@@ -9,6 +9,21 @@ import 'dart:convert';
 
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
+import 'che_secret_scan.dart';
+
+/// A spoken or typed turn that is about a password: a vault command, a
+/// password/key/token-shaped secret, or the start of one ("I want to save a
+/// password", "my PIN is ..."). Live voice (OpenAI Realtime) hands such a turn
+/// to the iPhone recognizer and the on-phone vault, never to the Worker, a
+/// model, chat history or logs.
+bool cheIsPasswordTurn(String text) {
+  final clean = text.trim();
+  if (clean.isEmpty) return false;
+  if (CheVaultCommand.parse(clean) != null || cheChatLooksSecret(clean)) return true;
+  return RegExp(r'\b(?:pass(?:word|code|phrase)s?|api[ _-]?keys?|log ?in credentials?)\b', caseSensitive: false)
+      .hasMatch(clean);
+}
+
 class CheVaultEntry {
   const CheVaultEntry({required this.site, required this.password, this.username = ''});
   final String site; // normalized name, e.g. "gmail" or "netflix.com"
@@ -29,7 +44,7 @@ class CheVaultEntry {
 /// Parsed vault voice/typed command.
 class CheVaultCommand {
   const CheVaultCommand(this.kind, {this.site = '', this.password = '', this.username = ''});
-  final String kind; // save, read, delete, list, import
+  final String kind; // save, ask_password, read, delete, list, import
   final String site;
   final String password;
   final String username;
@@ -47,6 +62,22 @@ class CheVaultCommand {
     if (save != null) {
       return CheVaultCommand('save', site: normalizeSite(save.group(1)!), password: save.group(2)!, username: save.group(3) ?? '');
     }
+    // "Save my password for Netflix" is the form CHE herself tells the owner to say (send.dart, secret-scan reply); it
+    // reached the Worker as ordinary chat. With the password in the same sentence it is saved; without it CHE asks
+    // for it. Either way nothing leaves the phone.
+    final saveFor = RegExp(
+      r'^(?:save|store|remember|keep)\s+(?:my\s+|a\s+)?password\s+for\s+(?:my\s+)?(.+?)(?:\s+(?:as|is)\s+(\S+))?\.?$',
+      caseSensitive: false,
+    ).firstMatch(text);
+    if (saveFor != null) {
+      final password = saveFor.group(2) ?? '';
+      return CheVaultCommand(password.isEmpty ? 'ask_password' : 'save', site: normalizeSite(saveFor.group(1)!), password: password);
+    }
+    final readFor = RegExp(
+      r"^(?:what(?:'?s|\s+is)|read|show|tell\s+me|give\s+me)\s+(?:me\s+)?(?:my\s+)?(?:password|login)\s+for\s+(?:my\s+)?(.+?)\.?$",
+      caseSensitive: false,
+    ).firstMatch(text);
+    if (readFor != null) return CheVaultCommand('read', site: normalizeSite(readFor.group(1)!));
     if (RegExp(r'^(?:what|which)\s+passwords\s+(?:do you have|are saved|did you save)|^(?:list|show)\s+(?:my\s+)?(?:saved\s+)?passwords$|^(?:my\s+)?passwords$', caseSensitive: false).hasMatch(text)) {
       return const CheVaultCommand('list');
     }

@@ -25,8 +25,9 @@ globalThis.fetch = async (input) => {
 
 const FABRICATED = 'You personally tested a new office security protocol last Tuesday and confirmed that after-hours access required a two-step biometric check.';
 
-function storageFor(saved) {
+function storageFor(saved, sql) {
   return {
+    ...(sql ? { sql } : {}),
     get: async (key) => (saved.has(key) ? structuredClone(saved.get(key)) : undefined),
     put: async (key, value) => saved.set(key, structuredClone(value)),
     delete: async (key) => saved.delete(key),
@@ -39,14 +40,14 @@ function storageFor(saved) {
 
 // A paired owner phone talking to CHE. `model` is what the chat model would
 // say; `calls` counts every model call the turn made.
-async function owner({ saved = new Map(), model = () => 'Understood, sir.' } = {}) {
+async function owner({ saved = new Map(), model = () => 'Understood, sir.', sql = null } = {}) {
   const counter = { calls: 0 };
   const env = {
     CHE_PAIR_CODE: '123456', CHE_DISABLE_KEYLESS_AI: '1',
     AI: { run: async (_model, input) => { counter.calls += 1; return { response: model(input) }; } },
   };
   const connect = () => {
-    const state = new CheState({ storage: storageFor(saved) }, env);
+    const state = new CheState({ storage: storageFor(saved, sql) }, env);
     env.CHE_STATE = { getByName: () => state };
     return state;
   };
@@ -68,7 +69,7 @@ async function owner({ saved = new Map(), model = () => 'Understood, sir.' } = {
     if (!extra.history) history.push({ role: 'user', content: message }, { role: 'assistant', content: reply });
     return { reply, meta: done, modelCalls: counter.calls - before, ms: performance.now() - started };
   };
-  return { say, saved, history, counter, restart: connect };
+  return { say, send, saved, history, counter, restart: connect };
 }
 
 test('A: "tell me something I\'ve personally confirmed" with no record never invents one', async () => {
@@ -396,6 +397,12 @@ test('deploy check: the live memory probe runs the real chat route in an isolate
     assert.ok(report.total >= 10);
     // Only the live model's own answer may downgrade to a deploy warning.
     assert.deepEqual(report.steps.filter((step) => step.optional).map((step) => step.name), ['News answer rests on opened articles', 'Model answer has no unsupported owner claims']);
+    // The live storage read (owner, 2026-10-24): real ids from the stores, the latest value, no invented ids.
+    for (const name of ['Memory search reads the real stores and names only their ids', '"Which memory ids did you retrieve" repeats the ids really read', 'No matching record is an honest no record, with no ids', 'Invented memory ids rejected at output boundary']) {
+      assert.ok(report.steps.some((step) => step.name === name && step.pass), name);
+    }
+    assert.equal(report.storage_read.kind, 'memory_store_read');
+    assert.ok(report.storage_read.record_ids.length >= 2 && report.storage_read.stores_read.includes('memory records'), JSON.stringify(report.storage_read));
     // A page that answers but says nothing of the claim never vouches for it.
     const recheck = report.steps.find((step) => step.name === 'Source re-check: the invented article is admitted, not defended');
     assert.match(recheck.reply, /^You're right to question it, sir\. I checked again just now: the link works, but technologyreview\.com's page does not mention MedMind/);
@@ -566,4 +573,213 @@ test('G: everyday ways of claiming a search never reach the owner without a rece
   // message: that starts a real lookup, and on a networked runner its receipt makes the claim true.)
   const brainstorm = await owner({ model: () => 'I researched the market and three websites agree it is growing.' });
   assert.match((await brainstorm.say('Brainstorm business ideas for me.')).reply, /do not have execution receipts/);
+});
+
+
+test('legitimate installed/backend status questions bypass the model and explain absent sources', async () => {
+  const che = await owner({ model: () => 'I deployed commit 1234567890abcdef. Installed version 9.9.9 build 999.' });
+  for (const prompt of [
+    'What version of CHE am I running?', 'What’s my installed build number?',
+    'What backend version are you connected to?', 'Open Settings and show my app version.',
+    'What GitHub commit is deployed?',
+  ]) {
+    const out = await che.say(prompt);
+    assert.equal(out.modelCalls, 0, prompt);
+    assert.equal(out.meta.source, 'che_runtime_status', prompt);
+    assert.match(out.reply, /unavailable/);
+    assert.doesNotMatch(out.reply, /9\.9\.9|999|1234567890abcdef|Model-written commands/);
+  }
+  const deployed = await che.say('Did you successfully deploy a change?');
+  assert.doesNotMatch(deployed.reply, /I (?:successfully )?deployed|completed successfully/);
+});
+
+test('fresh native metadata is returned as device-reported and never confused with a published build', async () => {
+  const che = await owner();
+  const out = await che.say('What version of CHE am I running?', { client_app: { source: 'ios_bundle', version: '1.2.345', build: '67890', checked_at: new Date().toISOString() } });
+  assert.match(out.reply, /installed CHE version 1\.2\.345, build 67890/);
+  assert.equal(out.meta.status_receipt.installed.source, 'ios_bundle');
+  assert.equal(out.modelCalls, 0);
+});
+
+test('a status question clears unrelated held consequential confirmations', async () => {
+  const saved = new Map();
+  const che = await owner({ saved });
+  saved.set('che:pending_owner_action', { kinds: ['money'], text: 'buy a subscription', at: Date.now() });
+  saved.set('che:pending_app_action', { app: 'external app', at: Date.now() });
+  const settings = await che.say('Open Settings and show my app version.');
+  assert.equal(settings.meta.open_screen, 'app_details');
+  assert.equal(saved.get('che:pending_owner_action'), null);
+  assert.equal(saved.get('che:pending_app_action'), null);
+});
+
+test('K: a repeated fact with a changed value is never presented as the owner\'s words (blue on record, "green" in the reply)', async () => {
+  const { guardOwnerAttributions, supportedBy } = await import('./memory_provenance.js');
+  const records = [{ id: 'c1', text: 'My favorite color is blue', source: 'owner_chat', verification_status: 'owner_attested', active: true }];
+  assert.equal(supportedBy('You told me your favorite color is green, sir, last Tuesday.', ['My favorite color is blue']), false);
+  assert.equal(supportedBy('You told me your favorite color is blue.', ['My favorite color is blue']), true);
+  assert.equal(supportedBy('You told me your favorite drink is strawberry Sprite.', ['my favorite drink is Sprite']), false, 'a longer value is a different value');
+  assert.equal(supportedBy('You told me your favorite drink is strawberry Sprite.', ['my favorite drink is strawberry Sprite']), true);
+  const out = guardOwnerAttributions('You told me your favorite color is green, sir, last Tuesday.', { records, ownerTurns: ['And about my favorite color?', 'Which one was first?'] });
+  assert.deepEqual(out.removed, ['You told me your favorite color is green, sir, last Tuesday.']);
+  const kept = guardOwnerAttributions('You told me your favorite color is blue.', { records, ownerTurns: [] });
+  assert.deepEqual(kept.removed, []);
+});
+
+// ─── Owner report, 2026-10-24: invented memory IDs 8829, 8830, 8831 "retrieved from storage" ─────────────────────────
+// A memory record question reached the model, which named record numbers and a storage read that never ran. Record
+// questions are now answered by owner_recall.ownerSearchTurn from a real read (done.read_receipt); on the model path the
+// memory_id rule removes numbered memories and every sentence that repeats their numbers. Each test seeds its own
+// in-memory records; nothing touches the owner's CHE. Replay: .claude/skills/che-fact-check/cases/memory-retrieval-fabrication.json
+const INVENTED_IDS = 'I retrieved memory IDs 8829, 8830 and 8831 from storage, sir. Record 8829 says your favorite color is blue.';
+const COLOR_RECORDS = [
+  // Listed newest first on purpose: the stored dates decide, never the array order.
+  { id: 'mem-red-2', text: 'My favorite color is red', source: 'owner_chat', verification_status: 'owner_attested', active: true, created_at: '2026-10-20T15:00:00.000Z' },
+  { id: 'mem-blue-1', text: 'My favorite color is blue', source: 'owner_chat', verification_status: 'owner_attested', active: true, created_at: '2026-10-01T15:00:00.000Z' },
+];
+async function seeded(records, opts = {}) {
+  const che = await owner({ model: () => INVENTED_IDS, ...opts });
+  const data = che.saved.get('che') || {};
+  data.memory_records = structuredClone(records);
+  che.saved.set('che', data);
+  return che;
+}
+const numbersIn = (text) => String(text).match(/\b\d{3,}\b/g) || [];
+
+test('memory retrieval 1: a record question reads the stores and names only the real seeded ids, with a read receipt', async () => {
+  const che = await seeded(COLOR_RECORDS);
+  for (const asked of ['what memories do you have about my favorite color', 'pull my memory records about colors', 'What do you have stored about my favorite color?', 'Search my memory for favorite color', 'give me your database entries for colors and their IDs', "what's stored in your database about colors", 'show me the database records about my favorite color']) {
+    const out = await che.say(asked);
+    assert.equal(out.meta.source, 'che_memory_search', asked);
+    assert.equal(out.modelCalls, 0, asked);
+    assert.match(out.reply, /^I read my memory stores just now/);
+    assert.match(out.reply, /record mem-red-2/);
+    assert.match(out.reply, /record mem-blue-1/);
+    assert.doesNotMatch(out.reply, /8829|8830|8831/);
+    assert.equal(out.meta.read_receipt.kind, 'memory_store_read');
+    assert.ok(out.meta.read_receipt.stores_read.includes('memory records'));
+    assert.deepEqual([...out.meta.record_ids].sort(), ['mem-blue-1', 'mem-red-2']);
+  }
+  // "Show me the memory IDs you retrieved": the ids the last answer's ledger entry really read.
+  const ids = await che.say('show me the memory IDs you retrieved');
+  assert.equal(ids.meta.source, 'che_memory_search');
+  assert.equal(ids.modelCalls, 0);
+  assert.match(ids.reply, /My last answer read 2 records.*mem-(?:red-2|blue-1).*mem-(?:red-2|blue-1)/);
+  assert.equal(ids.meta.read_receipt.kind, 'answer_ledger_read');
+  // A guest never reaches the owner's records.
+  const guest = await (await che.send('/api/chat', { message: 'what memories do you have about my favorite color', history: [] })).text();
+  assert.doesNotMatch(guest, /mem-red-2|mem-blue-1|8829/);
+});
+
+test('memory retrieval: record questions are read as asked; other routes keep their own sentences', async () => {
+  const { ownerMemorySearchIntent } = await import('./owner_recall.js');
+  const asks = {
+    'what memories do you have about my favorite color': 'my favorite color',
+    'CHE, pull my memory records about colors': 'colors',
+    'Can you list all your memories about Sprite?': 'Sprite',
+    'search my records for Magnolia': 'Magnolia',
+    'what do you have stored about my dog': 'my dog',
+    'give me your database entries for colors and their IDs': 'colors',
+    'show me the database records about my favorite color': 'my favorite color',
+    "What's stored in your database about colors?": 'colors',
+    'list the stored entries for Sprite': 'Sprite',
+  };
+  for (const [asked, term] of Object.entries(asks)) assert.equal(ownerMemorySearchIntent(asked)?.term, term, asked);
+  for (const asked of ['show me the memory IDs you retrieved', 'Which records did you read?', 'what memory ids did you use for that answer']) assert.equal(ownerMemorySearchIntent(asked)?.ids, true, asked);
+  for (const other of ['Pull the record for sim-2023-03-10-001.', 'Which records did you use for the backtest?', 'What is my favorite color?', 'Show me the record for MNQ today', 'Delete my memories about Sprite', 'Forget my memory records about colors', 'show me the database records about my trades', 'give me your database entries for my paper trades', 'Which storage key holds the simulation trades?']) {
+    assert.equal(ownerMemorySearchIntent(other), null, other);
+  }
+});
+
+test('memory retrieval 2: no matching record gives an honest "no record", with no invented ids', async () => {
+  const che = await seeded(COLOR_RECORDS);
+  const out = await che.say('what memories do you have about my passport');
+  assert.equal(out.meta.source, 'che_memory_search');
+  assert.equal(out.modelCalls, 0);
+  assert.match(out.reply, /found no record of it/);
+  assert.deepEqual(out.meta.record_ids, []);
+  assert.deepEqual(numbersIn(out.reply), []);
+  const ids = await che.say('which records did you read?');
+  assert.match(ids.reply, /didn't read any memory record, sir, so there are no memory IDs from it/);
+  assert.deepEqual(numbersIn(ids.reply), []);
+  const fact = await che.say('What is my favorite animal?');
+  assert.match(fact.reply, /I don't have a record of your favorite animal/);
+  assert.equal(fact.modelCalls, 0);
+});
+
+test('memory retrieval 3: conflicting confirmed preferences resolve to the newest, and the conflict is named', async () => {
+  const che = await seeded(COLOR_RECORDS);
+  const direct = await che.say('what is my favorite color');
+  assert.equal(direct.meta.source, 'che_personal_recall');
+  assert.match(direct.reply, /^Your favorite color is red\. You told me that on October 20, 2026\. Earlier, on October 1, 2026, you said blue; your newer statement replaces it\./);
+  assert.equal(direct.meta.recall_receipt.record_id, 'mem-red-2');
+  const search = await che.say('what memories do you have about my favorite color');
+  assert.match(search.reply, /Your latest confirmed favorite color is red \(record mem-red-2, October 20, 2026\); it replaces blue \(record mem-blue-1, October 1, 2026\)\./);
+  // Same records in the other array order: the same answer.
+  const flipped = await seeded([...COLOR_RECORDS].reverse());
+  assert.match((await flipped.say('what is my favorite color')).reply, /^Your favorite color is red\./);
+});
+
+test('memory retrieval 4: a correction ("actually … red" after "blue") wins, and the old value stays as history', async () => {
+  const che = await owner({ model: () => INVENTED_IDS });
+  await che.say('Remember that my favorite color is blue');
+  const fixed = await che.say('Actually my favorite color is red');
+  assert.match(fixed.reply, /Updated, sir: your favorite color is red/);
+  assert.equal(fixed.modelCalls, 0);
+  assert.match((await che.say('what is my favorite color')).reply, /^Your favorite color is red\./);
+  const search = await che.say('pull my memory records about my favorite color');
+  assert.match(search.reply, /superseded: "My favorite color is blue"/i);
+  assert.doesNotMatch(search.reply, /8829/);
+  const old = che.saved.get('che').memory_records.find((r) => /blue/.test(r.text));
+  assert.equal(old.active, false, 'the old statement is kept, not deleted');
+  // The owner's own words of 2026-10-24, after an older "blue".
+  const again = await seeded([COLOR_RECORDS[1]]);
+  const said = await again.say('Ensure user corrections override outdated preferences. My latest confirmed favorite color is red.');
+  assert.equal(said.meta.source, 'che_memory');
+  assert.equal(said.modelCalls, 0);
+  assert.match(said.reply, /Updated, sir: your favorite color is red/);
+  assert.match((await again.say('what is my favorite color')).reply, /^Your favorite color is red\./);
+  // A sentence beside it that asks for something else is never swallowed by the correction.
+  const { ownerFactCorrection } = await import('./memory_provenance.js');
+  assert.equal(ownerFactCorrection('Send Mark the report. My latest confirmed favorite color is red.', [COLOR_RECORDS[1]]), null);
+});
+
+test('memory retrieval 5: a store that cannot be read gives an honest failure, never content', async () => {
+  const broken = { exec: () => { throw new Error('SQLITE_IOERR: disk I/O error'); } };
+  const che = await seeded([COLOR_RECORDS[1]], { sql: broken });
+  const hit = await che.say('pull my memory records about my favorite color');
+  assert.equal(hit.meta.source, 'che_memory_search');
+  assert.match(hit.reply, /record mem-blue-1/);
+  assert.match(hit.reply, /Brain \(synced from the phone\): not readable right now/);
+  assert.ok(hit.meta.read_receipt.stores_unreadable.includes('Brain (synced from the phone)'));
+  const miss = await che.say('pull my memory records about my passport');
+  assert.match(miss.reply, /found no record of it, sir\. I couldn't read Brain \(synced from the phone\) just now, so a record there may exist that I can't see; I won't guess at it\./);
+  assert.doesNotMatch(miss.reply, /8829|8830|8831/);
+  // Every store failing: the turn says so and names nothing.
+  const { ownerSearchTurn } = await import('./owner_recall.js');
+  const data = { get memory_records() { throw new Error('storage read failed'); } };
+  const turn = await ownerSearchTurn(storageFor(new Map()), data, null, { term: 'favorite color' });
+  assert.match(turn.text, /^I couldn't read my memory stores just now, sir, so I have no records to show and I won't guess at any\./);
+  assert.equal(turn.meta.ok, false);
+  assert.deepEqual(turn.meta.record_ids, []);
+  assert.match(turn.meta.read_receipt.error, /storage read failed/);
+});
+
+test('memory retrieval 6: invented memory ids and "retrieved from storage" never reach the owner on the model path', async () => {
+  const fake = 'Retrieved memory IDs 8829, 8830, 8831 from storage. Memory 8830 says your favorite color is blue. Your favorite color is blue, sir (see 8831).';
+  const che = await seeded(COLOR_RECORDS, { model: () => fake });
+  const out = await che.say('tell me everything you know about colors');
+  assert.ok(out.modelCalls >= 1, 'this phrasing is answered by the model');
+  assert.doesNotMatch(out.reply, /8829|8830|8831|Retrieved memory/i);
+  assert.match(out.reply, /no storage read, lookup, tool or review ran for this answer/);
+  const real = new Set(COLOR_RECORDS.map((r) => r.id));
+  assert.ok(numbersIn(out.reply).every((n) => real.has(n)), 'no number that is not a real record id survives');
+  // Sentence level: an honest sentence stays, every sentence that repeats an invented number goes.
+  const { guardExecutionClaims } = await import('./truth_layer.js');
+  const guarded = guardExecutionClaims('Your favorite color is red, sir. Memory IDs 8829, 8830 and 8831 confirm it. See 8830 for details.', { message: 'what is my favorite color' }).text;
+  assert.match(guarded, /^Your favorite color is red, sir\./);
+  assert.doesNotMatch(guarded, /8829|8830|8831/);
+  // Ordinary numbers about records stay.
+  for (const plain of ['The record 2024 sales were strong.', 'A record 1,500 people came.', 'Order number 4521 shipped.']) {
+    assert.equal(guardExecutionClaims(plain, { message: 'sales' }).text, plain);
+  }
 });

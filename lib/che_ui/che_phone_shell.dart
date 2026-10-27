@@ -183,16 +183,19 @@ class _NavItem extends StatelessWidget {
                 ),
               ),
               const SizedBox(height: 2),
-              // One line, shrunk if needed: a wrapped label would overflow the fixed nav height.
-              FittedBox(
-                fit: BoxFit.scaleDown,
-                child: Text(
-                  tab.label,
-                  maxLines: 1,
-                  style: CheType.caption.copyWith(
-                    fontSize: 10.5,
-                    fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
-                    color: selected ? on : CheColors.textDim,
+              // One line, shrunk to the room left under the icon: with Larger Text the label was taller than the fixed
+              // nav height and overflowed (FittedBox alone got no height limit inside the Column).
+              Flexible(
+                child: FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child: Text(
+                    tab.label,
+                    maxLines: 1,
+                    style: CheType.caption.copyWith(
+                      fontSize: 10.5,
+                      fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+                      color: selected ? on : CheColors.textDim,
+                    ),
                   ),
                 ),
               ),

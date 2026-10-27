@@ -1,0 +1,434 @@
+{
+ "ok": true,
+ "source": "sim",
+ "source_label": "Strategy simulation",
+ "unit": "R",
+ "note": "Paper strategies on 1-minute bars, measured in R only; no dollar amounts are recorded.",
+ "time_zone": "America/Chicago",
+ "basis": "owner",
+ "basis_label": "Calendar day in America/Chicago, by exit time",
+ "break_even": {
+  "unit": "R",
+  "within": 0.1
+ },
+ "paper_only": true,
+ "live_orders": "disabled",
+ "sources": [
+  "sim",
+  "paper",
+  "broker"
+ ],
+ "month": "2026-09",
+ "prev": "2026-08",
+ "next": "2026-10",
+ "weeks": [
+  {
+   "days": [
+    {
+     "date": "2026-09-01",
+     "net": null,
+     "trades": 0,
+     "wins": 0,
+     "losses": 0,
+     "flat": 0,
+     "win_rate": null,
+     "missing_values": 0,
+     "color": null
+    },
+    {
+     "date": "2026-09-02",
+     "net": null,
+     "trades": 0,
+     "wins": 0,
+     "losses": 0,
+     "flat": 0,
+     "win_rate": null,
+     "missing_values": 0,
+     "color": null
+    },
+    {
+     "date": "2026-09-03",
+     "net": null,
+     "trades": 0,
+     "wins": 0,
+     "losses": 0,
+     "flat": 0,
+     "win_rate": null,
+     "missing_values": 0,
+     "color": null
+    },
+    {
+     "date": "2026-09-04",
+     "net": null,
+     "trades": 0,
+     "wins": 0,
+     "losses": 0,
+     "flat": 0,
+     "win_rate": null,
+     "missing_values": 0,
+     "color": null
+    },
+    {
+     "date": "2026-09-05",
+     "net": null,
+     "trades": 0,
+     "wins": 0,
+     "losses": 0,
+     "flat": 0,
+     "win_rate": null,
+     "missing_values": 0,
+     "color": null
+    },
+    {
+     "date": "2026-09-06",
+     "net": null,
+     "trades": 0,
+     "wins": 0,
+     "losses": 0,
+     "flat": 0,
+     "win_rate": null,
+     "missing_values": 0,
+     "color": null
+    }
+   ],
+   "net": null,
+   "trades": 0,
+   "wins": 0,
+   "losses": 0,
+   "flat": 0,
+   "win_rate": null,
+   "missing_values": 0
+  },
+  {
+   "days": [
+    {
+     "date": "2026-09-07",
+     "net": null,
+     "trades": 0,
+     "wins": 0,
+     "losses": 0,
+     "flat": 0,
+     "win_rate": null,
+     "missing_values": 0,
+     "color": null
+    },
+    {
+     "date": "2026-09-08",
+     "net": null,
+     "trades": 0,
+     "wins": 0,
+     "losses": 0,
+     "flat": 0,
+     "win_rate": null,
+     "missing_values": 0,
+     "color": null
+    },
+    {
+     "date": "2026-09-09",
+     "net": null,
+     "trades": 0,
+     "wins": 0,
+     "losses": 0,
+     "flat": 0,
+     "win_rate": null,
+     "missing_values": 0,
+     "color": null
+    },
+    {
+     "date": "2026-09-10",
+     "net": null,
+     "trades": 0,
+     "wins": 0,
+     "losses": 0,
+     "flat": 0,
+     "win_rate": null,
+     "missing_values": 0,
+     "color": null
+    },
+    {
+     "date": "2026-09-11",
+     "net": null,
+     "trades": 0,
+     "wins": 0,
+     "losses": 0,
+     "flat": 0,
+     "win_rate": null,
+     "missing_values": 0,
+     "color": null
+    },
+    {
+     "date": "2026-09-12",
+     "net": null,
+     "trades": 0,
+     "wins": 0,
+     "losses": 0,
+     "flat": 0,
+     "win_rate": null,
+     "missing_values": 0,
+     "color": null
+    },
+    {
+     "date": "2026-09-13",
+     "net": null,
+     "trades": 0,
+     "wins": 0,
+     "losses": 0,
+     "flat": 0,
+     "win_rate": null,
+     "missing_values": 0,
+     "color": null
+    }
+   ],
+   "net": null,
+   "trades": 0,
+   "wins": 0,
+   "losses": 0,
+   "flat": 0,
+   "win_rate": null,
+   "missing_values": 0
+  },
+  {
+   "days": [
+    {
+     "date": "2026-09-14",
+     "net": null,
+     "trades": 0,
+     "wins": 0,
+     "losses": 0,
+     "flat": 0,
+     "win_rate": null,
+     "missing_values": 0,
+     "color": null
+    },
+    {
+     "date": "2026-09-15",
+     "net": null,
+     "trades": 0,
+     "wins": 0,
+     "losses": 0,
+     "flat": 0,
+     "win_rate": null,
+     "missing_values": 0,
+     "color": null
+    },
+    {
+     "date": "2026-09-16",
+     "net": null,
+     "trades": 0,
+     "wins": 0,
+     "losses": 0,
+     "flat": 0,
+     "win_rate": null,
+     "missing_values": 0,
+     "color": null
+    },
+    {
+     "date": "2026-09-17",
+     "net": null,
+     "trades": 0,
+     "wins": 0,
+     "losses": 0,
+     "flat": 0,
+     "win_rate": null,
+     "missing_values": 0,
+     "color": null
+    },
+    {
+     "date": "2026-09-18",
+     "net": null,
+     "trades": 0,
+     "wins": 0,
+     "losses": 0,
+     "flat": 0,
+     "win_rate": null,
+     "missing_values": 0,
+     "color": null
+    },
+    {
+     "date": "2026-09-19",
+     "net": null,
+     "trades": 0,
+     "wins": 0,
+     "losses": 0,
+     "flat": 0,
+     "win_rate": null,
+     "missing_values": 0,
+     "color": null
+    },
+    {
+     "date": "2026-09-20",
+     "net": null,
+     "trades": 0,
+     "wins": 0,
+     "losses": 0,
+     "flat": 0,
+     "win_rate": null,
+     "missing_values": 0,
+     "color": null
+    }
+   ],
+   "net": null,
+   "trades": 0,
+   "wins": 0,
+   "losses": 0,
+   "flat": 0,
+   "win_rate": null,
+   "missing_values": 0
+  },
+  {
+   "days": [
+    {
+     "date": "2026-09-21",
+     "net": null,
+     "trades": 0,
+     "wins": 0,
+     "losses": 0,
+     "flat": 0,
+     "win_rate": null,
+     "missing_values": 0,
+     "color": null
+    },
+    {
+     "date": "2026-09-22",
+     "net": null,
+     "trades": 0,
+     "wins": 0,
+     "losses": 0,
+     "flat": 0,
+     "win_rate": null,
+     "missing_values": 0,
+     "color": null
+    },
+    {
+     "date": "2026-09-23",
+     "net": null,
+     "trades": 0,
+     "wins": 0,
+     "losses": 0,
+     "flat": 0,
+     "win_rate": null,
+     "missing_values": 0,
+     "color": null
+    },
+    {
+     "date": "2026-09-24",
+     "net": null,
+     "trades": 0,
+     "wins": 0,
+     "losses": 0,
+     "flat": 0,
+     "win_rate": null,
+     "missing_values": 0,
+     "color": null
+    },
+    {
+     "date": "2026-09-25",
+     "net": null,
+     "trades": 0,
+     "wins": 0,
+     "losses": 0,
+     "flat": 0,
+     "win_rate": null,
+     "missing_values": 0,
+     "color": null
+    },
+    {
+     "date": "2026-09-26",
+     "net": null,
+     "trades": 0,
+     "wins": 0,
+     "losses": 0,
+     "flat": 0,
+     "win_rate": null,
+     "missing_values": 0,
+     "color": null
+    },
+    {
+     "date": "2026-09-27",
+     "net": null,
+     "trades": 0,
+     "wins": 0,
+     "losses": 0,
+     "flat": 0,
+     "win_rate": null,
+     "missing_values": 0,
+     "color": null
+    }
+   ],
+   "net": null,
+   "trades": 0,
+   "wins": 0,
+   "losses": 0,
+   "flat": 0,
+   "win_rate": null,
+   "missing_values": 0
+  },
+  {
+   "days": [
+    {
+     "date": "2026-09-28",
+     "net": null,
+     "trades": 0,
+     "wins": 0,
+     "losses": 0,
+     "flat": 0,
+     "win_rate": null,
+     "missing_values": 0,
+     "color": null
+    },
+    {
+     "date": "2026-09-29",
+     "net": null,
+     "trades": 0,
+     "wins": 0,
+     "losses": 0,
+     "flat": 0,
+     "win_rate": null,
+     "missing_values": 0,
+     "color": null
+    },
+    {
+     "date": "2026-09-30",
+     "net": null,
+     "trades": 0,
+     "wins": 0,
+     "losses": 0,
+     "flat": 0,
+     "win_rate": null,
+     "missing_values": 0,
+     "color": null
+    }
+   ],
+   "net": null,
+   "trades": 0,
+   "wins": 0,
+   "losses": 0,
+   "flat": 0,
+   "win_rate": null,
+   "missing_values": 0
+  }
+ ],
+ "totals": {
+  "net": null,
+  "trades": 0,
+  "wins": 0,
+  "losses": 0,
+  "flat": 0,
+  "win_rate": null,
+  "missing_values": 0,
+  "green_days": 0,
+  "red_days": 0,
+  "yellow_days": 0
+ },
+ "color": null,
+ "duplicates_not_counted": 0,
+ "empty": true,
+ "read": [
+  {
+   "execution_type": "simulation",
+   "label": "Strategy simulation (1-minute)",
+   "read": true,
+   "trades": 0
+  }
+ ]
+}

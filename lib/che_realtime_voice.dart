@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:http/http.dart' as http;
 
+import 'che_private_voice.dart';
 import 'che_voice_state.dart';
 
 typedef CheRealtimeSnapshotCallback = void Function(CheVoiceSnapshot snapshot);
@@ -86,6 +87,9 @@ class CheRealtimeVoiceEngine {
 
   Future<void> connect() async {
     if (_disposed) throw StateError('Realtime voice engine was disposed.');
+    // Private voice: microphone audio never goes to OpenAI. Refused before any
+    // token request, audio session change or peer connection.
+    if (!ChePrivateVoice.allowsRealtime()) throw StateError(ChePrivateVoice.realtimeRefusal);
     await initialize();
     await disconnect(keepRenderer: true);
 
@@ -523,6 +527,21 @@ class CheRealtimeVoiceEngine {
     if (!_connected || clean.isEmpty) return;
 
     await _enqueueUserTurn(clean, null);
+  }
+
+  /// Removes one user turn from the live OpenAI session's conversation
+  /// (Realtime `conversation.item.delete`), used when the turn was about a
+  /// password. Residual limit: the audio was already streamed to OpenAI and
+  /// transcribed there before CHE could read the transcript, so this only
+  /// stops the session from keeping that item as context; it cannot unsend it.
+  void forgetUserItem(String? itemId) {
+    final id = itemId?.trim() ?? '';
+    if (id.isEmpty) return;
+    _send({
+      'type': 'conversation.item.delete',
+      'event_id': _eventId('forget'),
+      'item_id': id,
+    });
   }
 
   Future<void> cancelActiveResponse([String reason = 'owner interruption']) async {

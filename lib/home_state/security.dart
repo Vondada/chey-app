@@ -17,7 +17,13 @@ extension _CheHomeSecurity on _CHEHomeState {
     _homeBaseUrl = savedHomeBaseUrl.endsWith('/')
         ? savedHomeBaseUrl.substring(0, savedHomeBaseUrl.length - 1)
         : savedHomeBaseUrl;
-    _deviceToken = prefs.getString('che_agent_device_token');
+    // The sign-in lives in the Keychain (moved there once from an older build's plain storage).
+    _deviceToken = await CheSessionStore.instance.deviceToken();
+    if (_deviceToken == null || _deviceToken!.isEmpty) {
+      final ended = await CheSessionStore.instance.lastEnd();
+      _sessionNotice = cheSessionEndMessage(ended);
+      _showSessionNotice();
+    }
 
     if (_deviceToken != null && _deviceToken!.isNotEmpty) {
       await _loadAgentState(silent: true);
@@ -43,10 +49,28 @@ extension _CheHomeSecurity on _CHEHomeState {
     if (mounted) _set(() {});
   }
 
-  Future<void> _clearSecuritySession() async {
+  /// Shows why the sign-in ended as quiet text (never spoken unprompted; the owner can ask CHE to read it).
+  void _showSessionNotice() {
+    if (!mounted || _sessionNotice.isEmpty) return;
+    ScaffoldMessenger.maybeOf(context)?.showSnackBar(SnackBar(
+      content: Semantics(liveRegion: false, child: Text(_sessionNotice, maxLines: 4, overflow: TextOverflow.ellipsis)),
+      duration: const Duration(seconds: 8),
+    ));
+  }
+
+  /// A 401 from the Worker. Only an unknown or revoked device ends the sign-in; "needs Face ID first" keeps it.
+  /// Returns true when the sign-in ended.
+  Future<bool> _onUnauthorized(http.Response response) async {
+    if (!cheSessionRevoked(response.statusCode, response.body)) return false;
+    await _clearSecuritySession(CheSessionEnd.revoked);
+    return true;
+  }
+
+  Future<void> _clearSecuritySession(CheSessionEnd why) async {
     _lastAgentStateBody = null;
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.remove('che_agent_device_token');
+    await CheSessionStore.instance.clear(why);
+    _sessionNotice = cheSessionEndMessage(why);
+    if (why == CheSessionEnd.revoked) _showSessionNotice();
 
     _deviceToken = null;
     savedMemories = [];
@@ -79,7 +103,7 @@ extension _CheHomeSecurity on _CHEHomeState {
       );
 
       if (response.statusCode == 401) {
-        await _clearSecuritySession();
+        await _onUnauthorized(response);
         return;
       }
       if (response.statusCode != 200) return;
@@ -106,8 +130,10 @@ extension _CheHomeSecurity on _CHEHomeState {
       });
 
       _scrollToBottom();
-      if (voiceResponsesEnabled && openConversation) {
-        await speakText(suggestion);
+      // Timer-driven, so passive: it shows quietly and speaks only while the owner is awake in a voice conversation.
+      if (voiceResponsesEnabled &&
+          chePassiveNoticeMaySpeak(activeConversation: _inActiveVoiceConversation, speaking: _isSpeaking, sending: _isSending)) {
+        await speakText(suggestion, record: false);
       }
     } catch (_) {}
   }
@@ -183,7 +209,8 @@ extension _CheHomeSecurity on _CHEHomeState {
                   final homeBase = homeBaseController.text.trim().replaceFirst(RegExp(r'/$'), '');
                   final prefs = await SharedPreferences.getInstance();
                   if (address != cheAgentBaseUrl) {
-                    await prefs.remove('che_agent_device_token');
+                    await CheSessionStore.instance.clear(CheSessionEnd.serverChanged);
+                    _sessionNotice = cheSessionEndMessage(CheSessionEnd.serverChanged);
                     _deviceToken = null;
                     savedMemories = [];
                     learnedPersonality = [];
@@ -287,9 +314,9 @@ extension _CheHomeSecurity on _CHEHomeState {
                   throw Exception('The agent did not return a device token.');
                 }
 
-                final prefs = await SharedPreferences.getInstance();
-                await prefs.setString('che_agent_device_token', token);
+                await CheSessionStore.instance.save(token);
                 _deviceToken = token;
+                _sessionNotice = '';
 
                 if (!context.mounted) return;
                 Navigator.of(context).pop(true);
@@ -393,7 +420,7 @@ extension _CheHomeSecurity on _CHEHomeState {
       _stateLatencyMs = watch.elapsedMilliseconds;
 
       if (response.statusCode == 401) {
-        await _clearSecuritySession();
+        await _onUnauthorized(response);
         return;
       }
 
@@ -403,6 +430,8 @@ extension _CheHomeSecurity on _CHEHomeState {
       unawaited(_offlineLibrary.sync(cheAgentBaseUrl, _authHeaders));
       unawaited(_syncBrainReplica());
       unawaited(_refreshMailboxBadge());
+      // The owner's preferences set by voice (Owner Improvements) apply on startup and refresh, with no new build.
+      unawaited(CheOwnerConfigSync.refresh(CheOwnerImprovementsClient(baseUrl: cheAgentBaseUrl, headers: () => _authHeaders)));
 
       // Unchanged state: nothing to decode and nothing to rebuild. Home Base still gets the snapshot, so one that was
       // configured later, or missed a delivery, is not left waiting for the Worker's state to change.
@@ -445,6 +474,7 @@ extension _CheHomeSecurity on _CHEHomeState {
       final ownerContextData = (data['owner_context'] as List?) ?? const [];
       final personalSourceData = (data['personal_sources'] as Map?) ?? const {};
       final integrationData = (data['integrations'] as Map?) ?? const {};
+      _performanceNote = chePerformanceNote(data['performance']);
 
       savedMemories = memoryData.map((e) => e.toString()).toList();
       memoryRecords = memoryRecordData
@@ -517,7 +547,11 @@ extension _CheHomeSecurity on _CHEHomeState {
           ));
         }
         final options = [for (var i = 0; i < _actionApprovals.length; i++) '${i + 1}. ${_actionApprovals[i]['query']}'].join(' ');
-        if (!_isSpeaking && !_isSending) unawaited(speakText('Approval needed. $options Say or type approve action and its number, or reject action and its number.'));
+        // Passive poll (also the first poll at launch, when every pending approval is "new"):
+        // the approvals panel, notification and haptic show it quietly; speech only in a live conversation.
+        if (chePassiveNoticeMaySpeak(activeConversation: _inActiveVoiceConversation, speaking: _isSpeaking, sending: _isSending)) {
+          unawaited(speakText('Approval needed. $options Say or type approve action and its number, or reject action and its number.', record: false));
+        }
       }
       unawaited(_notifyFinishedJobs());
       ownerContext = ownerContextData
@@ -798,7 +832,7 @@ extension _CheHomeSecurity on _CHEHomeState {
                                   );
                                 } catch (_) {}
 
-                                await _clearSecuritySession();
+                                await _clearSecuritySession(CheSessionEnd.unpaired);
                                 if (!context.mounted) return;
                                 Navigator.pop(context);
                               },
@@ -860,6 +894,7 @@ extension _CheHomeSecurity on _CHEHomeState {
       final started = await _localVoice.runMicOp(() => CheNativeVoice.start());
       _nativeIosVoiceActive = started;
       if (!started) {
+        _reportPrivateMicRefusal();
         _voiceMachine.disconnected(reason ?? 'Voice engines unavailable.');
         _applyVoiceSnapshot(_voiceMachine.snapshot);
       }
@@ -908,6 +943,15 @@ extension _CheHomeSecurity on _CHEHomeState {
     await _beginRealtimeConversation(fromWake: true);
   }
 
+  /// A Porcupine listener died while CHE showed wake listening. Porcupine is
+  /// in its error cooldown now, so restarting the wake stack gives the
+  /// microphone to the native listener instead of leaving CHE deaf.
+  Future<void> _recoverFromPorcupineError(CheWakeWordEngine failed) async {
+    if (!mounted || !identical(_porcupineWake, failed)) return;
+    await _stopPorcupineWake(disposeEngine: true);
+    await _restartWakeListener();
+  }
+
   Future<bool> _startPorcupineWake() async {
     if (kIsWeb ||
         defaultTargetPlatform != TargetPlatform.iOS ||
@@ -925,10 +969,12 @@ extension _CheHomeSecurity on _CHEHomeState {
       await current.dispose();
     }
 
-    final wake = CheWakeWordEngine(
+    late final CheWakeWordEngine wake;
+    wake = CheWakeWordEngine(
       baseUrl: cheAgentBaseUrl,
       deviceToken: _deviceToken!,
       onWake: _handlePorcupineWake,
+      onListenerError: (_) => _recoverFromPorcupineError(wake),
     );
     _porcupineWake = wake;
 
@@ -1035,7 +1081,8 @@ extension _CheHomeSecurity on _CHEHomeState {
     }
 
     _realtimeCancelRequested = false;
-    if (!cheUseLiveVoice(liveConfigured: integrations['openai_live_voice'] == true, skipUntil: _realtimeSkipUntil, now: DateTime.now())) {
+    // A password or vault surface on screen never opens live voice (its audio goes to OpenAI).
+    if (!cheUseLiveVoice(liveConfigured: integrations['openai_live_voice'] == true, skipUntil: _realtimeSkipUntil, now: DateTime.now(), passwordSurface: CheScreenCapture.blocked, privateVoice: !ChePrivateVoice.allowsRealtime())) {
       // Straight to the free native listener: live voice is not set up, or it
       // failed recently. Waking never waits on a paid provider.
       HapticFeedback.mediumImpact();
@@ -1054,6 +1101,7 @@ extension _CheHomeSecurity on _CHEHomeState {
         _localVoice.recordMicFailure('The iPhone speech recognizer did not start: $error');
         _nativeIosVoiceActive = false;
       }
+      if (!_nativeIosVoiceActive) _reportPrivateMicRefusal();
       if (!_nativeIosVoiceActive && _localVoice.lastMicFailure == null) {
         _localVoice.recordMicFailure('The iPhone speech recognizer did not start.');
       }
@@ -1204,6 +1252,35 @@ extension _CheHomeSecurity on _CHEHomeState {
   Future<void> _onRealtimeUserTranscript(String text, String? itemId) async {
     final clean = text.trim();
     if (clean.isEmpty || !mounted) return;
+
+    // Password turns leave live voice (owner rule: passwords never reach an AI
+    // provider). Residual limit, stated honestly: Realtime streams raw mic
+    // audio to OpenAI, which transcribes it before CHE sees any words, so the
+    // first turn that mentions a password has already passed through OpenAI's
+    // speech service and cannot be pre-filtered. What CHE does: drop that item
+    // from the live session, switch to the iPhone recognizer (on-device when
+    // iOS supports it) and hold live voice off for chePasswordVoiceHold, so the
+    // owner's next words, usually the password itself, stay on the phone. The
+    // turn itself goes to sendMessage below, whose vault and secret checks run
+    // before anything reaches the Worker, a model, chat history or logs.
+    if (cheIsPasswordTurn(clean)) {
+      final passwordInTurn = CheVaultCommand.parse(clean)?.kind == 'save' || cheChatLooksSecret(clean);
+      _realtimeVoice?.forgetUserItem(itemId);
+      _realtimeSkipUntil = DateTime.now().add(chePasswordVoiceHold);
+      await _fallbackAfterRealtimeLoss('Password turn: switched to the iPhone recognizer.');
+      if (!mounted) return;
+      final notice = passwordInTurn
+          ? 'Live voice was on, sir, so those words went through OpenAI\'s speech service before I could stop them. '
+              'I switched to the iPhone recognizer for the next ${chePasswordVoiceHold.inMinutes} minutes; consider changing that password.'
+          : 'Switched to the iPhone recognizer for passwords, sir. Live voice stays off for ${chePasswordVoiceHold.inMinutes} minutes.';
+      HapticFeedback.heavyImpact();
+      await speakText(notice, record: false, show: true);
+    }
+
+    // Master profile values ("set my business phone to ...") stay out of the
+    // live session's context too. Same residual limit as passwords: Realtime
+    // transcribed the audio before CHE saw the words.
+    if (cheIsProfileTurn(clean)) _realtimeVoice?.forgetUserItem(itemId);
 
     // Use the same intake, authorization, streaming guard and TTS as typing.
     // A typed/local turn can already own the HTTP request. Keep these exact

@@ -1,0 +1,10 @@
+{
+  "about": "Reliability lane, 2026-10-25. The owner's frequent release questions (handoff + mailbox: 'is it deployed', 'what's on the iPhone'). With no GitHub access and no native bundle report, CHE must say what she could not verify, from code, with no model call; the fake model claims everything is deployed and installed and must never reach the reply.",
+  "owner": true,
+  "model": "Yes sir, everything is deployed, installed on your iPhone and the MNQ feed is live and real-time.",
+  "turns": [
+    { "message": "Is it deployed?", "expect": { "route": "che_self_update", "model_calls": 0, "match": "could not verify the Worker deployment", "not": "everything is deployed|installed on your iPhone" } },
+    { "message": "CHE, is the latest version deployed?", "expect": { "route": "che_self_update", "model_calls": 0, "match": "no live deployment lookup ran", "not": "everything is deployed" } },
+    { "message": "What version is installed on my iPhone?", "expect": { "route": "che_runtime_status", "model_calls": 0, "match": "Installed iPhone version and build are unavailable", "not": "everything is deployed|installed on your iPhone and" } }
+  ]
+}

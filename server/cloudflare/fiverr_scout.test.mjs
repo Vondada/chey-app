@@ -25,7 +25,7 @@ test('shortlist stub requires owner confirm and blocks outbound', () => {
 });
 
 test('CHE speaks hire Iris and Fiverr scout plans', () => {
-  assert.match(speakHireIris({ name: 'Iris', role: 'Ad Studio / paid-social creatives' }), /Iris is hired on Ad Studio/);
+  assert.match(speakHireIris({ name: 'Iris', role: 'Experience / accessibility' }), /Iris is on the roster — Experience \/ accessibility\. .*Lyra/);
   assert.match(speakHireIris(null), /not on the roster/);
   const said = speakFiverrScoutPlan(
     [{ agent: 'Atlas', task: 'Scout', blocker: '' }, { agent: 'Iris', task: 'Map fit' }],

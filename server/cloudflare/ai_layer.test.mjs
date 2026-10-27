@@ -12,8 +12,8 @@ import {
 } from './model_discovery.js';
 import { inferNeeds, orderByCapability, recordHealth, shouldCrossCheck } from './capability_router.js';
 import {
-  assembleKnowledgeBundle, classifyItem, extractCandidateMemories, fineTuneDisclosure,
-  personalizationPlan, providerMayReceive, setProviderPermission,
+  TENANT_AUDIT_TASK, appendAudit, assembleKnowledgeBundle, auditEntry, auditView, classifyItem, extractCandidateMemories,
+  fineTuneDisclosure, personalizationPlan, providerMayReceive, setProviderPermission,
 } from './privacy_policy.js';
 import {
   createAgent, handoffAgentTask, normalizeAgent, queueAgentTask, routingForAgent, teachOfficeSkill,
@@ -278,6 +278,97 @@ test('provider secrets are never returned to the app', async () => {
   const voice = await (await send('/api/chat', 'POST', { message: 'CHE, what AI models do you have?' }, token)).text();
   assert.match(voice, /xAI Grok/);
   assert.ok(!voice.includes('SUPERSECRETVALUE'));
+});
+
+// CORE-PRIVACY-1: a guest's words never reach the owner-readable AI audit, nor any stored state.
+test('guest and other-tenant chat text never reaches the owner AI audit or stored state', async () => {
+  const generated = new URL('./.ai_tenant_audit.test.generated.mjs', import.meta.url);
+  writeFileSync(generated, readFileSync(new URL('./worker.js', import.meta.url), 'utf8').replace(
+    "import { DurableObject } from 'cloudflare:workers';",
+    'class DurableObject { constructor(ctx, env) { this.ctx = ctx; this.env = env; } }',
+  ));
+  let mod;
+  try { mod = await import(`${generated.href}?t=${Date.now()}`); } finally { unlinkSync(generated); }
+  const saved = new Map();
+  const pending = [];
+  const prompts = [];
+  const env = {
+    CHE_PAIR_CODE: '123456', CHE_DISABLE_KEYLESS_AI: '1',
+    AI: { run: async (_model, input) => { prompts.push(JSON.stringify(input)); return { response: 'Happy to help.' }; } },
+  };
+  const storage = {
+    get: async (k) => (saved.has(k) ? structuredClone(saved.get(k)) : undefined),
+    put: async (k, v) => { saved.set(k, structuredClone(v)); },
+    delete: async (k) => saved.delete(k),
+    list: async ({ prefix = '' } = {}) => new Map([...saved.entries()].filter(([k]) => k.startsWith(prefix))),
+    setAlarm: async () => {}, deleteAlarm: async () => {},
+  };
+  const state = new mod.CheState({ storage, waitUntil: (p) => pending.push(p) }, env);
+  env.CHE_STATE = { getByName: () => state };
+  const send = (path, method = 'GET', body = {}, token = '') => mod.default.fetch(new Request(`https://che.example${path}`, {
+    method,
+    headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+    ...(method === 'POST' ? { body: JSON.stringify(body) } : {}),
+  }), env);
+  const settle = async () => { while (pending.length) await pending.shift(); };
+  const token = (await (await send('/api/pair', 'POST', { code: '123456' })).json()).device_token;
+  const enroll = async (tenantId) => {
+    const invite = await (await send('/api/platform/enrollments', 'POST', { access: 'private', tenant_id: tenantId }, token)).json();
+    return (await (await send('/api/enroll', 'POST', { enrollment_token: invite.enrollment.token, device_name: 'guest' })).json()).device_token;
+  };
+  const family = await (await send('/api/platform/tenants', 'POST', { name: 'Guest', role: 'family' }, token)).json();
+  const familyPhone = await enroll(family.tenant.id);
+  // A private phone inside the owner's own profile is still not the owner.
+  const privatePhone = await enroll('owner-369');
+  const FAMILY_MARKER = 'ZEBRAQUILL-7731 my private diary entry';
+  const PRIVATE_MARKER = 'MOONLARK-4410 private worry';
+  for (const [phone, words] of [[familyPhone, FAMILY_MARKER], [privatePhone, PRIVATE_MARKER]]) {
+    const res = await send('/api/chat', 'POST', { message: words, history: [{ role: 'user', content: `${words} earlier` }] }, phone);
+    assert.equal(res.status, 200);
+    await res.text();
+    await settle();
+  }
+  assert.ok(prompts.some((p) => p.includes(FAMILY_MARKER)) && prompts.some((p) => p.includes(PRIVATE_MARKER)), 'the guests were answered by a model');
+  const ownerRes = await send('/api/chat', 'POST', { message: 'Tell me one fact about the moon, CHE.' }, token);
+  await ownerRes.text();
+  await settle();
+
+  const audit = await (await send('/api/ai/audit', 'GET', {}, token)).json();
+  assert.ok(audit.calls.length >= 1, 'the owner still sees his own calls');
+  assert.ok(audit.calls.every((row) => !/^guest/.test(row.route) && (!row.tenant_id || row.tenant_id === 'owner-369')), 'owner rows only');
+  assert.equal(audit.other_tenant_calls, 2, 'other tenants are a count only');
+  for (const path of ['/api/ai/audit', '/api/ai/overview', '/api/state', '/api/platform']) {
+    const text = await (await send(path, 'GET', {}, token)).text();
+    for (const marker of ['ZEBRAQUILL', 'MOONLARK']) assert.ok(!text.includes(marker), `${path} exposed a guest's words`);
+  }
+  // Stored state: the guest rows keep tenant, engine, timing and outcome, never the words.
+  const stored = JSON.stringify([...saved.entries()]);
+  for (const marker of ['ZEBRAQUILL', 'MOONLARK']) assert.ok(!stored.includes(marker), `stored state holds ${marker}`);
+  const guestRows = saved.get('ai_audit').filter((row) => row.route === 'guest_chat');
+  assert.equal(guestRows.length, 2);
+  assert.deepEqual(guestRows.map((row) => row.tenant_id).sort(), [family.tenant.id, 'owner-369'].sort());
+  for (const row of guestRows) {
+    assert.equal(row.task, TENANT_AUDIT_TASK);
+    assert.deepEqual(row.memory_ids, []);
+    assert.equal(row.ok, true);
+    assert.ok(row.provider && Number.isFinite(row.latency_ms) && Number.isFinite(row.est_tokens));
+  }
+});
+
+test('tenant audit rows drop task text, and older rows holding it are scrubbed on the next write', async () => {
+  const row = auditEntry({ provider: 'cloudflare', model: 'm', task: 'secret guest words', route: 'office', tenant_id: 'tenant_abc', thread_id: 't1', memory: [{ id: 'x' }] });
+  assert.equal(row.task, TENANT_AUDIT_TASK);
+  assert.equal(row.thread_id, undefined);
+  assert.deepEqual(row.memory_ids, []);
+  const ownerRow = auditEntry({ provider: 'cloudflare', model: 'm', task: 'owner words', route: 'owner_chat', tenant_id: 'owner-369' });
+  assert.equal(ownerRow.task, 'owner words');
+  const storage = memoryStorage();
+  storage.saved.set('ai_audit', [{ route: 'guest_chat', task: 'legacy guest words', at: 'x' }, { route: 'owner_chat', task: 'owner words' }]);
+  await appendAudit(storage, ownerRow);
+  assert.ok(!JSON.stringify(storage.saved.get('ai_audit')).includes('legacy guest words'));
+  const view = auditView(storage.saved.get('ai_audit'));
+  assert.equal(view.other_tenant_calls, 1);
+  assert.deepEqual(view.calls.map((c) => c.task), ['owner words', 'owner words']);
 });
 
 test('new provider needs validation and owner authorization before use', () => {
