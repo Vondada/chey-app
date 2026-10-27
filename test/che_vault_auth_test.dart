@@ -111,7 +111,7 @@ void nativeKeychainTests() {
 
   test('vault items are bound to the current Face ID enrolment inside the Keychain', () {
     expect(source, contains('.biometryCurrentSet'));
-    expect(source, contains('kSecAttrAccessControl as String: access'));
+    expect(source, contains('item[kSecAttrAccessControl as String] = access'));
   });
 
   test('a vault write fails closed when the access control cannot be made', () {
