@@ -15,6 +15,8 @@ import 'package:flutter/semantics.dart';
 import 'package:flutter/services.dart';
 
 import '../che_ui/che_agents.dart';
+import 'che_crew_pager.dart';
+import '../che_ui/che_progress_bar.dart';
 import '../che_ui/che_chrome_status.dart';
 import '../che_ui/che_hud.dart';
 import '../che_ui/che_rooms.dart';
@@ -22,6 +24,8 @@ import '../che_ui/che_theme.dart';
 import '../che_ui/che_voice_actions.dart';
 import '../rooms/che_characters_room.dart';
 import 'che_agent_runtime.dart';
+import 'che_office_conversation.dart';
+import 'che_office_conversation_screen.dart';
 import 'che_office_glass.dart';
 import 'che_office_store.dart';
 
@@ -452,18 +456,14 @@ class _CheOfficeFloorScreenState extends State<CheOfficeFloorScreen> {
             style: CheType.bodyDim,
           )
         else
-          for (final p in agents)
-            Padding(
-              padding: const EdgeInsets.only(bottom: CheSpace.sm),
-              child: _AgentListCard(
-                agent: p.agent,
-                onTap: () => _openDesk(p.agent.id),
-                onReadAloud: () => _speak(
-                  '${p.agent.name}, ${p.agent.role}. ${p.agent.status.label}. '
-                  '${p.agent.task?.isNotEmpty == true ? p.agent.task : p.agent.specialty}',
-                ),
-              ),
+          CheCrewPager(
+            agents: [for (final p in agents) p.agent],
+            onOpen: (agent) => _openDesk(agent.id),
+            onReadAloud: (agent) => _speak(
+              '${agent.name}, ${agent.role}. ${agent.status.label}. '
+              '${agent.task?.isNotEmpty == true ? agent.task : agent.specialty}',
             ),
+          ),
         const SizedBox(height: CheSpace.lg),
         Text('WAR ROOM', style: cheOfficeLabel(CheType.overline)),
         const SizedBox(height: CheSpace.sm),
@@ -947,94 +947,6 @@ class _FilterPill extends StatelessWidget {
   }
 }
 
-/// Large-chibi agent row matching mockup 03 (not postage-stamp).
-class _AgentListCard extends StatelessWidget {
-  const _AgentListCard({
-    required this.agent,
-    required this.onTap,
-    required this.onReadAloud,
-  });
-  final CheAgent agent;
-  final VoidCallback onTap;
-  final VoidCallback onReadAloud;
-
-  @override
-  Widget build(BuildContext context) {
-    final working = cheAgentIsMoving(agent.status);
-    final task = agent.task?.trim();
-    return Semantics(
-      button: true,
-      label: '${agent.name}, ${agent.role}. ${agent.status.label}. Double tap to open desk.',
-      excludeSemantics: true,
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          onTap: onTap,
-          onLongPress: onReadAloud,
-          borderRadius: BorderRadius.circular(CheRadius.lg),
-          child: CheOfficeInkPanel(
-            padding: const EdgeInsets.fromLTRB(10, 10, 12, 10),
-            glow: working ? CheColors.accent : null,
-            decoration: BoxDecoration(
-              color: CheColors.surfaceHi,
-              borderRadius: BorderRadius.circular(CheRadius.lg),
-              border: Border.all(
-                color: working
-                    ? CheColors.accent.withValues(alpha: 0.65)
-                    : CheColors.stroke,
-              ),
-              boxShadow: working
-                  ? [BoxShadow(color: CheColors.accent.withValues(alpha: 0.18), blurRadius: 16)]
-                  : null,
-            ),
-            child: Row(
-              children: [
-                CheMiniPerson(agent: agent, size: 72, showDesk: false),
-                const SizedBox(width: CheSpace.md),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(agent.name, style: CheType.headline, maxLines: 1, overflow: TextOverflow.ellipsis),
-                      Text(
-                        agent.role.isEmpty ? agent.specialty : agent.role,
-                        style: CheType.caption,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        task?.isNotEmpty == true ? task! : agent.status.label,
-                        style: CheType.caption.copyWith(
-                          color: working ? CheColors.success : CheColors.textDim,
-                        ),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      const SizedBox(height: 6),
-                      ClipRRect(
-                        borderRadius: BorderRadius.circular(99),
-                        child: LinearProgressIndicator(
-                          value: working ? null : (agent.status == CheAgentStatus.done ? 1 : 0.08),
-                          minHeight: 3,
-                          backgroundColor: CheColors.stroke,
-                          color: CheColors.accent,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                Icon(Icons.chevron_right_rounded, color: CheColors.textFaint),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-
 class _Banner extends StatelessWidget {
   const _Banner({required this.text, required this.color});
   final String text;
@@ -1072,7 +984,7 @@ class _MeetingTile extends StatelessWidget {
               maxLines: 1, overflow: TextOverflow.ellipsis, style: CheType.caption),
           if (meeting.live) ...[
             const SizedBox(height: 6),
-            LinearProgressIndicator(value: meeting.progress, color: amber, backgroundColor: CheColors.stroke),
+            CheProgressBar(value: meeting.progress, color: amber, background: CheColors.stroke, height: 6),
           ],
           Align(
             alignment: Alignment.centerLeft,
@@ -1225,6 +1137,34 @@ class _AgentDeskSheetState extends State<_AgentDeskSheet> {
 
   bool get _isChe => _agentId == 'che';
 
+  /// The six-state status of this agent's current work, from its real task records: running work before work
+  /// waiting for review or blocked, before queued work (see cheHeadlineTask), otherwise the newest task. Null when
+  /// no task is recorded.
+  CheOfficeState? _headlineState(CheAgentDetail d) {
+    final pick = cheHeadlineTask(d.history);
+    if (pick == null) return null;
+    return cheOfficeStateForTaskStatus(pick.status, verified: pick.verifiedByChe);
+  }
+
+  /// Opens the full-screen conversation for this agent, or for one of its tasks. Read only.
+  Future<void> _openConversation({String? taskId}) async {
+    if (_isChe) return;
+    final agentId = _agentId;
+    try {
+      final first = await widget.client.conversation(agentId: agentId, taskId: taskId);
+      if (!mounted) return;
+      await Navigator.of(context).push(MaterialPageRoute<void>(
+        builder: (routeContext) => CheOfficeConversationScreen(
+          conversation: first,
+          onRefresh: () => widget.client.conversation(agentId: agentId, taskId: taskId),
+          onReadAloud: (text) => unawaited(cheReadAloud(routeContext, text, widget.onSpeak)),
+        ),
+      ));
+    } catch (e) {
+      if (mounted) setState(() => _error = 'Could not open the conversation: $e');
+    }
+  }
+
   Future<void> _switchAgent(int delta) async {
     if (widget.agentIds.length < 2 || _working) return;
     final next = (_agentIndex + delta).clamp(0, widget.agentIds.length - 1);
@@ -1240,21 +1180,26 @@ class _AgentDeskSheetState extends State<_AgentDeskSheet> {
     await _load();
   }
 
-  double _workflowProgress(CheAgentDetail detail) {
+  /// The measured share of a workflow that is finished: 1 when its task completed, otherwise null. No stage has a
+  /// measured percentage yet, so a running, queued or reviewing task shows an indeterminate bar and its real state
+  /// name, never a made-up percent (owner audit, 2026-10-26: the old fixed 0.55 and 0.22 were not measurements).
+  double? _workflowProgress(CheAgentDetail detail) {
     final status = detail.profile.assignmentStatus.toLowerCase();
     if (status.contains('complete') || status.contains('done')) return 1;
-    if (status.contains('review')) return 0.82;
-    if (status.contains('running') || detail.profile.working) return 0.55;
-    if (status.contains('queued') || status.contains('waiting')) return 0.22;
-    if (status.contains('fail') || status.contains('block')) return 0.08;
-    if (detail.history.isNotEmpty) {
-      final latest = detail.history.first.status.toLowerCase();
-      if (latest == 'complete') return 1;
-      if (latest == 'reviewing') return 0.82;
-      if (latest == 'running') return 0.55;
-      if (latest == 'queued') return 0.22;
+    if (status.contains('fail') || status.contains('block') || status.contains('review') || status.contains('running') ||
+        status.contains('queued') || status.contains('waiting') || detail.profile.working) {
+      return null;
     }
-    return 0;
+    if (detail.history.isNotEmpty && detail.history.first.status.toLowerCase() == 'complete') return 1;
+    return null;
+  }
+
+  /// The real state name for the progress line, from the same source as [_workflowProgress].
+  String _workflowStateLabel(CheAgentDetail detail) {
+    final status = detail.profile.assignmentStatus.trim();
+    if (status.isNotEmpty) return status;
+    if (detail.profile.working) return 'working';
+    return detail.history.isNotEmpty ? detail.history.first.status : 'no task';
   }
 
   String _verifiedOutputLine(CheAgentDetail detail) {
@@ -1354,11 +1299,12 @@ class _AgentDeskSheetState extends State<_AgentDeskSheet> {
                         Text(a.name, maxLines: 1, overflow: TextOverflow.ellipsis, style: CheType.title.copyWith(color: Colors.white)),
                         Text(a.role, maxLines: 1, overflow: TextOverflow.ellipsis, style: CheType.label.copyWith(color: Colors.white70)),
                         const SizedBox(height: CheSpace.xs),
-                        Text(a.status.label + (a.task != null ? ' • ${cheShortSummary(a.task!)}' : ''),
+                        Text(
+                            (_headlineState(d)?.label ?? a.status.label) + (a.task != null ? ' • ${cheShortSummary(a.task!)}' : ''),
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: CheType.caption.copyWith(color: a.color),
-                            semanticsLabel: a.status.label + (a.task != null ? ', ${a.task}' : '')),
+                            semanticsLabel: (_headlineState(d)?.label ?? a.status.label) + (a.task != null ? ', ${a.task}' : '')),
                         const SizedBox(height: CheSpace.xs),
                         Wrap(spacing: CheSpace.xs, crossAxisAlignment: WrapCrossAlignment.center, children: [
                           _Pill(p.modelTier == 'strong' ? 'Upgraded engine' : 'Fast engine'),
@@ -1394,7 +1340,7 @@ class _AgentDeskSheetState extends State<_AgentDeskSheet> {
                       : 'No active job right now. Status: ${a.status.label}.'),
             ),
             Semantics(
-              label: 'Verified productivity for ${a.name}. ${_verifiedOutputLine(d)}. Current workflow progress ${(progress * 100).round()} percent.',
+              label: 'Verified productivity for ${a.name}. ${_verifiedOutputLine(d)}. Current workflow state: ${_workflowStateLabel(d)}${progress == null ? '' : '. ${(progress * 100).round()} percent done'}.',
               child: CheOfficePanel(
                 padding: const EdgeInsets.all(CheSpace.md),
                 legacy: BoxDecoration(
@@ -1405,15 +1351,9 @@ class _AgentDeskSheetState extends State<_AgentDeskSheet> {
                 child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                   Text('VERIFIED PRODUCTIVITY', style: cheOfficeLabel(CheType.overline.copyWith(color: CheColors.accent))),
                   const SizedBox(height: 6),
-                  LinearProgressIndicator(
-                    value: progress,
-                    minHeight: 7,
-                    color: a.color,
-                    backgroundColor: CheColors.stroke,
-                    borderRadius: BorderRadius.circular(99),
-                  ),
+                  CheProgressBar(value: progress, color: a.color, background: CheColors.stroke),
                   const SizedBox(height: 6),
-                  Text('${(progress * 100).round()}% current workflow stage', style: CheType.label),
+                  Text(progress == null ? 'Current state: ${_workflowStateLabel(d)}. No measured percent yet.' : '${(progress * 100).round()}% done', style: CheType.label),
                   Text(_verifiedOutputLine(d), style: CheType.caption),
                   Text('Progress is based on real queued / working / review / completed states, not a guessed performance score.',
                       style: CheType.caption.copyWith(color: CheColors.textFaint)),
@@ -1421,6 +1361,15 @@ class _AgentDeskSheetState extends State<_AgentDeskSheet> {
               ),
             ),
             const SizedBox(height: CheSpace.md),
+            if (!_isChe)
+              Padding(
+                padding: const EdgeInsets.only(bottom: CheSpace.md),
+                child: OutlinedButton.icon(
+                  onPressed: _working ? null : () => unawaited(_openConversation()),
+                  icon: const Icon(Icons.forum_rounded, size: 18),
+                  label: const Text('Open full conversation'),
+                ),
+              ),
             if (a.personality.isNotEmpty) _Section('PERSONALITY', a.personality),
             if (a.specialty.isNotEmpty) _Section('JOB / SPECIALTY', a.specialty),
             if (p.departmentTitle.isNotEmpty) _Section('DEPARTMENT', '${p.departmentTitle}. Reports to CHE.'),
@@ -1533,6 +1482,7 @@ class _AgentDeskSheetState extends State<_AgentDeskSheet> {
             for (final t in d.history)
               _TaskCard(
                 task: t,
+                onOpenFull: _isChe ? null : () => unawaited(_openConversation(taskId: t.id)),
                 onReadAloud: () => cheReadAloud(
                   context,
                   '${t.task}. ${t.result.isNotEmpty ? t.result : ''} ${t.cheReview.isNotEmpty ? 'CHE review: ${t.cheReview}' : ''}',
@@ -1577,9 +1527,12 @@ class _Section extends StatelessWidget {
 }
 
 class _TaskCard extends StatelessWidget {
-  const _TaskCard({required this.task, required this.onReadAloud});
+  const _TaskCard({required this.task, required this.onReadAloud, this.onOpenFull});
   final CheAgentTask task;
   final VoidCallback onReadAloud;
+
+  /// Opens the full-screen conversation for this task. Null when the task cannot be opened (CHE's own desk).
+  final VoidCallback? onOpenFull;
   @override
   Widget build(BuildContext context) {
     final (tone, activity) = cheTaskStatus(task.status, verified: task.verifiedByChe);
@@ -1620,6 +1573,15 @@ class _TaskCard extends StatelessWidget {
             SelectableText(task.cheReview, style: CheType.bodyDim),
           ],
           if (task.error.isNotEmpty) Text(task.error, style: CheType.caption.copyWith(color: CheColors.danger)),
+          if (onOpenFull != null)
+            Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton.icon(
+                onPressed: onOpenFull,
+                icon: const Icon(Icons.forum_rounded, size: 18),
+                label: const Text('Open full conversation'),
+              ),
+            ),
         ],
       );
     if (cheHudActive) {

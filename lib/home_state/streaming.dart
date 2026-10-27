@@ -400,6 +400,7 @@ extension _CheHomeStreaming on _CHEHomeState {
     final complete = StringBuffer();
     _streamMediaUrl = null;
     _streamMediaType = null;
+    _streamMediaExtra = {};
     _streamUnderstoodAs = null;
     _streamResponseDetails = null;
     _streamRecordIds = const [];
@@ -507,6 +508,8 @@ extension _CheHomeStreaming on _CHEHomeState {
         }
         // "Open Truth and Verification": only the Worker's own truth handler opens the Brain Room section.
         if (data['open_screen'] == 'brain_truth' && data['source'] == 'che_brain_truth' && mounted) unawaited(_openBrainTruth());
+        // "Open the test registry": only the Worker's registry handler opens the Reliability Registry.
+        if (data['open_screen'] == 'brain_reliability' && data['source'] == 'che_reliability_registry' && mounted) unawaited(_openBrainReliability());
         // Owner Improvements: a setting CHE changed applies here at once, and the app reports what it now uses.
         if (data['source'] == 'che_owner_improvement') {
           if (data['open_screen'] == 'owner_improvements' && mounted) unawaited(_openOwnerImprovements());
@@ -658,6 +661,9 @@ extension _CheHomeStreaming on _CHEHomeState {
           _streamMediaUrl = mediaUrl;
           _streamMediaType = mediaType;
         }
+        // A library answer lists several videos with no single media_url, so the media fields are read on their own.
+        final mediaExtra = cheChatMediaExtra(data);
+        if (mediaExtra.isNotEmpty) _streamMediaExtra = {..._streamMediaExtra, ...mediaExtra};
         // "Open it in 3D", "rotate it", "change the color": the Worker built or found the invention's saved 3D model.
         final inventionId = data['invention_id']?.toString().trim() ?? '';
         if (data['open_invention_3d'] == true && inventionId.isNotEmpty && mounted) {
