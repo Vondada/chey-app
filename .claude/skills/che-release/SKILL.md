@@ -22,13 +22,7 @@ It reports:
 **UNKNOWN means not verified.** Never report it as success. The iPhone is never verifiable from here.
 
 ## The pre-merge gate: live tests on staging (owner, 2026-10-27)
-"Always do live tests ... before merging." Every pull request to main runs `.github/workflows/che-worker-staging.yml`, job **`live (staging)`**: it deploys the PR's merge commit to the separate staging Worker `chey-app-staging` (own Durable Object storage, no owner data) and runs `.github/scripts/che_live_probes.mjs --suite`, the same probe file the production deploy runs one step at a time. A PR is ready to merge only when:
-- `live (staging)` is green on the exact head, and
-- the release gate's `worker`, `flutter` and `coding` jobs are green.
-
-The **iOS simulator is not a gate.** `che-release-gate.yml` job `screens` and `che-ios-simulator-test.yml` run only when dispatched by hand, for information; a red or missing simulator run never blocks a merge.
-
-Staging is zero-spend: it gets a fresh random probe token and pairing code per run and only the free-tier keys listed in `STAGING_FREE_KEYS` in that workflow (no OpenAI, Anthropic, xAI, ElevenLabs, Fish, Gemini, OpenRouter, Hugging Face or production-only secrets). The run deletes any other secret from staging first, and the `engines` probe fails if staging can reach an engine outside the allowlist. Probes that need the owner's data or a production-only secret are listed as SKIPPED with the reason in the run summary; read that table, a skip is not a pass. Change a probe in `che_live_probes.mjs` only, so production and staging stay identical. This container cannot reach workers.dev; live results come only from the Actions runs.
+Every PR to main runs job **`live (staging)`** (`che-worker-staging.yml`): the PR's merge commit on the staging Worker, then `.github/scripts/che_live_probes.mjs --suite`. Ready to merge only when `live (staging)` and the release gate's `worker`, `flutter` and `coding` are green on the exact head. The iOS simulator is manual and informational, never a gate. Staging gets free-tier keys only; a SKIPPED probe is not a pass. Details: `reference/live-gate.md`.
 
 ## Authorization gate
 
@@ -63,4 +57,4 @@ Staging is zero-spend: it gets a fresh random probe token and pairing code per r
 - **2026-10-14: reading a full deploy job log for the probe output cost about 25k tokens.** The deploy now also writes `::notice` annotations (titled "Live CHE commit", "Memory truth" and "CHE voice"), which the script reads in one small request.
 - **2026-10-14: answering "is #300 merged and live?" from raw GitHub API JSON means 446,575 bytes across 7 endpoints.** The script prints the same answer in 843 bytes.
 - **2026-10-14: Node's fetch ignores HTTPS_PROXY unless `NODE_USE_ENV_PROXY=1` is set.** The script re-runs itself with it.
-- **2026-10-27: the gate moved from the iOS simulator to live tests on staging.** Owner: "I just need live tests ... before merging." The macOS jobs took 20-60 min and one hung 45 min (PR #666); they are now manual. One staging Worker serves every PR: each run waits for older runs of the workflow, and a newer push to the same PR cancels the older run.
+- **2026-10-27: the gate moved from the iOS simulator to live tests on staging** (the macOS jobs took 20-60 min; one hung 45 min on PR #666).
