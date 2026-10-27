@@ -157,7 +157,7 @@ class CheAiModelStatus {
   }
 
   List<CheAiProviderStatus> get freeForCoding =>
-      providers.where((p) => p.usedForCoding && p.usage != 'blocked').toList(growable: false);
+      providers.where((p) => p.usedForCoding && p.usage != 'blocked' && p.circuit != 'open').toList(growable: false);
 
   String get summary {
     final spend = authorizedSpendUsd == 0 ? r'$0' : '\$${authorizedSpendUsd.toStringAsFixed(2)}';
@@ -273,7 +273,7 @@ class _ProviderTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final p = provider;
-    final ok = p.usage != 'blocked';
+    final ok = p.usage != 'blocked' && p.circuit != 'open';
     final lines = <String>[
       '${p.usageWords} · ${p.connectionWords}${p.verification == 'owner_attested' ? ' · owner-confirmed plan' : ''}',
       if (p.currentModel != null) 'Model: ${p.currentModel}',

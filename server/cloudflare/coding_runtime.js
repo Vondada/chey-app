@@ -375,6 +375,13 @@ export function speakRuntimeStatus(result = {}) {
   const hasPr = Number(result.pr_number) > 0;
   const pr = Number(result.pr_number) > 0 ? `pull request ${Number(result.pr_number)}` : 'its pull request';
   const parts = [];
+  const charges = Object.entries(result.billing || {}).filter(([provider, row]) =>
+    /^[a-z0-9_-]{1,30}$/.test(provider) && row?.verified === true
+    && typeof row.delta_usd === 'number' && Number.isFinite(row.delta_usd) && row.delta_usd > 0);
+  if (result.billing_alert === true || charges.length) {
+    const amounts = charges.map(([provider, row]) => `${provider}: $${row.delta_usd.toFixed(6).replace(/0+$/, '').replace(/\.$/, '')}`).join(', ');
+    parts.push(`Zero-spend billing alert: ${amounts || 'the charge amount is not verified'}. Check provider billing before another run; paid AI spending remains unauthorized.`);
+  }
   // GitHub could not be asked whether the silent run is alive: say so rather
   // than calling it running or failed.
   if (result.liveness === 'unverified' && runtimeStateClass(result) === 'active') {

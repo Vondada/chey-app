@@ -67,4 +67,18 @@ void main() {
     await tester.pump();
     expect(spoken.last, startsWith('Groq: Blocked.'));
   });
+
+  testWidgets('paused free providers are excluded from visible availability and success indicators', (tester) async {
+    final payload = _payload();
+    final provider = (payload['providers'] as List).first as Map;
+    provider['circuit'] = 'open';
+    provider['last_error_class'] = 'billing_risk';
+    final status = CheAiModelStatus.fromJson(payload)!;
+    expect(status.freeForCoding, isEmpty);
+    expect(status.summary, contains('No provider is verified free for coding yet.'));
+    expect(status.summary, isNot(contains('Verified free for coding: OpenRouter')));
+    await tester.pumpWidget(MaterialApp(home: Scaffold(body: CheAiModelStatusCard(status: status))));
+    expect(find.bySemanticsLabel('No free model verified'), findsOneWidget);
+    expect(find.bySemanticsLabel('Free model available'), findsNothing);
+  });
 }
