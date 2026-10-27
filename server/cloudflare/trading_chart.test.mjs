@@ -4,7 +4,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, unlinkSync, writeFileSync } from 'node:fs';
-import { cancelConfirmation, cancelOrderIntent, chartMarkers, chartView, drawingProblems, futuresOrderIntent, marketOrderFeedProblem, readDrawings, saveDrawings } from './trading_chart.js';
+import { cancelConfirmation, cancelOrderIntent, chartMarkers, chartView, drawingProblems, futuresOrderIntent, marketOrderFeedProblem, readDrawings, rollUp, saveDrawings } from './trading_chart.js';
 import { cancelAlpacaPaperOrder, previewAlpacaPaperOrder } from './broker_alpaca.js';
 
 const generated = new URL('./.trading_chart.test.generated.mjs', import.meta.url);
@@ -297,7 +297,7 @@ test('futures never offer 1m: a 1m request answers with the 5-minute bars, label
   const v = await chartView(storage, {}, { account: 'futures_paper', tf: '1m', now: NOW });
   assert.equal(v.timeframe, '5m');
   assert.ok(!v.timeframes.includes('1m'));
-  assert.deepEqual(v.timeframes, ['5m', '15m', '1h', '1d']);
+  assert.deepEqual(v.timeframes, ['5m', '15m', '1h', '4h', '1d']);
   assert.equal(v.bars.length, 3);
   const stocks = await chartView(memStorage(), ENV, { account: 'alpaca_paper', symbol: 'AAPL', tf: '1m', now: NOW, fetcher: fakeAlpaca() });
   assert.equal(stocks.timeframe, '1m', 'Alpaca stocks keep 1-minute bars');
@@ -516,13 +516,48 @@ test('a spoken chart timeframe is one the chart offers, and the reply says exact
   // A bar size the chart does not have is said plainly, and the phone opens on the default bars the reply names.
   const fourHour = await che.say('Switch the chart to the 4 hour');
   assert.equal(fourHour.route, 'che_trading_chart');
-  assert.equal(fourHour.done.chart.timeframe, '5m');
-  assert.match(fourHour.reply, /^Opening the Alpaca PAPER chart for AAPL on 5-minute bars, sir\. That chart has no 4-hour bars; it offers 1-minute, 5-minute, 15-minute, hourly and daily\.$/);
+  assert.equal(fourHour.done.chart.timeframe, '4h');
+  assert.equal(fourHour.reply, 'Opening the Alpaca PAPER chart for AAPL on 4-hour bars, sir.');
+  const thirty = await che.say('Switch the chart to the 30 minute');
+  assert.equal(thirty.done.chart.timeframe, '5m');
+  assert.match(thirty.reply, /^Opening the Alpaca PAPER chart for AAPL on 5-minute bars, sir\. That chart has no 30-minute bars; it offers 1-minute, 5-minute, 15-minute, hourly, 4-hour and daily\.$/);
   const mnq = await che.say('Open the MNQ chart on the 1 minute');
   assert.equal(mnq.done.chart.account, 'futures_paper');
   assert.equal(mnq.done.chart.timeframe, '5m');
-  assert.match(mnq.reply, /on 5-minute bars, sir\. That chart has no 1-minute bars; it offers 5-minute, 15-minute, hourly and daily\.$/);
+  assert.match(mnq.reply, /on 5-minute bars, sir\. That chart has no 1-minute bars; it offers 5-minute, 15-minute, hourly, 4-hour and daily\.$/);
   // No bar size asked: no timeframe is sent, so the chart keeps the one the owner left it on.
   const plain = await che.say('Open Alpaca chart.');
   assert.equal('timeframe' in plain.done.chart, false);
+});
+
+test('4-hour and daily charts: futures never roll a few days of stored 5-minute bars up into them; Alpaca 4-hour is rolled up from hourly bars', async () => {
+  const storage = memStorage();
+  storage.saved.set('live_paper_feed', { status: 'DELAYED', provider: 'Yahoo', last_bar_time: '2026-10-20T14:50:00Z', bars: [0, 1, 2].map((k) => ({ t: new Date(Date.parse('2026-10-20T14:40:00Z') + k * 300_000).toISOString(), o: 1, h: 2, l: 0.5, c: 1.5, v: 1 })) });
+  const offline = async () => { throw new TypeError('fetch failed'); };
+  for (const tf of ['4h', '1d']) {
+    const v = await chartView(storage, {}, { account: 'futures_paper', tf, now: NOW, fetcher: offline });
+    assert.equal(v.timeframe, tf, `${tf} is offered on futures`);
+    assert.ok(v.timeframes.includes(tf));
+    assert.deepEqual(v.bars, [], `${tf} must not be built from the stored 5-minute bars`);
+    assert.match(v.no_data_reason, /No candle was made up/);
+  }
+  const stocks = await chartView(memStorage(), ENV, { account: 'alpaca_paper', symbol: 'AAPL', tf: '4h', now: NOW, fetcher: fakeAlpaca() });
+  assert.equal(stocks.timeframe, '4h');
+  assert.ok(stocks.bars.length > 0, 'Alpaca hourly bars roll up into 4-hour candles');
+  for (const b of stocks.bars) {
+    assert.equal(Date.parse(b.t) % 14_400_000, 0, 'each 4-hour candle starts on a 4-hour boundary');
+    assert.ok(b.h >= Math.max(b.o, b.c) && b.l <= Math.min(b.o, b.c), 'high and low contain open and close');
+  }
+});
+
+test('rollUp builds 4-hour candles from hourly bars with the first open, last close and the extremes', () => {
+  const hours = [0, 1, 2, 3].map((k) => ({ t: new Date(Date.parse('2026-10-20T12:00:00Z') + k * 3_600_000).toISOString(), o: 10 + k, h: 20 + k, l: 5 - k, c: 11 + k, v: 2 }));
+  const [bar, ...rest] = rollUp(hours, 240);
+  assert.equal(rest.length, 0);
+  assert.equal(bar.t, '2026-10-20T12:00:00.000Z');
+  assert.equal(bar.o, 10);
+  assert.equal(bar.c, 14);
+  assert.equal(bar.h, 23);
+  assert.equal(bar.l, 2);
+  assert.equal(bar.v, 8);
 });

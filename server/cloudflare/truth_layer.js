@@ -59,14 +59,14 @@ function sourceClaimIn(text, verifiedPaths) {
   return false;
 }
 
-export function guardExecutionClaims(reply, { message = '', receipts = [], documentRead = false, verifiedPaths = null, verifiedText = '' } = {}) {
+export function guardExecutionClaims(reply, { message = '', receipts = [], documentRead = false, verifiedPaths = null, verifiedText = '', requireEvidence = false } = {}) {
   const text = String(reply || '');
   if (storyRequested(message)) return { text, removed: [] };
   const identifiers = /\b(?:PRs?|pull requests?)\s*(?:numbers?\s*)?(?:#\s*)?\d+\b|\b[0-9a-f]{16,64}\b|\bcommit\s+[0-9a-f]{7,64}\b|\b(?:SHA|commit(?:\s+hash)?)\s*[:=]\s*\S+|\/path\/to\//i;
   const execution = /\b(?:I|we|CHE)\s+(?:(?:have|just|successfully|actually|already)\s+)*(?:executed|ran|invoked|dispatched|verified|checked\s+(?:GitHub|the\s+(?:repo|terminal))|retrieved\s+(?:the\s+)?(?:handoff|LIVE-HANDOFF))\b|\b(?:terminal|shell|command|tool|job|workflow|deployment)\b[^\n.!?]{0,100}\b(?:succeeded|successful|executed|completed|dispatched|verified)\b|\b(?:execution|invocation|job|workflow|deployment)[_ -]id\s*[:=]|\b(?:according to|verified (?:by|on|from))\s+GitHub\b/i;
   const repoEvidence = /\b(?:GitHub|LIVE-HANDOFF\.md|che-mailbox)\b[^\n.!?]{0,140}\b(?:verified|merged|unmerged|deployed|retrieved|read|commit|branch|completed)\b/i;
   const transcript = /(?:^|\n)\s*(?:[$>]\s*)?(?:git\s|gh\s+(?:api|pr)\b|(?:stdout|exit code|exit status)\s*:)|"(?:tool|command|operation|invocation_id|job_id|commit_sha|merge_commit_sha|head_sha)"\s*:/i;
-  const repoClaim = identifiers.test(text) || execution.test(text) || repoEvidence.test(text) || transcript.test(text);
+  const repoClaim = requireEvidence || identifiers.test(text) || execution.test(text) || repoEvidence.test(text) || transcript.test(text);
   const sourceClaim = sourceClaimIn(text, verifiedPaths);
   // Record claims are judged sentence by sentence, so one honest "not" elsewhere never covers a fabrication.
   const retrieval = guardRetrievalClaims(text, { documentRead, verifiedText });
@@ -1063,7 +1063,7 @@ export function guardClaimedOwnerActions(reply, { message = '', acted = false, r
 export const VALID_SHA = /^[0-9a-f]{40}$/;
 export const PLACEHOLDER_MSG = /\b(?:feature|bug\s*fix|documentation)\s+[XYZ]\b/i;
 
-export function validateCodingEvidence(text, { message = '' } = {}) {
+export function validateCodingEvidence(text, { message = '', preserveRemember = false } = {}) {
   const t = String(text || '');
   if (storyRequested(message)) return { ok: true, text: t };
   const shaMatches = [...t.matchAll(/\b(?:commit(?:\s+(?:sha|hash))?|sha)\s*(?:(?:is|at)\s+|[:=#]\s*)?([0-9a-f]{7,64})\b/gi)].map((m) => m[1]);
@@ -1072,11 +1072,12 @@ export function validateCodingEvidence(text, { message = '' } = {}) {
       return { ok: false, reason: 'invalid_sha', text: 'I cannot verify that commit SHA. A real GitHub SHA is 40 hex characters. No verified execution receipt backs this answer.' };
     }
   }
-  if (/\bcommit(?: message)?[^.!?\n]{0,80}/i.test(t) && PLACEHOLDER_MSG.test(t)) {
+  const commitMessages = [...t.matchAll(/\bcommit(?:\s+message)?\s*(?:(?:is|was|says|reads)\s+|[:=]\s*)([^.!?\n]{0,120})/gi)];
+  if (commitMessages.some((m) => PLACEHOLDER_MSG.test(m[1]))) {
     return { ok: false, reason: 'placeholder_message', text: 'I will not report placeholder commit messages. Real commit messages come only from a verified GitHub read.' };
   }
   // Strip any leaked che-remember blocks from coding replies.
-  const cleaned = t.replace(/```che-remember[\s\S]*?```/gi, '').trim();
+  const cleaned = preserveRemember ? t : t.replace(/```che-remember[\s\S]*?```/gi, '').trim();
   if (cleaned !== t) {
     return { ok: true, text: cleaned || 'An internal memory instruction was omitted. No verified coding result was provided.', cleaned: true };
   }
