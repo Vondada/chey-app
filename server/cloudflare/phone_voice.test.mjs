@@ -193,8 +193,8 @@ let mod;
 try { mod = await import(generated.href + '?t=' + Date.now()); } finally { try { unlinkSync(generated); } catch (_) {} }
 const { default: worker, CheState } = mod;
 
-async function pairedPhone(extraEnv = {}) {
-  const saved = new Map();
+async function pairedPhone(extraEnv = {}, stored = {}) {
+  const saved = new Map(Object.entries(stored));
   const workerEnv = { CHE_PAIR_CODE: '123456', ...env(), ...extraEnv };
   const state = new CheState({ storage: memoryStorage(saved) }, workerEnv);
   workerEnv.CHE_STATE = { getByName: () => state };
@@ -335,8 +335,7 @@ test('a key that reached its own credit limit is reported as a key limit, not an
 });
 
 test('route: in Private Mode the phone is told to speak with its own voice, and ElevenLabs and Fish never get the text (owner, 2026-10-27)', async () => {
-  const phone = await pairedPhone();
-  phone.saved.set('che:privacy_mode', { level: 'private', grants: [] });
+  const phone = await pairedPhone({}, { 'che:privacy_mode': { level: 'private', grants: [] } });
   const calls = fakeProviders();
   const reply = await phone.edge({ text: 'A private sentence.', turn: 'turn-44444444', index: 0 });
   assert.equal(reply.status, 204);

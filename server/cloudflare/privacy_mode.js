@@ -62,8 +62,16 @@ export function normalizePrivacy(saved, now = Date.now()) {
   return { level, grants, at: saved?.at || null };
 }
 
+// This object's own last-written policy, so a turn that makes no outside call reads storage once per instance, not once
+// per request. Only storePrivacy() writes the key, and it updates this cache, so the cache cannot go stale.
+const policyCache = new WeakMap();
+
 export async function loadPrivacy(storage, now = Date.now()) {
-  try { return normalizePrivacy(await storage.get(PRIVACY_KEY), now); } catch (_) { return normalizePrivacy(null, now); }
+  if (policyCache.has(storage)) return normalizePrivacy(policyCache.get(storage), now);
+  let saved;
+  try { saved = await storage.get(PRIVACY_KEY); } catch (_) { return normalizePrivacy(null, now); }
+  policyCache.set(storage, saved);
+  return normalizePrivacy(saved, now);
 }
 
 /** Runs fn under this object's stored policy, then waits for its ledger writes. */
@@ -134,6 +142,7 @@ export function noteEgress(verdict, input, init, now = Date.now()) {
 async function storePrivacy(storage, next, now) {
   const p = { ...normalizePrivacy(next, now), at: new Date(now).toISOString() };
   await storage.put(PRIVACY_KEY, p);
+  policyCache.set(storage, p);
   const ctx = current();
   if (ctx?.storage === storage) Object.assign(ctx, { level: p.level, grants: p.grants });
   return p;
