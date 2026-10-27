@@ -385,6 +385,9 @@ jobs:
       - name: Check CHE's Knowledge Atlas through the live Worker
         run: node .github/scripts/che_live_probes.mjs atlas
 
+      - name: Check a study assignment through the live Worker (real search and model)
+        run: node .github/scripts/che_live_probes.mjs study
+
       - name: Audit the owner's stored projects (counts only)
         continue-on-error: true
         run: node .github/scripts/che_live_probes.mjs projects-audit

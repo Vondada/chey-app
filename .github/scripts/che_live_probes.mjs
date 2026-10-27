@@ -425,6 +425,28 @@ const PROBES = {
     return optionalFailed.length ? warn(`${report.passed}/${report.total} live checks passed; optional not passed: ${optionalFailed.join('; ')}`) : pass(`${report.passed}/${report.total} live checks passed`);
   },
 
+  async study() {
+    // A study assignment on the isolated test CHE with the target's real network and model (comedy_study.js
+    // studyProbe): "go study Martin and The Fresh Prince of Bel-Air ... what makes them funny" is planned, a few
+    // background passes search Wikipedia, read the episode guides and derive lessons, then status, lessons and a
+    // joke are asked in chat. Coverage is reported by method: episode summaries read, never episodes watched.
+    const { body: report, error } = await postProbe('/api/study/probe', { attempts: 2, timeoutMs: 300000 });
+    if (!report) {
+      console.log(`::error title=Study check did not run::The ${WHERE} did not answer (${error}).`);
+      return fail(`did not run (${error})`);
+    }
+    for (const step of report.steps || []) console.log(`${step.pass ? 'PASS' : step.optional ? 'WARN' : 'FAIL'} ${step.name} [${step.route || '-'} | ${step.ms} ms] ${String(step.reply || '').replace(/\s+/g, ' ').slice(0, 300)}`);
+    for (const c of report.coverage || []) console.log(`Coverage: ${c.show}: ${c.covered} of ${c.episodes} episodes (${Object.entries(c.methods || {}).map(([k, v]) => `${v} ${k}`).join(', ')}); watched 0`);
+    console.log(`::notice title=Study::${report.passed}/${report.total} live checks passed`);
+    summary(`**Study assignment (${WHERE}, real network and model):** ${report.passed}/${report.total} live checks passed. ${(report.coverage || []).map((c) => `${c.show}: ${c.covered}/${c.episodes} episode summaries read`).join('; ')}.`);
+    if (!report.ok) {
+      const what = (report.steps || []).filter((s) => !s.pass && !s.optional).map((s) => s.name).join('; ') || report.error || 'see log';
+      console.log(`::error title=Study check failed::${what}`);
+      return fail(what);
+    }
+    return pass(`${report.passed}/${report.total} live checks passed`);
+  },
+
   async 'projects-audit'() {
     // Read-only (project_library.js projectAudit): counts only, no title, brief or script.
     if (STAGING) return skip('Counts the owner\'s stored projects; staging has its own empty storage, so the counts would be zeros that prove nothing about the owner\'s data.');
@@ -607,7 +629,7 @@ const PROBES = {
 
 // The production deploy's order. The staging gate runs all of it; production runs one per step.
 export const SUITE = ['health', 'engines', 'sidestore', 'mary-settings', 'fish-settings', 'voice', 'trading', 'trading-audit',
-  'memory', 'creation', 'creation-viewport', 'character-accept', 'commands', 'atlas', 'projects-audit', 'video', 'rea', 'fish-measure'];
+  'memory', 'creation', 'creation-viewport', 'character-accept', 'commands', 'atlas', 'study', 'projects-audit', 'video', 'rea', 'fish-measure'];
 
 async function runOne(name) {
   if (PRODUCTION_STEPS[name]) {

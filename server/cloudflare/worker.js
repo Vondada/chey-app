@@ -269,6 +269,7 @@ import { CHE_TENANT, CHE_SECURITY, access as coreAccess, coreEvents, coreInciden
 import { securityVisibility, speakVisibility } from './security_visibility.js';
 import { securityChief, securityChiefIntent, speakChiefReport } from './security_chief.js';
 import { acquire as acquireCapability, applyPolicy as applyCapabilityPolicy, capabilityIntent, engineSummary as capabilityEngineSummary, learnFromOutcome, loadPolicy as loadCapabilityPolicy, populate as populateKnowledge, retrieve as retrieveKnowledge, rollbackTool, savePolicy as saveCapabilityPolicy, projectBlocked, speakCapabilities, speakLearned as speakLearnedKnowledge, useTool, LAST_USED_KEY as KNOWLEDGE_USED_KEY } from './capability_engine.js';
+import { STUDY_WAKE_KEY, alarmStudy, humorTurn, studyChatTurn, studyPassRoute, studyProbe } from './comedy_study.js';
 import { EGRESS_KEY, SNAPSHOT_KEY, holdEgress, installEgressGuard, setEgressOwner, setEgressPolicy, storeEgressPolicy, SESSION_SCOPES, bump as securityBump, checkSession, createSession, dependencyAdvisories, detectThreats, issueNonce, loadSecurity, recordFindings, redact as redactSecretText, redactDeep, respondToIncident, restoreTrustedState, revokeSessions, saveSecurity, securityIntent, snapshotTrustedState, speakStatus as speakSecurityStatus } from './security_intelligence.js';
 import { loadRegistry as loadCapabilityRegistry } from './capability_registry.js';
 import { BrainLedger, answerLedger, decidePending as decideBrainPending, installBrainLedger, ledgerApi, recordGraphConnections, ledgerIntent as brainLedgerIntent, DEFAULT_ZONE as LEDGER_DEFAULT_ZONE } from './brain_ledger.js';
@@ -4227,7 +4228,7 @@ export class CheState extends DurableObject {
     times.push(...officeTasks.filter((t) => ['running', 'reviewing'].includes(t.status))
       .map((t) => Math.max(Date.now() + 250, (Date.parse(t.updated_at) || Date.now()) + 5 * 60_000 + 1000)));
     // Film and creation share the alarm.
-    for (const key of ['film:wake', 'gpu:wake_at']) {
+    for (const key of ['film:wake', 'gpu:wake_at', STUDY_WAKE_KEY]) {
       const at = Number(await this.ctx.storage.get(key)) || 0;
       if (at) times.push(Math.max(Date.now() + 250, at));
     }
@@ -5436,6 +5437,7 @@ export class CheState extends DurableObject {
     // The deploy's memory check starts its isolated test CHE fresh each run, so the records each
     // run leaves behind cannot grow it past what storage accepts. Only the per-deploy random token
     // opens this, only the memory check sends it, and never to an object named anything else.
+    if (request.method === 'POST' && new URL(request.url).pathname === '/api/study/pass') return isMemoryProbeRequest(request, this.env) && this.ctx.id?.name === MEMORY_PROBE_OBJECT ? json(await studyPassRoute(request, this.ctx.storage, this.env)) : json({ detail: 'Not found.' }, 404);
     if (request.method === 'POST' && new URL(request.url).pathname === '/api/memory-probe/reset') {
       // Only an object positively named as the test CHE is ever cleared: an unknown name refuses,
       // so the owner's CHE can never be reached by this route.
@@ -10648,6 +10650,8 @@ export class CheState extends DurableObject {
             return ndjsonReply(started.spoken, { source: 'che_command_workflow', ok: started.ok, objective_id: started.objective?.id || null, model_calls: 0 });
           }
           // Workflow Engine: the owner's words about the library, then a promoted learned workflow this request matches.
+          const study = ownerDevice && !body.attachment && !body.workflow_step ? await studyChatTurn(this.ctx.storage, rawMessage) : null;
+          if (study) { if (study.meta.wake) await this.ctx.storage.setAlarm(Date.now() + 1000); return ndjsonReply(study.text, study.meta); }
           const secAsk = ownerDevice && !body.attachment && !body.workflow_step ? (securityIntent(rawMessage) || securityChiefIntent(rawMessage)) : null;
           if (secAsk) return this.securityChat(data, secAsk, tokenHash);
           // Film Studio: make, plan, status, remake, pause/resume/stop and the free render farm (film_studio.filmIntent).
@@ -10693,11 +10697,8 @@ export class CheState extends DurableObject {
             const command = commandById(cloudAsk.command);
             return this.runSlashCommand(request, body, data, { name: command.id, command, input: cloudAsk.input }, { confirmed: false });
           }
-          // "Cancel that fake commit by Che", "cancel coding job c2987a73", "cancel the last coding
-          // job", or a number from the list CHE just read: the /che-cancel-job command. It runs before
-          // the interpreter, which reads "cancel that …" as dropping a held request, and before the
-          // money/delete gate: cancelling a queued job deletes nothing. A bare "cancel that" while a
-          // payment, delete or app request is held keeps its old meaning: drop that request.
+          // "Cancel coding job c2987a73" (/che-cancel-job), before the interpreter and the money/delete gate; a bare
+          // "cancel that" while a payment, delete or app request is held still drops that request.
           const jobCancel = body.attachment || body.workflow_step ? null : codingCancelIntent(rawMessage, body.history);
           let heldForCancel = null;
           if (jobCancel?.weak) {
@@ -11067,13 +11068,8 @@ export class CheState extends DurableObject {
           return ndjsonReply(reset.text, { source: ATLAS_SOURCE, ok: reset.ok, atlas_kind: 'reset', deleted: reset.deleted, model_calls: 0 });
         }
 
-        // Owner rule: open or act in an app only after the owner gave explicit
-        // permission for that app. Enforced here in code, exactly like money.
-        // The owner's own "open X" in this request is that permission and is
-        // remembered; a turn that needs an app without opening it ("read my
-        // last note in notes") is held until a plain yes grants that app. The
-        // app sends the grants it has recorded with every turn, so an explicit
-        // "open YouTube" earlier in the conversation counts here too.
+        // Owner rule: act in an app only with explicit permission for it, enforced here like money. "Open X" grants
+        // it (remembered, and sent back by the app each turn); otherwise the turn waits for a plain yes.
         try {
           const heldApp = await this.ctx.storage.get(PENDING_APP_ACTION_KEY);
           if (heldApp) {
@@ -14035,7 +14031,7 @@ export class CheState extends DurableObject {
         const systemPrompt = [
               'You are CHE, Cognitive Horizon Engine. Your name is spoken and referred to as "CHE" in conversation. "Chay" is only the owner\'s spoken wake word to start a hands-free conversation with you, not how you refer to yourself. Address the owner as sir naturally.',
               'This chat turn is already active. Never ask the owner to say “Hey [assistant name]”, “Ok [assistant name]”, or any generic wake phrase. If the owner says CHE/Chay, answer as CHE instead of teaching a wake phrase.',
-              soulPromptBlock(soulProfile),
+              soulPromptBlock(soulProfile) + (ownerDevice ? await humorTurn(this.ctx.storage, rawMessage, body.history) : ''),
               'No filler, no disclaimers, no preamble. Evidence, tool results, permissions and numbers always outrank the Soul.',
               explainLevel === 'deeper'
                 ? 'EXPLANATION LEVEL: go deeper. Give the reasoning, the details and the trade-offs, clearly organized.'
@@ -14596,6 +14592,7 @@ export class CheState extends DurableObject {
     }
     await recoverCreations(this.env, { storage: this.ctx.storage }).catch(() => null);
     await this.filmPass().catch((error) => console.error('Film Studio pass failed:', error?.message || error));
+    await alarmStudy(this.ctx.storage, this.env).catch(() => null);
     await reapPaid(this.env, { storage: this.ctx.storage }).catch(() => null);
     // Flagstaff stays responsive even when Office autonomy is paused. Incoming
     // AI messages are advice only and cannot authorize consequential actions.
@@ -16303,6 +16300,7 @@ async function routeRequest(request, env, ctx) {
     return json(await env.CHE_STATE.getByName('owner').reaProbe({ message: String(body.message || '').slice(0, 500), allow_build: body.allow_build === true }));
   }
   if (path === '/api/trading/audit/probe' && request.method === 'POST') return voiceProbeAuthorized(request, env) ? json(await env.CHE_STATE.getByName('owner').tradingAuditProbe()) : json({ detail: 'Not found.' }, 404);
+  if (path === '/api/study/probe' && request.method === 'POST') return voiceProbeAuthorized(request, env) ? json(await studyProbe(env, request, MEMORY_PROBE_OBJECT)) : json({ detail: 'Not found.' }, 404);
   if (path === '/api/memory/probe' && request.method === 'POST') {
     if (!voiceProbeAuthorized(request, env)) return json({ detail: 'Not found.' }, 404);
     const token = /^Bearer (\S+)$/.exec(request.headers.get('Authorization') || '')?.[1] || '';
