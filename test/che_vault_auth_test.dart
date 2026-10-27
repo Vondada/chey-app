@@ -5,7 +5,7 @@ import 'dart:io';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:che/security/che_vault_auth.dart';
+import 'package:chey/security/che_vault_auth.dart';
 
 void main() {
   nativeKeychainTests();
