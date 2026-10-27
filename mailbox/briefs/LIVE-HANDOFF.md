@@ -77,6 +77,16 @@ Then, on GitHub:
 
 ## 2. Current position
 
+**Claude, 2026-10-27 (owner mission: real GPU rendering + photoreal character + video). Audit only; no GPU job run, no PR opened for this mission.**
+- Owner approved: Kaggle T4 only, at $0 (free weekly quota). Owner declined the free CPU-first Actions render. Colab, Hugging Face and Modal not approved for jobs yet (Modal only after a $0 spend limit is set and confirmed).
+- Evidence on main (5f448fba): `server/cloudflare/gpu_providers.js`, `gpu_queue.js`, `modal_gpu.js`, `film_farm.js` (Kaggle + HF farm, tier A moving clips with LTX-Video only), `server/renderfarm/kaggle_worker.py` (LTX clips, NOT Blender), `scripts/che_gpu_face_preview.py` + `che_gpu_worker.py` (Blender Cycles OptiX/CUDA, Colab-only, owner must press Run all), `.github/workflows/che-film-render.yml` (CPU ffmpeg segments on Actions).
+- Verified: Modal authenticated /health earlier (deploy run 40454073565 and 3fa157eb). No GPU job receipt exists for any provider. Colab T4 unverified. Kaggle and HF unverified (no token/run evidence visible to this session).
+- Sandbox cannot reach `chey-app.henryjavoni.workers.dev` (proxy 403, policy). Do not route around. Live status must come from the Worker or GitHub Actions.
+- Blockers, owner-side: (1) Kaggle username:token saved in CHE Keys and the Kaggle account phone-verified (internet in kernels); (2) Modal spend limit set to $0 and confirmed in chat if Modal is wanted; (3) owner's confirmation of the render test request.
+- Code blockers: no Blender character job on Kaggle yet. Shortest path: a Kaggle kernel that installs Blender 5.0.1 (checksum-verified), runs the existing `che_gpu_face_preview.py` on `che-gpu-assets` inputs, and returns PNG + receipt through the farm token. Test A (still) first; then Test B (MP4 via ffmpeg), C (Office scene), D (persistence: job survives app close), E (Gallery). Nothing is claimed for A-E until a real run record exists.
+- Next: owner confirms Kaggle token + phone verification; then build the Kaggle Blender still job as its own PR (`feat/gpu-kaggle-blender-still`), with a local unit test using a stand-in Blender, and run it through the production farm.
+
+
 **Claude, 2026-10-27 (owner: make CHE factually accurate, mathematical, self-aware; PR-based). Branch `fact/numeric-truth` at 20f4c9ca, PR #713 (open, checks running).**
 - DONE (verified locally): `server/cloudflare/numeric_truth.js` + new pipeline stage `numeric_check` (last in TRUTH_STAGES). Checks figures against exact definitions (speed of light, light-year, AU) and labelled estimates (observable-universe stars 10^22–10^24, galaxies, atoms). Corrections are appended, never silently rewritten. Tests: `numeric_truth.test.mjs` 14/14; full Worker suite 4593 tests, 4584 pass, 0 fail, 7 skipped (2 pre-existing TODO entries).
 - NOT DONE (owner asks from the same request, honest status): general calculator route and explained calculations (item 2); read-only self-introspection layer (item 3; the existing `che_self_knowledge.js` is identity text for study agents, not runtime introspection; build it on `truth_layer.verifiedState` and receipts); experience records and before/after mistake retrieval (item 4); Rithmic and live-trading audit (item 5: broker/market-data not connected, per earlier handoff lines); the 10 regression categories beyond numbers (items 6.5–6.9).
