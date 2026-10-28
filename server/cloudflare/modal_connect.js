@@ -50,9 +50,9 @@ export async function modalWorkflowState(env, fetcher = fetch) {
  * Starts the Modal check workflow on main with one short GPU render. GitHub answers 204 with no run id, so the run is
  * looked up separately; until it appears, the render is reported as started, not as rendered.
  */
-export async function dispatchModalRender(env, fetcher = fetch) {
+export async function dispatchModalRender(env, fetcher = fetch, now = Date.now()) {
   const sent = await gh(env, 'POST', `/actions/workflows/${MODAL_CHECK_WORKFLOW}/dispatches`, { ref: 'main', inputs: { gpu_test: 'true' } }, fetcher);
-  if (sent.status === 204 || sent.ok) return { ok: true, started_at: new Date().toISOString() };
+  if (sent.status === 204 || sent.ok) return { ok: true, started_at: new Date(now).toISOString() };
   return { ok: false, status: sent.status || 0, detail: `GitHub refused the render workflow (${sent.status || 'network'}${sent.data?.message ? `: ${String(sent.data.message).slice(0, 120)}` : ''}).` };
 }
 
@@ -111,7 +111,7 @@ export async function modalConnectReply(env, storage, intent, { fetcher = fetch,
       steps.render = { started: false, blocked: wf.known ? 'the check workflow is missing' : wf.reason };
       lines.push(`Render: not started. ${steps.render.blocked}`);
     } else {
-      const sent = await dispatchModalRender(env, fetcher);
+      const sent = await dispatchModalRender(env, fetcher, now);
       if (!sent.ok) {
         steps.render = { started: false, blocked: sent.detail };
         lines.push(`Render: not started. ${sent.detail}`);
