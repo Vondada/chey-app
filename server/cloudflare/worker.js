@@ -167,6 +167,7 @@ import { APPROVED_SKILLS, handleInstalledSkill, installedSkillIntent, installedS
 import { lastSite, publishSite, saveSite, serveSite, siteBuildIntent, siteEditIntent, sitePreviewIntent, sitePublishIntent, siteUrl, speakSitePublished, speakSiteResult, wantsImmediatePublish, workingHtml, writeSite } from './site_builder.js';
 import { noteJobActivity } from './job_activity.js';
 import { CODING_CANCEL_SOURCE, cancelQueuedJob, codingCancelIntent, resolveCodingCancel, speakCancelResult, speakUnresolved } from './coding_cancel.js';
+import { classifyRequest } from './intent_class.js';
 import { PENDING_OWNER_ACTION_KEY, deskOwnedMoney, forbiddenAction, prohibitionSpans, withoutProhibitions, PENDING_OWNER_ACTION_MS, gateOwnerAction, grantForKinds, isOwnerYes, peerActionReply, APPS_GRANTED_KEY, PENDING_APP_ACTION_KEY, PENDING_APP_ACTION_MS, gateAppAccess, classifyAppNeed, classifyExplicitAppOpen, classifyAppAccesses } from './owner_action_gate.js';
 import { placedOrdersLine, recordDeviceInstall } from './action_receipts.js';
 import { brainTruthSummary, brainTruthView, truthScreenAsk } from './brain_truth.js';
@@ -13558,6 +13559,8 @@ export class CheState extends DurableObject {
         // reply is built from those results. The model is not asked here, so it cannot describe a picture that was not made.
         if (requestedCapabilities.includes('image_generation') && !requestedCapabilities.includes('video_generation') && !body.attachment) {
           if (!ownerDevice) return ndjsonReply('Only the CHE owner can make pictures, sir. Nothing was made.', { source: CHAT_IMAGE_SOURCE, ok: false, model_calls: 0 });
+          // A real weapon built or taken apart is never drawn (intent_class.js). A game, history or general request is.
+          if (classifyRequest(message).category === 'manufacturing') return ndjsonReply('I will not make pictures of a real weapon being built or taken apart, sir. Nothing was made or saved.', { source: CHAT_IMAGE_SOURCE, ok: false, model_calls: 0 });
           const results = await makeChatImages(this.keyEnv || this.env, this.ctx.storage, { message, count: requestedImageCount(message) });
           // media_url is what the iPhone chat shows inline (owner, 2026-10-22: "I'm supposed to see an actual picture").
           return ndjsonReply(chatImageReply(results), { source: CHAT_IMAGE_SOURCE, ok: results.some((r) => r.ok), model_calls: 0, media: chatImageMedia(results), ...chatImageInline(results, new URL(request.url).origin) });
