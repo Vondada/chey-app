@@ -66,6 +66,16 @@ test('on: an explicit Modal request starts one GPU call with validated arguments
   assert.equal(aiCalls, 0, 'no other engine ran');
 });
 
+test('a 256 px picture is sent as 256 px; an unsupported size is sent as the 512 px default', async () => {
+  const { calls, fetcher } = fakeModal();
+  await startModalImage(ENV_ON, memoryStorage(), { prompt: 'a kite', width: 256, height: 256 }, fetcher);
+  assert.equal(calls[0].body.width, 256);
+  assert.equal(calls[0].body.height, 256);
+  const other = fakeModal();
+  await startModalImage(ENV_ON, memoryStorage(), { prompt: 'a kite', width: 384 }, other.fetcher);
+  assert.equal(other.calls[0].body.width, 512);
+});
+
 test('the cap: a second GPU call beyond the cap is refused and not sent', async () => {
   const { calls, fetcher } = fakeModal();
   const storage = memoryStorage();

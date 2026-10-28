@@ -11,7 +11,7 @@ MODEL_ID = "stabilityai/sdxl-turbo"
 # The commit of MODEL_ID, read from Hugging Face's model API (the "sha" field) by the "CHE model revision lookup" workflow on
 # GitHub's runner, run 40745995951 (2026-10-28). The function refuses to load any other revision.
 MODEL_REVISION = "71153311d3dbb46851df1931d3ca6e939de83304"
-ALLOWED_SIZES = (512,)
+ALLOWED_SIZES = (256, 512)
 MAX_PROMPT = 500
 MAX_STEPS = 4
 PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"

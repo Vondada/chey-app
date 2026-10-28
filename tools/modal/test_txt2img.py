@@ -32,6 +32,9 @@ class Validation(unittest.TestCase):
         with self.assertRaises(ValueError):
             t.validate_txt2img_args({"prompt": "a", "width": 1024})
         with self.assertRaises(ValueError):
+            t.validate_txt2img_args({"prompt": "a", "width": 384, "height": 384})
+        self.assertEqual(t.validate_txt2img_args({"prompt": "a", "width": 256, "height": 256})["width"], 256)
+        with self.assertRaises(ValueError):
             t.validate_txt2img_args({"prompt": "a", "steps": 0})
         with self.assertRaises(ValueError):
             t.validate_txt2img_args({"prompt": "a", "steps": 5})
