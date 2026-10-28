@@ -287,6 +287,7 @@ import { FilmStore, filmIntent, filmProgress, farmProviders, loadRates, loadUsag
 import { GpuQueue, gpuWorkerRoute, speakGpuConnect, speakGpuSummary } from './gpu_queue.js';
 import { recoverCreations } from './creation_orchestrator.js';
 import { CreationStudio, studioOwnerRoute } from './creation_studio.js';
+import { sceneRoute } from './scene_store.js';
 import { populationAnswer, worldPopulationIntent, worldRoute } from './world_population.js';
 import { creationProbeRoute } from './creation_probe.js';
 import { paidWakes, poolRoute, poolSay, reapPaid } from './compute_pool.js';
@@ -7552,6 +7553,12 @@ export class CheState extends DurableObject {
       if (path === '/api/brain/truth' && request.method === 'GET') {
         if (!ownerDevice) return json({ detail: 'Only the CHE owner can read his brain.' }, 403);
         return json(await brainTruthView(this.ctx.storage));
+      }
+      // Create Studio scenes (scene_store.js, M2b): owner only, optimistic versions, refused rather than overwritten.
+      if (path === '/api/scenes' || /^\/api\/scenes\/scene_[a-f0-9]{12}$/.test(path)) {
+        if (!ownerDevice) return json({ detail: 'Only the CHE owner can use the Create Studio.' }, 403);
+        const sceneOut = await sceneRoute({ storage: this.ctx.storage, now: () => new Date().toISOString() }, path, request.method, body);
+        return json(sceneOut.body, sceneOut.status);
       }
       if (/^\/api\/(gpu|creations)(\/|$)/.test(path)) {
         if (!ownerDevice) return json({ detail: 'Only the CHE owner can use the GPU queue.' }, 403);
