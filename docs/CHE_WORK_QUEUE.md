@@ -33,6 +33,7 @@ Statuses: `open`, `in progress`, `waiting on owner`, `built, not verified`, `ver
 | Q-35 | GPU and 3D world: 25 upgrades | open | `docs/gpu-world-upgrades` | Start with items 1, 4, 5 and 25 in `docs/CHE_GPU_WORLD_UPGRADES.md` (free, local, measurable). Paid GPU (15-19) waits for the owner's spend decision and a cap above $0. | Doc only; nothing built |
 | Q-36 | 10 real-world tools that work together | open | `docs/real-world-tools` | Build tools 1, 4 and 7 first (capability map, permission gate, verifier), then 10 (eval). See `docs/CHE_REAL_WORLD_TOOLS.md`. | Doc only; nothing built |
 | Q-37 | Free 3D parts pipeline (look up, plan, model, show) | open | `docs/free-3d-tools` | Build the parts pipeline with CadQuery, Wikipedia and Three.js first; test with a car and a bicycle. See `docs/CHE_FREE_3D_TOOLS.md`. Verify licenses of tools 2, 3, 7, 8 at source first. | Research only; nothing installed |
+| Q-38 | Character and creature menu in the creation room (5 bio tools, 10 more tools, 5 examples) | open | `docs/character-creature-tools` | Check Quaternius and MakeHuman licenses at source; prototype one customizable human in the creation studio on Safari 26; measure load and edit time on the owner's iPhone. See `docs/CHE_CHARACTER_AND_CREATURE_TOOLS.md`. | Research only; nothing built |
 
 ## Owner decisions needed
 - Office swipe (Q-02).
@@ -41,6 +42,7 @@ Statuses: `open`, `in progress`, `waiting on owner`, `built, not verified`, `ver
 - Whether automatic background runs are allowed (this would change the AGENTS.md rule and use more usage).
 
 ## Log
+- 2026-10-28: Q-38 added (character and creature menu research). Free GPU without login = the owner's own device via WebGPU; server GPUs need an account.
 - 2026-10-28: Q-37 added (free 3D build tools, `docs/CHE_FREE_3D_TOOLS.md`). Research only.
 - 2026-10-28: Q-36 added (10 real-world tools, `docs/CHE_REAL_WORLD_TOOLS.md`). Nothing built yet.
 - 2026-10-28: Q-35 added (25 GPU and 3D world upgrades, `docs/CHE_GPU_WORLD_UPGRADES.md`). Nothing built yet.
