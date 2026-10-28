@@ -197,7 +197,8 @@ test('6. with 40 paper trades in the journal, the win rate and the expectancy ag
   const s = summarize(trades);
   const win = calc(await che.say('what is my win rate'));
   assert.equal(win.route, 'che_trading_evidence');
-  assert.match(win.reply, /^Paper trades, from CHE's evidence pass .*none recorded yet\.\nRecorded in total: 0 /, win.reply);
+  assert.match(win.reply, /^Scope 1, daily evidence pass .*: 0 closed trades recorded\. Open now: \d+\.\nScope 2, forward-paper journal \(paper, every portfolio, not pooled\): /, win.reply);
+  assert.match(win.reply, /do not match and are not added together/, win.reply);
   assert.match(win.reply, /Win rate, sir, from CHE's paper journal \(delayed forward-paper data\), since the evidence pass has recorded no trades/, win.reply);
   assert.match(win.reply, /40 closed paper trades in 1 paper portfolio/, win.reply);
   assert.match(win.reply, new RegExp(`${s.wins} wins in ${s.trades}, a win rate of ${s.win_rate}%`), win.reply);

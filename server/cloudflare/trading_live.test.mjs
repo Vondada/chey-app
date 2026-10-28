@@ -161,7 +161,7 @@ test('the daily evidence report does not count intraday paper trades', async () 
   await liveTick(storage, { force: true, load: feedOf(DAY1), now: after(DAY1) });
   await liveTick(storage, { force: true, load: feedOf([...DAY1, ...DAY2]), now: after(DAY2) });
   storage.saved.set('evidence_runs', [{ at: new Date().toISOString(), ok: true }]);
-  assert.match(await evidenceReport(storage), /Recorded in total: 0 /);
+  assert.match(await evidenceReport(storage), /Scope 1, daily evidence pass .*: 0 closed trades recorded\. Open now: \d+\./);
 });
 
 test('no lookahead: every intraday value at a bar is the same with or without later bars', () => {
