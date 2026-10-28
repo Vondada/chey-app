@@ -187,7 +187,7 @@ import { loadPackedJson, savePackedJson } from './prompt_compaction.js';
 import { githubWorkshopPieces, workshopAvatar, workshopAvatarIntent, workshopSnapshot } from './workshop.js';
 import { flushOutbox, handleWebMailbox, isOpen as flagstaffOpen, lockMailbox, openMailbox, transcript as flagstaffTranscript, mailboxCode, mailboxLink, postWebMail, readWebMail, rotateMailboxCode } from './web_mailbox.js';
 import { CheLibrary, fetchReadable, libraryContext, libraryIntent } from './library.js';
-import { plainArithmetic } from './arithmetic.js';
+import { answerForChat } from './problem_controller.js';
 import { KnowledgeLibrary, knowledgeIntent, knowledgeReply, knowledgeTaskContext } from './knowledge_library.js';
 import { answerPersonalFact, answerStoredStatement, explicitMemorySave, factCorrectionReply, groundedReply, isQuestionLike, needsStrongEngine, ownerFactTurn, personalFactQuestion, recallPersonalFact, storedStatementQuestion } from './personal_recall.js';
 import { brainRecordIntent, chatgptHistoryIntent, importChatgptBatch, inspectMemory, memoryInspectIntent, ownerMemorySearchIntent, ownerSearchTurn, ownerStatementCandidates, phoneBrainNotes, speakBrainRecord, speakChatgptHistory, speakMemoryInspection } from './owner_recall.js';
@@ -10462,8 +10462,16 @@ export class CheState extends DurableObject {
           return ndjsonReply('I did not keep that, sir: it looks like an API key, and keys never go in chat. It may now be exposed, so regenerate it where it came from. A new Alpaca paper key goes in the Trading Room, straight to CHE\'s key store.', { source: 'che_secret_refused', ok: false, model_calls: 0 });
         }
         // Plain arithmetic is computed here: no model guesses it, and no earlier turn can answer it (owner, 2026-10-28).
-        const sum = !body.attachment && !body.workflow_step ? plainArithmetic(rawMessage) : null;
-        if (sum) return ndjsonReply(sum.error || `${sum.result}.`, { source: 'che_arithmetic', ok: !sum.error, model_calls: 0, expression: sum.expression });
+        // Plain arithmetic goes through the universal problem controller (problem_controller.js): exact, checked by a
+        // round trip, with an execution receipt. A goal with no verified path returns null and falls through to the model.
+        const sum = !body.attachment && !body.workflow_step ? answerForChat(rawMessage) : null;
+        if (sum) {
+          const verified = sum.status === 'verified';
+          return ndjsonReply(sum.text, {
+            source: 'che_arithmetic', ok: verified, model_calls: 0, expression: sum.expression,
+            execution_receipt: { tool: 'arithmetic', operation: 'exact_evaluate', status: verified ? 'success' : 'error', capability_id: sum.receipt.capability_id, capability_version: sum.receipt.capability_version, correlation_id: sum.receipt.correlation_id, latency_ms: sum.receipt.latency_ms, steps: sum.receipt.steps },
+          });
+        }
         const privBlock = privateChatGate(rawMessage, body);
         if (privBlock) return privBlock;
         // A family/guest device never reaches the owner's chat routes below.
