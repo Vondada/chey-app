@@ -45,6 +45,9 @@ test('parse: ordinary chat is not a rule change', () => {
   assert.equal(parseAuthorityCommand('remember this for 30 minutes'), null);
   assert.equal(parseAuthorityCommand('what is the weather today'), null);
   assert.equal(parseAuthorityCommand('the restriction enzyme cuts DNA'), null);
+  assert.equal(parseAuthorityCommand('What did I tell ChatGPT about my trading rules last week?'), null);
+  assert.equal(parseAuthorityCommand('Open Settings and show my app version.'), null);
+  assert.equal(parseAuthorityCommand('/che-plan a booking app, rules and all the details of the plan'), null);
 });
 
 test('capabilities, amounts and durations are read from the sentence', () => {

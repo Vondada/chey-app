@@ -71,11 +71,16 @@ export function durationOf(text) {
  */
 export function parseAuthorityCommand(text) {
   const t = norm(text);
-  if (!t || t.length > 400) return null;
-  const NAMES_RULE = /\b(?:restrictions?|rules?|permissions?|authori[sz]ations?|approvals?|settings?|allowances?)\b/;
+  // An owner rule command is a short sentence. A long prompt that happens to contain "rules" is not one.
+  if (!t || t.length > 160) return null;
+  if (t.startsWith('/')) return null;
+  // Only words that name a restriction, rule or permission. "Settings" and "show" are app navigation, not rule commands.
+  const NAMES_RULE = /\b(?:restrictions?|rules?|permissions?|authori[sz]ations?|approvals?)\b/;
   const REFERS = /\b(?:this|that|it|the same|those|these)\b/;
   if (/\b(?:what|which) (?:rules? )?(?:changed|changes)\b|\brule history\b|\bshow (?:my )?(?:rule )?(?:changes|history)\b/.test(t) && NAMES_RULE.test(t) || /\brule history\b/.test(t)) return { op: 'history', raw: t };
-  if (NAMES_RULE.test(t) && /\b(?:what|which|tell me|list|show|read|all|current|active)\b/.test(t) && !/\b(?:revoke|lift|allow|never|always|remove|restore|make)\b/.test(t)) return { op: 'list', raw: t };
+  // "Your restrictions", "what restrictions are active": CHE's own rules. "My trading rules" or what was said to another AI is not.
+  const ASKS_LIST = /\b(?:your (?:current |active |own )?(?:restrictions?|rules?|permissions?|authori[sz]ations?)|(?:restrictions?|rules?|permissions?|authori[sz]ations?) (?:are |do you )?(?:active|in force|set)|what (?:restrictions?|rules?|permissions?|authori[sz]ations?) (?:do you|are|have))\b/;
+  if (ASKS_LIST.test(t) && !/\b(?:told|said|chatgpt|claude|gemini|grok)\b|\b(?:revoke|lift|allow|never|always|remove|restore|make)\b/.test(t)) return { op: 'list', raw: t };
   if (/\bwhy (?:did|do|have) you (?:refuse|hold|held|block|blocked|deny|denied|stop|stopped|decline)\b/.test(t)) return { op: 'why', raw: t };
   if (/\brestore (?:my |the )?(?:previous|last|old|prior|earlier) (?:settings?|rules?|permissions?|authori[sz]ations?)\b/.test(t)) return { op: 'restore', raw: t };
   if (/\b(?:revoke|withdraw|take back)\b/.test(t) && (NAMES_RULE.test(t) || REFERS.test(t))) return { op: 'revoke', capability: capabilityOf(t), raw: t };
@@ -202,13 +207,15 @@ export async function authorityCommandReply(storage, cmd, { now = Date.now() } =
   if (cmd.op === 'list') return { text: listRules(state, now), changed: false };
   if (cmd.op === 'why') {
     const d = state.last_decision;
+    if (!d) return { text: '', changed: false, fallthrough: true };
     return { text: d ? `I ${d.decision === 'allow' ? 'let it go ahead' : d.decision === 'deny' ? 'refused it' : 'held it for your yes'}, sir. ${d.reason} That was at ${new Date(d.at).toISOString().slice(0, 16).replace('T', ' ')} UTC.` : 'I have no recent refusal or hold recorded, sir.', changed: false };
   }
   if (cmd.op === 'history') return { text: historySentences(state).join(' ') || 'No rule has changed yet, sir.', changed: false };
 
   if (cmd.op === 'revoke') {
     const matches = state.rules.filter((r) => !subject || !r.capability || r.capability === subject);
-    if (!matches.length) return { text: `I have no rule for ${name} to revoke, sir. Nothing changed.`, changed: false };
+    // No rule of this kind: the revoke belongs to another permission (for example Private Mode's grants), so it goes on.
+    if (!matches.length) return { text: '', changed: false, fallthrough: true };
     if (matches.length > 1 && !subject) return { text: `Which one, sir? ${matches.map((r, i) => `${i + 1}. ${ruleSentence(r)}`).join(' ')} Name the action and I will revoke it.`, changed: false };
     const gone = matches.slice(0, 1);
     state = { ...state, previous: state.rules, rules: state.rules.filter((r) => !gone.includes(r)), history: [...state.history, { at: now, op: 'revoked', rule_id: gone[0].id, capability: gone[0].capability, by: 'owner', summary: `Revoked: ${ruleSentence(gone[0])}` }] };
@@ -245,12 +252,14 @@ export async function authorityCommandReply(storage, cmd, { now = Date.now() } =
 
 /** A pending grant or restore from an earlier turn: applied on the owner's plain yes, dropped on anything else. */
 export async function takePendingAuthority(storage, message, { now = Date.now(), isYes }) {
+  if (!isYes(message)) return null;
   let pending = null;
   try { pending = await storage.get(AUTHORITY_PENDING_KEY); } catch (_) { return null; }
   if (!pending) return null;
-  // Anything other than a yes drops the pending change and lets the message through as ordinary chat.
-  await storage.put(AUTHORITY_PENDING_KEY, null);
+  // Only a yes is looked for, so an ordinary turn costs no storage read. Any other message leaves the pending change
+  // unconfirmed, and it expires on its own.
   if (!isYes(message)) return null;
+  await storage.put(AUTHORITY_PENDING_KEY, null);
   if (now - Number(pending.at || 0) > AUTHORITY_PENDING_MS) return { text: 'Nothing changed, sir. The rule was not confirmed in time.', changed: false };
   let state = await loadAuthority(storage);
   if (pending.kind === 'restore') {

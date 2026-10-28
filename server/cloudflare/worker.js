@@ -10499,7 +10499,7 @@ export class CheState extends DurableObject {
           const authCommand = parseAuthorityCommand(rawMessage);
           if (authCommand) {
             const answered = await authorityCommandReply(this.ctx.storage, authCommand);
-            return ndjsonReply(answered.text, { source: 'che_owner_authority', ok: answered.changed, model_calls: 0 });
+            if (!answered.fallthrough) return ndjsonReply(answered.text, { source: 'che_owner_authority', ok: answered.changed, model_calls: 0 });
           }
         }
         const svc = !body.attachment && !body.workflow_step ? serviceCommandIntent(rawMessage) : null;
