@@ -10,6 +10,9 @@ import {
   feedStatus, fetchCoinbaseCandles, fetchKrakenCandles, marketStudy, nextCryptoTickAt, setCryptoPaper, speakCrypto,
 } from './crypto_markets.js';
 import { COSTS, CRYPTO_CONTRACTS, RECORD_PREFIX, newPortfolio, readTrades, settleTrade } from './trading_evidence.js';
+import { haltState } from './strategy_governor.js';
+// These tests cover entry mechanics. The owner's forward-paper halt is tested in strategy_governor.test.mjs.
+haltState.halted = false;
 
 function memoryStorage(saved = new Map()) {
   return {
