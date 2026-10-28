@@ -285,7 +285,7 @@ import { FilmStore, filmIntent, filmProgress, farmProviders, loadRates, loadUsag
 import { GpuQueue, gpuWorkerRoute, speakGpuConnect, speakGpuSummary } from './gpu_queue.js';
 import { recoverCreations } from './creation_orchestrator.js';
 import { CreationStudio, studioOwnerRoute } from './creation_studio.js';
-import { sceneRoute } from './scene_store.js';
+import { sceneRoute, sceneProbe } from './scene_store.js';
 import { populationAnswer, worldPopulationIntent, worldRoute } from './world_population.js';
 import { creationProbeRoute } from './creation_probe.js';
 import { paidWakes, poolRoute, poolSay, reapPaid } from './compute_pool.js';
@@ -16211,6 +16211,7 @@ async function routeRequest(request, env, ctx) {
     return json(await commandCenterProbe(env, token, { commands: COMMANDS, categories: CATEGORIES, voiceSecrets: voiceSecretsFrom(env) }));
   }
   if (path === '/api/social/probe' && request.method === 'POST') return voiceProbeAuthorized(request, env) ? json(await socialProbe(env, request, await probeObjectName(String(env.CHE_VOICE_PROBE_TOKEN || '')))) : json({ detail: 'Not found.' }, 404);
+  if (path === '/api/scenes/probe' && request.method === 'POST') return voiceProbeAuthorized(request, env) ? json(await sceneProbe(env, request, await probeObjectName(String(env.CHE_VOICE_PROBE_TOKEN || '')))) : json({ detail: 'Not found.' }, 404);
   if (path === '/api/history/probe' && request.method === 'POST') return voiceProbeAuthorized(request, env) ? json(await historyProbe(env, request, await probeObjectName(String(env.CHE_VOICE_PROBE_TOKEN || '')))) : json({ detail: 'Not found.' }, 404);
   if (path === '/api/coding-audit/probe' && request.method === 'POST') return voiceProbeAuthorized(request, env) ? json(await codingAuditProbe(env, request, await probeObjectName(String(env.CHE_VOICE_PROBE_TOKEN || '')))) : json({ detail: 'Not found.' }, 404);
   // The deploy's Knowledge Atlas check, on the same isolated test CHE (#346).

@@ -380,6 +380,27 @@ const PROBES = {
     return pass(line);
   },
 
+  async scenes() {
+    // Create Studio scenes on the isolated test CHE (scene_store.js sceneProbe): pair, create a character from the
+    // person template, save an edit, refuse a stale save, reopen and read the saved value. Real owner routes, test data.
+    const { body: report, error } = await postProbe('/api/scenes/probe', { attempts: 3, timeoutMs: 120000 });
+    if (!report) {
+      console.log(`::error title=Create Studio scene check did not run::The ${WHERE} did not answer (${error}).`);
+      return fail(`did not run (${error})`);
+    }
+    for (const st of report.steps || []) console.log(`${st.ok ? 'PASS' : 'FAIL'} ${st.name} [${st.detail}]`);
+    const passed = (report.steps || []).filter((s) => s.ok).length;
+    const total = (report.steps || []).length;
+    console.log(`::notice title=Create Studio scenes::${passed}/${total} live checks passed`);
+    summary(`**Create Studio scenes (${WHERE}):** ${passed}/${total} live checks passed on the isolated test CHE.`);
+    if (!report.ok) {
+      const what = (report.steps || []).filter((s) => !s.ok).map((s) => s.name).join('; ') || report.error || 'see log';
+      console.log(`::error title=Create Studio scene check failed::${what}`);
+      return fail(what);
+    }
+    return pass(`${passed}/${total} live scene checks passed`);
+  },
+
   async history() {
     // Long-term memory on the isolated test CHE (conversation_history.js historyProbe): a spoken conversation on a
     // random 2025 day, posted to /api/logs as the phone does, is retrieved by its date; CHE's wrong answer that day is
@@ -697,7 +718,7 @@ const PROBES = {
 
 // The production deploy's order. The staging gate runs all of it; production runs one per step.
 export const SUITE = ['health', 'engines', 'sidestore', 'mary-settings', 'fish-settings', 'voice', 'trading', 'trading-audit',
-  'memory', 'history', 'creation', 'creation-viewport', 'character-accept', 'commands', 'atlas', 'privacy', 'social', 'study', 'projects-audit', 'video', 'rea', 'fish-measure'];
+  'memory', 'history', 'scenes', 'creation', 'creation-viewport', 'character-accept', 'commands', 'atlas', 'privacy', 'social', 'study', 'projects-audit', 'video', 'rea', 'fish-measure'];
 
 async function runOne(name) {
   if (PRODUCTION_STEPS[name]) {

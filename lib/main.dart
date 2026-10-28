@@ -106,6 +106,8 @@ import 'create/che_code_workspace.dart';
 import 'create/che_creative_studio.dart';
 import 'create/che_project_manager.dart';
 import 'create/che_creation_engine_page.dart';
+import 'create/che_scene_client.dart';
+import 'create/che_scene_studio_page.dart';
 import 'create/che_gpu_browser.dart';
 import 'create/che_gpu_connect.dart';
 import 'create/che_live_studio.dart';
@@ -697,6 +699,14 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
         onSpeak: (text) => unawaited(speakText(text, record: false, readOnDemand: true)),
       ),
     ));
+  }
+
+  /// Create Studio: the owner's saved character and scene projects, on the Worker (scene_store.js). Opened from More.
+  void _openSceneProjects() {
+    HapticFeedback.selectionClick();
+    unawaited(Navigator.of(context).push(MaterialPageRoute<void>(
+      builder: (_) => CheSceneListPage(client: CheSceneClient(baseUrl: cheAgentBaseUrl, headers: () => _authHeaders)),
+    )));
   }
 
   /// SECURITY: Home → Security, More → Security, and "open security" by voice.
@@ -2422,6 +2432,13 @@ OWNER AGENCY
           subtitle: 'What CHE can make, and what still needs setup',
           onTap: _openShowroom,
           hue: kit.CheColors.apps,
+        ),
+        CheMoreItem(
+          icon: Icons.draw_rounded,
+          title: 'Create Studio',
+          subtitle: 'Character and scene projects: create, edit, save, reopen',
+          onTap: _openSceneProjects,
+          hue: kit.CheColors.accent,
         ),
         CheMoreItem(
           icon: Icons.view_in_ar_rounded,

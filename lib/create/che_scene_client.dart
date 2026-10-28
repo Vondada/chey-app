@@ -48,7 +48,7 @@ class CheSceneClient {
   CheSceneClient({required this.baseUrl, required this.headers, http.Client? client}) : _http = client ?? http.Client();
 
   final String baseUrl;
-  final Map<String, String> headers;
+  final Map<String, String> Function() headers;
   final http.Client _http;
 
   Map<String, dynamic> _decode(http.Response r) {
@@ -57,14 +57,14 @@ class CheSceneClient {
   }
 
   Future<List<SceneSummary>> list() async {
-    final r = await _http.get(Uri.parse('$baseUrl/api/scenes'), headers: headers);
+    final r = await _http.get(Uri.parse('$baseUrl/api/scenes'), headers: headers());
     final body = _decode(r);
     if (r.statusCode != 200) throw SceneRequestFailed(r.statusCode, body['detail'] as String? ?? 'Could not list scenes.');
     return [for (final s in (body['scenes'] as List? ?? const [])) SceneSummary.fromJson(Map<String, dynamic>.from(s as Map))];
   }
 
   Future<LoadedScene> load(String id) async {
-    final r = await _http.get(Uri.parse('$baseUrl/api/scenes/$id'), headers: headers);
+    final r = await _http.get(Uri.parse('$baseUrl/api/scenes/$id'), headers: headers());
     final body = _decode(r);
     if (r.statusCode != 200) throw SceneRequestFailed(r.statusCode, body['detail'] as String? ?? 'Could not load the scene.');
     return LoadedScene((body['version'] as num).toInt(), SceneDocument.fromJson(Map<String, dynamic>.from(body['scene'] as Map)));
@@ -73,7 +73,7 @@ class CheSceneClient {
   Future<LoadedScene> create({required String name, required String template}) async {
     final r = await _http.post(
       Uri.parse('$baseUrl/api/scenes'),
-      headers: {...headers, 'Content-Type': 'application/json'},
+      headers: {...headers(), 'Content-Type': 'application/json'},
       body: jsonEncode({'name': name, 'template': template}),
     );
     final body = _decode(r);
@@ -85,7 +85,7 @@ class CheSceneClient {
   Future<LoadedScene> save(String id, SceneDocument scene, int expectedVersion) async {
     final r = await _http.put(
       Uri.parse('$baseUrl/api/scenes/$id'),
-      headers: {...headers, 'Content-Type': 'application/json'},
+      headers: {...headers(), 'Content-Type': 'application/json'},
       body: jsonEncode({'scene': scene.toJson(), 'expected_version': expectedVersion}),
     );
     final body = _decode(r);

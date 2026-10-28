@@ -143,3 +143,24 @@ test('the routes map GET and POST for the list and GET and PUT for one scene', a
 test('templateObjects returns nothing for a blank canvas', () => {
   assert.deepEqual(templateObjects('blank'), []);
 });
+
+test('the live scene probe runs create, save, stale-refusal and reopen through the owner routes', async () => {
+  const st = fakeStorage();
+  // Stands in for the test CHE: pairs, then serves the same scene routes the Worker's object serves.
+  const testChe = {
+    fetch: async (req) => {
+      const url = new URL(req.url);
+      if (url.pathname === '/api/pair') return new Response(JSON.stringify({ device_token: 'device-test' }), { status: 200 });
+      const body = req.method === 'GET' ? undefined : await req.json();
+      const out = await sceneRoute({ storage: st, now: () => NOW }, url.pathname, req.method, body);
+      return new Response(JSON.stringify(out.body), { status: out.status });
+    },
+  };
+  const env = { CHE_STATE: { getByName: () => testChe }, CHE_PAIR_CODE: '123456' };
+  const req = new Request('https://worker.example/api/scenes/probe', { method: 'POST', headers: { Authorization: 'Bearer probe-token' } });
+  const { sceneProbe } = await import('./scene_store.js');
+  const report = await sceneProbe(env, req, 'probe-object');
+  assert.equal(report.ok, true, JSON.stringify(report.steps));
+  assert.equal(report.steps.length, 4);
+  assert.deepEqual(report.steps.map((s) => s.ok), [true, true, true, true]);
+});

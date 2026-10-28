@@ -223,6 +223,13 @@ class CheSceneListPage extends StatefulWidget {
 class _CheSceneListPageState extends State<CheSceneListPage> {
   late Future<List<SceneSummary>> _scenes = widget.client.list();
 
+  Future<void> _newCharacter() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(builder: (_) => CheSceneStudioPage(client: widget.client, template: 'person')),
+    );
+    if (mounted) setState(() => _scenes = widget.client.list());
+  }
+
   Future<void> _openScene(String id) async {
     await Navigator.of(context).push(
       MaterialPageRoute<void>(builder: (_) => CheSceneStudioPage(client: widget.client, sceneId: id)),
@@ -234,6 +241,15 @@ class _CheSceneListPageState extends State<CheSceneListPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text('Create Studio projects')),
+      floatingActionButton: Semantics(
+        button: true,
+        label: 'New character',
+        child: FloatingActionButton.extended(
+          onPressed: _newCharacter,
+          icon: const Icon(Icons.person_add_alt_1_rounded),
+          label: const Text('New character'),
+        ),
+      ),
       body: FutureBuilder<List<SceneSummary>>(
         future: _scenes,
         builder: (context, snap) {

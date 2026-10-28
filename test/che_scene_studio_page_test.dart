@@ -61,7 +61,7 @@ class FakeWorker {
 
 CheSceneClient clientFor(FakeWorker w) => CheSceneClient(
       baseUrl: 'https://worker.example',
-      headers: const {},
+      headers: () => const {},
       client: MockClient((req) async => w.handle(req)),
     );
 
