@@ -312,3 +312,14 @@ test('a 429 is an upstream outage too; a 404 is not', async () => {
   const missing = async () => new Response('gone', { status: 404 });
   await withInstantTimers(() => assert.rejects(findShow('Martin', missing), (error) => error.upstream === undefined));
 });
+
+test('a lesson check that depends on Wikipedia is pending during an outage, and a lesson check with no outage is still a FAIL', async () => {
+  const { judgeStudySteps } = await import('./comedy_study.js');
+  const upstream = { http_status: 503, attempts: 3 };
+  const lastError = { at: 'now', message: 'Wikipedia returned 503', upstream };
+  const steps = [{ name: 'learned lessons', pass: false, route: 'che_study', external: 'wikipedia' }];
+  assert.equal(judgeStudySteps(steps, lastError)[0].status, 'upstream_unavailable', 'lessons need the episode reads that Wikipedia blocked');
+  assert.equal(judgeStudySteps(steps, null)[0].status, 'fail', 'with no outage, missing lessons are a real fault');
+  const reply = [{ name: 'status', pass: false, route: 'che_study' }];
+  assert.equal(judgeStudySteps(reply, lastError)[0].status, 'fail', 'a CHE reply without the external tag stays a fault');
+});

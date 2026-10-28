@@ -103,7 +103,9 @@ export function judgeStudySteps(steps, lastError) {
   return steps.map((step) => {
     if (step.pass) return { ...step, status: 'pass' };
     if (step.optional) return { ...step, status: 'warn' };
-    if (upstream && step.route === 'wikipedia') {
+    // A step is judged against Wikipedia when it reads Wikipedia's data (route) or depends on it (external), for
+    // example lessons, which exist only after episode summaries were read from Wikipedia.
+    if (upstream && (step.route === 'wikipedia' || step.external === 'wikipedia')) {
       return { ...step, status: 'upstream_unavailable', upstream: { ...upstream, message: lastError.message, at: lastError.at } };
     }
     return { ...step, status: 'fail' };
@@ -448,13 +450,13 @@ export async function studyProbe(env, request, objectName, { passes = 6 } = {}) 
   const device = paired.device_token;
   if (!device) return { ok: false, error: 'The check could not pair with its test CHE.', steps: [] };
   const steps = [];
-  const chat = async (name, message, check, optional = false) => {
+  const chat = async (name, message, check, optional = false, external = null) => {
     const started = Date.now();
     const res = await call('/api/chat', { message, history: [] }, device);
     const events = (await res.text()).split('\n').filter(Boolean).map((line) => { try { return JSON.parse(line); } catch (_) { return null; } }).filter(Boolean);
     const done = events.find((e) => e.type === 'done') || {};
     const reply = events.filter((e) => e.type === 'delta').map((e) => e.delta).join('').trim();
-    steps.push({ name, optional, pass: res.status === 200 && Boolean(reply) && Boolean(check({ reply, done })), ms: Date.now() - started, route: done.source || 'model', model_calls: done.model_calls ?? null, reply: reply.slice(0, 600) });
+    steps.push({ name, optional, pass: res.status === 200 && Boolean(reply) && Boolean(check({ reply, done })), ms: Date.now() - started, route: done.source || 'model', model_calls: done.model_calls ?? null, reply: reply.slice(0, 600), ...(external ? { external } : {}) });
     return { reply, done };
   };
   let assignment = null;
@@ -481,7 +483,7 @@ export async function studyProbe(env, request, objectName, { passes = 6 } = {}) 
     steps.push({ name: 'episode guides read: episodes listed per show with their source pages', pass: found.length > 0 && found.every((s) => s.episodes.length > 0), ms: 0, route: 'wikipedia', model_calls: 0,
       reply: found.map((s) => `${s.article}: ${s.episodes.length} episodes from ${s.list_pages.join(', ') || 'no list page'}; covered ${s.cursor}`).join(' | ') });
     await chat('status names coverage by method and says no episode was watched', "How's your studying going?", ({ reply, done }) => done.source === 'che_study' && done.model_calls === 0 && /Episodes watched: 0/.test(reply));
-    await chat('learned lessons are retrieved from storage, in her own words', 'What did you learn about comedy?', ({ reply, done }) => done.source === 'che_study' && done.model_calls === 0 && /^Here's what I've learned/.test(reply));
+    await chat('learned lessons are retrieved from storage, in her own words', 'What did you learn about comedy?', ({ reply, done }) => done.source === 'che_study' && done.model_calls === 0 && /^Here's what I've learned/.test(reply), false, 'wikipedia');
     await chat('an original joke in conversation (model\'s choice, shown for review)', 'Roast me a little, I burned the rice again.', ({ done }) => done.source !== 'che_study', true);
   } finally {
     await call('/api/security/revoke_self', {}, device).catch(() => null);
