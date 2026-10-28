@@ -32,8 +32,11 @@ void main() {
     expect(worker.scenes, hasLength(2), reason: 'New character must store a new project on the Worker');
     expect(find.text('Height (m): 1.70'), findsOneWidget);
 
-    // Back again: the list now holds both projects, and the new one reopens by its ID.
+    // Back again: the list now holds both projects. The list reloads from the Worker after the editor closes; wait for
+    // that reload to finish, then let the screen draw its result before checking it.
     await tester.pageBack();
+    await tester.pumpAndSettle();
+    await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 20)));
     await tester.pumpAndSettle();
     expect(find.text('Old robot'), findsOneWidget);
     expect(worker.scenes.keys, contains(oldId));

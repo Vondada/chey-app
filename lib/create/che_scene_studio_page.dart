@@ -227,14 +227,22 @@ class _CheSceneListPageState extends State<CheSceneListPage> {
     await Navigator.of(context).push(
       MaterialPageRoute<void>(builder: (_) => CheSceneStudioPage(client: widget.client, template: 'person')),
     );
-    if (mounted) setState(() => _scenes = widget.client.list());
+    if (mounted) {
+      setState(() {
+        _scenes = widget.client.list();
+      });
+    }
   }
 
   Future<void> _openScene(String id) async {
     await Navigator.of(context).push(
       MaterialPageRoute<void>(builder: (_) => CheSceneStudioPage(client: widget.client, sceneId: id)),
     );
-    if (mounted) setState(() => _scenes = widget.client.list());
+    if (mounted) {
+      setState(() {
+        _scenes = widget.client.list();
+      });
+    }
   }
 
   @override
