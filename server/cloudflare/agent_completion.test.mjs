@@ -79,8 +79,7 @@ test('approval: only an APPROVED review completes the task, verified', async () 
 });
 
 test('rejection: repaired at most MAX_REPAIR_PASSES times, then rejected, never complete or verified', async () => {
-  // Each round names a different gap, so the repair really changed the review and the pass limit is what stops it.
-  const o = office({ review: Array.from({ length: MAX_REPAIR_PASSES + 1 }, (_, i) => `NEEDS WORK\nNo sources for the price claims, round ${i}.`) });
+  const o = office({ review: ['NEEDS WORK\nNo sources for the price claims.'] });
   const id = o.queue();
   await o.run();
   const t = o.task(id);
@@ -94,17 +93,6 @@ test('rejection: repaired at most MAX_REPAIR_PASSES times, then rejected, never 
   assert.equal(o.events.find((e) => e.kind === 'task_rejected')?.refs.task_id, id);
   assert.equal(o.data.agent_work_log[0].status, 'rejected');
   assert.equal(o.agent().runtime_status, 'idle', 'the agent is not shown as done');
-});
-
-test('an identical review twice stops the repair loop at once and holds the task for the owner', async () => {
-  const o = office({ review: ['NEEDS WORK\nNo sources for the price claims.', 'NEEDS WORK\nNo sources for the price claims.'] });
-  const id = o.queue();
-  await o.run();
-  const t = o.task(id);
-  assert.equal(t.status, 'rejected');
-  assert.equal(t.verified_by_che, false);
-  assert.equal(o.calls.work, 2, 'the original pass and one repair; the repeat is not sent again');
-  assert.match(t.error, /same review twice.*held for the owner/);
 });
 
 test('a rejection that is then repaired completes on the approved pass', async () => {

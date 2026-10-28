@@ -294,11 +294,10 @@ class _CheTradingRoomState extends State<CheTradingRoom> {
               onExpand: _expandChart,
             ),
           )),
+          CheTradingResearchStrip(key: const Key('research_strip'), client: _research, market: _market, onRead: widget.onRead),
           // The older overview (index chart, quotes, 3D scene) is folded so nothing heavy builds until asked for.
           if (widget.chartExtras.isNotEmpty)
             _fold('market_overview', 'MARKET OVERVIEW', 'Index chart and quotes', Column(children: widget.chartExtras)),
-          // Owner (2026-10-26): the sections sit at the bottom, under the chart.
-          CheTradingResearchStrip(key: const Key('research_strip'), client: _research, market: _market, onRead: widget.onRead),
         ];
       case CheTradingSection.setups:
         return [_pad(CheSetupBoard(desk: _desk, onRead: widget.onRead))];
@@ -306,9 +305,9 @@ class _CheTradingRoomState extends State<CheTradingRoom> {
         return [
           // CHE's own simulated account on live Rithmic prices (owner, 2026-10-23): balance, positions, trade details.
           _fold('che_paper', 'CHE PAPER ACCOUNT', 'Simulated balance and positions on live Rithmic prices',
-              ChePaperAccountPanel(key: const Key('che_paper_account'), onRead: widget.onRead)),
+              ChePaperAccountPanel(key: const Key('che_paper_account'), onRead: widget.onRead), open: true),
           _fold('journal', 'PAPER JOURNAL', 'CHE PAPER ACCOUNT trades and totals',
-              CheLivePaperPanel(baseUrl: p.baseUrl, headers: p.headers, onAsk: p.onAsk, onRead: widget.onRead, client: p.client)),
+              CheLivePaperPanel(baseUrl: p.baseUrl, headers: p.headers, onAsk: p.onAsk, onRead: widget.onRead, client: p.client), open: true),
           _fold('fye', 'FUNDYOUREDGE DRAFT', 'Order drafts; nothing is sent', CheFyeDraftCard(baseUrl: p.baseUrl, headers: p.headers, client: p.client)),
         ];
       case CheTradingSection.history:
@@ -325,13 +324,13 @@ class _CheTradingRoomState extends State<CheTradingRoom> {
             ),
           )),
           _fold('history', 'TRADE HISTORY', 'Simulation, paper journal and broker ledgers, each labelled',
-              CheTradingLedgersPanel(baseUrl: p.baseUrl, headers: p.headers, onAsk: p.onAsk, client: p.client)),
+              CheTradingLedgersPanel(baseUrl: p.baseUrl, headers: p.headers, onAsk: p.onAsk, client: p.client), open: true),
         ];
       case CheTradingSection.strategies:
         // The research dashboard first; limits, the registry and the historical study fold under it.
         return [
           _fold('research', 'RESEARCH', 'Evidence by strategy and timeframe',
-              CheTradingResearchDashboard(client: _research, market: _market, onRead: widget.onRead)),
+              CheTradingResearchDashboard(client: _research, market: _market, onRead: widget.onRead), open: true),
           _fold('controls', 'CONTROLS', 'Enable, pause and limits per strategy',
               CheStrategyControlsPanel(baseUrl: p.baseUrl, headers: p.headers, onAsk: p.onAsk, client: p.client)),
           // Historical trading intelligence (owner, 2026-10-22): decades of history, out-of-sample ranking, paper signals.
@@ -341,10 +340,10 @@ class _CheTradingRoomState extends State<CheTradingRoom> {
       case CheTradingSection.account:
         return [
           _fold('che_paper_compact', 'CHE PAPER ACCOUNT', 'Simulated balance and limits',
-              ChePaperAccountPanel(key: const Key('che_paper_account_compact'), onRead: widget.onRead, compact: true)),
+              ChePaperAccountPanel(key: const Key('che_paper_account_compact'), onRead: widget.onRead, compact: true), open: true),
           // Hidden while kShowAlpacaPaper is false (owner, 2026-10-23); the panel and its data path are kept.
           if (kShowAlpacaPaper) _fold('alpaca', 'ALPACA PAPER', 'Paper balance, orders and fills (delayed data)',
-              CheAlpacaPaperPanel(baseUrl: p.baseUrl, headers: p.headers, onAsk: p.onAsk, client: p.client)),
+              CheAlpacaPaperPanel(baseUrl: p.baseUrl, headers: p.headers, onAsk: p.onAsk, client: p.client), open: true),
           _fold('connections', 'CONNECTIONS', 'Broker and data connections',
               CheTradingConnectionsPanel(baseUrl: p.baseUrl, headers: p.headers, onAsk: p.onAsk, client: p.client)),
           ...widget.accountExtras,

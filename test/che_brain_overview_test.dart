@@ -198,7 +198,7 @@ void main() {
 
     await _pumpSized(tester, _overview(load: () async => throw Exception('CHE did not answer within 20 seconds.')));
     await tester.pump();
-    expect(find.textContaining('Learning feed unavailable. Tap refresh to retry.'), findsOneWidget);
+    expect(find.textContaining('Learning feed unavailable: CHE did not answer'), findsOneWidget);
   });
 
   testWidgets('Live Activity: newest first, real filters, opens the record', (tester) async {

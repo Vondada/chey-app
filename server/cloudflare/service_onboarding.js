@@ -243,7 +243,7 @@ function gpuGuided(id) {
       if (id === 'modal') {
         // Connected only when CHE's own app answers an authenticated /health with the expected version.
         const h = await modalHealth(parseModalCredential(token), fetcher);
-        return { ok: h.ok, auth: h.ok ? 'ok' : h.auth, checks: [{ id: 'auth', ok: h.ok, detail: h.detail }], works: h.ok ? works : undefined, ...(h.upstream_id ? { upstream_id: h.upstream_id } : {}) };
+        return { ok: h.ok, auth: h.ok ? 'ok' : h.auth, checks: [{ id: 'auth', ok: h.ok, detail: h.detail }], works: h.ok ? works : undefined };
       }
       const b = await GPU_ADAPTERS[id].balance(String(token).trim(), fetcher);
       if (!b.ok) return { ok: false, auth: b.status === 'unauthorized' ? 'invalid' : b.status, checks: [{ id: 'auth', ok: false, detail: `${plain} ${b.status === 'unauthorized' ? 'refused the key' : b.status === 'network' ? 'could not be reached' : `answered ${b.status}${b.http ? ` (HTTP ${b.http})` : ''}`}` }] };
@@ -546,35 +546,29 @@ export async function verifyOnboarding(ctx, provider, capability) {
   const now = ctx.now?.() || Date.now();
   const rec = (await load(ctx.storage, provider, r.capability)) || fresh(provider, r.capability, now);
   const token = effectiveToken(ctx, adapter);
-  // Every check carries its own ID, so the owner's screen and the server record can be matched (owner, 2026-10-27).
-  const request_id = `chk_${crypto.randomUUID().replace(/-/g, '').slice(0, 12)}`;
   if (!token) {
-    rec.failure = { reason: 'missing_info', detail: `CHE has no ${adapter.name} token to verify${provider === 'modal' ? ': the Worker secret MODAL_TOKEN is not set. Run the "CHE Modal deploy" workflow, which writes it' : ''}` };
+    rec.failure = { reason: 'missing_info', detail: `CHE has no ${adapter.name} token to verify` };
     await save(ctx.storage, rec, 'failed', 'nothing to verify', now);
-    return { ok: false, status: 409, ...publicView(rec, adapter), category: 'missing_credential', detail: rec.failure.detail, request_id };
+    return { ok: false, status: 409, ...publicView(rec, adapter) };
   }
-  const v = { ...(await runVerify(ctx, adapter, rec, token)), request_id };
-  // The answer the app reads directly: one category, one plain detail, the request ID. Details are already redacted.
-  const answer = { category: CHECK_CATEGORY[v.auth] || v.auth || 'unknown', detail: (v.checks.find((c) => !c.ok) || v.checks[0])?.detail || '', request_id, checks: v.checks, ...(v.upstream_id ? { upstream_id: v.upstream_id } : {}) };
+  const v = await runVerify(ctx, adapter, rec, token);
   rec.verification = v;
   if (v.ok && v.provisional) {
     // Stored, but no free check exists: never "Connected".
     rec.failure = null; rec.pause = null;
     await save(ctx.storage, rec, 'secret_configured', 'stored; no free verification exists', now);
-    return { ok: true, ...publicView(rec, adapter), ...answer };
+    return { ok: true, ...publicView(rec, adapter) };
   }
   if (v.ok) {
     rec.failure = null; rec.pause = null;
     await save(ctx.storage, rec, 'verified', 'auth and capability checks passed', now);
     await fileLetter(ctx.storage, { tray: provider, subject: `${adapter.name} connected (${rec.capability})`, body: outcomeLines(rec, adapter).join('\n'), tag: 'system', severity: 'info' });
-    return { ok: true, ...publicView(rec, adapter), ...answer };
+    return { ok: true, ...publicView(rec, adapter) };
   }
   rec.failure = { reason: v.auth === 'ok' ? 'capability_check_failed' : `token_${v.auth}`, detail: v.checks.filter((c) => !c.ok).map((c) => c.detail).join('; ') };
   await save(ctx.storage, rec, 'failed', 'verification failed', now);
-  return { ok: false, status: 422, ...publicView(rec, adapter), ...answer };
+  return { ok: false, status: 422, ...publicView(rec, adapter) };
 }
-// Verification results in the words the app shows; anything not listed passes through as reported.
-const CHECK_CATEGORY = { invalid: 'unauthorized', missing_info: 'missing_credential' };
 
 // ─── HTTP routes (owner-only, lockdown-aware; called from CheState.fetch) ──
 export async function onboardingRoute(ctx, path, method, body, { owner = false, lockedDown = false, query = '' } = {}) {

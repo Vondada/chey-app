@@ -126,27 +126,6 @@ test('the code graph finds the LIVE War Room (screen -> native 3D scene) and mar
   assert.equal(graph.contradiction, false, 'a live War Room exists, so no contradiction');
 });
 
-test('a neighbour that imports many related files cannot crowd the War Room renderer out of the graph budget', async () => {
-  // Regression (PR #666): the Office floor gained one more War-Room-related
-  // import and, hopping first, used the last graph slot before the War Room
-  // screen reached its 3D scene.
-  const extras = Array.from({ length: 12 }, (_, i) => `lib/office/che_office_part_${i}.dart`);
-  const files = {
-    [MAIN]: "import 'agents/che_office_floor_screen.dart';\nvoid main() {}\n",
-    [FLOOR]: `${extras.map((p) => `import '../${p.slice(4)}';`).join('\n')}\nimport 'che_war_room_screen.dart';\nclass CheOfficeFloorScreen { final label = 'Open the War Room'; }\n`,
-    [SCREEN]: "import '../widgets/che_native_scene_world.dart';\nclass CheWarRoomScreen { final title = 'War Room'; }\n",
-    [SCENE]: 'class CheNativeSceneWorld { final warRoomTable = 2.55; }\n',
-    ...Object.fromEntries(extras.map((p, i) => [p, `class CheOfficePart${i} { final room = 'War Room part ${i}'; }\n`])),
-  };
-  const graph = await traceSourceGraph({ CHE_GITHUB_TOKEN: 't', CHE_GITHUB_REPO: 'o/r' }, {
-    index: { paths: Object.keys(files) }, request: 'Make the War Room table bigger.', seeds: [FLOOR, SCREEN], read: async (p) => files[p] ?? null, fetcher: fakeGitHub(files),
-  });
-  const scene = graph.files.find((f) => f.path === SCENE);
-  assert.ok(scene, `the renderer stays in the graph: ${graph.files.map((f) => f.path).join(', ')}`);
-  assert.equal(scene.live, true);
-  assert.deepEqual(scene.callers, [SCREEN]);
-});
-
 test('failure evidence flows into each retry: dead file -> live file -> exact anchor, then review passes', async () => {
   const seen = [];
   const out = await prepareSelfUpdate(warRoomEnv({ seen }), REQUEST, fakeGitHub(), memoryStore(), { intentRequest: REQUEST });

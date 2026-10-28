@@ -192,7 +192,6 @@ export class GpuQueue {
       settings: cleanSettings(spec.settings), samples: Math.min(Math.max(Number(spec.samples) || 64, 1), 1024),
       res: Math.min(Math.max(Number(spec.res) || 480, 64), 2048), queued_by: String(spec.queued_by || 'owner').slice(0, 60),
       tenant_id: /^[a-z0-9_-]{1,64}$/i.test(String(spec.tenant_id || '')) ? String(spec.tenant_id) : 'owner',
-      request_key: String(spec.request_key || '').slice(0, 160),
       created_at: iso(t), updated_at: iso(t), state: 'queued', failures: 0, sessions: 0, lease: null,
       priority: PRIORITIES[spec.priority] !== undefined ? spec.priority : 'normal',
       requires: { gpu: GPU_NEEDS.includes(spec.requires?.gpu) ? spec.requires.gpu : needOf({ kind: spec.kind }) },
@@ -209,10 +208,7 @@ export class GpuQueue {
     const jobs = await this.jobs();
     const probe = this.newJob(spec, this.now());
     if (!probe.views.length) return { ok: false, detail: 'Name at least one view (0 front, 45 three-quarter, 90 side).' };
-    const prior = probe.request_key && jobs.find((j) => j.request_key === probe.request_key && j.tenant_id === probe.tenant_id
-      && ['queued', 'paused', 'rendering', 'completed'].includes(j.state));
-    if (prior) return { ok: true, job: prior, duplicate: true };
-    const same = jobs.find((j) => !probe.request_key && j.tenant_id === probe.tenant_id && ['queued', 'paused', 'rendering'].includes(j.state)
+    const same = jobs.find((j) => ['queued', 'paused', 'rendering'].includes(j.state)
       && (j.kind || 'face_preview') === probe.kind && (j.requires?.gpu || probe.requires.gpu) === probe.requires.gpu && JSON.stringify(j.settings) === JSON.stringify(probe.settings) && j.views.join() === probe.views.join() && j.samples === probe.samples && j.res === probe.res);
     if (same) return { ok: true, job: same, duplicate: true };
     const live = jobs.filter((j) => j.state === 'queued' || j.state === 'paused').length;

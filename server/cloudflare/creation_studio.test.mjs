@@ -18,33 +18,6 @@ const GPU = 'Tesla T4, 550.54.15, 15360 MiB';
 const DEV = "DEVICE OPTIX ['Tesla T4'] 384x480";
 const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3, 4]);
 
-test('retrying Render after reopening reuses a completed version instead of submitting a duplicate', async () => {
-  const s = setup();
-  const p = (await s.call('/api/creations', 'POST', {base:'che'})).body.project;
-  const a = (await s.call(`/api/creations/${p.id}/generate`, 'POST', {})).body;
-  const jobs = await s.storage.get('gpu:jobs');
-  jobs.find(j => j.id === a.job.id).state = 'completed';
-  await s.storage.put('gpu:jobs', jobs);
-  const b = (await s.call(`/api/creations/${p.id}/generate`, 'POST', {})).body;
-  assert.equal(b.job.id, a.job.id);
-  assert.equal(b.duplicate, true);
-});
-
-test('undo followed by a divergent edit never reuses the abandoned version render', async () => {
-  const s = setup();
-  const p = (await s.call('/api/creations', 'POST', {base:'che'})).body.project;
-  const path = `/api/creations/${p.id}`;
-  await s.call(`${path}/edit`, 'POST', {text:'make the nose wider'});
-  const a = (await s.call(`${path}/generate`, 'POST', {})).body;
-  await s.call(`${path}/undo`, 'POST', {});
-  await s.call(`${path}/edit`, 'POST', {text:'make the nose narrower'});
-  const b = (await s.call(`${path}/generate`, 'POST', {})).body;
-  assert.notEqual(b.job.id, a.job.id);
-  assert.notEqual(b.job.request_key, a.job.request_key);
-  const retry = (await s.call(`${path}/generate`, 'POST', {})).body;
-  assert.equal(retry.job.id, b.job.id);
-});
-
 /** A minimal valid GLB v2: 12-byte header, one JSON chunk. */
 function glb(extra = 0) {
   const jsonText = JSON.stringify({ asset: { version: '2.0' }, pad: 'x'.repeat(extra) });

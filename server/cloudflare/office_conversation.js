@@ -18,10 +18,7 @@ const STORED_REQUEST_LIMIT = 3000;
 const AGENT_HISTORY_LIMIT = 30;
 
 const str = (value) => (value == null ? '' : String(value));
-// Accepts an ISO string or epoch milliseconds (the runtime stores retry_at as Date.now() + delay). 0, null and
-// empty values mean "not recorded", never 1970.
 const ts = (value) => {
-  if (typeof value === 'number') return Number.isFinite(value) && value > 0 ? value : null;
   const t = Date.parse(str(value));
   return Number.isFinite(t) ? t : null;
 };
@@ -93,32 +90,12 @@ function currentStep(task, s) {
   return s.reason;
 }
 
-// Work in progress outranks work waiting to start: queueAgentTask prepends (tasks are newest first) and runOneTask
-// starts the oldest queued task, so an older running task is the real current work and the oldest queued task is
-// the one that starts next. Same precedence as the desk headline (lib/agents/che_office_floor_screen.dart).
-const ACTIVE_RANK = { running: 0, reviewing: 0, review_pending: 1, needs_review: 1, queued: 2 };
-function activeTask(tasks) {
-  let best = null;
-  let bestRank = Infinity;
-  for (const t of tasks) {
-    const rank = ACTIVE_RANK[t?.status];
-    if (rank == null) continue;
-    // Among queued tasks the oldest (last in the list) wins; otherwise the newest.
-    if (rank < bestRank || (rank === 2 && bestRank === 2)) {
-      best = t;
-      bestRank = rank;
-    }
-  }
-  return best;
-}
-
 function agentLocalState(data, agent) {
   const tasks = (data.team_tasks || []).filter((t) => t && t.partner_id === agent.id);
-  const active = activeTask(tasks);
+  const active = tasks.find((t) => OPEN.has(t.status)) || null;
   const latest = active || tasks[0] || null;
   const s = latest ? officeTaskState(latest) : null;
-  // Oldest first: the order runOneTask starts them in.
-  const queued = tasks.filter((t) => t.status === 'queued' && t !== active).reverse();
+  const queued = tasks.filter((t) => t.status === 'queued' && t !== active);
   const verifiedTasks = tasks.filter((t) => t.verified_by_che === true && t.status === 'complete');
   const workLog = (Array.isArray(data.agent_work_log) ? data.agent_work_log : []).filter((e) => e && e.agent_id === agent.id);
   const verifiedAt = [

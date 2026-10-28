@@ -261,45 +261,12 @@ class CheHomeAssistantMessage extends StatelessWidget {
                   for (final s in liveSteps) StepLine(label: s.text, status: StepStatus.done),
                 ]),
               ),
-            if (text.isNotEmpty) _CheReplyBubble(child: CheRichText(text: text, streaming: streaming)),
+            if (text.isNotEmpty) CheRichText(text: text, streaming: streaming),
             if (!live && details.isNotEmpty) CheReplyDetails(children: details),
             ...extras,
           ]),
         ),
       ]),
-    );
-  }
-}
-
-/// CHE's reply text in a left-aligned bubble, matching the owner's bubbles on the right (owner, 2026-10-26).
-class _CheReplyBubble extends StatelessWidget {
-  const _CheReplyBubble({required this.child});
-  final Widget child;
-
-  @override
-  Widget build(BuildContext context) {
-    const shape = BorderRadius.only(
-      topLeft: Radius.circular(CheRadius.lg),
-      topRight: Radius.circular(CheRadius.lg),
-      bottomLeft: Radius.circular(6),
-      bottomRight: Radius.circular(CheRadius.lg),
-    );
-    if (cheHudActive) {
-      return CheGlass(
-        radius: 14,
-        glow: CheHud.ice,
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-        child: child,
-      );
-    }
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-      decoration: BoxDecoration(
-        borderRadius: shape,
-        color: CheColors.surface,
-        border: Border.all(color: CheColors.accentAlt.withValues(alpha: 0.35)),
-      ),
-      child: child,
     );
   }
 }
