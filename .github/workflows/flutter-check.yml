@@ -153,7 +153,10 @@ jobs:
           # Reference photo fit on synthetic fixtures (mediapipe Apache-2.0; the model is pinned by SHA-256 in photo_fit.py),
           # the person job's reference stage, GLB measurements and body macros.
           sudo apt-get -qq install -y libegl1 libgles2 > /dev/null   # mediapipe's native library links libEGL
-          python3 -m pip install --quiet mediapipe==1.1.1 pillow
+          # Same pins, retried: a PyPI index reply cut off mid-transfer made pip fail with JSONDecodeError (2026-10-28,
+          # run 40667522261). One retry after a pause; the tests still run on the installed packages, nothing is skipped.
+          python3 -m pip install --quiet --retries 5 --timeout 60 mediapipe==1.1.1 pillow \
+            || { sleep 20; python3 -m pip install --quiet --retries 5 --timeout 60 mediapipe==1.1.1 pillow; }
           python3 -m unittest discover -s tools -p 'test_photo_fit.py' -v
           python3 -m unittest discover -s tools -p 'test_photo_reference_job.py'
           python3 -m unittest discover -s tools -p 'test_worker_reference.py'
