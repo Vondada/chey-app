@@ -77,6 +77,13 @@ Then, on GitHub:
 
 ## 2. Current position
 
+**Claude, 2026-10-28 (owner: universal intelligence + neural efficiency engines; first slice only).**
+- Audit: capability_registry.js, capability_engine.js and capability_router.js exist on main and are reused. Exact arithmetic (arithmetic.js) is only on unmerged PR #737, not on main.
+- Built: `server/cloudflare/problem_controller.js` + 9 tests (branch `feat/universal-controller-slice`, commit c7c8dada, PR #742). One goal goes through classify, verified path, exact result with float cross-check, and a receipt. Goals with no verified path return needs_model with zero model calls.
+- Not done: wiring into worker.js/chat, the other four workload categories, efficiency monitor, memory/knowledge graph, sandboxed experiments. Nothing merged.
+- Open PRs at time of writing: #738 red (staging, Wikipedia 503), #739 red (staging), #740 green and mergeable (needs owner merge go), #741 pending, #742 new.
+- Next: owner decides on merges; then wire the controller behind a single route with a test that calls it from /api/chat.
+
 **Claude, 2026-10-28 (owner: real-time voice + problem solving + car Bluetooth; audit only, no code yet).**
 - Voice map (origin/main bc11dc3a, read-only, no timings in repo): reply is fully buffered before the first byte (worker.js ~14353-14394, no upstream stream); TTS is one non-streaming POST per clip (preferred_elevenlabs_voice.js:211-242); playback waits for the whole clip (bootstrap.sh:1480); end-of-turn wait 3.6 s (microphone.dart:586) or 1.6-3.6 s native (bootstrap.sh:1198-1212); barge-in only on native path, none on the Flutter speech_to_text path.
 - Bluetooth lead (code evidence, NOT device-tested): speech_to_text 7.5.0 on every listen start sets playAndRecord with mode default and on stop calls setActive(false, notifyOthersOnDeactivation) (SpeechToTextPlugin.swift:457-528). CHE's native session is playAndRecord/voiceChat (bootstrap.sh:802-829), re-activated on every clip. Each flip can renegotiate the car route. Likely cause of "car disconnects when she speaks"; fix not built.
