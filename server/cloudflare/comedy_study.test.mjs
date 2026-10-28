@@ -223,3 +223,24 @@ test('the live check passes against this code', async () => {
   assert.equal(report.ok, true, JSON.stringify(report.steps.filter((s) => !s.pass && !s.optional)));
   assert.deepEqual(report.coverage.map((x) => [x.show, x.episodes, x.covered]), [['Martin (TV series)', 3, 3], ['The Fresh Prince of Bel-Air', 2, 2]]);
 });
+
+test('a Wikipedia 503 that clears is retried, so the study does not stop on a blip', async () => {
+  const { findShow } = await import('./comedy_study.js');
+  let calls = 0;
+  const flaky = async (input) => {
+    calls += 1;
+    if (calls === 1) return new Response('busy', { status: 503, headers: { 'Retry-After': '1' } });
+    return fakeWiki(String(input?.url || input));
+  };
+  const found = await findShow('Martin', flaky);
+  assert.equal(calls, 2, 'the 503 was retried once');
+  assert.ok(found.title, 'the show was found after the retry');
+});
+
+test('a Wikipedia outage that lasts still stops the pass with its wait, after bounded retries', async () => {
+  const { findShow } = await import('./comedy_study.js');
+  let calls = 0;
+  const down = async () => { calls += 1; return new Response('busy', { status: 503, headers: { 'Retry-After': '120' } }); };
+  await assert.rejects(findShow('Martin', down), (error) => error.retryAfter === 120 && /Wikipedia returned 503/.test(error.message));
+  assert.equal(calls, 3, 'one try and two bounded retries, then it stops');
+});

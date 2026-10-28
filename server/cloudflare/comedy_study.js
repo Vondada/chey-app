@@ -56,9 +56,23 @@ export function studyIntent(message) {
 }
 
 // ─── Sources ───
+// Wikipedia answers 429, 502, 503 or 504 for a moment under load (staging probe, 2026-10-28: a burst of checks hit
+// three 503s in a row and the study stopped). A short, bounded retry rides out a blip; a sustained outage still stops
+// the pass, which keeps the wait Wikipedia asked for (Retry-After) and picks up at the same place.
+export const WIKI_RETRY_WAITS_MS = [1000, 3000];
+const WIKI_RETRY_STATUS = new Set([429, 502, 503, 504]);
+
+async function wikiFetch(url, fetcher) {
+  for (let attempt = 0; ; attempt += 1) {
+    const res = await fetcher(url, { headers: UA, signal: AbortSignal.timeout(15000) });
+    if (res.ok || !WIKI_RETRY_STATUS.has(res.status) || attempt >= WIKI_RETRY_WAITS_MS.length) return res;
+    await new Promise((resolve) => setTimeout(resolve, WIKI_RETRY_WAITS_MS[attempt]));
+  }
+}
+
 async function wiki(params, fetcher) {
   const url = `${WIKI}?${new URLSearchParams({ format: 'json', formatversion: '2', redirects: '1', origin: '*', ...params })}`;
-  const res = await fetcher(url, { headers: UA, signal: AbortSignal.timeout(15000) });
+  const res = await wikiFetch(url, fetcher);
   if (!res.ok) {
     // A rate limit says how long to wait; the next pass is scheduled after it instead of retrying into it.
     const error = new Error(`Wikipedia returned ${res.status}`);
