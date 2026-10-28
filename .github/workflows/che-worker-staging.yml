@@ -86,6 +86,9 @@ jobs:
           done
 
       - name: Worker tests
+        # Offline by design: tests must not reach the runner's network (test_offline_guard.mjs).
+        env:
+          NODE_OPTIONS: --import ./server/cloudflare/test_offline_guard.mjs
         run: |
           for f in server/cloudflare/*.js; do node --check "$f"; done
           # The same command as before. Its output is kept so that, when a test fails, the failing test names and
