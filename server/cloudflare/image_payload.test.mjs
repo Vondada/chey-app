@@ -129,3 +129,23 @@ test('the film pipeline\'s still model is FLUX, so its payload carries no seed (
   const r = imagePayload(STILL_MODEL, { prompt: 'a harbour at night, film still 7', steps: 4, seed: 99 });
   assert.deepEqual(Object.keys(r.payload).sort(), ['prompt', 'steps']);
 });
+
+// Provider routing: an explicit Modal request is refused, never answered by Workers AI or another engine.
+test('an explicit Modal image request is refused: no Workers AI call, nothing saved, the refusal says so', async () => {
+  const calls = [];
+  const storage = memoryStorage();
+  const out = await generateImage({ AI: fluxSchemaAi(calls) }, storage, { prompt: 'a bell tower in snow, provider check 1190', provider: 'modal' });
+  assert.equal(out.status, 503);
+  assert.equal(out.provider_requested, 'modal');
+  assert.equal(out.provider_used, null);
+  assert.match(out.detail, /Nothing was generated, and no other engine was used/);
+  assert.equal(calls.length, 0, 'Workers AI was not called for an explicit Modal request');
+  assert.equal((await listMedia(storage)).length, 0, 'nothing is saved');
+});
+
+test('without an explicit provider, the Workers AI engine is still used (the default is unchanged)', async () => {
+  const calls = [];
+  const out = await generateImage({ AI: fluxSchemaAi(calls) }, memoryStorage(), { prompt: 'a bell tower in snow, default check 1191' });
+  assert.equal(out.status, 200);
+  assert.equal(calls.length, 1);
+});

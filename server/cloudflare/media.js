@@ -366,6 +366,9 @@ export async function generateImage(env, storage, body, fetcher = fetch) {
   // owner's own Cloudflare account. Read from Security Intelligence's egress policy, the one internal-only switch.
   let internalOnly = false;
   try { internalOnly = (await storage.get('che:egress_policy'))?.internal_only === true; } catch (_) { internalOnly = false; }
+  // An explicit Modal request is never answered by another engine (owner, 2026-10-28). CHE has no Modal text-to-image
+  // path yet (the Modal app runs CHE's own renders and the health check), so the request is refused, not rerouted.
+  if (body.provider === 'modal') return { status: 503, detail: 'Modal GPU was requested, but CHE has no Modal text-to-image path yet. Nothing was generated, and no other engine was used.', provider_requested: 'modal', provider_used: null };
   const engines = [];
   if (env.CHE_IMAGE_GEN_URL && !internalOnly) engines.push({ id: 'Your image connector', run: async () => ({ url: await connectorImage(env, finalPrompt, fetcher) }) });
   if (!internalOnly && paidMediaEnabled(env) && openAiKey(env)) engines.push({ id: draft ? 'openai-gpt-image-fast' : 'openai-gpt-image-hd', paid: true, run: async () => openAiImage(env, finalPrompt, draft, fetcher) });
