@@ -51,6 +51,7 @@ Statuses: `open`, `in progress`, `waiting on owner`, `built, not verified`, `ver
 | Q-32 | Driving-safe voice replies | open | — | Short, spoken-first replies when the route is a car, with no screen steps. | Owner request 13 |
 | Q-33 | Car test script and route log | open | — | A script the owner runs in the car that records each route transition, interruption and failure to a file for review. Needs the owner's car. | Owner request 16 |
 | Q-34 | Native audio changes need an IPA | open | — | Audio-session and route changes are native (Swift). Decide with the owner whether they ship by Shorebird patch or a new IPA. | Owner decision |
+| Q-41 | Video-to-implementation workflow (owner, 2026-10-28) | built, not verified | `feat/video-review-workflow` | Process and Video Review record are in `docs/CHE_VIDEO_REVIEW.md`; the check is `tools/video_review_check.mjs`. Verified only when a real video or ChatGPT observation produces a task with receipts. Add each video's task as a row in that record, not here. | Owner request 2026-10-28; check tests 6/6 |
 
 ## Owner decisions needed
 - Office swipe (Q-02).
