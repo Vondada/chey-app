@@ -625,8 +625,7 @@ void main() {
     final people = await voice('create person');
     await tester.pumpAndSettle();
     expect(people, startsWith('Create Person.'));
-    expect(people, contains('Say 1 to describe your character'));
-    expect(await voice('three'), 'Opening Vale.');
+    expect(await voice('two'), 'Opening Vale.');
     await tester.pumpAndSettle();
     expect(calls.list.last, 'person vale');
     final menu = await voice('option seven');

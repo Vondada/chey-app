@@ -11,7 +11,6 @@ import 'package:http/http.dart' as http;
 import 'security/che_session_store.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import 'che_private_voice.dart';
 import 'che_speech_pipeline.dart';
 
 /// One /api/voice/edge reply. [clip] is null when the server spoke nothing.
@@ -187,7 +186,6 @@ String cheVoiceEngineLabel(String? engine) => switch (engine) {
       'openai-neural' => 'OpenAI voice',
       'neural' => 'Server neural voice',
       'iphone-neural' => 'iPhone neural voice',
-      'kokoro-on-device' => 'On-device voice (private)',
       'iphone-tts' => 'iPhone system voice',
       _ => engine,
     };
@@ -226,8 +224,6 @@ class CheEdgeVoice {
   }) async {
     final said = text.trim();
     if (said.isEmpty) return const CheEdgeResult();
-    // Private voice: ElevenLabs and Fish never receive the reply text.
-    if (!ChePrivateVoice.allowsServerVoice()) return const CheEdgeResult(failure: ChePrivateVoice.serverVoiceRefusal);
     final prefs = await SharedPreferences.getInstance();
     final base =
         prefs.getString('che_agent_base_url') ??
