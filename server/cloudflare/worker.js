@@ -167,6 +167,7 @@ import { APPROVED_SKILLS, handleInstalledSkill, installedSkillIntent, installedS
 import { lastSite, publishSite, saveSite, serveSite, siteBuildIntent, siteEditIntent, sitePreviewIntent, sitePublishIntent, siteUrl, speakSitePublished, speakSiteResult, wantsImmediatePublish, workingHtml, writeSite } from './site_builder.js';
 import { noteJobActivity } from './job_activity.js';
 import { CODING_CANCEL_SOURCE, cancelQueuedJob, codingCancelIntent, resolveCodingCancel, speakCancelResult, speakUnresolved } from './coding_cancel.js';
+import { chatPictureTurn } from './chat_image_provider.js';
 import { PENDING_OWNER_ACTION_KEY, deskOwnedMoney, forbiddenAction, prohibitionSpans, withoutProhibitions, PENDING_OWNER_ACTION_MS, gateOwnerAction, grantForKinds, isOwnerYes, peerActionReply, APPS_GRANTED_KEY, PENDING_APP_ACTION_KEY, PENDING_APP_ACTION_MS, gateAppAccess, classifyAppNeed, classifyExplicitAppOpen, classifyAppAccesses } from './owner_action_gate.js';
 import { placedOrdersLine, recordDeviceInstall } from './action_receipts.js';
 import { brainTruthSummary, brainTruthView, truthScreenAsk } from './brain_truth.js';
@@ -13563,9 +13564,9 @@ export class CheState extends DurableObject {
         // reply is built from those results. The model is not asked here, so it cannot describe a picture that was not made.
         if (requestedCapabilities.includes('image_generation') && !requestedCapabilities.includes('video_generation') && !body.attachment) {
           if (!ownerDevice) return ndjsonReply('Only the CHE owner can make pictures, sir. Nothing was made.', { source: CHAT_IMAGE_SOURCE, ok: false, model_calls: 0 });
-          const results = await makeChatImages(this.keyEnv || this.env, this.ctx.storage, { message, count: requestedImageCount(message) });
-          // media_url is what the iPhone chat shows inline (owner, 2026-10-22: "I'm supposed to see an actual picture").
-          return ndjsonReply(chatImageReply(results), { source: CHAT_IMAGE_SOURCE, ok: results.some((r) => r.ok), model_calls: 0, media: chatImageMedia(results), ...chatImageInline(results, new URL(request.url).origin) });
+          // The engine and the reply are chosen in chat_image_provider.js (the owner sees which engine made a picture).
+          const picture = await chatPictureTurn(this.keyEnv || this.env, this.ctx.storage, { message, origin: new URL(request.url).origin, makeImages: (count) => makeChatImages(this.keyEnv || this.env, this.ctx.storage, { message, count }) });
+          return ndjsonReply(picture.text, picture.meta);
         }
         let imageGeneration = requestedCapabilities.includes('image_generation') &&
           !requestedCapabilities.includes('video_generation')
