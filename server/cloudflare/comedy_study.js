@@ -62,11 +62,19 @@ export function studyIntent(message) {
 export const WIKI_RETRY_WAITS_MS = [1000, 3000];
 const WIKI_RETRY_STATUS = new Set([429, 502, 503, 504]);
 
+// Wikipedia's own Retry-After (seconds) is honoured when it is sent, but never waited on for more than 10 s here.
+const WIKI_RETRY_CAP_MS = 10000;
+function wikiRetryWaitMs(res, attempt) {
+  const seconds = Number(res.headers?.get?.('Retry-After'));
+  if (Number.isFinite(seconds) && seconds > 0) return Math.min(seconds * 1000, WIKI_RETRY_CAP_MS);
+  return WIKI_RETRY_WAITS_MS[attempt];
+}
+
 async function wikiFetch(url, fetcher) {
   for (let attempt = 0; ; attempt += 1) {
     const res = await fetcher(url, { headers: UA, signal: AbortSignal.timeout(15000) });
     if (res.ok || !WIKI_RETRY_STATUS.has(res.status) || attempt >= WIKI_RETRY_WAITS_MS.length) return res;
-    await new Promise((resolve) => setTimeout(resolve, WIKI_RETRY_WAITS_MS[attempt]));
+    await new Promise((resolve) => setTimeout(resolve, wikiRetryWaitMs(res, attempt)));
   }
 }
 

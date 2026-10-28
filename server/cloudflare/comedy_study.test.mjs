@@ -244,3 +244,22 @@ test('a Wikipedia outage that lasts still stops the pass with its wait, after bo
   await assert.rejects(findShow('Martin', down), (error) => error.retryAfter === 120 && /Wikipedia returned 503/.test(error.message));
   assert.equal(calls, 3, 'one try and two bounded retries, then it stops');
 });
+
+test('Wikipedia\'s own Retry-After is the wait before the retry, capped at 10 seconds', async () => {
+  const { findShow } = await import('./comedy_study.js');
+  const waits = [];
+  const realSetTimeout = globalThis.setTimeout;
+  globalThis.setTimeout = (fn, ms) => { waits.push(ms); return realSetTimeout(fn, 0); };
+  try {
+    let calls = 0;
+    const throttled = async (input) => {
+      calls += 1;
+      if (calls === 1) return new Response('busy', { status: 503, headers: { 'Retry-After': '2' } });
+      return fakeWiki(String(input?.url || input));
+    };
+    await findShow('Martin', throttled);
+    assert.deepEqual(waits, [2000], 'the server asked for 2 seconds, so 2 seconds are waited');
+  } finally {
+    globalThis.setTimeout = realSetTimeout;
+  }
+});
