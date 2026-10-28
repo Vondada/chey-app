@@ -437,26 +437,23 @@ class CheBestNowCard extends StatelessWidget {
         if (has) ...[
           Semantics(
         container: true,
-            button: true,
-            label: 'Best now: ${b['name']}, ${researchTfSpoken(_str(b['timeframe']))}, ${researchWords(b['session'], 'any session')}. $evidence.${b['confidence'] == null ? '' : ' Confidence ${b['confidence']}.'} Tap to open.',
+            label: 'Best now: ${b['name']}, ${researchTfSpoken(_str(b['timeframe']))}, ${researchWords(b['session'], 'any session')}. $evidence.${b['confidence'] == null ? '' : ' Confidence ${b['confidence']}.'}',
             excludeSemantics: true,
-            child: InkWell(
-              key: const Key('best_now_tap'),
-              borderRadius: BorderRadius.circular(8),
-              onTap: () => onOpen(_str(b['strategy_id'] ?? b['id']), _str(b['name'])),
-              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
               Text(_str(b['name']), style: const TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.w800)),
               const SizedBox(height: 2),
               Text(line, style: const TextStyle(color: Colors.white, fontSize: 16)),
               Text(evidence, style: const TextStyle(color: _gold, fontSize: 16, fontWeight: FontWeight.w700)),
               if (b['window'] != null) Text('Evidence window: ${b['window']}', style: const TextStyle(color: _dim, fontSize: 14)),
             ]),
-            ),
           ),
         ] else
-          const Text(
-            'No strategy.',
-            style: TextStyle(color: Colors.white, fontSize: 17, fontWeight: FontWeight.w600),
+          Text(
+            // The Worker's own reason, which usually starts with this same sentence.
+            _str(data['best_now_reason']).startsWith('No strategy')
+                ? _str(data['best_now_reason'])
+                : 'No strategy currently meets your threshold.${data['best_now_reason'] == null ? '' : ' ${data['best_now_reason']}'}',
+            style: const TextStyle(color: Colors.white, fontSize: 17, fontWeight: FontWeight.w600),
           ),
         const SizedBox(height: 8),
         Wrap(spacing: 8, children: [
@@ -984,50 +981,25 @@ class _CheTradingResearchDashboardState extends State<CheTradingResearchDashboar
     final done = j['completed'] is List ? (j['completed'] as List).length : _num(j['done'])?.toInt();
     final total = j['completed'] is List ? done! + (j['remaining'] is List ? (j['remaining'] as List).length : 0) : _num(j['total'])?.toInt();
     final errors = j['errors'] is List ? (j['errors'] as List).length : 0;
-    final name = _str(j['name'] ?? j['label'] ?? j['id']);
-    final label = '$name: ${_str(j['status'])}${done == null ? '' : ', $done of $total combinations'}${errors > 0 ? ', $errors errors' : ''}';
-    // Each combination is one strategy on one timeframe; the bar is the share finished, not a score.
-    final units = [
-      for (final u in (j['completed'] is List ? j['completed'] as List : const [])) _str(u),
-      for (final u in (j['cached'] is List ? j['cached'] as List : const [])) '${_str(u)} (reused)',
-    ];
+    final label = '${_str(j['name'] ?? j['label'] ?? j['id'])}: ${_str(j['status'])}${done == null ? '' : ', $done of $total combinations'}${errors > 0 ? ', $errors errors' : ''}';
     return Padding(
       padding: const EdgeInsets.only(top: 6),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-        Theme(
-          data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
-          child: ExpansionTile(
-            key: Key('job_${_str(j['id'])}'),
-            tilePadding: EdgeInsets.zero,
-            childrenPadding: const EdgeInsets.only(left: 4, bottom: 6),
-            iconColor: Colors.white,
-            collapsedIconColor: Colors.white70,
-            title: Text(label, style: const TextStyle(color: Colors.white, fontSize: 16, height: 1.3)),
-            subtitle: progress == null ? null : Padding(
-              padding: const EdgeInsets.only(top: 4),
-              child: LinearProgressIndicator(value: progress.clamp(0, 1), color: _gold, backgroundColor: CheColors.stroke),
-            ),
-            children: [
-              if (units.isEmpty)
-                const Align(alignment: Alignment.centerLeft, child: Text('No combinations finished yet.', style: TextStyle(color: _dim, fontSize: 15)))
-              else
-                for (final u in units)
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 4),
-                    child: Text(u.replaceAll('|', ' · '), style: const TextStyle(color: Colors.white, fontSize: 15, height: 1.3)),
-                  ),
-              if (errors > 0)
-                for (final e in (j['errors'] as List)) Text('Error: ${_str(e)}', style: const TextStyle(color: _gold, fontSize: 14)),
-            ],
+      child: Row(children: [
+        Expanded(
+          child: Semantics(
+        container: true,
+            label: label,
+            excludeSemantics: true,
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text(label, style: const TextStyle(color: Colors.white, fontSize: 14)),
+              if (progress != null) LinearProgressIndicator(value: progress.clamp(0, 1), color: _gold, backgroundColor: CheColors.stroke),
+            ]),
           ),
         ),
         if (running)
-          Align(
-            alignment: Alignment.centerRight,
-            child: TextButton(
-              onPressed: _busy ? null : () => unawaited(_act('cancel_job', {'id': j['id']}, 'Cancelled $name.')),
-              child: Text('Cancel', semanticsLabel: 'Cancel $name'),
-            ),
+          TextButton(
+            onPressed: _busy ? null : () => unawaited(_act('cancel_job', {'id': j['id']}, 'Cancelled ${_str(j['name'] ?? j['label'] ?? j['id'])}.')),
+            child: Text('Cancel', semanticsLabel: 'Cancel ${_str(j['name'] ?? j['label'] ?? j['id'])}'),
           ),
       ]),
     );

@@ -9,7 +9,6 @@
 // 5. failover never bills twice for one idempotency key; the worker error is visible.
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { readFileSync } from 'node:fs';
 import { GpuQueue, gpuWorkerRoute } from './gpu_queue.js';
 import { ensureCapacity } from './creation_orchestrator.js';
 import { budgetCommand, loadPool, modalCommand, poolView, savePool, selectProvider, POOL_PROVIDERS } from './compute_pool.js';
@@ -17,7 +16,6 @@ import { startOnboarding, storeSecret, verifyOnboarding } from './service_onboar
 import { cloudIntent } from './cloud_computer.js';
 import {
   MODAL_APP_VERSION, MODAL_RESERVE_MS, MODAL_USD_HR, callCostUsd, computeUsageLedger, creditStopUsd, modalIntent, modalStateOf, parseModalCredential,
-  modalProbe,
 } from './modal_gpu.js';
 
 const offline = async (input) => { throw new TypeError(`fetch failed (offline test: ${new URL(String(input?.url || input)).host})`); };
@@ -414,71 +412,4 @@ test('workflow-issued bearer credential: connect verifies the existing Worker se
   const s2 = setup(); const wrong = fakeModal({ bearer: 'b'.repeat(64) });
   const r2 = await startOnboarding({ ...onbCtx(s2, wrong.fetcher), env: { MODAL_TOKEN: cred }, keyEnv: () => ({ MODAL_TOKEN: cred }) }, 'modal');
   assert.notEqual(r2.state, 'verified');
-});
-
-// Owner report (2026-10-27): the deploy workflow wrote MODAL_TOKEN=bearer:<token>@https://vondada--che-gpu.us-east.modal.run
-// (Modal's regional URL; run 40238828084 verified it), but Check Connection said "Modal is not connected. The check gave
-// no detail." The Worker refused the regional host, and the reply had no top-level detail for the app to read.
-test('the regional endpoint the deploy wrote verifies, and a failed check returns a category, a request ID and a detail, never the token', async () => {
-  const TOKEN = 'c'.repeat(64);
-  const cred = `bearer:${TOKEN}@https://vondada--che-gpu.us-east.modal.run`;
-  assert.deepEqual(parseModalCredential(cred), { bearer: TOKEN, base: 'https://vondada--che-gpu.us-east.modal.run', host: 'vondada--che-gpu.us-east.modal.run' });
-  for (const bad of [`bearer:${TOKEN}@https://vondada--che-gpu.evil.example`, `bearer:${TOKEN}@https://vondada--che-gpu.us-east.modal.run.evil.example`,
-    `bearer:${TOKEN}@https://vondada--che-gpu.a.b.modal.run`, `bearer:${TOKEN}@https://vondada--other.us-east.modal.run`]) {
-    assert.equal(parseModalCredential(bad), null, bad);
-  }
-  const ok = fakeModal({ bearer: TOKEN });
-  const s = setup();
-  const r = await verifyOnboarding({ ...onbCtx(s, ok.fetcher), env: { MODAL_TOKEN: cred }, keyEnv: () => ({ MODAL_TOKEN: cred }) }, 'modal', '');
-  assert.equal(r.ok, true, JSON.stringify(r));
-  assert.equal(r.category, 'ok');
-  assert.match(r.detail, /accepted the access token/);
-  assert.match(r.request_id, /^chk_[a-f0-9]{12}$/);
-  assert.ok(ok.log.some((l) => l.host === 'vondada--che-gpu.us-east.modal.run' && l.path === '/health'), 'the probe went to the regional host');
-
-  const wrong = fakeModal({ bearer: 'd'.repeat(64) });
-  const r2 = await verifyOnboarding({ ...onbCtx(setup(), wrong.fetcher), env: { MODAL_TOKEN: cred }, keyEnv: () => ({ MODAL_TOKEN: cred }) }, 'modal', '');
-  assert.equal(r2.ok, false);
-  assert.equal(r2.category, 'unauthorized');
-  assert.match(r2.detail, /HTTP 401/);
-  assert.match(r2.request_id, /^chk_[a-f0-9]{12}$/);
-
-  const r3 = await verifyOnboarding({ ...onbCtx(setup(), ok.fetcher), env: { MODAL_TOKEN: `bearer:${TOKEN}@https://evil.example` }, keyEnv: () => ({ MODAL_TOKEN: `bearer:${TOKEN}@https://evil.example` }) }, 'modal', '');
-  assert.equal(r3.category, 'credential_unreadable');
-  assert.ok(r3.detail.length > 20);
-  assert.ok(!ok.log.some((l) => l.host === 'evil.example'), 'an unrecognised host is never called');
-
-  const r4 = await verifyOnboarding({ ...onbCtx(setup(), ok.fetcher), env: {}, keyEnv: () => ({}) }, 'modal', '');
-  assert.equal(r4.category, 'missing_credential');
-  assert.ok(r4.detail.length > 20);
-
-  const down = async () => { throw new TypeError('fetch failed'); };
-  const r5 = await verifyOnboarding({ ...onbCtx(setup(), down), env: { MODAL_TOKEN: cred }, keyEnv: () => ({ MODAL_TOKEN: cred }) }, 'modal', '');
-  assert.equal(r5.category, 'network');
-
-  for (const x of [r, r2, r3, r4, r5]) assert.ok(!JSON.stringify(x).includes(TOKEN), 'the token is never in a reply');
-});
-
-test('the deploy probe runs the authenticated Modal health check and returns time, check ID, HTTP status and category, never a secret', async () => {
-  const TOKEN = 'e'.repeat(64);
-  const env = { MODAL_TOKEN: `bearer:${TOKEN}@https://vondada--che-gpu.us-east.modal.run` };
-  const storage = { get: async () => undefined };
-  const fm = fakeModal({ bearer: TOKEN });
-  const ok = await modalProbe(env, storage, fm.fetcher, Date.parse('2026-10-27T05:00:00Z'));
-  assert.deepEqual({ ok: ok.ok, category: ok.category, http_status: ok.http_status, credential: ok.credential, host: ok.host, version: ok.version, gpu: ok.gpu, at: ok.at },
-    { ok: true, category: 'ok', http_status: 200, credential: 'readable', host: 'vondada--che-gpu.us-east.modal.run', version: MODAL_APP_VERSION, gpu: 'T4', at: '2026-10-27T05:00:00.000Z' });
-  assert.match(ok.request_id, /^chk_[a-f0-9]{12}$/);
-  assert.ok(fm.log.some((l) => l.host === 'vondada--che-gpu.us-east.modal.run' && l.path === '/health'));
-  const bad = await modalProbe(env, storage, fakeModal({ bearer: 'h'.repeat(64) }).fetcher);
-  assert.deepEqual([bad.ok, bad.category, bad.http_status], [false, 'unauthorized', 401]);
-  const none = await modalProbe({}, storage, fm.fetcher);
-  assert.deepEqual([none.category, none.credential, none.http_status], ['missing_credential', 'absent', null]);
-  const unreadable = await modalProbe({ MODAL_TOKEN: `bearer:${TOKEN}@https://evil.example` }, storage, fm.fetcher);
-  assert.deepEqual([unreadable.category, unreadable.credential], ['credential_unreadable', 'unreadable']);
-  for (const x of [ok, bad, none, unreadable]) { assert.ok(!JSON.stringify(x).includes(TOKEN)); assert.equal(x.detail, undefined); }
-});
-
-test('the Worker serves /api/probe/modal only behind the per-deploy probe token, like the other deploy probes', () => {
-  const src = readFileSync(new URL('./worker.js', import.meta.url), 'utf8');
-  assert.match(src, /path === '\/api\/probe\/modal' && request\.method === 'POST'\) return voiceProbeAuthorized\(request, env\) \? json\(await env\.CHE_STATE\.getByName\('owner'\)\.modalProbe\(\)\) : json\(\{ detail: 'Not found\.' \}, 404\)/);
 });

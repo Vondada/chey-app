@@ -64,7 +64,7 @@ jobs:
     # changes. Do not add a commit-message gate here: follow-up fixes can merge
     # without a marker and must still deploy the exact green main commit.
     runs-on: ubuntu-latest
-    timeout-minutes: ${{ inputs.character_accept && 100 || (inputs.creation_check || contains(github.event.head_commit.message, '[creation-check]')) && 75 || (inputs.video_check || inputs.rea_check) && 30 || 15 }}
+    timeout-minutes: ${{ inputs.character_accept && 100 || inputs.creation_check && 75 || (inputs.video_check || inputs.rea_check) && 30 || 15 }}
     env:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: c49b395e8f1138b5fae36ab88222542c
@@ -528,7 +528,7 @@ jobs:
           JS
 
       - name: Creation Engine end to end on the live Worker (Generate, free cloud worker, Blender, GLB)
-        if: (inputs.creation_check || contains(github.event.head_commit.message, '[creation-check]'))
+        if: inputs.creation_check
         timeout-minutes: 55
         run: |
           mkdir -p che-creation-check
@@ -546,8 +546,6 @@ jobs:
           console.log(JSON.stringify(start));
           if (!start.ok) fail('Creation Engine check did not start', start.detail || 'no answer');
           if (!start.engine?.automatic) fail('Creation Engine cannot start a cloud worker', start.engine?.waiting_reason || 'automatic cloud workers are not usable');
-          // Leave all phone/browser clients absent while the server worker starts.
-          await new Promise((r) => setTimeout(r, 60000));
           const t0 = Date.now(); let last = ''; let job = null; let status = null;
           while (Date.now() - t0 < 50 * 60_000) {
             status = await (await fetch(`${base}/status?job=${start.job_id}`, { headers, signal: AbortSignal.timeout(30000) })).json().catch(() => null);
@@ -578,7 +576,7 @@ jobs:
           JS
 
       - name: Open the generated GLB in CHE's Live Studio viewport
-        if: (inputs.creation_check || contains(github.event.head_commit.message, '[creation-check]'))
+        if: inputs.creation_check
         run: |
           npm install --no-save --no-audit --no-fund playwright@1.56.1 > /dev/null
           npx playwright install --with-deps chromium > /dev/null
@@ -589,7 +587,7 @@ jobs:
           if [ "$ok" = 1 ]; then echo "::notice title=Creation Engine viewport::$msg"; else echo "::error title=Creation Engine viewport::$msg"; exit 1; fi
 
       - name: Keep the Creation Engine check files
-        if: always() && (inputs.creation_check || contains(github.event.head_commit.message, '[creation-check]'))
+        if: always() && inputs.creation_check
         uses: actions/upload-artifact@v4
         with:
           name: che-creation-check
@@ -666,29 +664,6 @@ jobs:
             console.log(`::error title=Command Center check failed::${(report.steps || []).filter((s) => !s.pass && !s.optional).map((s) => s.name).join('; ') || (report.readiness && report.readiness.error) || report.error || 'see log'}`);
             process.exit(1);
           }
-          JS
-
-      - name: Check CHE's Modal GPU connection through the live Worker (authenticated /health, no GPU)
-        run: |
-          node --input-type=module <<'JS'
-          // The same authenticated GET /health as Flagstaff's Check Connection, run by the live Worker with its own
-          // MODAL_TOKEN. One short CPU call on Modal; no GPU starts. The reply holds a category, a check ID, the host,
-          // the app version and the GPU name, never a token. Informational: Modal is optional, so this never fails
-          // the deploy; a failure is a warning with its category and check ID.
-          import { appendFileSync } from 'node:fs';
-          const summary = (line) => appendFileSync(process.env.GITHUB_STEP_SUMMARY, `${line}\n`);
-          let r = null; let err = '';
-          for (let attempt = 0; attempt < 3 && !r; attempt++) {
-            try {
-              const response = await fetch(`${process.env.CHE_LIVE_BASE}/api/probe/modal`, { method: 'POST', headers: { Authorization: `Bearer ${process.env.CHE_VOICE_PROBE_TOKEN}` }, signal: AbortSignal.timeout(60000) });
-              if (response.ok) r = await response.json(); else err = `HTTP ${response.status}`;
-            } catch (error) { err = error?.name === 'TimeoutError' ? 'no answer within 60 s' : 'network error'; }
-            if (!r) await new Promise((resolve) => setTimeout(resolve, 4000));
-          }
-          if (!r) { console.log(`::warning title=Modal check did not run::The live Worker did not answer (${err}).`); process.exit(0); }
-          const line = `at ${r.at}, check ID ${r.request_id}, HTTP ${r.http_status ?? '-'}, category ${r.category}, credential ${r.credential || '-'}, host ${r.host || '-'}${r.ok ? `, app ${r.version}, GPU ${r.gpu}` : ''}${r.upstream_id ? `, Modal call ${r.upstream_id}` : ''}`;
-          console.log(r.ok ? `::notice title=Modal connected::${line}` : `::warning title=Modal not connected::${line}`);
-          summary(`**Modal (live Worker, authenticated /health):** ${r.ok ? 'connected' : 'NOT connected'}: ${line}.`);
           JS
 
       - name: Check CHE's Knowledge Atlas through the live Worker

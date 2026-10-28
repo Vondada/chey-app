@@ -1,23 +1,19 @@
 import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
-import 'package:url_launcher/url_launcher.dart';
 import 'package:http/http.dart' as http;
 import '../browser/che_browser.dart';
 import '../che_gpu_jobs.dart' show cheGpuWorkerOnline;
 import 'che_gpu_connect.dart';
-import 'che_live_studio.dart' show cheColabNotebookUrl;
 
 /// One retained session in CHE's existing browser. This never starts or keeps a Colab runtime alive.
 class CheGpuBrowser extends StatefulWidget {
-  const CheGpuBrowser({super.key, required this.baseUrl, required this.headers, this.onRead, this.client, this.browser, this.connect, this.authenticate});
+  const CheGpuBrowser({super.key, required this.baseUrl, required this.headers, this.onRead, this.client, this.browser, this.connect});
   final String baseUrl;
   final Map<String, String> headers;
   final void Function(String)? onRead;
   final http.Client? client;
   final Widget? browser;
-  final Future<bool> Function(Uri)? authenticate;
 
   /// The Connect GPU flow; defaults to the app's one instance, which outlives this screen.
   final CheGpuConnect? connect;
@@ -53,17 +49,11 @@ CheGpuUiCommand? cheGpuUiCommand(String words) {
   return null;
 }
 
-class _CheGpuBrowserState extends State<CheGpuBrowser> with WidgetsBindingObserver {
+class _CheGpuBrowserState extends State<CheGpuBrowser> {
   // The owner's saved Colab account (or the default), read once. Both the first page and Reopen use it (review of #536).
-  Future<String> get _account => CheGpuAccount.read();
+  late final Future<String> _account = CheGpuAccount.read();
   late final http.Client _http = widget.client ?? http.Client();
-  String _status = 'Setup Required: checking GPU heartbeat.';
-  String _officeAccount = '';
-  String _officeStatus = 'Checking CHE Office account.';
-  bool _officeConnected = false;
-  bool _connecting = false;
-  bool _allowClose = false;
-  String? _loadedAccount;
+  String _status = 'GPU status not checked.';
   // The GPU details above the browser. Hidden, the Colab page fills the screen (owner, 2026-10-25).
   bool _statusVisible = true;
   Timer? _timer;
@@ -72,7 +62,6 @@ class _CheGpuBrowserState extends State<CheGpuBrowser> with WidgetsBindingObserv
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addObserver(this);
     CheGpuBrowser.openCount++;
     CheGpuBrowser.voiceHandler = _voice;
     if (_connect.worker == null || widget.client != null) {
@@ -83,12 +72,7 @@ class _CheGpuBrowserState extends State<CheGpuBrowser> with WidgetsBindingObserv
     _timer = Timer.periodic(const Duration(seconds: 15), (_) => unawaited(_check()));
   }
   @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) unawaited(_check());
-  }
-  @override
   void dispose() {
-    WidgetsBinding.instance.removeObserver(this);
     _timer?.cancel();
     CheGpuBrowser.openCount--;
     if (CheGpuBrowser.voiceHandler == _voice) CheGpuBrowser.voiceHandler = null;
@@ -96,93 +80,23 @@ class _CheGpuBrowserState extends State<CheGpuBrowser> with WidgetsBindingObserv
     if (widget.client == null) _http.close();
     super.dispose();
   }
-  Future<Map> _get(String path) async {
-    final r = await _http.get(Uri.parse('${widget.baseUrl}$path'), headers: widget.headers)
-        .timeout(const Duration(seconds: 12));
-    if (r.statusCode != 200) throw StateError('status ${r.statusCode}');
-    final d = jsonDecode(r.body);
-    if (d is! Map) throw StateError('invalid status');
-    return d;
-  }
   Future<String> _check() async {
     if (_checking) return _status;
     _checking = true;
-    // A failed check never retains a previously Connected label.
-    var message = 'Disconnected: GPU status unavailable. Try GPU Status again.';
+    var message = 'GPU status unavailable. Try GPU Status again.';
     try {
-      final d = await _get('/api/gpu');
-      if (d['workers'] is! List) throw StateError('invalid workers');
+      final r = await _http.get(Uri.parse('${widget.baseUrl}/api/gpu'), headers: widget.headers)
+          .timeout(const Duration(seconds: 12));
+      if (r.statusCode != 200) throw StateError('status ${r.statusCode}');
+      final d = jsonDecode(r.body);
+      if (d is! Map || d['workers'] is! List) throw StateError('invalid status');
       final gpu = (d['workers'] as List).whereType<Map>().where(cheGpuWorkerOnline).toList();
-      final jobs = (d['jobs'] as List? ?? []).whereType<Map>();
-      if (gpu.isEmpty) {
-        message = '${d['worker_paired'] == false ? 'Setup Required' : 'Disconnected'}: No GPU heartbeat online. Saved jobs remain in CHE; free CPU workers handle supported jobs.';
-        if (jobs.any((j) => ['queued', 'paused'].contains(j['state']) && j['cloud']?['state'] == 'dispatching')) {
-          message += ' Reconnecting compute: the backend requested a cloud CPU worker; GPU remains disconnected.';
-        }
-      } else {
-        final rendering = jobs.any((j) => j['state'] == 'rendering' && gpu.any((w) => w['job_id'] == j['id']));
-        message = '${rendering ? 'Rendering' : 'Connected'}: GPU heartbeat online: ${gpu.first['gpu'] ?? 'GPU'}. Last seen: ${gpu.first['last_seen'] ?? 'unknown'}.';
-      }
+      message = gpu.isEmpty ? 'No GPU heartbeat online. Saved jobs remain in CHE; free CPU workers handle supported jobs.'
+          : 'GPU heartbeat online: ${gpu.first['gpu'] ?? 'GPU'}. Last seen: ${gpu.first['last_seen'] ?? 'unknown'}.';
     } catch (_) {}
-    try {
-      final data = await _get('/api/google/status');
-      final office = data['services']?['office'];
-      if (office is Map) {
-        _officeAccount = office['account']?.toString() ?? '';
-        _officeConnected = office['connected'] == true;
-        _officeStatus = _officeConnected ? 'CHE Office: $_officeAccount'
-            : '${_officeAccount.isEmpty ? 'Setup Required' : 'Reauthentication required'}: connect your CHE Office Google account.';
-      } else {
-        _officeConnected = false;
-        _officeStatus = 'Setup Required: CHE Office account is not connected.';
-      }
-    } catch (_) {
-      _officeConnected = false;
-      _officeStatus = 'CHE Office status unavailable. Check again before connecting.';
-    }
-    if (mounted && _officeConnected && _loadedAccount != _officeAccount && widget.browser == null) {
-      final open = CheBrowserActions.openUrl;
-      if (open != null) {
-        _loadedAccount = _officeAccount;
-        await CheGpuAccount.save(_officeAccount);
-        try { await open(_notebookUrl); } catch (_) { _loadedAccount = null; }
-      }
-    }
     _checking = false;
     if (mounted) setState(() => _status = message);
-    return '$_officeStatus $message';
-  }
-  String get _notebookUrl {
-    if (!_officeConnected || _officeAccount.isEmpty) return cheColabNotebookUrl;
-    final uri = Uri.parse(cheColabNotebookUrl);
-    return uri.replace(queryParameters: {...uri.queryParameters, 'authuser': _officeAccount}).toString();
-  }
-  Future<String> _connectOffice() async {
-    if (_connecting) return 'CHE Office sign-in is already opening.';
-    setState(() => _connecting = true);
-    try {
-      final r = await _http.post(Uri.parse('${widget.baseUrl}/api/google/connect/start'),
-        headers: {...widget.headers, 'Content-Type': 'application/json'}, body: jsonEncode({'service': 'office'}))
-          .timeout(const Duration(seconds: 15));
-      final data = jsonDecode(r.body);
-      final uri = Uri.tryParse(data['url']?.toString() ?? '');
-      if (r.statusCode != 200 || uri == null || uri.scheme != 'https' || uri.host != 'accounts.google.com' || uri.userInfo.isNotEmpty) {
-        return data['detail']?.toString() ?? 'CHE Office sign-in could not start. Check Google configuration.';
-      }
-      final opened = await (widget.authenticate?.call(uri) ?? launchUrl(uri, mode: LaunchMode.inAppBrowserView));
-      return opened ? 'Choose your CHE Office account in Google. Return to CHE after approval; your verified selection is saved securely.'
-          : 'Google sign-in could not open. Try Connect CHE Office again.';
-    } catch (_) {
-      return 'CHE Office sign-in is unavailable. Try again.';
-    } finally {
-      if (mounted) setState(() => _connecting = false);
-    }
-  }
-  Future<void> _close() async {
-    FocusManager.instance.primaryFocus?.unfocus();
-    setState(() => _allowClose = true);
-    await WidgetsBinding.instance.endOfFrame;
-    if (mounted) Navigator.of(context).pop();
+    return message;
   }
   /// Runs a screen command and reports only what actually happened.
   Future<String?> _screen(CheGpuUiCommand command) async {
@@ -194,7 +108,7 @@ class _CheGpuBrowserState extends State<CheGpuBrowser> with WidgetsBindingObserv
         final open = CheBrowserActions.openUrl;
         if (open == null) return 'The Colab page is not ready yet. Try again in a moment.';
         try {
-          await open(cheGpuNotebookUrl(_officeConnected ? _officeAccount : await _account));
+          await open(cheGpuNotebookUrl(await _account));
         } catch (_) {
           return 'I could not open Colab. Try again in a moment.';
         }
@@ -212,7 +126,7 @@ class _CheGpuBrowserState extends State<CheGpuBrowser> with WidgetsBindingObserv
         return _statusVisible ? 'Showing the GPU status above the browser.' : 'The status did not show.';
       case CheGpuUiCommand.close:
         if (!Navigator.of(context).canPop()) return 'There is no browser screen to close.';
-        await _close();
+        Navigator.of(context).pop();
         return 'Closed the GPU browser.';
       case CheGpuUiCommand.back:
       case CheGpuUiCommand.forward:
@@ -225,8 +139,6 @@ class _CheGpuBrowserState extends State<CheGpuBrowser> with WidgetsBindingObserv
   Future<String?> _voice(String words) async {
     if (!(ModalRoute.of(context)?.isCurrent ?? true)) return null;
     final t = words.trim().toLowerCase().replaceAll(RegExp(r'[.!?]+$'), '');
-    if (RegExp(r'^(?:connect|switch)(?: (?:che )?office(?: account)?)?$').hasMatch(t)) return _connectOffice();
-    if (t == 'read status') return _check();
     // Screen commands come first, so "open the browser" never reaches the GPU connection flow.
     final ui = cheGpuUiCommand(words);
     if (ui != null) return _screen(ui);
@@ -243,37 +155,29 @@ class _CheGpuBrowserState extends State<CheGpuBrowser> with WidgetsBindingObserv
     if (RegExp(r'^(?:reconnect(?: (?:the )?gpu)?|open(?: (?:the )?(?:notebook|colab))?)$').hasMatch(t)) {
       final open = CheBrowserActions.openUrl;
       if (open == null) return 'The notebook browser is not ready. Try Open again.';
-      await open(cheGpuNotebookUrl(_officeConnected ? _officeAccount : await _account));
+      await open(cheGpuNotebookUrl(await _account));
       return 'Notebook refreshed. Choose Runtime, Reconnect or Run all in Colab. CHE cannot start the GPU herself. ${await _check()}';
     }
     return null;
   }
   Future<void> _action(String command) async {
-    unawaited(HapticFeedback.selectionClick());
     final result = command == 'refresh'
         ? await CheBrowserActions.voice?.call('refresh')
         : await _voice(command);
     if (result != null && mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(result)));
+      setState(() => _status = result);
       widget.onRead?.call(result);
     }
   }
   @override
-  Widget build(BuildContext context) => PopScope(
-    canPop: _allowClose,
-    onPopInvokedWithResult: (didPop, result) { if (!didPop) unawaited(_action('back')); },
-    child: Scaffold(
-    appBar: AppBar(title: const Text('GPU Browser'),
-      leading: IconButton(tooltip: 'Back in browser history', icon: const Icon(Icons.arrow_back), onPressed: () => unawaited(_action('back'))),
-      actions: [TextButton(onPressed: () => unawaited(_action('close the browser')), child: const Text('Close'))]),
+  Widget build(BuildContext context) => Scaffold(
+    appBar: AppBar(title: const Text('GPU Browser')),
     body: Column(children: [
-      // The status takes at most 25% of the screen and scrolls; the Colab page keeps the rest (owner, 2026-10-25:
+      // The status takes at most 30% of the screen and scrolls; the Colab page keeps the rest (owner, 2026-10-25:
       // the panel left no room for the web page, so Open and Refresh only reloaded a strip). Hidden, it takes no room.
       if (_statusVisible) ConstrainedBox(
-        constraints: BoxConstraints(maxHeight: MediaQuery.sizeOf(context).height * 0.25),
+        constraints: BoxConstraints(maxHeight: MediaQuery.sizeOf(context).height * 0.3),
         child: SingleChildScrollView(padding: const EdgeInsets.all(8), child: Column(children: [
-          Text(_officeStatus),
-          TextButton(onPressed: _connecting ? null : () => unawaited(_action('connect office')), child: Text(_officeConnected ? 'Switch CHE Office account' : 'Connect CHE Office')),
           CheGpuConnectPanel(controller: _connect, onRead: widget.onRead),
           Text(_status),
           const Text('Google decides whether it allows signing in here; if it refuses, CHE opens the notebook in Safari. '
@@ -282,17 +186,16 @@ class _CheGpuBrowserState extends State<CheGpuBrowser> with WidgetsBindingObserv
       ),
       // The controls stay on screen whatever the status above is (they were inside the scroll area before).
       Padding(padding: const EdgeInsets.symmetric(horizontal: 8), child: Wrap(spacing: 8, children: [
-        for (final command in const ['back', 'forward', 'open', 'refresh', 'reconnect', 'gpu status', 'read status'])
+        for (final command in const ['open', 'refresh', 'reconnect', 'gpu status'])
           TextButton(onPressed: () => unawaited(_action(command)),
-              child: Text(const {'back': 'Back', 'forward': 'Forward', 'read status': 'Read status', 'open': 'Open', 'refresh': 'Refresh', 'reconnect': 'Reconnect', 'gpu status': 'GPU Status'}[command]!)),
+              child: Text(const {'open': 'Open', 'refresh': 'Refresh', 'reconnect': 'Reconnect', 'gpu status': 'GPU Status'}[command]!)),
       ])),
       Expanded(child: widget.browser ?? FutureBuilder<String>(
         future: _account,
         builder: (context, saved) => saved.hasData
-            ? CheBrowserScreen(initialUrl: cheGpuNotebookUrl(saved.data!), title: 'Colab', sessionKey: cheGpuSessionKey, historyOnlyBack: true, onClose: _close, appMode: false, googleSignInInPage: true)
+            ? CheBrowserScreen(initialUrl: cheGpuNotebookUrl(saved.data!), title: 'Colab', sessionKey: cheGpuSessionKey, appMode: false, googleSignInInPage: true)
             : const Center(child: CircularProgressIndicator()),
       )),
     ]),
-  ),
   );
 }

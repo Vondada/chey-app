@@ -155,7 +155,7 @@ export async function creationProbeRoute(ctx, path, request) {
     } else if ((({ p }) => p?.versions?.[p.current]?.reference)(await studio.find(id))) {
       await studio.removeReference(id);
     }
-    const out = await studio.generate(id, { fresh: true });
+    const out = await studio.generate(id);
     if (!out.ok) return json({ ok: false, stage: 'generate', project_id: id, detail: out.detail }, 409);
     rec.project_id = id;
     rec.jobs = [...rec.jobs.filter((j) => j !== out.job.id), out.job.id].slice(-MAX_PROBE_JOBS);

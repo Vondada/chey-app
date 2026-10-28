@@ -399,7 +399,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(w.posts.last, '/api/creations/cr_1/generate');
     expect(find.text('Queued. It builds when your Creation Engine is online.'), findsOneWidget);
-    expect(find.text('Rendering'), findsOneWidget);
+    expect(find.text('Model in progress'), findsOneWidget);
     await tester.pumpWidget(const SizedBox());
   });
 

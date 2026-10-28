@@ -58,7 +58,7 @@ async function checkFile(env, storage, item, fetcher) {
 }
 
 /** The library: every saved video record, its file checked (at most MAX_CHECKS GitHub reads per answer). */
-export async function mediaLibraryReport(env, storage, items, { fetcher = fetch, url = '', message = '' } = {}) {
+export async function mediaLibraryReport(env, storage, items, { fetcher = fetch } = {}) {
   const videos = (items || []).filter(isVideoRecord).sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || '')));
   let checks = 0;
   const rows = [];
@@ -70,13 +70,10 @@ export async function mediaLibraryReport(env, storage, items, { fetcher = fetch,
       if (canCheckGithub) checks += 1;
       file = await checkFile(env, storage, item, fetcher);
     }
-    rows.push({ id: item.id, title: String(item.title || 'Untitled video').slice(0, 80), created_at: item.created_at || '', thumbnail_media_id: item.thumbnail_media_id || null, ...file });
+    rows.push({ id: item.id, title: String(item.title || 'Untitled video').slice(0, 80), created_at: item.created_at || '', ...file });
   }
   const count = (status) => rows.filter((row) => row.status === status).length;
-  const report = { total: rows.length, playable: count('playable'), unverified: count('unverified'), missing: count('missing'), videos: rows };
-  // The chat fields for the playable videos (each with its thumbnail and a tap that opens it), for the chat reply.
-  report.chat = mediaLibraryPayload(report, { origin: url ? new URL(url).origin : '', items, latest: wantsLatestVideo(message) });
-  return report;
+  return { total: rows.length, playable: count('playable'), unverified: count('unverified'), missing: count('missing'), videos: rows };
 }
 
 // "Save this picture", "keep this file" with a file attached: CHE keeps it in her media store (media.js saveOwnerFile).
@@ -141,18 +138,8 @@ export function mediaOpenIntent(message) {
   return { id, latest: !id && latest, room: true };
 }
 
-/** "my latest picture" is a picture, never the newest video; "my latest video" is never a picture. */
-export function mediaKindFor(message) {
-  const text = cleanText(message);
-  return { picture: PICTURE_WORD.test(text) && !VIDEO_WORD.test(text), video: VIDEO_WORD.test(text) && !PICTURE_WORD.test(text) };
-}
-
-function openable(row, { picture = false, video = false } = {}) {
-  if (!row) return false;
-  const isVideo = row.kind === 'video';
-  if (video && !isVideo) return false;
-  if (picture && isVideo) return false;
-  return isVideo || /^image\//.test(String(row.mime_type || ''));
+function openable(row) {
+  return Boolean(row) && (row.kind === 'video' || /^image\//.test(String(row.mime_type || '')));
 }
 
 /** The saved picture or video with this ID, from the stored records, or null. An owner upload that is a picture opens too. */
@@ -162,58 +149,22 @@ export function mediaOpenRow(items, id) {
 }
 
 /** The newest saved picture or video, for "open my latest picture in my Creation Room". */
-export function mediaLatestOpenRow(items, message = '') {
-  const kind = mediaKindFor(message);
+export function mediaLatestOpenRow(items) {
   return [...(items || [])]
     .sort((a, b) => String(b?.created_at || '').localeCompare(String(a?.created_at || '')))
-    .find((row) => openable(row, kind)) || null;
+    .find(openable) || null;
 }
 
-/**
- * The fields the chat shows and taps for one saved picture or video. The phone builds its links from these IDs and
- * this Worker's own media route only; a URL stored in a record is never passed on. A video's thumbnail is included
- * only when its record is a stored picture (the phone's image load reports whether it actually shows).
- */
-export function mediaChatFields(row, { origin = '', items = [] } = {}) {
-  const video = row.kind === 'video';
-  const thumb = video && row.thumbnail_media_id
-    ? (items || []).find((item) => item?.id === row.thumbnail_media_id && /^image\//.test(String(item.mime_type || '')))
-    : null;
-  return {
-    media_id: row.id,
-    media_type: video ? 'video' : 'image',
-    media_url: `${origin}/api/media/${row.id}/${video ? 'video' : 'image'}`,
-    media_title: String(row.title || (video ? 'Video' : 'Picture')).slice(0, 80),
-    target_room: 'creation',
-    ...(thumb ? { thumbnail_media_id: thumb.id, thumbnail_url: `${origin}/api/media/${thumb.id}/image` } : {}),
-  };
-}
-
-/** The chat fields of a library answer: `media` (its playable videos) and, for a latest-only answer, the top-level fields. */
-export function mediaLibraryPayload(report, { origin = '', items = [], latest = false } = {}) {
-  const media = mediaLibraryMedia(report, { origin, items, latest });
-  const top = media[0];
-  return {
-    ...(media.length ? { media } : {}),
-    ...(top ? { media_id: top.media_id, media_type: top.media_type, media_url: top.media_url, media_title: top.media_title, target_room: top.target_room, ...(top.thumbnail_url ? { thumbnail_media_id: top.thumbnail_media_id, thumbnail_url: top.thumbnail_url } : {}) } : {}),
-  };
-}
-
-/** The playable videos of a library answer as chat media (newest first). A latest-only answer sends the newest one only, and only when it is playable. */
-export function mediaLibraryMedia(report, { origin = '', items = [], latest = false, limit = 8 } = {}) {
-  const videos = report?.videos || [];
-  if (latest && videos[0]?.status !== 'playable') return [];
-  return videos.filter((row) => row.status === 'playable').slice(0, latest ? 1 : limit)
-    .map((row) => mediaChatFields({ id: row.id, kind: 'video', title: row.title, thumbnail_media_id: row.thumbnail_media_id }, { origin, items }));
-}
-export function mediaOpenReply(row, { origin = '', room = true, items = [] } = {}) {
+export function mediaOpenReply(row, { origin = '', room = true } = {}) {
   const kind = row.kind === 'video' ? 'video' : 'image';
   const title = String(row.title || (kind === 'video' ? 'Video' : 'Picture')).slice(0, 80);
   // Retrieval only: the Worker read the bytes back. Whether it is on screen is the phone's image-load result.
   return {
     text: room ? `Opening "${title}" (ID ${row.id}) in your Creation Room, sir.`
       : `I retrieved "${title}" (ID ${row.id}), sir: its stored bytes were read back and verified. Showing it here now.`,
-    chat: mediaChatFields(row, { origin, items }),
+    media_id: row.id,
+    media_type: kind,
+    media_url: `${origin}/api/media/${row.id}/${kind === 'video' ? 'video' : 'image'}`,
   };
 }
 
