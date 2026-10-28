@@ -7,11 +7,41 @@ import 'dart:convert';
 
 import 'package:http/http.dart' as http;
 
+final _callIdPattern = RegExp(r'^fc-[A-Za-z0-9]{8,64}$');
+
 /// The job id from a chat reply that started a Modal picture, or '' when it started none.
 String cheModalPictureCallId(Map data) {
   if (data['provider_used'] != 'modal' || data['ok'] != true) return '';
   final id = '${data['call_id'] ?? ''}'.trim();
-  return RegExp(r'^fc-[A-Za-z0-9]{8,64}$').hasMatch(id) ? id : '';
+  return _callIdPattern.hasMatch(id) ? id : '';
+}
+
+/// The job ids the Worker still holds as waiting, from GET /api/media/modal/pending. A malformed answer is no jobs.
+List<String> cheModalPendingCallIds(Object? decoded) {
+  if (decoded is! Map || decoded['jobs'] is! List) return const [];
+  return [
+    for (final j in decoded['jobs'] as List)
+      if (j is Map && _callIdPattern.hasMatch('${j['call_id'] ?? ''}')) '${j['call_id']}',
+  ];
+}
+
+/// The waiting jobs after the app was closed or interrupted. A network error is no jobs now; the next resume asks again.
+Future<List<String>> fetchCheModalPendingCallIds({
+  required http.Client client,
+  required String baseUrl,
+  required Map<String, String> headers,
+}) async {
+  try {
+    final res = await client.get(Uri.parse('$baseUrl/api/media/modal/pending'), headers: headers);
+    if (res.statusCode != 200) return const [];
+    Object? decoded;
+    try {
+      decoded = jsonDecode(res.body);
+    } catch (_) {}
+    return cheModalPendingCallIds(decoded);
+  } catch (_) {
+    return const [];
+  }
 }
 
 enum CheModalPictureState { saved, running, failed }

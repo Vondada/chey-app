@@ -116,4 +116,23 @@ void main() {
     expect(outcome.mediaId, isEmpty);
     expect(posts, 4);
   });
+
+  test('the waiting jobs after an interruption are read from the list; a malformed list is no jobs', () {
+    expect(cheModalPendingCallIds({'jobs': [{'call_id': _callId, 'title': 'a kite'}, {'call_id': 'bad'}]}), [_callId]);
+    expect(cheModalPendingCallIds({'jobs': []}), isEmpty);
+    expect(cheModalPendingCallIds({'jobs': 'nope'}), isEmpty);
+    expect(cheModalPendingCallIds('not json'), isEmpty);
+  });
+
+  test('the app asks the Worker for its waiting jobs, and a failed request is no jobs (asked again on resume)', () async {
+    final ok = MockClient((request) async {
+      expect(request.method, 'GET');
+      expect(request.url.path, '/api/media/modal/pending');
+      return _json(200, {'jobs': [{'call_id': _callId}]});
+    });
+    expect(await fetchCheModalPendingCallIds(client: ok, baseUrl: 'https://worker.example', headers: const {}), [_callId]);
+
+    final down = MockClient((request) async => throw http.ClientException('offline'));
+    expect(await fetchCheModalPendingCallIds(client: down, baseUrl: 'https://worker.example', headers: const {}), isEmpty);
+  });
 }

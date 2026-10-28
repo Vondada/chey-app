@@ -424,6 +424,14 @@ export async function finishModalImage(env, storage, callId, fetcher = fetch) {
   return { status: 200, item };
 }
 
+/** The Modal pictures still waiting, for the app to follow again after it was closed: call ids and titles only. */
+export async function pendingModalImages(storage) {
+  const records = (await storage.get(MODAL_IMAGE_KEY)) || [];
+  return records
+    .filter((r) => r.call_id && (r.state === 'started' || r.state === 'running' || !r.state))
+    .map((r) => ({ call_id: r.call_id, title: r.title || '', created_at: r.created_at || null }));
+}
+
 export async function generateImage(env, storage, body, fetcher = fetch) {
   const prompt = String(body.prompt || '').trim().slice(0, 2000);
   const mode = ['variation', 'refine'].includes(body.mode) ? body.mode : 'new';

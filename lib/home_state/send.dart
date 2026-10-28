@@ -1743,7 +1743,9 @@ extension _CheHomeSend on _CHEHomeState {
   /// A Modal GPU picture started in chat: follow its job until it is saved, fails, or the wait runs out, then say so in
   /// the chat. A saved picture is shown from the Worker's image route, and it is in the Gallery by then.
   Future<void> _followModalPicture(String callId) async {
+    // One job is followed once at a time: a reply and a resume may both ask for it. A repeat returns null.
     final outcome = await () async {
+      if (!_followingModalCallIds.add(callId)) return null;
       final client = http.Client();
       try {
         return await followCheModalPicture(
@@ -1754,8 +1756,10 @@ extension _CheHomeSend on _CHEHomeState {
         );
       } finally {
         client.close();
+        _followingModalCallIds.remove(callId);
       }
     }();
+    if (outcome == null) return;
     if (!mounted) return;
     _set(() {
       messages.add(switch (outcome.state) {
@@ -1777,6 +1781,21 @@ extension _CheHomeSend on _CHEHomeState {
       });
     });
     _scrollToBottom();
+  }
+
+  /// Picks up the Modal pictures the Worker still holds as waiting (after the app was closed or interrupted), and follows
+  /// each one that is not already followed here. Nothing is started or charged: this only reads the job list.
+  Future<void> _restorePendingModalPictures() async {
+    final client = http.Client();
+    final List<String> ids;
+    try {
+      ids = await fetchCheModalPendingCallIds(client: client, baseUrl: cheAgentBaseUrl, headers: _authHeaders);
+    } finally {
+      client.close();
+    }
+    for (final id in ids) {
+      if (!_followingModalCallIds.contains(id)) unawaited(_followModalPicture(id));
+    }
   }
 
   Future<void> _sendFactCheckFromChat(String reply, String messageId) async {

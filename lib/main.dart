@@ -1173,6 +1173,7 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
   String? _streamMediaType;
   // The Modal GPU picture job the reply started (chat_modal_picture.dart), followed after the reply.
   String _streamModalCallId = '';
+  final Set<String> _followingModalCallIds = {};
   // The saved media ID, thumbnail and library list of the reply (che_chat_media.dart), shown as tiles under it.
   Map<String, String> _streamMediaExtra = {};
   // How CHE read a held or multi-step turn (issue #345), shown quietly under the reply.
@@ -1487,6 +1488,10 @@ OWNER AGENCY
     _wireBrowser();
     initializeVoice();
     _loadSecuritySession();
+    // Modal pictures started before the app was closed are followed again (after the device token has loaded).
+    Future<void>.delayed(const Duration(seconds: 4), () {
+      if (mounted) unawaited(_restorePendingModalPictures());
+    });
     _deepLinkSub = CheDeepLinks.listen(_onDeepLink);
     // The Rithmic session the owner left on comes back by itself (login from the on-device vault; off after Disconnect).
     if (!kIsWeb) unawaited(cheRithmicResume());
@@ -1554,6 +1559,7 @@ OWNER AGENCY
     if (kIsWeb || !mounted) return;
 
     _appForeground = state == AppLifecycleState.resumed;
+    if (state == AppLifecycleState.resumed) unawaited(_restorePendingModalPictures());
     // The Rithmic feed lives on this phone and pauses while CHE is off screen; the chart marks that stretch as a gap.
     if (state == AppLifecycleState.resumed || state == AppLifecycleState.paused || state == AppLifecycleState.hidden) {
       CheRithmicLive.instance.appLifecycle(foreground: state == AppLifecycleState.resumed);

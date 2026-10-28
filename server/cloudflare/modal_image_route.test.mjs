@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import test from 'node:test';
-import { finishModalImage, listMedia, MODAL_IMAGE_KEY, MODAL_IMAGE_REVISION, MODAL_IMAGE_TIMEOUT_MS, readBlob, startModalImage, generateImage } from './media.js';
+import { finishModalImage, pendingModalImages, listMedia, MODAL_IMAGE_KEY, MODAL_IMAGE_REVISION, MODAL_IMAGE_TIMEOUT_MS, readBlob, startModalImage, generateImage } from './media.js';
 
 const HOST = 'https://vondada--che-gpu.us-east.modal.run';
 const ENV_ON = { CHE_MODAL_TXT2IMG: 'enabled', MODAL_TOKEN: `bearer:${'a'.repeat(40)}@${HOST}`, CHE_AI_BOUND: true };
@@ -213,4 +213,16 @@ test('the Modal call index keeps no secret: only call ids, prompts and states ar
   await startModalImage(ENV_ON, storage, { prompt: 'a kite' }, fetcher);
   const stored = JSON.stringify(await storage.get(MODAL_IMAGE_KEY));
   assert.doesNotMatch(stored, /bearer|aaaaaaaa|modal\.run/i);
+});
+
+test('after the app was closed, the pending Modal pictures are listed again; saved and failed ones are not', async () => {
+  const storage = memoryStorage();
+  await storage.put(MODAL_IMAGE_KEY, [
+    { call_id: 'fc-running0001', title: 'a kite', state: 'started', created_at: '2026-10-28T20:00:00.000Z' },
+    { call_id: 'fc-saved000001', title: 'a boat', state: 'saved', item: {} },
+    { call_id: 'fc-failed000001', title: 'a car', state: 'failed', error: 'x' },
+  ]);
+  const jobs = await pendingModalImages(storage);
+  assert.deepEqual(jobs.map((j) => j.call_id), ['fc-running0001']);
+  assert.deepEqual(Object.keys(jobs[0]).sort(), ['call_id', 'created_at', 'title']);
 });

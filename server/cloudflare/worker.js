@@ -40,7 +40,7 @@ import {
 import { discoverKeylessModels, engineStatus, paidAllowed, routedEnv, routeText } from './ai_router.js';
 import { capabilityPromptLine, inferTurnCapabilities, runtimeCapabilityRegistry } from './cognitive_capabilities.js';
 import { identityQuestionIntent, speakIdentity } from './che_maturity.js';
-import { deleteMedia, finishModalImage, generateImage, generateVideo, listMedia, readBlob, saveOwnerFile, upscaleImage, verifyMediaFile } from './media.js';
+import { deleteMedia, finishModalImage, generateImage, pendingModalImages, generateVideo, listMedia, readBlob, saveOwnerFile, upscaleImage, verifyMediaFile } from './media.js';
 import { withCheNote, guardEngineClaims, guardSoulClaims, lastReplyRecord, loadSoul, replyProvenanceAnswer, replyProvenanceQuestion, restoreSoul, saveSoul, soulPromptBlock, soulProvenance, soulView, stripPhoneSoul } from './soul.js';
 import { mediaHoldAnswer, mediaHoldIntent, mediaKeepFor, mediaLatestReply, mediaLibraryIntent, mediaLibraryReply, mediaLibraryReport, mediaLatestOpenRow, mediaOpenIntent, mediaOpenMissingReply, mediaOpenReply, mediaOpenRow, mediaRows, mediaSaveIntent, mediaSaveReply, mediaShowLatestIntent, mediaShowReply, verifyMediaRows, wantsLatestVideo } from './media_library.js';
 import { capabilityGap, capabilityReply } from './capability_gap.js';
@@ -8041,6 +8041,7 @@ export class CheState extends DurableObject {
         const { status, ...rest } = await finishModalImage(this.keyEnv || this.env, this.ctx.storage, String(body.call_id || ''));
         return json(rest, status);
       }
+      if (path === '/api/media/modal/pending' && request.method === 'GET') return json({ jobs: await pendingModalImages(this.ctx.storage) });
       if (path === '/api/media/generate' && request.method === 'POST') {
         const mediaType = String(body.type || body.kind || 'image').toLowerCase();
         const result = mediaType === 'video'
