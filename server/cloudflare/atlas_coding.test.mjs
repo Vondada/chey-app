@@ -249,7 +249,7 @@ test('the inspection, reasoning, CI and recovery cards agree with CHE\'s own cod
   const workflow = read('.github/workflows/flutter-check.yml');
   assert.match(workflow, /^  analyze:$/m);
   assert.match(workflow, /^    name: Worker syntax and unit tests$/m);
-  assert.ok(read('.claude/skills/che-release/scripts/release_status.mjs').includes("const NON_GATING = new Set(['Workers Builds: chey-app', 'screens', 'simulator']);"));
+  assert.ok(read('.claude/skills/che-release/scripts/release_status.mjs').includes("const NON_GATING = new Set(['Workers Builds: chey-app']);"));
   const { releaseStatus } = await import(pathToFileURL(join(ROOT, '.claude/skills/che-release/scripts/release_status.mjs')).href);
   const SHA = 'c'.repeat(40);
   for (const c of ci.exercises[0].cases) {

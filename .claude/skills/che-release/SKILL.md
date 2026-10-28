@@ -11,7 +11,7 @@ node .claude/skills/che-release/scripts/release_status.mjs [--pr N | --sha SHA] 
 ```
 It reports:
 - the PR state and merge SHA;
-- the checks on the head (`Workers Builds: chey-app`, `screens` and `simulator` are non-gating; an open PR is `NOT READY` until `live (staging)` passes);
+- the checks on the head (`Workers Builds: chey-app` and the iOS simulator jobs `screens`/`simulator` are non-gating). For an open PR it also prints `live (staging)`, and the verdict is `NOT READY` until that check succeeded on the head;
 - the main head;
 - the Worker deploy run for the target commit, with what it verified live (the live commit, the memory probe, the voice probe);
 - the Shorebird and IPA runs;
@@ -22,7 +22,13 @@ It reports:
 **UNKNOWN means not verified.** Never report it as success. The iPhone is never verifiable from here.
 
 ## The pre-merge gate: live tests on staging (owner, 2026-10-27)
-Merge only when `live (staging)` (`che-worker-staging.yml`) and `worker`, `flutter`, `coding` are green on the exact head. The iOS simulator is never a gate. A SKIPPED probe is not a pass. Details: `reference/live-gate.md`.
+"Always do live tests ... before merging." Every pull request to main runs `.github/workflows/che-worker-staging.yml`, job **`live (staging)`**: it deploys the PR's merge commit to the separate staging Worker `chey-app-staging` (own Durable Object storage, no owner data) and runs `.github/scripts/che_live_probes.mjs --suite`, the same probe file the production deploy runs one step at a time. A PR is ready to merge only when:
+- `live (staging)` is green on the exact head, and
+- the release gate's `worker`, `flutter` and `coding` jobs are green.
+
+The **iOS simulator is not a gate.** `che-release-gate.yml` job `screens` and `che-ios-simulator-test.yml` run only when dispatched by hand, for information; a red or missing simulator run never blocks a merge.
+
+Staging is zero-spend: it gets a fresh random probe token and pairing code per run and only the free-tier keys listed in `STAGING_FREE_KEYS` in that workflow (no OpenAI, Anthropic, xAI, ElevenLabs, Fish, Gemini, OpenRouter, Hugging Face or production-only secrets). The run deletes any other secret from staging first, and the `engines` probe fails if staging can reach an engine outside the allowlist. Probes that need the owner's data or a production-only secret are listed as SKIPPED with the reason in the run summary; read that table, a skip is not a pass. Change a probe in `che_live_probes.mjs` only, so production and staging stay identical. This container cannot reach workers.dev; live results come only from the Actions runs.
 
 ## Authorization gate
 
@@ -36,7 +42,7 @@ Merge only when `live (staging)` (`che-worker-staging.yml`) and `worker`, `flutt
 | YouTube publish, payments, deleting | — | The owner's direct yes, every time (AGENTS.md) |
 
 ## Merge and verify
-1. Run `release_status.mjs --pr N` and confirm checks are `GREEN` on the exact head, including `live (staging)`.
+1. Run `release_status.mjs --pr N` and confirm checks are `GREEN` on the exact head, including `live (staging)` (read its summary: which probes passed, warned and skipped).
 2. Read the review threads. Codex P1/P2 and red-circle findings are bug reports: fix them or answer them.
 3. Squash merge with `expectedHeadSha`. Add `[worker-deploy]` when the Worker changed.
 4. Merge `origin/main` back into the work branch. Force-push is denied here.
@@ -44,7 +50,8 @@ Merge only when `live (staging)` (`che-worker-staging.yml`) and `worker`, `flutt
 6. Update `mailbox/briefs/LIVE-HANDOFF.md` §2 on `che-mailbox`, and append one line to `mailbox/claude.jsonl`.
 
 ## Never
-- Never call something live from a green PR, or from a deploy that is still running. Staging green is not production.
+- Never call something live from a green PR, or from a deploy that is still running. A green `live (staging)` proves staging, not production.
+- Never treat the iOS simulator as a merge requirement, and never merge without a green `live (staging)` on the head.
 - Never claim iPhone behavior without the owner's device evidence.
 - Never re-run CI with an empty commit. Never skip or disable a test.
 - Never print secrets. The script needs none, and an optional `GITHUB_TOKEN` is never printed.
@@ -56,3 +63,4 @@ Merge only when `live (staging)` (`che-worker-staging.yml`) and `worker`, `flutt
 - **2026-10-14: reading a full deploy job log for the probe output cost about 25k tokens.** The deploy now also writes `::notice` annotations (titled "Live CHE commit", "Memory truth" and "CHE voice"), which the script reads in one small request.
 - **2026-10-14: answering "is #300 merged and live?" from raw GitHub API JSON means 446,575 bytes across 7 endpoints.** The script prints the same answer in 843 bytes.
 - **2026-10-14: Node's fetch ignores HTTPS_PROXY unless `NODE_USE_ENV_PROXY=1` is set.** The script re-runs itself with it.
+- **2026-10-27: the gate moved from the iOS simulator to live tests on staging.** Owner: "I just need live tests ... before merging." The macOS jobs took 20-60 min and one hung 45 min (PR #666); they are now manual. One staging Worker serves every PR: each run waits for older runs of the workflow, and a newer push to the same PR cancels the older run.

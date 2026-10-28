@@ -23,8 +23,6 @@ import { createHash } from 'node:crypto';
 const BASE = String(process.env.CHE_LIVE_BASE || '').replace(/\/+$/, '');
 const TARGET = String(process.env.CHE_LIVE_TARGET || 'production').toLowerCase() === 'staging' ? 'staging' : 'production';
 const STAGING = TARGET === 'staging';
-// Memory-probe steps that read GitHub with CHE_GITHUB_TOKEN; staging never holds that secret.
-const STAGING_GITHUB_STEPS = new Set(['GitHub truth and execution receipts', 'Pinned live handoff receipt']);
 const TOKEN = process.env.CHE_VOICE_PROBE_TOKEN || '';
 const WHERE = STAGING ? 'staging Worker' : 'live Worker';
 const on = (name) => ['1', 'true', 'yes'].includes(String(process.env[name] || '').toLowerCase());
@@ -308,29 +306,16 @@ const PROBES = {
       console.log(`     ${String(step.reply || '').replace(/\s+/g, ' ')}`);
       summary(`| ${step.name} | ${step.pass ? 'pass' : '**FAIL**'} | ${step.route || 'model'} | ${step.model_calls ?? '?'} | ${step.ms} |`);
     }
-    // Staging holds no CHE_GITHUB_TOKEN (production-only), so the two GitHub receipt steps can only answer
-    // "not connected". They are skipped with that reason, and only when the reply says exactly that; any
-    // other failure of those steps (an invented PR state, say) still fails the probe.
-    const githubOnly = (step) => STAGING && STAGING_GITHUB_STEPS.has(step.name)
-      && /not connected to GitHub|GitHub credentials or repository are unavailable/.test(String(step.reply || ''))
-      && !/\b(merged|is open|was closed)\b/i.test(String(step.reply || ''));
-    for (const step of (report.steps || []).filter((st) => !st.pass && githubOnly(st))) {
-      console.log(`::notice title=Memory step skipped on staging::${step.name}: needs CHE_GITHUB_TOKEN, a production-only secret; CHE answered that GitHub is not connected.`);
-      summary(`SKIPPED on staging: ${step.name} (needs CHE_GITHUB_TOKEN, production only; CHE said GitHub is not connected).`);
-    }
     // Only the step the Worker marks optional (a live model's own words) may warn instead of fail.
-    const failedMemory = (report.steps || []).filter((step) => !step.pass && step.optional !== true && !githubOnly(step));
+    const failedMemory = (report.steps || []).filter((step) => !step.pass && step.optional !== true);
     const failedModel = (report.steps || []).filter((step) => !step.pass && step.optional === true);
     for (const step of failedModel) console.log(`::warning title=Model answer check::${step.name}: ${String(step.reply).slice(0, 200)}`);
-    const skippedGithub = (report.steps || []).filter((st) => !st.pass && githubOnly(st)).length;
-    // A report that is not ok with no failing step is an error of the check itself: never a pass.
-    if (failedMemory.length || (!report.ok && !(report.steps || []).some((st) => !st.pass))) {
+    if (failedMemory.length || (!report.ok && !failedModel.length)) {
       const what = failedMemory.map((step) => step.name).join('; ') || report.error || 'see log';
       console.log(`::error title=Memory truth check failed::${what}`);
       return fail(what);
     }
-    const skippedNote = skippedGithub ? `; ${skippedGithub} GitHub step${skippedGithub === 1 ? '' : 's'} skipped on staging (no CHE_GITHUB_TOKEN)` : '';
-    return failedModel.length ? warn(`${report.passed}/${report.total} steps passed${skippedNote}; model answer not checked: ${failedModel.map((s) => s.name).join('; ')}`) : pass(`${report.passed}/${report.total} steps passed${skippedNote}`);
+    return failedModel.length ? warn(`${report.passed}/${report.total} steps passed; model answer not checked: ${failedModel.map((s) => s.name).join('; ')}`) : pass(`${report.passed}/${report.total} steps passed`);
   },
 
   async creation() {
