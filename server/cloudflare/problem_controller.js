@@ -1,134 +1,48 @@
-// Universal problem controller, first slice: one goal goes through classify → choose the cheapest verified path →
-// execute → cross-check → record a receipt. It reuses the capability registry (promotion gate, serving, use records).
+// Universal problem controller, first slice: one goal goes through classify → the verified capability → exact evaluation
+// → round-trip verification → a receipt. The exact arithmetic is arithmetic.js (PR #737), the only parser in CHE for a
+// plain sum. The capability registry (capability_registry.js) decides whether the arithmetic capability serves.
 // A goal with no verified path is reported as needs_model. It is never answered from a guess, and no model is called.
 
-import { PROMOTION_CHECKS, emptyRegistry, register, recordCheck, promote, serving, recordUse } from './capability_registry.js';
+import { ArithmeticError, checkEquations, evaluate, formatRational, parseDecimal, plainArithmetic } from './arithmetic.js';
+import { PROMOTION_CHECKS, emptyRegistry, promote, recordCheck, recordUse, register, serving } from './capability_registry.js';
 
 export const ARITHMETIC_ID = 'math.exact_arithmetic';
 
-const MAX_EXPONENT = 64n;
-const TOLERANCE = 1e-9;
-const EXPRESSION = /^[\d\s+\-*/^().]+$/;
-
 const clip = (v, n) => String(v ?? '').slice(0, n);
-const coded = (code) => Object.assign(new Error(code), { code });
 
-// Exact rational arithmetic on BigInt. The denominator is always positive and the fraction is reduced.
-const gcd = (a, b) => {
-  let x = a < 0n ? -a : a;
-  let y = b < 0n ? -b : b;
-  while (y) [x, y] = [y, x % y];
-  return x;
-};
-const rat = (n, d = 1n) => {
-  if (d === 0n) throw coded('division_by_zero');
-  if (d < 0n) { n = -n; d = -d; }
-  const g = gcd(n, d) || 1n;
-  return { n: n / g, d: d / g };
-};
-const EXACT = {
-  num: (s) => {
-    const [whole, frac = ''] = s.split('.');
-    return rat(BigInt(whole + frac), 10n ** BigInt(frac.length));
-  },
-  add: (a, b) => rat(a.n * b.d + b.n * a.d, a.d * b.d),
-  sub: (a, b) => rat(a.n * b.d - b.n * a.d, a.d * b.d),
-  mul: (a, b) => rat(a.n * b.n, a.d * b.d),
-  div: (a, b) => {
-    if (b.n === 0n) throw coded('division_by_zero');
-    return rat(a.n * b.d, a.d * b.n);
-  },
-  pow: (a, b) => {
-    if (b.d !== 1n || b.n > MAX_EXPONENT || b.n < -MAX_EXPONENT) throw coded('exponent_too_large');
-    const k = b.n < 0n ? -b.n : b.n;
-    let r = rat(1n);
-    for (let i = 0n; i < k; i++) r = EXACT.mul(r, a);
-    return b.n < 0n ? EXACT.div(rat(1n), r) : r;
-  },
-  neg: (a) => rat(-a.n, a.d),
-  toNumber: (a) => Number(a.n) / Number(a.d),
-};
-
-// Floating-point arithmetic. It is a different arithmetic from EXACT, so it cross-checks the exact result.
-const FLOAT = {
-  num: (s) => Number(s),
-  add: (a, b) => a + b,
-  sub: (a, b) => a - b,
-  mul: (a, b) => a * b,
-  div: (a, b) => {
-    if (b === 0) throw coded('division_by_zero');
-    return a / b;
-  },
-  pow: (a, b) => {
-    if (b !== Math.trunc(b) || Math.abs(b) > Number(MAX_EXPONENT)) throw coded('exponent_too_large');
-    if (a === 0 && b < 0) throw coded('division_by_zero');
-    return a ** b;
-  },
-  neg: (a) => -a,
-  toNumber: (a) => a,
-};
-
-// One recursive-descent parser for both arithmetics. Precedence: parentheses, then ^ (right-assoc), then unary -,
-// then * and /, then + and -. So -2^2 is -4, as in school arithmetic.
-export function evaluate(source, ops) {
-  const normalised = String(source).replace(/\s+/g, '');
-  const tokens = normalised.match(/\d+(?:\.\d+)?|[-+*/^()]/g) || [];
-  if (tokens.join('') !== normalised) throw coded('bad_expression');
-  let i = 0;
-  const eat = (t) => {
-    if (tokens[i] === t) { i++; return true; }
-    return false;
-  };
-  const expr = () => {
-    let v = term();
-    while (tokens[i] === '+' || tokens[i] === '-') {
-      const op = tokens[i++];
-      const r = term();
-      v = op === '+' ? ops.add(v, r) : ops.sub(v, r);
-    }
-    return v;
-  };
-  const term = () => {
-    let v = factor();
-    while (tokens[i] === '*' || tokens[i] === '/') {
-      const op = tokens[i++];
-      const r = factor();
-      v = op === '*' ? ops.mul(v, r) : ops.div(v, r);
-    }
-    return v;
-  };
-  const factor = () => (eat('-') ? ops.neg(factor()) : power());
-  const power = () => {
-    const base = primary();
-    return eat('^') ? ops.pow(base, factor()) : base;
-  };
-  const primary = () => {
-    if (eat('(')) {
-      const v = expr();
-      if (!eat(')')) throw coded('bad_expression');
-      return v;
-    }
-    if (tokens[i] && /^\d/.test(tokens[i])) return ops.num(tokens[i++]);
-    throw coded('bad_expression');
-  };
-  const value = expr();
-  if (i !== tokens.length) throw coded('bad_expression');
-  return value;
-}
-
-/** Decides which kind of problem a goal is. Only plain arithmetic is handled deterministically in this slice. */
+/** Classifies a goal. Only a bare sum is arithmetic; anything else is unhandled and goes to the model. */
 export function classify(goal = '') {
-  let s = String(goal).trim()
-    .replace(/^(?:what is|what's|calculate|compute|evaluate|solve)\s+/i, '')
-    .replace(/\s*[=?]\s*$/, '')
-    .replace(/×/g, '*')
-    .replace(/÷/g, '/')
-    .replace(/(?<=\d\s*)x(?=\s*\(?\d)/gi, '*');
-  if (!s || !EXPRESSION.test(s) || !/\d/.test(s)) return { kind: 'unhandled', expression: null };
-  return { kind: 'arithmetic', expression: s.trim() };
+  const sum = plainArithmetic(goal);
+  if (!sum) return { kind: 'unhandled', expression: null };
+  return { kind: 'arithmetic', expression: sum.expression };
 }
 
-const formatExact = (r) => (r.d === 1n ? r.n.toString() : `${r.n}/${r.d}`);
+/**
+ * The text a receipt shows for an exact value: a decimal when the decimal reads back to the same exact value, else the
+ * exact fraction. Nothing is rounded, so a shown answer is always the value that was computed.
+ */
+export function exactText(r) {
+  const shown = formatRational(r);
+  if (r.d === 1n) return shown;
+  try {
+    const back = parseDecimal(shown);
+    if (back.n === r.n && back.d === r.d) return shown;
+  } catch (_) { /* not a plain decimal: use the fraction */ }
+  return `${r.n}/${r.d}`;
+}
+
+/** Reads a shown answer back into an exact value: a decimal (with separators) or a fraction "n/d". */
+function readBack(text) {
+  const frac = /^\s*(-?\d+)\/(\d+)\s*$/.exec(text);
+  if (frac) return { n: BigInt(frac[1]), d: BigInt(frac[2]) };
+  return parseDecimal(text);
+}
+
+const CODE_FOR = [
+  [/Division by zero/, 'division_by_zero'],
+  [/Only whole-number powers/, 'exponent_too_large'],
+];
+const errorCode = (message) => CODE_FOR.find(([pattern]) => pattern.test(message))?.[1] || 'bad_expression';
 
 /** Seeds the registry with the one deterministic capability. It is promoted only through the registry's own gate. */
 export function seedRegistry(now = new Date().toISOString()) {
@@ -136,22 +50,22 @@ export function seedRegistry(now = new Date().toISOString()) {
   register(registry, {
     capability_id: ARITHMETIC_ID,
     name: 'Exact arithmetic',
-    description: 'Exact +, -, *, /, ^ on rational numbers, cross-checked with floating point. No model call, no network.',
+    description: 'Exact +, -, *, /, ^ and percentages on rational numbers (arithmetic.js). No model call, no network.',
     category: 'mathematics',
     inputs: ['arithmetic expression'],
     outputs: ['exact rational', 'verified flag'],
-    implementation_location: 'server/cloudflare/problem_controller.js',
+    implementation_location: 'server/cloudflare/arithmetic.js',
     execution: 'internal',
     risk_level: 'low',
     permissions: { network: [], credentials: [], files: [], devices: [], actions: [] },
   }, now);
   const evidence = {
-    functional: 'problem_controller.test.mjs: precedence, rationals, errors',
+    functional: 'arithmetic_eval.test.mjs: 24 exact problems, precedence, errors; problem_controller.test.mjs: receipts and routing',
     security: 'pure code: no network, storage or credentials used',
-    resource: `exponent capped at ${MAX_EXPONENT}, expression parsed in one pass`,
+    resource: 'whole-number powers capped at 64; the expression is parsed in one pass',
     license: 'original CHE code',
-    output: 'exact result must match the floating-point cross-check',
-    regression: 'problem_controller.test.mjs runs on every Worker test run',
+    output: 'the stated result must read back to the exact value (round trip)',
+    regression: 'problem_controller.test.mjs and arithmetic_eval.test.mjs run on every Worker test run',
     rollback: 'no prior version; removing the seed makes needs_model apply',
   };
   for (const check of PROMOTION_CHECKS) recordCheck(registry, ARITHMETIC_ID, check, { ok: true, evidence: evidence[check] }, now);
@@ -161,8 +75,7 @@ export function seedRegistry(now = new Date().toISOString()) {
 
 /**
  * Solves one goal and returns a receipt. Status is one of:
- *   verified     exact result, cross-checked
- *   unverified   exact result, cross-check disagreed (never claimed as verified)
+ *   verified     exact result; the stated result reads back to the exact value
  *   error        the goal has a verified path, and the problem is undefined (for example division by zero)
  *   needs_model  no verified path; the model would be needed and was not called
  */
@@ -183,23 +96,39 @@ export function solve(goal, { registry = seedRegistry(), now = new Date().toISOS
 
   let exact;
   try {
-    exact = evaluate(route.expression, EXACT);
+    exact = evaluate(route.expression);
   } catch (err) {
-    // An undefined or malformed problem is a correct answer, so it does not count against the capability's record.
-    steps.push({ step: 'exact', result: err.code });
-    return finish({ status: 'error', expression: route.expression, error: err.code, capability_id: ARITHMETIC_ID, capability_version: cap.version });
+    if (!(err instanceof ArithmeticError)) throw err;
+    // An undefined problem is a correct answer, so it does not count against the capability's record.
+    steps.push({ step: 'exact', result: errorCode(err.message) });
+    return finish({ status: 'error', expression: route.expression, error: errorCode(err.message), message: err.message, capability_id: ARITHMETIC_ID, capability_version: cap.version });
   }
-  steps.push({ step: 'exact', result: formatExact(exact) });
-  const approx = evaluate(route.expression, FLOAT);
-  const agrees = Number.isFinite(approx) && Number.isFinite(EXACT.toNumber(exact))
-    && Math.abs(EXACT.toNumber(exact) - approx) <= TOLERANCE * Math.max(1, Math.abs(approx));
-  steps.push({ step: 'float_cross_check', result: agrees ? 'agrees' : 'disagrees' });
-  recordUse(registry, ARITHMETIC_ID, agrees, now);
+  const result = exactText(exact);
+  steps.push({ step: 'exact', result });
+  // Round trip: the stated result must read back to the exact value, and a decimal must also check as an equation.
+  const readsBack = (() => { try { const b = readBack(result); return b.n === exact.n && b.d === exact.d; } catch (_) { return false; } })();
+  const equation = /\//.test(result) ? [] : checkEquations(`${route.expression} = ${result}`);
+  const equationOk = equation.length === 0 || equation.every((c) => c.status === 'verified');
+  const verified = readsBack && equationOk;
+  steps.push({ step: 'verify', result: verified ? 'agrees' : 'disagrees' });
+  recordUse(registry, ARITHMETIC_ID, verified, now);
   return finish({
-    status: agrees ? 'verified' : 'unverified',
+    status: verified ? 'verified' : 'error',
     expression: route.expression,
-    result: formatExact(exact),
+    result,
     capability_id: ARITHMETIC_ID,
     capability_version: cap.version,
+    ...(verified ? {} : { error: 'verification_failed', message: 'The computed answer did not read back to the exact value, so it is not given.' }),
   });
+}
+
+/**
+ * The chat route's use of the controller. Returns null when the goal has no verified path, so the model answers as
+ * before. Otherwise returns the reply text and the receipt, with no model call.
+ */
+export function answerForChat(goal, options) {
+  const receipt = solve(goal, options);
+  if (receipt.status === 'needs_model') return null;
+  const text = receipt.status === 'verified' ? `${receipt.result}.` : (receipt.message || 'That problem has no answer, sir.');
+  return { text, status: receipt.status, expression: receipt.expression, receipt };
 }
