@@ -66,7 +66,6 @@ class CheMockupHome extends StatelessWidget {
     required this.onOpenTrading,
     required this.onOpenCreate,
     required this.onOpenWorld,
-    this.onOpenRecordingStudio,
     this.onOpenSecurity,
     required this.onOfficeStatus,
     this.listening = false,
@@ -129,8 +128,6 @@ class CheMockupHome extends StatelessWidget {
   final VoidCallback onOpenTrading;
   final VoidCallback onOpenCreate;
   final VoidCallback onOpenWorld;
-  /// One tap into the Recording Studio's timeline (owner, 2026-10-26). Optional so other callers are unchanged.
-  final VoidCallback? onOpenRecordingStudio;
   /// SECURITY, a top-level destination (owner, 2026-10-22). Optional so older callers keep five destinations.
   final VoidCallback? onOpenSecurity;
   final VoidCallback onOfficeStatus;
@@ -190,15 +187,6 @@ class CheMockupHome extends StatelessWidget {
           hue: CheEnergy.cyan,
           onOpen: onOpenWorld,
         ),
-        if (onOpenRecordingStudio != null)
-          CheHomeDestination(
-            id: 'recording_studio',
-            label: 'Recording',
-            detail: 'Studio timeline',
-            icon: Icons.mic_rounded,
-            hue: CheEnergy.rose,
-            onOpen: onOpenRecordingStudio!,
-          ),
         if (onOpenSecurity != null)
           CheHomeDestination(
             id: 'security',

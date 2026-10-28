@@ -96,9 +96,7 @@ class _CheOfficeConversationScreenState extends State<CheOfficeConversationScree
         if (_matchesFilter(m) && cheConversationMatches(m, _search.text)) m,
     ];
     final agent = _c.agent;
-    final title = _c.scope == 'task'
-        ? (agent == null ? 'Office task' : '${agent.name} · task conversation')
-        : (agent == null ? 'Office task' : '${agent.name} · conversation');
+    final title = agent == null ? 'Office task' : '${agent.name} · conversation';
     return Scaffold(
       appBar: AppBar(
         title: Text(title, maxLines: 1, overflow: TextOverflow.ellipsis),
@@ -130,7 +128,7 @@ class _CheOfficeConversationScreenState extends State<CheOfficeConversationScree
                         ? null
                         : IconButton(
                             tooltip: 'Clear search',
-                            icon: const Icon(Icons.close_rounded),
+                            icon: const Icon(Icons.clear_rounded),
                             onPressed: () => setState(() => _search.clear()),
                           ),
                   ),
@@ -169,14 +167,7 @@ class _CheOfficeConversationScreenState extends State<CheOfficeConversationScree
                     padding: const EdgeInsets.only(bottom: CheSpace.md),
                     child: Text('Could not refresh: $_error', style: CheType.caption.copyWith(color: CheColors.danger)),
                   ),
-                // A task view shows the selected task; its agent stays as context inside the panel. The agent
-                // panel (active task, current step) is for the agent view only.
-                if (_c.scope == 'task' && _c.task != null)
-                  _TaskPanel(task: _c.task!, agent: agent)
-                else if (agent != null)
-                  _AgentPanel(agent: agent)
-                else if (_c.task != null)
-                  _TaskPanel(task: _c.task!),
+                if (agent != null) _AgentPanel(agent: agent) else if (_c.task != null) _TaskPanel(task: _c.task!),
                 const SizedBox(height: CheSpace.md),
                 _EvidencePanel(messages: _c.messages),
                 const SizedBox(height: CheSpace.md),
@@ -280,11 +271,8 @@ class _AgentPanel extends StatelessWidget {
 }
 
 class _TaskPanel extends StatelessWidget {
-  const _TaskPanel({required this.task, this.agent});
+  const _TaskPanel({required this.task});
   final CheConversationTask task;
-
-  /// The agent that holds this task, shown as context only. Null when the record has no agent.
-  final CheConversationAgent? agent;
   @override
   Widget build(BuildContext context) => Card(
         color: CheColors.surfaceHi,
@@ -297,12 +285,7 @@ class _TaskPanel extends StatelessWidget {
             const SizedBox(height: CheSpace.xs),
             Text(task.reason, style: CheType.caption),
             const SizedBox(height: CheSpace.md),
-            _Kv(
-              'Agent',
-              agent == null
-                  ? task.partnerName
-                  : '${agent!.name}${agent!.role.isEmpty ? '' : ' · ${agent!.role}'} · agent status: ${agent!.status?.label ?? 'No task recorded'}',
-            ),
+            _Kv('Agent', task.partnerName),
             _Kv('Created', cheAbsoluteTime(task.createdAt)),
             _Kv('Last update', cheAbsoluteTime(task.updatedAt)),
           ]),

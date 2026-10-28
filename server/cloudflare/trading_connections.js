@@ -56,14 +56,6 @@ function tradovateCard({ configured, conn, desk }) {
     risk_limits: desk.risk_limits,
     blocked_by: configured ? [] : TRADOVATE_PREREQUISITES,
     ...(configured ? {} : { blocked_note: TRADOVATE_BLOCKED_NOTE, worker_secrets: TRADOVATE_WORKER_SECRETS }),
-    // Each fact is reported on its own. A website sign-in is never proof of brokerage API access.
-    separate: {
-      website_login: 'Not visible to CHE. Signing in on NinjaTrader\'s website in Safari grants CHE no brokerage access.',
-      brokerage_authorized: state === 'signed_in',
-      accounts: desk.account?.live || desk.account?.sim ? { sim: desk.account.sim || null, live: desk.account.live || null } : null,
-      market_data: conn?.market_data_allowed === true ? 'allowed' : conn?.market_data_allowed === false ? 'not allowed' : 'unknown',
-      live_orders: 'disabled: needs verified account permissions, a preview and your explicit confirmation',
-    },
     open_account: TRADOVATE_OPEN_ACCOUNT,
     detail: state === 'signed_in' ? 'Signed in on Tradovate\'s own page; CHE never sees the password.'
       : state === 'expired' ? 'The Tradovate sign-in expired; say "connect NinjaTrader" to sign in again.'

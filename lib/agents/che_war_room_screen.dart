@@ -7,7 +7,6 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../che_ui/che_agents.dart';
-import '../che_ui/che_progress_bar.dart';
 import '../che_ui/che_rooms.dart';
 import '../che_ui/che_theme.dart';
 import '../che_ui/che_hud.dart';
@@ -141,7 +140,7 @@ class _CheWarRoomScreenState extends State<CheWarRoomScreen> {
                               Text('${(m.summary.progress * 100).round()}%', style: CheType.caption.copyWith(color: Colors.white70)),
                             ]),
                             const SizedBox(height: CheSpace.xs),
-                            CheProgressBar(value: m.summary.progress, color: _amber, background: Colors.white12, height: 4),
+                            LinearProgressIndicator(value: m.summary.progress, color: _amber, backgroundColor: Colors.white12),
                           ]),
                         ),
                       ),

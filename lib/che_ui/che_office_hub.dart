@@ -271,19 +271,6 @@ class CheSectionShell extends StatefulWidget {
 
 class _CheSectionShellState extends State<CheSectionShell> {
   late int _i = widget.initialIndex;
-  // Swipe between sections; each page stays alive so scroll position and state survive a switch.
-  late final PageController _pages = PageController(initialPage: widget.initialIndex);
-
-  @override
-  void dispose() {
-    _pages.dispose();
-    super.dispose();
-  }
-
-  void _go(int i) {
-    setState(() => _i = i);
-    _pages.animateToPage(i, duration: CheMotion.d(context, CheMotion.base), curve: CheMotion.curve);
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -312,43 +299,21 @@ class _CheSectionShellState extends State<CheSectionShell> {
             CheSectionBar(
               items: [for (final x in widget.sections) CheSectionBarItem(label: x.title, icon: x.icon, hue: x.hue)],
               index: _i,
-              onChanged: _go,
+              onChanged: (i) => setState(() => _i = i),
             ),
             const SizedBox(height: CheSpace.sm),
             Expanded(
-              child: PageView.builder(
-                controller: _pages,
-                itemCount: widget.sections.length,
-                onPageChanged: (i) => setState(() => _i = i),
-                itemBuilder: (context, i) => _KeptPage(
-                  key: ValueKey('section_${widget.sections[i].id}'),
-                  build: () => widget.sections[i].builder(context),
-                ),
+              child: AnimatedSwitcher(
+                duration: CheMotion.d(context, CheMotion.base),
+                switchInCurve: CheMotion.curve,
+                transitionBuilder: cheSwitchTransition,
+                child: KeyedSubtree(key: ValueKey(s.id), child: s.builder(context)),
               ),
             ),
           ]),
         ),
       ]),
     );
-  }
-}
-
-/// Keeps a section's state (scroll position, open boxes) while another section is shown.
-class _KeptPage extends StatefulWidget {
-  const _KeptPage({super.key, required this.build});
-  final Widget Function() build;
-  @override
-  State<_KeptPage> createState() => _KeptPageState();
-}
-
-class _KeptPageState extends State<_KeptPage> with AutomaticKeepAliveClientMixin {
-  @override
-  bool get wantKeepAlive => true;
-
-  @override
-  Widget build(BuildContext context) {
-    super.build(context);
-    return widget.build();
   }
 }
 
