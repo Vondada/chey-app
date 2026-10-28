@@ -30,6 +30,7 @@ Statuses: `open`, `in progress`, `waiting on owner`, `built, not verified`, `ver
 | Q-12 | Conversation reliability suite | open | main | Expand Q-09 into multi-turn, follow-up and correction cases, and grade them. | — |
 | Q-13 | Chat: more improvements the owner asked for | open | main | Verdict read-aloud, claim-by-claim split, source-freshness marks, "Ask again" for False verdicts. | — |
 | Q-14 | Cloudflare Workers Builds failures | ignored | — | Owner said to ignore this check. | — |
+| Q-35 | GPU and 3D world: 25 upgrades | open | `docs/gpu-world-upgrades` | Start with items 1, 4, 5 and 25 in `docs/CHE_GPU_WORLD_UPGRADES.md` (free, local, measurable). Paid GPU (15-19) waits for the owner's spend decision and a cap above $0. | Doc only; nothing built |
 
 ## Owner decisions needed
 - Office swipe (Q-02).
@@ -38,5 +39,6 @@ Statuses: `open`, `in progress`, `waiting on owner`, `built, not verified`, `ver
 - Whether automatic background runs are allowed (this would change the AGENTS.md rule and use more usage).
 
 ## Log
+- 2026-10-28: Q-35 added (25 GPU and 3D world upgrades, `docs/CHE_GPU_WORLD_UPGRADES.md`). Nothing built yet.
 - 2026-10-27: Q-01 done (#672 merged); Q-07 is PR #700.
 - 2026-10-26: queue created from the day's requests. Earlier work is recorded in the branches above and in `docs/CHE_MISSION_LEDGER.md`.
