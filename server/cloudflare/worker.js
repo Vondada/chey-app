@@ -607,6 +607,22 @@ function ndjsonReply(reply, meta = {}) {
   );
 }
 
+// A reply that every truth stage removed is never sent as a blank success. The owner gets a named reason and the
+// request id, and the stage rules that removed it are logged, so the cause can be read in the Worker log.
+export function emptyReplyStream(requestId, removals = []) {
+  const rules = [...new Set((removals || []).map((item) => item?.rule).filter(Boolean))].slice(0, 6);
+  console.warn('CHE reply empty after checks', requestId, rules.join(', ') || 'no stage named a rule');
+  return new Response(JSON.stringify({
+    type: 'error',
+    category: 'empty_after_checks',
+    retryable: true,
+    request_id: requestId,
+    message: 'I wrote a reply, sir, but my checks removed all of it, so nothing was sent. Ask me again, or ask in smaller parts.',
+  }) + '\n', {
+    headers: { 'Content-Type': 'application/x-ndjson; charset=utf-8', 'Cache-Control': 'no-store' },
+  });
+}
+
 function liveVoicePage() {
   const html = `<!doctype html><html><head>
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
@@ -14359,6 +14375,7 @@ export class CheState extends DurableObject {
         });
         if (verified.earlyResponse) return verified.earlyResponse;
         reply = verified.text;
+        if (!String(reply || '').trim()) return emptyReplyStream(executionRequestId, verified.removals);
         const { steps, answerReceipt, sourced } = verified;
         // This answer's own receipt, keyed to its text, for "how do you know that?".
         await recordAnswerEvidence(this.ctx.storage, reply, answerReceipt, { attributions_removed: verified.attributionRemoved });
