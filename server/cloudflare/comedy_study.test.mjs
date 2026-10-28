@@ -263,3 +263,41 @@ test('Wikipedia\'s own Retry-After is the wait before the retry, capped at 10 se
     globalThis.setTimeout = realSetTimeout;
   }
 });
+
+test('a Wikipedia step that fails during a Wikipedia outage is UPSTREAM_UNAVAILABLE, with the HTTP status, not PASS or FAIL', async () => {
+  const { findShow, judgeStudySteps } = await import('./comedy_study.js');
+  let calls = 0;
+  const down = async () => { calls += 1; return new Response('busy', { status: 503 }); };
+  let lastError = null;
+  try { await findShow('Martin', down); } catch (error) { lastError = { at: 'now', message: error.message, upstream: error.upstream }; }
+  assert.deepEqual(lastError.upstream, { http_status: 503, attempts: 3 }, 'the evidence keeps the status and every attempt');
+  const judged = judgeStudySteps([{ name: 'real search', pass: false, route: 'wikipedia' }], lastError);
+  assert.equal(judged[0].status, 'upstream_unavailable');
+  assert.equal(judged[0].pass, false, 'pending is never a pass');
+  assert.equal(judged[0].upstream.http_status, 503);
+});
+
+test('a failure that is not Wikipedia\'s own 429 or 5xx stays a FAIL, even while Wikipedia is also down', async () => {
+  const { judgeStudySteps } = await import('./comedy_study.js');
+  const upstream = { http_status: 503, attempts: 3 };
+  const steps = [
+    { name: 'search found the article', pass: false, route: 'wikipedia' },
+    { name: 'status reply', pass: false, route: 'che_study' },
+    { name: 'joke', pass: true, route: 'model', optional: true },
+  ];
+  const judged = judgeStudySteps(steps, { at: 'now', message: 'Wikipedia returned 503', upstream });
+  assert.equal(judged[1].status, 'fail', 'a CHE reply that is wrong is a fault, not an outage');
+  assert.equal(judged[2].status, 'pass');
+  const noOutage = judgeStudySteps([{ name: 'search', pass: false, route: 'wikipedia' }], { at: 'now', message: 'Wikipedia: invalid response' });
+  assert.equal(noOutage[0].status, 'fail', 'a parse error from Wikipedia is not an outage');
+  const passing = judgeStudySteps([{ name: 'search', pass: true, route: 'wikipedia' }], { at: 'now', message: 'x', upstream });
+  assert.equal(passing[0].status, 'pass', 'a step that passed is never changed');
+});
+
+test('a 429 is an upstream outage too; a 404 is not', async () => {
+  const { findShow } = await import('./comedy_study.js');
+  const limited = async () => new Response('slow', { status: 429 });
+  await assert.rejects(findShow('Martin', limited), (error) => error.upstream?.http_status === 429);
+  const missing = async () => new Response('gone', { status: 404 });
+  await assert.rejects(findShow('Martin', missing), (error) => error.upstream === undefined);
+});

@@ -73,21 +73,41 @@ function wikiRetryWaitMs(res, attempt) {
 async function wikiFetch(url, fetcher) {
   for (let attempt = 0; ; attempt += 1) {
     const res = await fetcher(url, { headers: UA, signal: AbortSignal.timeout(15000) });
-    if (res.ok || !WIKI_RETRY_STATUS.has(res.status) || attempt >= WIKI_RETRY_WAITS_MS.length) return res;
+    if (res.ok || !WIKI_RETRY_STATUS.has(res.status) || attempt >= WIKI_RETRY_WAITS_MS.length) return { res, attempts: attempt + 1 };
     await new Promise((resolve) => setTimeout(resolve, wikiRetryWaitMs(res, attempt)));
   }
 }
 
 async function wiki(params, fetcher) {
   const url = `${WIKI}?${new URLSearchParams({ format: 'json', formatversion: '2', redirects: '1', origin: '*', ...params })}`;
-  const res = await wikiFetch(url, fetcher);
+  const { res, attempts } = await wikiFetch(url, fetcher);
   if (!res.ok) {
     // A rate limit says how long to wait; the next pass is scheduled after it instead of retrying into it.
     const error = new Error(`Wikipedia returned ${res.status}`);
     if (res.status === 429 || res.status === 503) error.retryAfter = Math.min(Number(res.headers.get('Retry-After')) || 60, 3600);
+    // Wikipedia's own answer, kept as evidence: a 429 or 5xx is an outage at Wikipedia, not a fault in CHE.
+    if (res.status === 429 || res.status >= 500) error.upstream = { http_status: res.status, attempts };
     throw error;
   }
   return { url, data: await res.json() };
+}
+
+/**
+ * Judges each live-check step once the study has run. A Wikipedia step that did not succeed becomes
+ * 'upstream_unavailable' only when the study's last error is Wikipedia's own HTTP 429 or 5xx: it is then reported
+ * as pending external verification, with the status code. Every other failure stays 'fail'. Passing steps are
+ * never changed, and no step is ever turned into a pass.
+ */
+export function judgeStudySteps(steps, lastError) {
+  const upstream = lastError?.upstream;
+  return steps.map((step) => {
+    if (step.pass) return { ...step, status: 'pass' };
+    if (step.optional) return { ...step, status: 'warn' };
+    if (upstream && step.route === 'wikipedia') {
+      return { ...step, status: 'upstream_unavailable', upstream: { ...upstream, message: lastError.message, at: lastError.at } };
+    }
+    return { ...step, status: 'fail' };
+  });
 }
 
 /** The show's Wikipedia article: a search, then the best title match. */
@@ -299,7 +319,7 @@ export async function studyPass(storage, { store = null, complete, fetcher = fet
       if (subject.cursor >= subject.episodes.length) { subject.status = 'done'; summariesToSave.set(`${a.id}:summaries:${a.subjects.indexOf(subject)}`, null); }
     }
   } catch (error) {
-    a.last_error = { at: new Date(now).toISOString(), message: clip(error?.message || error, 120), ...(error?.retryAfter ? { retry_after_s: error.retryAfter } : {}) };
+    a.last_error = { at: new Date(now).toISOString(), message: clip(error?.message || error, 120), ...(error?.retryAfter ? { retry_after_s: error.retryAfter } : {}), ...(error?.upstream ? { upstream: error.upstream } : {}) };
     note(a, `A pass stopped (${clip(error?.message || error, 120)}); I'll pick up at the same place.`, now);
   }
   await savePass(storage, a, checkpoint, summariesToSave, now);
@@ -466,8 +486,12 @@ export async function studyProbe(env, request, objectName, { passes = 6 } = {}) 
   } finally {
     await call('/api/security/revoke_self', {}, device).catch(() => null);
   }
-  const required = steps.filter((s) => !s.optional);
-  return { ok: required.length > 0 && required.every((s) => s.pass), passed: steps.filter((s) => s.pass).length, total: steps.length, steps, coverage: (assignment?.subjects || []).map((s) => ({ show: s.article || s.name, episodes: s.episodes.length, covered: s.cursor, methods: methodCounts(s.episodes) })) };
+  // Judged after the run: a Wikipedia step can be pending external verification (upstream_unavailable), which is
+  // neither a pass nor a fail. The gate fails only on a real fault.
+  const judged = judgeStudySteps(steps, assignment?.last_error);
+  const required = judged.filter((s) => !s.optional);
+  const pending = judged.filter((s) => s.status === 'upstream_unavailable').map((s) => s.name);
+  return { ok: required.length > 0 && required.every((s) => s.status === 'pass' || s.status === 'upstream_unavailable'), pending, passed: judged.filter((s) => s.status === 'pass').length, total: judged.length, steps: judged, coverage: (assignment?.subjects || []).map((s) => ({ show: s.article || s.name, episodes: s.episodes.length, covered: s.cursor, methods: methodCounts(s.episodes) })) };
 }
 
 // ─── Worker hooks (kept here so worker.js stays within its byte budget) ───
