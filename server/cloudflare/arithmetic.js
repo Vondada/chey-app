@@ -123,19 +123,21 @@ export function evaluate(text) {
     if (peek() === '%') { take(); v = div(v, rat(100n)); }
     return v;
   }
+  // School precedence: a leading minus is applied after the power, so -2^2 is -(2^2) = -4. The exponent may carry its
+  // own sign (2^-1 = 1/2) and powers are right-associative (2^3^2 = 2^9).
   function unary() {
     if (peek() === '-') { take(); return mul(rat(-1n), unary()); }
     if (peek() === '+') { take(); return unary(); }
-    return primary();
+    return power();
   }
   function power() {
-    const base = unary();
-    if (peek() === '^') { take(); return pow(base, power()); }
+    const base = primary();
+    if (peek() === '^') { take(); return pow(base, unary()); }
     return base;
   }
   function term() {
-    let v = power();
-    while (peek() === '*' || peek() === '/') v = take() === '*' ? mul(v, power()) : div(v, power());
+    let v = unary();
+    while (peek() === '*' || peek() === '/') v = take() === '*' ? mul(v, unary()) : div(v, unary());
     return v;
   }
   function expr() {

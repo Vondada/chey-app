@@ -74,3 +74,12 @@ test('a memory line about CHE\'s own lookups is dropped even when the owner used
   assert.doesNotMatch(out.text, /fetched|searched/);
   assert.equal(out.dropped.length, 1);
 });
+
+test('school precedence: a leading minus is applied after the power, and the exponent may be signed', () => {
+  assert.equal(formatRational(evaluate('-2^2')), '-4', '-2^2 is -(2^2)');
+  assert.equal(formatRational(evaluate('-2^2 + 5')), '1', 'the case that gave 9 before the fix');
+  assert.equal(formatRational(evaluate('(-2)^2')), '4', 'brackets keep the minus with the base');
+  assert.equal(formatRational(evaluate('2^-1')), '0.5', 'a negative exponent');
+  assert.equal(formatRational(evaluate('2^3^2')), '512', 'powers are right-associative');
+  assert.equal(formatRational(evaluate('-3 * 2^2')), '-12');
+});
