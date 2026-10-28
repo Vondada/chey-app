@@ -664,7 +664,7 @@ export function guardClaimedResearchActions(reply, { research = null, tools = []
   // Searching, googling, looking something up and "my research shows" all
   // claim a search that ran, including counts ("three websites"). Reading a
   // document the owner shared is judged by the document check below.
-  const SEARCHED_WHAT = '(?:(?:the|some|multiple|several|most|many|a\\s+few|a\\s+couple\\s+of|\\d+|two|three|four|five|six|ten|all\\s+the|a\\s+bunch\\s+of)\\s+)?(?:fresh|recent|current|live|online|web|internet|sources?|articles?|websites?|sites?|news|studies|google)\\b';
+  const SEARCHED_WHAT = '(?:(?:the|some|multiple|several|most|many|a\\s+few|a\\s+couple\\s+of|\\d+|two|three|four|five|six|ten|all\\s+the|a\\s+bunch\\s+of)\\s+)?(?:fresh|recent|current|live|online|web|internet|sources?|articles?|websites?|sites?|news|studies|google|github|repos?|repositories)\\b';
   const claimedSearch = /\b(?:i|we)\s+(?:searched|looked up|pulled|researched|checked|retrieved)\s+(?:(?:the|some|multiple|several|most)\s+)?(?:fresh|recent|current|live|online|web|sources?|articles?|documents?|information)\b/i.test(text)
     || new RegExp(`\\b(?:i|we)(?:'ve|\\s+have)?\\s+(?:just\\s+|already\\s+|also\\s+|quickly\\s+)?(?:searched|looked\\s+up|pulled|checked|retrieved|browsed|scanned|consulted|visited)\\s+(?:through\\s+|across\\s+|on\\s+)?${SEARCHED_WHAT}`, 'i').test(text)
     || /\b(?:i|we)(?:'ve|\s+have)?\s+(?:just\s+|already\s+|also\s+|quickly\s+)?(?:googled|web.?searched|researched)\b|\b(?:i|we)(?:'ve|\s+have)?\s+looked\s+(?:it|this|that|them|those|these)\s+up\b|\b(?:i|we)\s+(?:looked|searched)\s+(?:it\s+)?(?:up\s+)?(?:online|on\s+(?:the\s+)?(?:web|internet|google))\b/i.test(text)
