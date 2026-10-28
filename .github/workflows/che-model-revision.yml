@@ -1,0 +1,35 @@
+# Reads the commit hash of one pinned Hugging Face model, from Hugging Face's own API, on a GitHub runner (the sandbox
+# cannot reach huggingface.co). Read-only: it writes the revision to the job summary and changes nothing else.
+name: CHE model revision lookup
+
+on:
+  workflow_dispatch:
+    inputs:
+      model:
+        description: Hugging Face model id (owner/name)
+        required: true
+        default: stabilityai/sdxl-turbo
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  revision:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Read the model's commit from Hugging Face
+        env:
+          MODEL: ${{ inputs.model }}
+        run: |
+          set -euo pipefail
+          case "$MODEL" in
+            [A-Za-z0-9._-]*/[A-Za-z0-9._-]*) ;;
+            *) echo "::error::model id must look like owner/name"; exit 1 ;;
+          esac
+          json=$(curl -fsS --retry 3 "https://huggingface.co/api/models/${MODEL}")
+          sha=$(printf '%s' "$json" | python3 -c 'import json,sys; print(json.load(sys.stdin)["sha"])')
+          echo "model: ${MODEL}" | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "revision (commit sha): ${sha}" | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "source: https://huggingface.co/api/models/${MODEL} (field sha)" | tee -a "$GITHUB_STEP_SUMMARY"
