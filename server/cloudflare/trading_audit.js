@@ -8,7 +8,9 @@
 // positions, evidence and the look-ahead audit. Nothing is written, ordered or sent to a model. Corrections are shown
 // next to the stored value; the stored history is never rewritten.
 import { MINUTE_FEEDS, MAX_COST_R, RETIRED_FEEDS, readSimState, readStoredTrades, roundTripCost, summarize as simSummary } from './strategy_sim.js';
-import { RECORD_PREFIX, contractOf, isCryptoRecord, tradeDayOf, validateTradeRecord } from './trading_evidence.js';
+import { INTRADAY_CANDIDATES, RECORD_PREFIX, contractOf, isCryptoRecord, readTrades, tradeDayOf, validateTradeRecord } from './trading_evidence.js';
+import { RESOLUTION } from './trading_live.js';
+import { gatherLossReview, lossReply } from './trading_loss_review.js';
 
 export const AUDIT_SOURCE = 'che_trading_audit';
 const RESEARCH_PREFIX = 'trd_ev:';
@@ -205,7 +207,7 @@ export function speakDeepAudit(a) {
   const lines = ['Deeper checks, read only, from the stored records.'];
   if (!s.error) {
     lines.push(`Strategy simulation: ${s.closed} closed trades and ${s.open.count} open. Total ${s.total_r} R: ${s.gross_r_before_costs} R from price moves and ${-s.costs_r} R in costs.`);
-    if (s.trades_with_costs_over_risk) lines.push(`${s.trades_with_costs_over_risk} trades had costs larger than their whole risk; they account for ${s.r_from_those_trades} R. New signals like that are now skipped.`);
+    if (s.trades_with_costs_over_risk) lines.push(`${s.trades_with_costs_over_risk} simulation trades had costs larger than their whole risk; they account for ${s.r_from_those_trades} R. They were recorded before the simulation's cost gate (0.25 R); the gate skips new signals above that. The forward crypto journal has no such gate yet.`);
     if (s.open.on_retired_feeds.length) lines.push(`${s.open.on_retired_feeds.length} open positions are on retired Binance feeds and cannot close by themselves.`);
   }
   for (const [k, g] of Object.entries(a.journal.groups)) lines.push(`Journal ${k.replace(':', ' ')}: ${g.records} records, net $${g.net_pnl}.`);
@@ -213,4 +215,66 @@ export function speakDeepAudit(a) {
   const d = a.journal.day;
   lines.push(`${d.day} paper P&L: $${d.new_york_date.net_pnl} by New York date, $${d.utc_date.net_pnl} by UTC date, $${d.cme_trade_day.net_pnl} by CME trade day.`);
   return lines.join('\n');
+}
+
+// ─── Cost arithmetic on real journal records (read only) ─────────────────
+
+const costsTotal = (t) => (Number(t.costs?.spread) || 0) + (Number(t.costs?.slippage) || 0) + (Number(t.costs?.commissions) || 0) + (Number(t.costs?.fees) || 0);
+const dollars = (x) => `${Number(x) < 0 ? '-' : ''}$${Math.abs(Number(x) || 0).toFixed(2)}`;
+
+/** One journal record's cost arithmetic, from its stored fields only: the stop distance, risk, each cost, and the cost per R. */
+export function explainTrade(t, { n = 5 } = {}) {
+  const qty = Number(t.qty) || 0;
+  const pointValue = isCryptoRecord(t) ? 1 : 2;
+  const pv = pointValue * qty;
+  const entryRaw = Number(t.entry?.raw);
+  const exitRaw = Number(t.exit?.raw);
+  const stopDist = Math.abs(entryRaw - Number(t.stop));
+  const costs = costsTotal(t);
+  const risk = Number(t.risk_dollars);
+  const gross = Number(t.gross_before_costs);
+  const net = Number(t.net_pnl);
+  const tradedValue = (entryRaw + exitRaw) * pv;
+  return {
+    id: t.id, strategy: t.strategy, side: t.side, market: isCryptoRecord(t) ? 'crypto' : 'futures', qty,
+    entry_time: t.entry?.time, exit_time: t.exit?.time, exit_reason: t.exit?.reason,
+    entry_raw: entryRaw, exit_raw: exitRaw, stop: Number(t.stop),
+    steps: [
+      `stop distance = |${entryRaw} − ${Number(t.stop)}| = ${stopDist}; risk = ${stopDist} × ${pointValue} × ${qty} = ${dollars(stopDist * pv)} (stored ${dollars(risk)})`,
+      `costs = spread ${dollars(t.costs?.spread)} + slippage ${dollars(t.costs?.slippage)} + commissions ${dollars(t.costs?.commissions)} + fees ${dollars(t.costs?.fees)} = ${dollars(costs)}`,
+      `fees as a share of both legs' value: ${dollars(t.costs?.fees)} ÷ ${dollars(tradedValue)} = ${tradedValue ? (100 * (Number(t.costs?.fees) || 0) / tradedValue).toFixed(3) : 'n/a'}%`,
+      `net = gross ${dollars(gross)} − costs ${dollars(costs)} = ${dollars(gross - costs)} (stored ${dollars(net)}; ${Math.abs(gross - costs - net) < 0.01 ? 'matches' : 'DOES NOT MATCH'})`,
+      `cost per R = costs ${dollars(costs)} ÷ risk ${dollars(risk)} = ${risk > 0 ? (costs / risk).toFixed(3) : 'n/a'}R; stored R net ${Number(t.r_net)}`,
+    ],
+    cost_r: risk > 0 ? r4(costs / risk) : null,
+  };
+}
+
+/** Up to [n] journal records whose costs exceed their risk, spread from the smallest to the largest cost per R. */
+export function costExamples(records, n = 5) {
+  const rows = records.filter((t) => t.environment === 'paper' && Number(t.risk_dollars) > 0 && costsTotal(t) > Number(t.risk_dollars))
+    .sort((a, b) => costsTotal(a) / Number(a.risk_dollars) - costsTotal(b) / Number(b.risk_dollars));
+  if (!rows.length) return [];
+  const picks = [...new Set(Array.from({ length: n }, (_, i) => Math.round((i * (rows.length - 1)) / Math.max(1, n - 1))))];
+  return picks.map((i) => explainTrade(rows[i]));
+}
+
+/**
+ * The probe's cost examples, and the owner's loss questions answered from the same paper journal the chat route reads
+ * (the futures journal is the answer; the crypto journal is reported on its own line).
+ */
+export async function costAndLossProbe(storage) {
+  const records = [...(await storage.list({ prefix: RECORD_PREFIX })).values()];
+  const isPaper = (t) => t.environment === 'paper' && t.data?.resolution === RESOLUTION;
+  const nameOf = (id) => INTRADAY_CANDIDATES[id]?.name || id;
+  const { futures, crypto } = await gatherLossReview(storage, { readTrades, isPaper, nameOf });
+  return {
+    cost_examples: costExamples(records),
+    loss_answers: {
+      why_losing: lossReply('why_losing', futures),
+      worst: lossReply('worst', futures),
+      best: lossReply('best', futures),
+      crypto_why_losing: crypto.entries ? lossReply('why_losing', crypto) : null,
+    },
+  };
 }
