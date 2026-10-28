@@ -3,7 +3,8 @@
 // several models, not the owner's exact request.
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { FLUX_SCHNELL, imagePayload, payloadReceipt } from './image_payload.js';
+import { FLUX_SCHNELL, LUCID_ORIGIN, imagePayload, payloadReceipt } from './image_payload.js';
+import { STILL_MODEL } from './film_studio.js';
 import { generateImage, listMedia } from './media.js';
 
 test('FLUX.1 schnell is never sent a seed: its schema lists prompt and steps only', () => {
@@ -98,4 +99,33 @@ test('a provider that refuses the payload is reported with its own error, and no
 test('a payload the old code would have sent (seed on flux) is refused by the stand-in: the regression is caught', async () => {
   const ai = fluxSchemaAi();
   await assert.rejects(() => ai.run(FLUX_SCHNELL, { prompt: 'a bell', steps: 4, seed: 1 }), /\/seed/);
+});
+
+test('model switching: the same wish gives each model its own payload (seed kept by lucid, dropped by FLUX)', () => {
+  const wish = { prompt: 'a glass bridge over a quiet lake, switch-test 552', steps: 6, seed: 4242, width: 768, height: 512, guidance: 5 };
+  const flux = imagePayload(FLUX_SCHNELL, wish);
+  const lucid = imagePayload(LUCID_ORIGIN, wish);
+  assert.deepEqual(Object.keys(flux.payload).sort(), ['prompt', 'steps']);
+  assert.deepEqual(Object.keys(lucid.payload).sort(), ['guidance', 'height', 'prompt', 'seed', 'steps', 'width']);
+  assert.equal(lucid.payload.seed, 4242, 'a supported seed is preserved');
+  assert.equal(lucid.seed_applied, true);
+  assert.equal(flux.seed_applied, false);
+  assert.ok(flux.dropped.some((d) => d.field === 'width') && flux.dropped.some((d) => d.field === 'guidance'));
+  assert.deepEqual(lucid.dropped, [], 'nothing supported is dropped for lucid');
+});
+
+test('numeric limits are enforced per model and each change is reported', () => {
+  const r = imagePayload(LUCID_ORIGIN, { prompt: 'a clock tower', guidance: 15, width: 9000, height: -4, steps: 0, seed: -1 });
+  assert.equal(r.payload.guidance, 10);
+  assert.equal(r.payload.width, 2500);
+  assert.equal(r.payload.height, 0);
+  assert.equal(r.payload.steps, 1);
+  assert.equal(r.payload.seed, undefined, 'a negative seed is not sent');
+  for (const field of ['guidance', 'width', 'height', 'steps', 'seed']) assert.ok(r.dropped.some((d) => d.field === field), field);
+});
+
+test('the film pipeline\'s still model is FLUX, so its payload carries no seed (the same 5006 case)', () => {
+  assert.equal(STILL_MODEL, FLUX_SCHNELL);
+  const r = imagePayload(STILL_MODEL, { prompt: 'a harbour at night, film still 7', steps: 4, seed: 99 });
+  assert.deepEqual(Object.keys(r.payload).sort(), ['prompt', 'steps']);
 });
