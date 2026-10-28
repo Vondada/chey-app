@@ -17,8 +17,6 @@ test('the stage order is exactly the order worker.js ran before the pipeline exi
     'truth_layer', 'research_actions', 'owner_actions', 'citations', 'grounding', 'asset_truth', 'capability_gap',
     'attribution', 'agent_task', 'answer_receipt', 'wake_text', 'pretend_tool_call', 'execution_claims', 'auditor',
     'engine_claims', 'vision_note',
-    // added after the historical order: numeric arithmetic on the final text (numeric_truth.js), so nothing strips it
-    'numeric_check',
   ]);
   assert.equal(new Set(TRUTH_STAGE_ORDER).size, TRUTH_STAGE_ORDER.length, 'no duplicate stage names');
   for (const stage of TRUTH_STAGES) assert.equal(typeof stage.run, 'function', stage.name);

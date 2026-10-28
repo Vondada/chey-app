@@ -91,21 +91,6 @@ export async function storeRithmicCandles(storage, candles, { now = Date.now() }
   return { ok: true, source: RITHMIC_SOURCE, stored, duplicates, conflicts, refused: refused.length, refusals: refused.slice(0, 20), kept_days: KEEP_DAYS };
 }
 
-/** The newest stored candle per contract: how many hours are recorded and when the phone last sent a candle. Reads only. */
-export async function rithmicStatus(storage) {
-  const index = await storage.list({ prefix: INDEX });
-  const symbols = [];
-  for (const [key, hours] of index) {
-    const symbol = key.slice(INDEX.length);
-    const list = Array.isArray(hours) ? hours : [];
-    if (!SYMBOL.test(symbol) || !list.length) continue;
-    const hour = await storage.get(`${PREFIX}${symbol}:${list[list.length - 1]}`);
-    const newest = Object.values(hour?.candles || {}).sort((a, b) => a.t.localeCompare(b.t)).at(-1) || null;
-    symbols.push({ symbol, hours: list.length, latest_t: newest?.t || null, received_at: newest?.received_at || null });
-  }
-  return { symbols: symbols.sort((a, b) => a.symbol.localeCompare(b.symbol)) };
-}
-
 /** The recorded candles for one contract between two times, with real coverage: nothing is filled in. */
 export async function readRithmicCandles(storage, { symbol, from = null, to = null, now = Date.now() } = {}) {
   if (!SYMBOL.test(String(symbol || ''))) return { ok: false, error: 'symbol must be a futures contract such as MNQZ6' };

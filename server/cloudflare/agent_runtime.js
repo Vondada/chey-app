@@ -20,7 +20,6 @@ import { officeConversation } from './office_conversation.js';
 import { meetingEvent, officeTaskEvent, researchEvent } from './room_events.js';
 import { assertAgentMayRun, permissionBlocker } from './agent_permissions.js';
 import { guardRetrievalClaims } from './truth_layer.js';
-import { cheNote } from './soul.js';
 import { JOB_ROLE_SPECS, POOL_NAMES, agentSoul, isPartnerAgent, pickOfficeAgent, runBrowseTask } from './browse_chat.js';
 import { closeCheck } from './office_queue.js';
 
@@ -597,8 +596,6 @@ export function queueAgentTask(data, agent, task, source = 'owner', options = {}
     partner_name: agent.name,
     role: agent.role,
     task: clip(task, 3000),
-    // CHE's own task line; the specialist keeps its own role and voice.
-    che_note: options.che_note === false ? '' : cheNote('agent_task', { subject: task, name: agent.name }),
     source,
     status: 'queued',
     result: '',
@@ -1275,7 +1272,7 @@ async function runOneTask(ctx) {
         env,
         modelFor(env, agent, models),
         agentSystemPrompt(agent, workContext),
-        task.che_note ? `${task.che_note}\n\n${task.task}` : task.task,
+        task.task,
         agent.model_tier === 'strong' ? 1800 : 1100,
         routing,
       );

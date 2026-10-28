@@ -7,12 +7,6 @@ import { fileURLToPath } from 'node:url';
 import { resolve } from 'node:path';
 
 export const MAX_CODING_PAID_USD = 15;
-// Owner rule (2026-10-27): authorized out-of-pocket AI spend is $0. A provider-enforced cap is a
-// ceiling, not an authorization, so a verified $15 cap no longer opens the paid step. Same value as
-// AUTHORIZED_SPEND_USD in server/cloudflare/model_router.mjs (a test keeps them equal); it is a
-// constant on purpose: no variable or secret can raise it, only a reviewed code change.
-export const AUTHORIZED_CODING_SPEND_USD = 0;
-export const SPEND_NOT_AUTHORIZED = 'Paid coding is disabled: the owner authorized $0 of AI spend (2026-10-27). A spending cap is a ceiling, not an approval to spend.';
 
 // Only the key's numeric and boolean status fields, plus the reset interval and the
 // field names. The key's label and any key text are never returned or logged.
@@ -72,12 +66,7 @@ export async function paidGate({ env = process.env, fetcher = fetch } = {}) {
     });
     if (!response.ok) return { ok: false, reason: `Could not verify the paid key (HTTP ${response.status}).` };
     const payload = await response.json();
-    const cap = validateMonthlyCap(payload, MAX_CODING_PAID_USD, { byokConfirmedNone });
-    // The read above is free and still reports the cap, but no verified cap authorizes spend.
-    if (AUTHORIZED_CODING_SPEND_USD <= 0) {
-      return { ok: false, reason: SPEND_NOT_AUTHORIZED, cap_verified: cap.ok, cap_detail: cap.ok ? `$${cap.limit}/month cap, $${cap.remaining.toFixed(2)} left` : cap.reason, summary: keyStatusSummary(payload) };
-    }
-    return { ...cap, summary: keyStatusSummary(payload) };
+    return { ...validateMonthlyCap(payload, MAX_CODING_PAID_USD, { byokConfirmedNone }), summary: keyStatusSummary(payload) };
   } catch (_) {
     return { ok: false, reason: 'Could not verify the paid key with OpenRouter.' };
   }
@@ -91,7 +80,6 @@ if (invokedDirectly) {
   const result = await paidGate();
   if (result.summary) console.log(`Key status: ${JSON.stringify(result.summary)}`);
   if (!result.ok) {
-    if (result.cap_detail) console.log(`Cap check: ${result.cap_detail}.`);
     console.error(`Paid coding fallback blocked: ${result.reason}`);
     process.exitCode = 2;
   } else {

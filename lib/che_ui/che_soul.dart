@@ -16,9 +16,9 @@ class CheSoulTrait {
 /// The six traits, in the order the owner sees them. Defaults match soul.js.
 const kCheSoulTraits = [
   CheSoulTrait('warmth', 'Warmth', 'How personal and caring she sounds', 7),
-  CheSoulTrait('playfulness', 'Playfulness', 'Light humour in relaxed talk, never about money or problems', 6),
-  CheSoulTrait('formality', 'Formality', 'From casual wording to formal wording', 3),
-  CheSoulTrait('directness', 'Directness', 'From offering options to a clear recommendation first', 8),
+  CheSoulTrait('playfulness', 'Playfulness', 'Light humour in relaxed talk, never about money or problems', 4),
+  CheSoulTrait('formality', 'Formality', 'From casual wording to formal wording', 5),
+  CheSoulTrait('directness', 'Directness', 'From offering options to a clear recommendation first', 7),
   CheSoulTrait('verbosity', 'Detail', 'From one to three sentences to thorough explanations', 3),
   CheSoulTrait('proactivity', 'Initiative', 'From answering only what was asked to offering next steps', 5),
 ];

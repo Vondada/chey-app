@@ -11,7 +11,6 @@
 //   classify  read a failed attempt's error text (stdin) into a failure kind
 //   receipt   one model attempt's receipt for the job record (failure text on stdin)
 //   redact    print stdin with provider keys, bearer tokens and token fields replaced
-//   last      one field of the last receipt in --attempts (error_class, decision, scope, resumable)
 //   unsafe    print the paths the final patch would refuse
 //
 // Only syntax is checked here (node --check for JS, JSON.parse). Tests and review
@@ -23,7 +22,7 @@ import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { CHECKPOINT_MAX_BYTES, attemptReceipt, classifyModelFailure, failoverDecision, progressPrompt, redactSecrets, unsafeCodingPaths } from '../server/cloudflare/coding_failover.mjs';
+import { CHECKPOINT_MAX_BYTES, attemptReceipt, classifyModelFailure, progressPrompt, redactSecrets, unsafeCodingPaths } from '../server/cloudflare/coding_failover.mjs';
 
 export const CHECKPOINT_PATCH = 'checkpoint.patch';
 export const CHECKPOINT_META = 'checkpoint.json';
@@ -166,7 +165,7 @@ export function verify({ cwd, dir, baseSha = '' }) {
 
 // Verify, and on success write the prompt the next model receives: the original request
 // plus what is already verified.
-export function advance({ cwd, dir, baseSha = '', basePrompt = '', attempt = 1, history = [] }) {
+export function advance({ cwd, dir, baseSha = '', basePrompt = '', attempt = 1 }) {
   const verdict = verify({ cwd, dir, baseSha });
   if (verdict.ok) {
     writeFileSync(join(dir, NEXT_PROMPT), progressPrompt({
@@ -175,8 +174,6 @@ export function advance({ cwd, dir, baseSha = '', basePrompt = '', attempt = 1, 
       additions: verdict.additions,
       deletions: verdict.deletions,
       attempt,
-      history,
-      checked: verdict.checked,
     }));
   }
   return verdict;
@@ -272,12 +269,7 @@ function main(argv) {
   else if (command === 'advance') {
     const promptFile = argValue(rest, '--prompt-file');
     const basePrompt = promptFile && existsSync(promptFile) ? readFileSync(promptFile, 'utf8') : '';
-    // The earlier attempts' receipts (one JSON line each), so the next model knows what failed.
-    const historyFile = argValue(rest, '--history-file');
-    const history = historyFile && existsSync(historyFile)
-      ? readFileSync(historyFile, 'utf8').split('\n').filter(Boolean).flatMap((line) => { try { return [JSON.parse(line)]; } catch (_) { return []; } })
-      : [];
-    result = advance({ cwd, dir, baseSha: argValue(rest, '--base'), basePrompt, attempt: Number(argValue(rest, '--attempt')) || 1, history });
+    result = advance({ cwd, dir, baseSha: argValue(rest, '--base'), basePrompt, attempt: Number(argValue(rest, '--attempt')) || 1 });
   } else if (command === 'classify') {
     // The failure text arrives on stdin; the kind decides whether a resume may follow.
     const verdict = classifyModelFailure({ text: readFileSync(0, 'utf8'), exitCode: Number(argValue(rest, '--exit')) || 0 });
@@ -300,26 +292,7 @@ function main(argv) {
       seconds: Number(argValue(rest, '--seconds')) || 0,
       capSeconds: Number(argValue(rest, '--cap')) || 0,
       progress: argValue(rest, '--progress') || 'none',
-      coverage: argValue(rest, '--coverage'),
-      startedAt: argValue(rest, '--started'),
     });
-  } else if (command === 'last') {
-    // The router's verdict on the last attempt, for the runner's shell loop. `scope` is
-    // provider when every model of that provider must be skipped for the rest of the run;
-    // `resumable` is true when a later run of this session may succeed once a limit clears.
-    const file = argValue(rest, '--attempts');
-    const lines = file && existsSync(file) ? readFileSync(file, 'utf8').split('\n').filter(Boolean) : [];
-    let last = {};
-    try { last = lines.length ? JSON.parse(lines[lines.length - 1]) : {}; } catch (_) { last = {}; }
-    const decision = last.error_class ? failoverDecision(last.error_class) : null;
-    const fields = {
-      error_class: last.error_class || '',
-      decision: last.decision || '',
-      scope: last.scope || (decision ? decision.scope : ''),
-      resumable: String(Boolean(last.resumable || decision?.resumable)),
-    };
-    process.stdout.write(`${fields[argValue(rest, '--field')] ?? ''}\n`);
-    return 0;
   } else if (command === 'restore') result = restore({ cwd, dir });
   else if (command === 'revert') result = revert({ cwd, dir });
   else if (command === 'unsafe') result = unsafeCodingPaths(rest.filter((arg) => !arg.startsWith('--')));

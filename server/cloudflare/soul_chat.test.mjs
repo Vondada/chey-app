@@ -106,7 +106,7 @@ test('the owner can read the Soul and restore an earlier version; a restore is a
   assert.deepEqual(view.json.history.map((entry) => entry.version), [0]);
   const restored = await che.soul('POST', '/api/soul/restore', { version: 0 });
   assert.equal(restored.json.version, 2);
-  assert.equal(restored.json.traits.formality, 3, 'the built-in formality is back (owner, 2026-10-27: more casual by default)');
+  assert.equal(restored.json.traits.formality, 5, 'the built-in formality is back');
   const reply = await che.say(PERSONALITY_PROMPT);
   assert.match(reply.system, /SOUL v2/);
   const missing = await che.soul('POST', '/api/soul/restore', { version: 42 });

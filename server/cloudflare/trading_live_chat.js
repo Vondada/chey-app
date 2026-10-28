@@ -127,7 +127,7 @@ function feedLine(d) {
   return `Data: ${f.status} ${f.provider_symbol} (${f.contract || 'front month'}) from ${f.provider}${lag}. ${f.status === 'LIVE' ? '' : 'Delayed data is research only, not execution evidence. '}Market: ${d.session.state}.`;
 }
 
-export function tradeLine(t) {
+function tradeLine(t) {
   return `${t.side} ${t.qty} ${t.contract}, ${t.strategy}, entered ${t.entry.fill} at ${when(t.entry.time)}, exited ${t.exit.fill} on ${t.exit.reason} at ${when(t.exit.time)}, net ${money(t.net_pnl)}`;
 }
 

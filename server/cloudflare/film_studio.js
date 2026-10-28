@@ -195,22 +195,12 @@ export async function farmProviders(env = {}, storage, { now = Date.now(), inter
   const kv = valid.kaggle || {};
   const kaggleLeft = kv.ok ? Math.max(0, Number(kv.allowed_s || 0) - Number(kv.used_s || 0) - Number(kv.reserved_s || 0) - KAGGLE_MARGIN_SECONDS - usage.kaggle_seconds) : 0;
   const kBlock = blocked(FARM_PROVIDERS.kaggle);
-  // A saved token Kaggle accepts is connected. Whether a session can start depends on the account name, which Kaggle
-  // returns for a modern token; the status says exactly which piece is missing, and never asks for the token again.
-  const kName = kv.username || '';
-  const nameMissing = {
-    network: 'Kaggle could not be reached to read your account name. I try again on the next check; your token is kept.',
-    unauthorized: 'Kaggle rejected the token when reading your account name. Re-save it in Keys.',
-    no_name: 'Kaggle accepted the token but did not return an account name. In Keys, save your same Kaggle token as yourusername:yourtoken. No new token is needed.',
-    unknown: 'Kaggle answered without an account name. I try again on the next check; your token is kept.',
-  }[kv.username_error] || 'I am reading your Kaggle account name.';
   add('kaggle', {
-    status: !kaggleKey ? 'not set up' : kBlock ? 'blocked' : kv.ok ? (kName ? 'connected' : 'connected, account name not read') : kv.error ? 'not working' : 'not yet checked',
-    usable: Boolean(kaggleKey) && !kBlock && kv.ok === true && Boolean(kName) && kaggleLeft > 1800,
-    username: kName || null,
+    status: !kaggleKey ? 'not set up' : kBlock ? 'blocked' : kv.ok ? (kv.username ? 'connected' : 'connected, needs your username') : kv.error ? 'not working' : 'not yet checked',
+    usable: Boolean(kaggleKey) && !kBlock && kv.ok === true && Boolean(kv.username) && kaggleLeft > 1800,
     remaining: { gpu_seconds: round(kaggleLeft) },
-    detail: kBlock || (!kaggleKey ? 'Paste your Kaggle API token in Keys (kaggle.com → Settings → API). GPU sessions with internet need a phone-verified Kaggle account.'
-      : kv.ok ? (kName ? `${round(kaggleLeft / 3600, 1)} GPU hours left this week after a one-hour margin.` : `Your token works. ${nameMissing}`)
+    detail: kBlock || (!kaggleKey ? 'Paste your Kaggle API token in Keys as username:token (kaggle.com → Settings → API). GPU sessions with internet need a phone-verified Kaggle account.'
+      : kv.ok ? `${round(kaggleLeft / 3600, 1)} GPU hours left this week after a one-hour margin.${kv.username ? '' : ' Add your Kaggle username before the token (username:token) so I can start sessions.'}`
         : kv.error || 'I check it the next time a film needs it.'),
   });
 

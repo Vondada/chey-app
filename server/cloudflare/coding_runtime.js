@@ -326,8 +326,6 @@ export function runtimeState(result = {}) {
   const failure = String(result.failure || '').trim().toLowerCase();
   if (raw === 'blocked' && failure === 'opencode_failed') return 'opencode_failed';
   if (raw === 'blocked' && failure === 'deliver_failed') return 'deliver_failed';
-  // The zero-cost router found no model verified as free (owner, 2026-10-27: $0 authorized spend).
-  if (raw === 'blocked' && failure === 'no_eligible_model') return 'no_eligible_model';
   return raw || 'queued';
 }
 
@@ -336,7 +334,7 @@ export function runtimeStateClass(result = {}) {
   if (['queued', 'dispatching', 'running', 'retrying', 'recovering', 'waiting_capacity', 'resuming'].includes(state)) return 'active';
   if (['implemented', 'pr_open', 'reviewing', 'approved_waiting_owner'].includes(state)) return 'progress';
   if (['complete', 'merged', 'no_change', 'rolled_back'].includes(state)) return 'complete';
-  if (['opencode_failed', 'deliver_failed', 'tests_failed', 'review_rejected', 'failed', 'cancelled', 'dead_letter', 'no_eligible_model'].includes(state)) return 'failed';
+  if (['opencode_failed', 'deliver_failed', 'tests_failed', 'review_rejected', 'failed', 'cancelled', 'dead_letter'].includes(state)) return 'failed';
   return 'unknown';
 }
 
@@ -375,13 +373,6 @@ export function speakRuntimeStatus(result = {}) {
   const hasPr = Number(result.pr_number) > 0;
   const pr = Number(result.pr_number) > 0 ? `pull request ${Number(result.pr_number)}` : 'its pull request';
   const parts = [];
-  const charges = Object.entries(result.billing || {}).filter(([provider, row]) =>
-    /^[a-z0-9_-]{1,30}$/.test(provider) && row?.verified === true
-    && typeof row.delta_usd === 'number' && Number.isFinite(row.delta_usd) && row.delta_usd > 0);
-  if (result.billing_alert === true || charges.length) {
-    const amounts = charges.map(([provider, row]) => `${provider}: $${row.delta_usd.toFixed(6).replace(/0+$/, '').replace(/\.$/, '')}`).join(', ');
-    parts.push(`Zero-spend billing alert: ${amounts || 'the charge amount is not verified'}. Check provider billing before another run; paid AI spending remains unauthorized.`);
-  }
   // GitHub could not be asked whether the silent run is alive: say so rather
   // than calling it running or failed.
   if (result.liveness === 'unverified' && runtimeStateClass(result) === 'active') {
@@ -427,19 +418,11 @@ export function speakRuntimeStatus(result = {}) {
       const tried = (Array.isArray(result.models_tried) ? result.models_tried : []).slice(0, 6);
       const cause = runtimeFailureCause(result);
       parts.push(`The OpenCode attempt failed with ${changes}${tried.length ? ` after trying ${tried.length} model${tried.length === 1 ? '' : 's'} (${tried.join(', ')})` : ''}${cause.words ? `; the last one failed because ${cause.words}` : ''}.`);
-      // The router's class for each failed attempt, when the record has them (2026-10-27 records on).
-      const classes = (Array.isArray(result.error_history) ? result.error_history : []).map((row) => String(row?.error_class || '')).filter(Boolean);
-      if (classes.length) parts.push(`Failure classes, in order: ${classes.slice(0, 8).map((c) => c.replace(/_/g, ' ')).join(', ')}.`);
       parts.push('I am recovering the coding job automatically with my own coding team on other engines.');
       if (['too_large', 'quota', 'access'].includes(cause.kind)) parts.push('OpenCode itself needs a model key with enough quota and token limit (for example a paid Gemini key, or an OpenRouter key) to run this request.');
       break;
     }
     case 'deliver_failed': parts.push('The coding change could not be delivered. I am recovering the coding job automatically.'); break;
-    case 'no_eligible_model': {
-      const why = typeof result.error === 'string' ? result.error.trim().slice(0, 240) : '';
-      parts.push(`I stopped the coding job before it started: no AI model is verified as free right now, and you authorized zero dollars of AI spend, so nothing was spent.${why ? ` ${why}` : ''}`);
-      break;
-    }
     case 'failed': case 'cancelled': case 'dead_letter':
       parts.push(result.failure === 'dispatch_stale'
         ? 'The coding workflow never started, so I am not reporting it as running.'
@@ -448,9 +431,6 @@ export function speakRuntimeStatus(result = {}) {
           : `The coding job stopped: ${state.replace(/_/g, ' ')}.`); break;
     default: parts.push(`The coding job status is ${state.replace(/_/g, ' ')}.`);
   }
-  // Which model actually did the work, from the runner's own record (never guessed).
-  const finisher = typeof result.completed_by_model === 'string' ? result.completed_by_model.trim().slice(0, 120) : '';
-  if (finisher && ['progress', 'complete'].includes(runtimeStateClass(result))) parts.push(`The model that finished it was ${finisher}.`);
   if (result.remaining) parts.push(`Still remaining: ${String(result.remaining).slice(0, 200)}.`);
   return parts.join(' ');
 }

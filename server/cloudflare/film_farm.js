@@ -34,14 +34,7 @@ export async function farmTokenOpens(record, token, now = Date.now()) {
 
 // ─── Kaggle ──────────────────────────────────────────────────────────────────
 
-/**
- * Reads the stored Kaggle credential. Two formats exist:
- *  - modern: an API token (KGAT_…, or any token Kaggle issues now). Sent alone as Bearer. The account name is not part
- *    of the credential, so it is read from Kaggle (kaggleIdentity), never concatenated into the token.
- *  - legacy: a 32-hex key that needs its username. Sent as Basic username:key, the one format that joins them.
- * "username:token" is accepted for both. The username prefix is used only for a legacy key, or as the name when Kaggle
- * does not return one. The token value is returned for the call and must never be logged or shown.
- */
+/** "username:token" (or a bare token). New API tokens use Bearer; a legacy 32-hex key uses Basic with the username. */
 export function kaggleAuth(raw = '') {
   const value = String(raw || '').trim();
   const at = value.indexOf(':');
@@ -50,53 +43,7 @@ export function kaggleAuth(raw = '') {
   if (!secret) return null;
   const legacy = /^[a-f0-9]{32}$/i.test(secret);
   if (legacy && !username) return null;
-  return {
-    method: legacy ? 'legacy' : 'modern',
-    username,
-    token: secret,
-    header: legacy ? `Basic ${btoa(`${username}:${secret}`)}` : `Bearer ${secret}`,
-  };
-}
-
-export const KAGGLE_OAUTH = 'https://api.kaggle.com/v1/security.OAuthService';
-const IDENTITY_TRIES = 3;
-
-/**
- * The account name a modern token belongs to: Kaggle's IntrospectToken call, the same one its official SDK makes.
- * Retries only transient failures (network, 5xx, 429) with a short backoff. Never retries a rejected token.
- */
-export async function kaggleIdentity(auth, fetcher = fetch, timeout = 15000, sleep = (ms) => new Promise((r) => setTimeout(r, ms))) {
-  if (!auth?.token) return { ok: false, status: 'invalid' };
-  for (let attempt = 1; attempt <= IDENTITY_TRIES; attempt += 1) {
-    let res;
-    try {
-      res = await fetcher(`${KAGGLE_OAUTH}/IntrospectToken`, {
-        method: 'POST', headers: { Authorization: `Bearer ${auth.token}`, 'Content-Type': 'application/json', Accept: 'application/json' },
-        body: JSON.stringify({ token: auth.token }), signal: AbortSignal.timeout(timeout),
-      });
-    } catch (_) {
-      if (attempt < IDENTITY_TRIES) { await sleep(500 * 2 ** (attempt - 1)); continue; }
-      return { ok: false, status: 'network' };
-    }
-    if (res.status === 401 || res.status === 403) return { ok: false, status: 'unauthorized' };
-    if (res.status === 429 || res.status >= 500) {
-      if (attempt < IDENTITY_TRIES) { await sleep(500 * 2 ** (attempt - 1)); continue; }
-      return { ok: false, status: 'network' };
-    }
-    if (!res.ok) return { ok: false, status: 'unknown' };
-    let data = {};
-    try { data = await res.json(); } catch (_) { data = {}; }
-    if (data.active === false) return { ok: false, status: 'unauthorized' };
-    const username = typeof data.username === 'string' ? data.username.trim() : '';
-    return username ? { ok: true, username, user_id: data.userId ?? null } : { ok: false, status: 'no_name' };
-  }
-  return { ok: false, status: 'network' };
-}
-
-/** An error message with the token removed, so a failure can never show the credential. */
-export function scrubbed(text, auth) {
-  const t = String(text ?? '');
-  return auth?.token ? t.split(auth.token).join('[hidden]').slice(0, 60) : t.slice(0, 60);
+  return { username, header: legacy ? `Basic ${btoa(`${username}:${secret}`)}` : `Bearer ${secret}` };
 }
 
 export async function kaggleCall(auth, method, body = {}, fetcher = fetch, timeout = 15000) {
@@ -116,28 +63,17 @@ export function durationSeconds(v) {
   return m ? Number(m[1]) : 0;
 }
 
-/**
- * Validates the stored credential with a real call that needs auth and reads the real weekly GPU quota. A modern token
- * that Kaggle accepts is "healthy" even when its account name cannot be read right now; the reason is returned so the
- * app can say exactly what is missing.
- */
+/** Validates the token with a real call that needs auth and reads the real weekly GPU quota. */
 export async function validateKaggle(raw, fetcher = fetch) {
   const auth = kaggleAuth(raw);
-  if (!auth) return { ok: false, status: 'invalid', error: 'That is not a Kaggle token. Paste your Kaggle API token in Keys (an old key also needs your username).' };
+  if (!auth) return { ok: false, status: 'invalid', error: 'That is not a Kaggle token. Paste it as username:token.' };
   let r;
-  try { r = await kaggleCall(auth, 'GetAcceleratorQuotaStatistics', {}, fetcher); } catch (e) { return { ok: false, status: 'network', error: `Kaggle could not be reached (${scrubbed(e?.message || e, auth)}).` }; }
+  try { r = await kaggleCall(auth, 'GetAcceleratorQuotaStatistics', {}, fetcher); } catch (e) { return { ok: false, status: 'network', error: `Kaggle could not be reached (${String(e?.message || e).slice(0, 60)}).` }; }
   if (r.status === 401 || r.status === 403) return { ok: false, status: 'unauthorized', error: 'Kaggle rejected that token.' };
   if (!r.ok) return { ok: false, status: 'unknown', error: `Kaggle answered ${r.status}.` };
   const q = r.data.gpuQuota || r.data.gpu_quota || {};
-  let username = auth.username;
-  let username_source = username ? 'typed' : null;
-  let username_error = null;
-  if (!username && auth.method === 'modern') {
-    const identity = await kaggleIdentity(auth, fetcher);
-    if (identity.ok) { username = identity.username; username_source = 'kaggle'; } else username_error = identity.status;
-  }
   return {
-    ok: true, status: 'healthy', method: auth.method, username: username || null, username_source, username_error,
+    ok: true, status: 'healthy', username: auth.username,
     allowed_s: durationSeconds(q.totalTimeAllowed ?? q.total_time_allowed), used_s: durationSeconds(q.timeUsed ?? q.time_used),
     reserved_s: durationSeconds(q.timeReserved ?? q.time_reserved), refresh: r.data.quotaRefreshTime || r.data.quota_refresh_time || '',
     pay_to_scale: Boolean(q.isPayToScaleEnabled ?? q.is_pay_to_scale_enabled),
@@ -224,13 +160,10 @@ export function kaggleWorkerScript({ base, filmId, token, deadlineS }) {
  * Starts one private Kaggle GPU session for a film. Kaggle itself stops it at `seconds` (sessionTimeoutSeconds), so
  * the free weekly quota cannot be overrun even if CHE never hears back. Never uses paid scale-up.
  */
-export async function startKaggleSession(raw, { base, film, token, seconds, username: knownName = '' }, fetcher = fetch) {
+export async function startKaggleSession(raw, { base, film, token, seconds }, fetcher = fetch) {
   const auth = kaggleAuth(raw);
-  if (!auth) return { ok: false, error: 'That is not a Kaggle token. Paste your Kaggle API token in Keys.' };
-  // The name a session is filed under: the typed prefix (legacy), or the name Kaggle returned for this token.
-  const name = auth.username || String(knownName || '').trim();
-  if (!name) return { ok: false, error: 'CHE has not read your Kaggle account name yet. Your token is saved; the session starts once Kaggle returns it.' };
-  const slug = `${name}/che-film-${film.id.slice(5, 15)}`;
+  if (!auth?.username) return { ok: false, error: 'Kaggle needs your username in Keys (username:token) to start a session.' };
+  const slug = `${auth.username}/che-film-${film.id.slice(5, 15)}`;
   const body = {
     slug, newTitle: `che film ${film.id.slice(5, 15)}`, text: kaggleWorkerScript({ base, filmId: film.id, token, deadlineS: seconds - 300 }),
     language: 'python', kernelType: 'script', isPrivate: true, enableGpu: true, enableInternet: true, enableTpu: false,
@@ -239,7 +172,7 @@ export async function startKaggleSession(raw, { base, film, token, seconds, user
   let r;
   try { r = await kaggleCall(auth, 'SaveKernel', body, fetcher, 30000); } catch (e) { return { ok: false, error: `Kaggle could not be reached (${String(e?.message || e).slice(0, 60)}). No session started.` }; }
   if (!r.ok || r.data.error) return { ok: false, error: `Kaggle did not start the session: ${String(r.data.error || r.status).slice(0, 200)}.` };
-  return { ok: true, ref: r.data.ref || slug, url: r.data.url || '', version: r.data.versionNumber || null, username: name, slug: slug.split('/')[1] };
+  return { ok: true, ref: r.data.ref || slug, url: r.data.url || '', version: r.data.versionNumber || null, username: auth.username, slug: slug.split('/')[1] };
 }
 
 export async function kaggleSessionStatus(raw, session, fetcher = fetch) {

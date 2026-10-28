@@ -327,18 +327,6 @@ CheBeatSpec? cheParseBeatRequest(String said) {
   final bars = RegExp(r'\b(\d{1,2}) bars?\b').firstMatch(s);
   // "Make me a beat" alone stays with the Beat Maker's starter groove; the producer answers when a genre, key or
   // tempo is named, or the owner says produce or generate.
-  // "A type of beat" or "in the style of" names a sound, not a genre: the producer makes the closest genre it has
-  // (trap for the rap styles the owner asks for) and says which one it used. It never copies an artist's recording.
-  final styleRequest = RegExp(r'\b(type of beat|style of|sounds? like)\b').hasMatch(s);
-  if (genre == null && key == null && tempo == null && !styleRequest && !RegExp(r'\b(produce|generate|cook up)\b').hasMatch(s)) return null;
-  return CheBeatSpec.of(genre ?? (styleRequest ? 'trap' : 'hip hop'), bpm: bpm, key: root == null ? null : root % 12, minor: minor, bars: bars == null ? 4 : int.parse(bars.group(1)!));
-}
-
-/// Whether chat words ask CHE to make or play a beat now. A question about beats ("how do I make a trap beat?") is
-/// answered in chat, and an ask for a playlist, video or picture of beats is not a beat to render (Codex review, PR #688).
-bool cheBeatAskIsCommand(String said) {
-  final s = said.toLowerCase().replaceFirst(RegExp(r'^\s*(?:che|chay|chey)[,:]?\s+'), '').trim();
-  if (RegExp(r'\b(playlist|video|movie|picture|image|photo)s?\b').hasMatch(s)) return false;
-  if (RegExp(r"^(?:how|what|why|where|when|who|which|is|are|does|did|should)\b|\bhow (?:do|can|would|should) (?:i|you|we|one)\b|\bhow to\b").hasMatch(s)) return false;
-  return true;
+  if (genre == null && key == null && tempo == null && !RegExp(r'\b(produce|generate|cook up)\b').hasMatch(s)) return null;
+  return CheBeatSpec.of(genre ?? 'hip hop', bpm: bpm, key: root == null ? null : root % 12, minor: minor, bars: bars == null ? 4 : int.parse(bars.group(1)!));
 }

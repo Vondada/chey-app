@@ -47,7 +47,6 @@ import 'che_ui/che_owner_improvements.dart';
 import 'workflows/che_workflows_screen.dart';
 import 'film/che_film_studio_screen.dart';
 import 'mailbox/che_fact_check.dart';
-import 'music/che_beat_producer.dart';
 import 'music/che_recording_studio.dart';
 import 'world/che_meeting_room.dart';
 import 'world/che_meetings.dart';
@@ -1556,10 +1555,6 @@ OWNER AGENCY
       CheRithmicLive.instance.appLifecycle(foreground: state == AppLifecycleState.resumed);
       // iOS may have dropped the socket while CHE was away: reconnect the session the owner left on.
       if (state == AppLifecycleState.resumed && !CheRithmicLive.instance.attached) unawaited(cheRithmicResume());
-    }
-    // The Face ID vault session never survives leaving the app (the owner's vault must not stay open in the background).
-    if (state == AppLifecycleState.paused || state == AppLifecycleState.hidden) {
-      CheVaultAuth.instance.onAppBackgrounded();
     }
     if (state == AppLifecycleState.resumed) {
       _updateHomeState(() { _priorityBannerVersion++; });

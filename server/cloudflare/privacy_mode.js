@@ -62,16 +62,8 @@ export function normalizePrivacy(saved, now = Date.now()) {
   return { level, grants, at: saved?.at || null };
 }
 
-// This object's own last-written policy, so a turn that makes no outside call reads storage once per instance, not once
-// per request. Only storePrivacy() writes the key, and it updates this cache, so the cache cannot go stale.
-const policyCache = new WeakMap();
-
 export async function loadPrivacy(storage, now = Date.now()) {
-  if (policyCache.has(storage)) return normalizePrivacy(policyCache.get(storage), now);
-  let saved;
-  try { saved = await storage.get(PRIVACY_KEY); } catch (_) { return normalizePrivacy(null, now); }
-  policyCache.set(storage, saved);
-  return normalizePrivacy(saved, now);
+  try { return normalizePrivacy(await storage.get(PRIVACY_KEY), now); } catch (_) { return normalizePrivacy(null, now); }
 }
 
 /** Runs fn under this object's stored policy, then waits for its ledger writes. */
@@ -142,7 +134,6 @@ export function noteEgress(verdict, input, init, now = Date.now()) {
 async function storePrivacy(storage, next, now) {
   const p = { ...normalizePrivacy(next, now), at: new Date(now).toISOString() };
   await storage.put(PRIVACY_KEY, p);
-  policyCache.set(storage, p);
   const ctx = current();
   if (ctx?.storage === storage) Object.assign(ctx, { level: p.level, grants: p.grants });
   return p;
@@ -291,15 +282,6 @@ export async function privacyTurn(storage, ask, { devices = [], security = null,
 // memory reaches no outside AI or voice company (Knox's fetch-layer ledger shows nothing sent), live voice refuses
 // OpenAI, and Knox's three questions are answered from records with no model call.
 export async function privacyProbe(env, request, objectName) {
-  try {
-    return await privacyProbeRun(env, request, objectName);
-  } catch (error) {
-    // Report what failed, so the live check says why instead of answering with an opaque server error.
-    return { ok: false, passed: 0, total: 0, steps: [], error: `The check failed inside CHE: ${String(error?.message || error).slice(0, 200)}` };
-  }
-}
-
-async function privacyProbeRun(env, request, objectName) {
   const token = /^Bearer (\S+)$/.exec(request.headers.get('Authorization') || '')?.[1] || '';
   const probe = env.CHE_STATE.getByName(objectName);
   const call = (path, body, device = '') => probe.fetch(new Request(`https://che.internal${path}`, {

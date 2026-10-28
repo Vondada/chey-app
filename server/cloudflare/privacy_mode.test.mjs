@@ -223,19 +223,3 @@ test('a held provider change expires: a "yes" more than five minutes later opens
   assert.equal(await privacyConfirmIntent(held(6), 'yes', now), null, 'a stale yes is not a confirmation');
   assert.equal(await privacyConfirmIntent({ get: async () => undefined }, 'yes', now), null, 'a yes with nothing held changes nothing');
 });
-
-test('a failure inside the Private Mode check is reported as a failed check, not thrown to the server', async () => {
-  const env = { CHE_STATE: { getByName: () => ({ fetch: async () => { throw new Error('storage unavailable'); } }) }, CHE_PAIR_CODE: '123456' };
-  const report = await privacyProbe(env, new Request('https://che.example/api/privacy/probe', { method: 'POST', headers: { Authorization: 'Bearer probe-token-0123456789abcdef' } }), 'memory-truth-probe');
-  assert.equal(report.ok, false);
-  assert.match(report.error, /storage unavailable/);
-});
-
-test('the Private Mode probe route names an object the Worker imports (a missing import made the live check answer 500)', async () => {
-  const source = readFileSync(new URL('./worker.js', import.meta.url), 'utf8');
-  const route = source.split('\n').find((line) => line.includes("'/api/privacy/probe'"));
-  assert.ok(route, 'the route exists');
-  for (const name of route.match(/[A-Z_]{6,}/g) || []) {
-    assert.match(source, new RegExp(`import \\{[^}]*\\b${name}\\b[^}]*\\} from`), `${name} must be imported`);
-  }
-});

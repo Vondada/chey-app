@@ -79,18 +79,11 @@ void main() {
       expect(voice, contains('_staySilent(text, why, outcome)'));
       // The on-device Kokoro voice speaks only under Private voice (owner question 2026-10-25,
       // docs/CHE_PRIVATE_VOICE.md), where ElevenLabs and Fish must not get the words. Never otherwise.
-      // Two places use it: the phone's own Private voice, and the server's Private Mode fallback (the
-      // server answered 204 because ElevenLabs and Fish were not called, so the phone speaks it instead).
-      expect('synthesizeNeural'.allMatches(voice).length, 2);
+      expect('synthesizeNeural'.allMatches(voice).length, 1);
       final privateBranch = voice.indexOf('if (privateVoice) {');
       expect(privateBranch, greaterThan(0));
-      final firstSynth = voice.indexOf('synthesizeNeural');
-      expect(firstSynth, greaterThan(privateBranch));
-      expect(firstSynth - privateBranch, lessThan(200));
-      final serverBranch = voice.indexOf('if (edge.privateMode) {');
-      expect(serverBranch, greaterThan(0));
-      final secondSynth = voice.indexOf('synthesizeNeural', firstSynth + 1);
-      expect(secondSynth - serverBranch, lessThan(200));
+      expect(voice.indexOf('synthesizeNeural'), greaterThan(privateBranch));
+      expect(voice.indexOf('synthesizeNeural') - privateBranch, lessThan(200));
       expect(voice, isNot(contains('/api/voice/synthesize')));
     });
 

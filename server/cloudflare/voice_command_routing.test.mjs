@@ -60,8 +60,6 @@ const ROUTES = {
   che_app_build: ['App build status', 'app build status'],
   che_strategy_sim: ['Pause the strategy simulation.', 'pause the strategy simulation', 'chay pause the strategy simulation', 'resume the strategy simulation'],
   che_trading_desk: ['What are my trading connections?', 'what are my trading connections', 'Trading status', 'trading status'],
-  // AI Model Status (Codex, PR #685): the Keys-tab card's Read aloud and Providers, by voice or typing.
-  che_model_status: ['AI model status', 'ai model status', 'chay read the ai model status', 'Which AI models are free?', 'show me the ai model status', 'are the coding providers free', 'which coding models are free'],
   che_command_workflow: ['run a workflow to che memory my business then che plan a report'],
 };
 
@@ -85,11 +83,6 @@ test('ordinary conversation that mentions command words still goes to the model'
     assert.notEqual(out.route, 'che_coding_history', phrase);
     assert.notEqual(out.route, 'che_mission_status', phrase);
     assert.notEqual(out.route, 'che_self_update', phrase);
-  }
-  // A 3D model, a drone model or "which model should I use" is not the AI Model Status.
-  for (const phrase of ['what is the status of my 3d model', 'which drone model is best', 'explain how an ai model works', 'model the status quo of the housing market']) {
-    const say = await owner();
-    assert.notEqual((await say(phrase)).route, 'che_model_status', phrase);
   }
 });
 

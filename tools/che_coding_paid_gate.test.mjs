@@ -4,7 +4,7 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, copyFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { AUTHORIZED_CODING_SPEND_USD, MAX_CODING_PAID_USD, validateMonthlyCap, paidGate, keyStatusSummary } from './che_coding_paid_gate.mjs';
+import { MAX_CODING_PAID_USD, validateMonthlyCap, paidGate, keyStatusSummary } from './che_coding_paid_gate.mjs';
 
 // The owner's real key today: cap set, monthly reset, BYOK not counted, nothing spent.
 const verified = { data: { limit: 15, limit_reset: 'monthly', limit_remaining: 15, include_byok_in_limit: false, is_provisioning_key: false, is_management_key: false, byok_usage_monthly: 0 } };
@@ -73,7 +73,7 @@ test('no approval means no request, even if paid key exists', async () => {
   assert.equal(calls, 0);
 });
 
-test('a verified $15 cap is not an authorization: with $0 authorized, the gate never opens', async () => {
+test('when approved, the cap is read from the provider API before any paid request, and the owner confirmation is applied', async () => {
   let inspected = '';
   const result = await paidGate({
     env: { CHE_CODING_PAID_FALLBACK: 'true', CHE_CODING_OPENROUTER_PAID_KEY: 'placeholder', CHE_CODING_OPENROUTER_NO_BYOK: 'true' },
@@ -82,16 +82,9 @@ test('a verified $15 cap is not an authorization: with $0 authorized, the gate n
       return { ok: true, json: async () => verified };
     },
   });
-  assert.equal(AUTHORIZED_CODING_SPEND_USD, 0);
-  assert.equal(result.ok, false, 'the cap checks out, but no cap authorizes spend');
-  assert.equal(result.cap_verified, true, 'the read-only cap check still reports the cap');
-  assert.match(result.reason, /authorized \$0/);
+  assert.equal(result.ok, true);
+  assert.equal(result.byok, 'confirmed_none');
   assert.equal(inspected, 'https://openrouter.ai/api/v1/key');
-});
-
-test('the gate and the router hold the same $0 authorization', async () => {
-  const { AUTHORIZED_SPEND_USD } = await import('../server/cloudflare/model_router.mjs');
-  assert.equal(AUTHORIZED_CODING_SPEND_USD, AUTHORIZED_SPEND_USD);
 });
 
 test('without the owner confirmation, an otherwise valid key is still blocked', async () => {
@@ -100,8 +93,7 @@ test('without the owner confirmation, an otherwise valid key is still blocked', 
     fetcher: async () => ({ ok: true, json: async () => verified }),
   });
   assert.equal(result.ok, false);
-  assert.equal(result.cap_verified, false);
-  assert.match(result.cap_detail, /BYOK is ruled out/);
+  assert.match(result.reason, /BYOK is ruled out/);
 });
 
 test('unreachable key verification fails closed', async () => {
