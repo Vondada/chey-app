@@ -40,7 +40,7 @@ import {
 import { discoverKeylessModels, engineStatus, paidAllowed, routedEnv, routeText } from './ai_router.js';
 import { capabilityPromptLine, inferTurnCapabilities, runtimeCapabilityRegistry } from './cognitive_capabilities.js';
 import { identityQuestionIntent, speakIdentity } from './che_maturity.js';
-import { deleteMedia, generateImage, generateVideo, listMedia, readBlob, saveOwnerFile, upscaleImage, verifyMediaFile } from './media.js';
+import { deleteMedia, finishModalImage, generateImage, generateVideo, listMedia, readBlob, saveOwnerFile, upscaleImage, verifyMediaFile } from './media.js';
 import { withCheNote, guardEngineClaims, guardSoulClaims, lastReplyRecord, loadSoul, replyProvenanceAnswer, replyProvenanceQuestion, restoreSoul, saveSoul, soulPromptBlock, soulProvenance, soulView, stripPhoneSoul } from './soul.js';
 import { mediaHoldAnswer, mediaHoldIntent, mediaKeepFor, mediaLatestReply, mediaLibraryIntent, mediaLibraryReply, mediaLibraryReport, mediaLatestOpenRow, mediaOpenIntent, mediaOpenMissingReply, mediaOpenReply, mediaOpenRow, mediaRows, mediaSaveIntent, mediaSaveReply, mediaShowLatestIntent, mediaShowReply, verifyMediaRows, wantsLatestVideo } from './media_library.js';
 import { capabilityGap, capabilityReply } from './capability_gap.js';
@@ -8033,6 +8033,11 @@ export class CheState extends DurableObject {
           title: body.title || 'Video render', thumbnail: body.thumbnail === true,
         });
         const { status, ...rest } = result;
+        return json(rest, status);
+      }
+      // The result of an explicit Modal picture: saved to the Gallery only once its bytes and hash check out.
+      if (path === '/api/media/modal/result' && request.method === 'POST') {
+        const { status, ...rest } = await finishModalImage(this.keyEnv || this.env, this.ctx.storage, String(body.call_id || ''));
         return json(rest, status);
       }
       if (path === '/api/media/generate' && request.method === 'POST') {
