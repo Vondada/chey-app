@@ -135,12 +135,14 @@ import 'che_ui/che_log.dart' show CheTranscriptScreen;
 import 'home/che_home_chat.dart';
 import 'home/screen_command.dart';
 import 'home/che_inline_preview.dart';
+import 'home/che_chat_media.dart';
 import 'home/che_grok_chat_screen.dart';
 import 'home/che_mockup_home.dart';
 import 'home/che_home_tiles.dart';
 import 'home/che_flagstaff_banner.dart';
 import 'home/che_more_tab.dart';
 import 'home/che_connections_screen.dart';
+import 'home/che_broker_return.dart';
 import 'home/che_projects_board.dart';
 import 'home/che_memory_brain.dart';
 import 'che_ui/che_phone_shell.dart';
@@ -547,6 +549,8 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
   Timer? _proactiveTimer;
 
   StreamSubscription<Map<String, dynamic>>? _nativeIosVoiceSub;
+  // Links opened into CHE (che://), such as the return from Tradovate's sign-in page.
+  StreamSubscription<Uri>? _deepLinkSub;
   bool _nativeIosVoiceActive = false;
   // True while native iOS recognition is taking ownership of the microphone.
   // speech_to_text callbacks can fire during cancellation; this prevents those
@@ -1148,6 +1152,8 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
   Map<String, String>? _pendingAttachment;
   String? _streamMediaUrl;
   String? _streamMediaType;
+  // The saved media ID, thumbnail and library list of the reply (che_chat_media.dart), shown as tiles under it.
+  Map<String, String> _streamMediaExtra = {};
   // How CHE read a held or multi-step turn (issue #345), shown quietly under the reply.
   String? _streamUnderstoodAs;
   // The reply's Soul and engine provenance (Response Details → Personality), from its done event.
@@ -1460,6 +1466,7 @@ OWNER AGENCY
     _wireBrowser();
     initializeVoice();
     _loadSecuritySession();
+    _deepLinkSub = CheDeepLinks.listen(_onDeepLink);
     // The Rithmic session the owner left on comes back by itself (login from the on-device vault; off after Disconnect).
     if (!kIsWeb) unawaited(cheRithmicResume());
     _jobPollTimer = Timer.periodic(const Duration(seconds: 15), (_) {
@@ -1589,6 +1596,7 @@ OWNER AGENCY
 
   @override
   void dispose() {
+    unawaited(_deepLinkSub?.cancel());
     CheScreenAwareness.unregister(_screenToken);
     CheUiPreferences.instance.removeListener(_onUiPrefsChanged);
     WidgetsBinding.instance.removeObserver(this);
@@ -1802,6 +1810,7 @@ OWNER AGENCY
       onConnectRithmic: () => unawaited(_openRithmic()),
       onOpenCreate: () => _openAssistantHub(tab: 5),
       onOpenWorld: () => _goShellTab(3),
+      onOpenRecordingStudio: () => unawaited(_openRecordingStudio()),
       onOpenSecurity: () => unawaited(_openSecurity()),
       onOfficeStatus: () => unawaited(_speakOfficeStatus()),
       onTapAgent: (agent) => _openOfficeFloor(agentName: agent.name),
@@ -2305,12 +2314,29 @@ OWNER AGENCY
     await Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => const CheRithmicScreen()));
   }
 
-  Future<void> _openConnections({String autoConnect = ''}) async {
+  // che://broker/tradovate: back from Tradovate's sign-in. An open Connections page re-checks and
+  // reports; otherwise Connections opens and does. Other links are ignored.
+  void _onDeepLink(Uri uri) {
+    final back = CheBrokerReturn.parse(uri);
+    if (back == null) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final open = CheConnectionsVoice.brokerReturn;
+      if (open != null) {
+        unawaited(open(back.result));
+      } else {
+        unawaited(_openConnections(brokerReturn: back.result));
+      }
+    });
+  }
+
+  Future<void> _openConnections({String autoConnect = '', String brokerReturn = ''}) async {
     await Navigator.of(context).push(MaterialPageRoute<void>(
       builder: (_) => CheConnectionsScreen(
         baseUrl: cheAgentBaseUrl,
         headers: () => _authHeaders,
         autoConnect: autoConnect,
+        brokerReturn: brokerReturn,
         onSpeak: (line) => unawaited(speakText(line, record: false, readOnDemand: true)),
         onCloudComputer: _openCreationEngine,
         onColabGpu: () => unawaited(_showGpuBrowser()),

@@ -974,8 +974,12 @@ export async function traceSourceGraph(env, { index, request, seeds = [], read, 
   const order = [...new Set(seeds.filter((path) => allPaths.has(path)))];
   for (const path of order.slice(0, maxFiles)) await load(path);
   // One hop along the graph from every seed, keeping what relates to the feature.
+  // Seeds named after the feature hop first: the file budget is shared, so a
+  // broad neighbour that imports many related files (the Office floor) must not
+  // use it up before the feature's own screen reaches its renderer.
   const edges = new Map();
-  for (const path of [...order]) {
+  const featureFirst = (path) => (pathMatchesFeature(path, spellings) ? 0 : 1);
+  for (const path of [...order].sort((a, b) => featureFirst(a) - featureFirst(b))) {
     const text = texts.get(path);
     if (!text) continue;
     const refs = codeReferences(path, text, allPaths);

@@ -114,6 +114,31 @@ void main() {
     });
   });
 
+  group('desk headline precedence (Codex review on PR #666)', () {
+    CheAgentTask t(String id, String status) => CheAgentTask(
+        id: id, task: id, status: status, result: '', cheReview: '', verifiedByChe: false, error: '', createdAt: null);
+
+    test('an older running task outranks a newer queued one', () {
+      // History is newest first, as GET /api/agents/:id returns it.
+      final pick = cheHeadlineTask([t('newer-queued', 'queued'), t('older-running', 'running')]);
+      expect(pick?.id, 'older-running');
+      expect(cheOfficeStateForTaskStatus(pick!.status, verified: false), CheOfficeState.running);
+    });
+
+    test('reviewing outranks queued; waiting-for-review and blocked outrank queued', () {
+      expect(cheHeadlineTask([t('q', 'queued'), t('rv', 'reviewing')])?.id, 'rv');
+      expect(cheHeadlineTask([t('q', 'queued'), t('rp', 'review_pending')])?.id, 'rp');
+      expect(cheHeadlineTask([t('q', 'queued'), t('b', 'blocked')])?.id, 'b');
+      expect(cheHeadlineTask([t('rp', 'review_pending'), t('r', 'running')])?.id, 'r');
+    });
+
+    test('with only queued tasks, the oldest (started next) is the headline; with none open, the newest task', () {
+      expect(cheHeadlineTask([t('q3', 'queued'), t('q2', 'queued'), t('q1', 'queued')])?.id, 'q1');
+      expect(cheHeadlineTask([t('done-new', 'complete'), t('done-old', 'failed')])?.id, 'done-new');
+      expect(cheHeadlineTask(const []), isNull);
+    });
+  });
+
   test('time since last activity reads from the real timestamp', () {
     final now = DateTime.utc(2026, 10, 26, 12, 0);
     expect(cheTimeAgo(null, now: now), 'Not recorded');
@@ -229,6 +254,39 @@ void main() {
     final viewport = tester.getRect(find.byType(ListView));
     expect(rect.top, greaterThanOrEqualTo(viewport.top));
     expect(rect.bottom, lessThanOrEqualTo(viewport.bottom));
+  });
+
+  // Codex review on PR #666: conversation(taskId: ...) keeps the agent record, and the screen used to render the
+  // agent panel whenever an agent was present, so a task view showed the agent's active task instead of the task.
+  testWidgets('a task-scoped view shows the selected task panel, with the agent kept as context', (tester) async {
+    final body = _queuedAtlas(messages: [
+      _message(seq: 1, kind: 'request', text: 'Older finished task', taskTitle: 'Older finished task', taskState: 'Completed', taskRaw: 'complete', at: '2026-10-26T09:00:00.000Z'),
+    ]);
+    final record = body['conversation'] as Map<String, dynamic>;
+    record['scope'] = 'task';
+    record['task'] = {
+      'id': 'task-old-0001',
+      'title': 'Older finished task',
+      'state': 'Completed',
+      'raw_status': 'complete',
+      'reason': 'Approved by CHE.',
+      'partner_name': 'Atlas',
+      'verified_by_che': true,
+      'created_at': '2026-10-26T09:00:00.000Z',
+      'updated_at': '2026-10-26T09:30:00.000Z',
+    };
+    await _pump(tester, CheOfficeConversation.fromResponse(body));
+    await tester.pumpAndSettle();
+    // The task panel: the selected task's title, state and reason.
+    expect(find.byWidgetPredicate((w) => w is SelectableText && w.data == 'Older finished task', skipOffstage: false), findsWidgets);
+    expect(find.text('Approved by CHE.', skipOffstage: false), findsOneWidget);
+    // Not the agent panel, which would show the agent's active (queued) task and current step.
+    expect(find.text('CURRENT STEP', skipOffstage: false), findsNothing);
+    expect(find.text('ACTIVE TASK', skipOffstage: false), findsNothing);
+    expect(find.text('Queued. Not started yet.', skipOffstage: false), findsNothing);
+    // The agent stays as context: its name and its own status.
+    expect(find.text('AGENT', skipOffstage: false), findsOneWidget);
+    expect(find.textContaining('Atlas · Research', skipOffstage: false), findsOneWidget);
   });
 
   test('the client reads the conversation from the agent record, and a task view keeps only that task', () async {
