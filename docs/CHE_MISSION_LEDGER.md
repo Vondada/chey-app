@@ -9,4 +9,10 @@
 | 5 | Conversation reliability | Not started in this session | — |
 | 6 | Coding engine | Blocked | Free model failing; eval not scored |
 
+## 7. Background GPU and 3D worlds (added 2026-10-28)
+
+Goal: CHE builds a 3D world on her own, renders it, and keeps creating in the background without the owner watching.
+25 upgrades with next steps: `docs/CHE_GPU_WORLD_UPGRADES.md` (queue item Q-35). Status: not built. Paid GPU needs the
+owner's spend decision and a cap above $0.
+
 Other missions: see `mailbox/briefs/LIVE-HANDOFF.md` §2 on `che-mailbox`. Not re-verified here.
