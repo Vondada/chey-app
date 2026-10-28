@@ -89,7 +89,7 @@ import { matrixIntent, readMatrix, runMatrix, speakMatrix } from './backtest_mat
 import { autoQueue as researchAutoQueue, cancelJob as cancelResearchJob, matrixView as researchMatrixView, nextResearchAt, queueJob as queueResearchJob, researchIntent, researchStep, researchView, setProfile as setResearchProfile, speakBestNow, speakHistory, speakStrategy, strategyView as researchStrategyView } from './trading_research.js';
 import { nextStrategySimTickAt, strategySimIntent, strategySimTick, strategySimView, strategySimWake } from './strategy_sim.js';
 import { simChatReply, simControlRoute } from './trading_sim_control.js';
-import { auditSummaryLine, deepTradeAudit } from './trading_audit.js';
+import { auditSummaryLine, deepTradeAudit, costAndLossProbe } from './trading_audit.js';
 import { evidenceIntent, evidenceReport, evidenceTick } from './trading_evidence_runner.js';
 import { readTrades } from './trading_evidence.js';
 import { tradingCapabilities } from './trading_capabilities.js';
@@ -4835,7 +4835,7 @@ export class CheState extends DurableObject {
   // REA log, so the iPhone shows them. Building is never part of it unless
   // the deploy run explicitly asks for the one owner-authorized test build.
   // The deploy's read-only trading audit: counts only (auditSummaryLine), never record contents.
-  async tradingAuditProbe() { const a = await deepTradeAudit(this.ctx.storage); return { ok: true, summary: auditSummaryLine(a), simulation_closed: a.simulation?.closed ?? null }; }
+  async tradingAuditProbe() { const a = await deepTradeAudit(this.ctx.storage); return { ok: true, summary: auditSummaryLine(a), simulation_closed: a.simulation?.closed ?? null, ...(await costAndLossProbe(this.ctx.storage)) }; }
 
   async reaProbe({ message = '', allow_build = false } = {}) {
     const text = String(message || '').slice(0, 500);

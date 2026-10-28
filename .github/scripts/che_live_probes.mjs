@@ -281,6 +281,9 @@ const PROBES = {
     const { body: out, error } = await postProbe('/api/trading/audit/probe', { attempts: 3, timeoutMs: 60000 });
     if (!out) { console.log(`::warning title=Trading audit did not run::${error}`); return warn(`did not run (${error})`); }
     console.log(`::notice title=Trading audit::${out.summary}`);
+    // The journal's cost arithmetic and the owner's loss answers, from the owner's own records (trading_audit.js).
+    console.log(`Trading audit cost examples (journal, real records): ${JSON.stringify(out.cost_examples || [], null, 1)}`);
+    console.log(`Trading audit loss answers (journal): ${JSON.stringify(out.loss_answers || {}, null, 1)}`);
     summary(`**Trading audit (${WHERE}, read only${STAGING ? ', staging records' : ''}):** ${out.summary}`);
     return pass(out.summary);
   },
