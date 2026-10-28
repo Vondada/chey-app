@@ -109,3 +109,17 @@ test('a failing provider never returns an answer to a different question', async
   const out = await che.say('What is the capital of Spain?');
   assert.doesNotMatch(out.reply, /204|GitHub|Four/, 'no answer from another question appears');
 });
+
+test('an explanation with a wrong equation gets the exact correction, keeps the owner\'s text, and saves no speculation', async () => {
+  const reply = [
+    'The answer 204 aligns with basic multiplication: 12 × 17 = 224 — so it is off by one.',
+    '```che-remember',
+    '[Knowledge] The cache probably returned the old GitHub research.',
+    '```',
+  ].join('\n');
+  const che = await app({ reply });
+  const out = await che.say('Explain how multiplication works with a worked example.');
+  assert.match(out.reply, /12 × 17 = 204, not 224\./, 'the exact answer is named beside the wrong one');
+  assert.match(out.reply, /The answer 204 aligns/, 'the owner\'s text is kept, not rewritten');
+  assert.doesNotMatch(out.raw, /probably/, 'the speculation never reaches the reply or the memory block');
+});
