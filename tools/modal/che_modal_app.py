@@ -61,11 +61,13 @@ except ImportError:  # pragma: no cover - exercised by the unit test environment
     modal = None
 
 APP_NAME = "che-gpu"
-APP_VERSION = "che-modal-2"            # server/cloudflare/modal_gpu.js MODAL_APP_VERSION must match
+APP_VERSION = "che-modal-3"            # server/cloudflare/modal_gpu.js MODAL_APP_VERSION must match
 ENDPOINT_LABEL = "che-gpu"             # URL: https://<workspace>--che-gpu.modal.run
 GPU = "T4"
 MAX_CALL_S = 45 * 60                   # hard timeout of one GPU call
 SCALEDOWN_S = 60                       # an idle container stops after a minute (scale to zero)
+# The text-to-image function stops after 2 s idle: one picture is one short call, and an idle minute is billed GPU time.
+TXT2IMG_SCALEDOWN_S = 2
 MAX_JOBS_PER_CALL = 3
 DICT_NAME = "che-gpu-jobs"
 
@@ -341,7 +343,7 @@ if modal is not None:  # pragma: no cover - runs on Modal, not in unit tests
                      .add_local_file(os.path.join(os.path.dirname(os.path.abspath(__file__)), "txt2img.py"), "/root/txt2img.py", copy=True)
                      .run_function(prefetch_txt2img_model))
 
-    @app.function(image=txt2img_image, gpu=GPU, timeout=600, scaledown_window=SCALEDOWN_S, max_containers=1, retries=0)
+    @app.function(image=txt2img_image, gpu=GPU, timeout=600, scaledown_window=TXT2IMG_SCALEDOWN_S, max_containers=1, retries=0)
     def txt2img_gpu(args: dict) -> dict:
         """One SDXL-Turbo picture on the T4. Validated again here; returns the PNG as base64 with its receipt."""
         import sys
