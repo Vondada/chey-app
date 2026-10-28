@@ -34,9 +34,25 @@ jobs:
         with:
           node-version: 22
       - name: Worker syntax and unit tests
+        # Offline by design: tests must not reach the runner's network (test_offline_guard.mjs). The same guard
+        # as che-worker-staging.yml, so this gate and the live gate run the same tests.
+        env:
+          NODE_OPTIONS: --import ./server/cloudflare/test_offline_guard.mjs
         run: |
           for f in server/cloudflare/*.js; do node --check "$f"; done
-          node --test server/cloudflare/*.test.mjs
+          # Output kept so that, when a test fails, the failing test names and errors are printed LAST.
+          set +e
+          node --test server/cloudflare/*.test.mjs > worker-tests.tap 2>&1
+          code=$?
+          set -e
+          if [ "$code" -ne 0 ]; then
+            cat worker-tests.tap
+            echo "::group::Failing Worker tests (names and errors)"
+            awk '/^ *not ok /{p=1} /^ *ok /{p=0} p' worker-tests.tap | head -400
+            grep -E '^# (tests|pass|fail)' worker-tests.tap
+            echo "::endgroup::"
+          fi
+          exit "$code"
 
   flutter:
     runs-on: ubuntu-latest

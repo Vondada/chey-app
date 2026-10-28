@@ -472,6 +472,24 @@ const PROBES = {
     return pass(`${report.passed}/${report.total} live checks passed`);
   },
 
+  async arithmetic() {
+    // Live checks on the isolated test CHE through the real /api/chat route: a typed sum is computed with a receipt,
+    // school precedence holds, an undefined sum is an error with a receipt, and a sentence about maths is not computed.
+    const { body: report, error } = await postProbe('/api/arithmetic/probe', { attempts: 3, timeoutMs: 120000 });
+    if (!report) {
+      console.log(`::error title=Arithmetic check did not run::The ${WHERE} did not answer (${error}).`);
+      return fail(`did not run (${error})`);
+    }
+    printSteps(report);
+    summary(`**Arithmetic route (${WHERE}, /api/chat):** ${report.passed}/${report.total} live checks passed.`);
+    if (!report.ok) {
+      const what = (report.steps || []).filter((s) => !s.pass && !s.optional).map((s) => s.name).join('; ') || report.error || 'see log';
+      console.log(`::error title=Arithmetic check failed::${what}`);
+      return fail(what);
+    }
+    return pass(`${report.passed}/${report.total} live checks passed`);
+  },
+
   async study() {
     // A study assignment on the isolated test CHE with the target's real network and model (comedy_study.js
     // studyProbe): "go study Martin and The Fresh Prince of Bel-Air ... what makes them funny" is planned, a few
@@ -711,7 +729,7 @@ const PROBES = {
 
 // The production deploy's order. The staging gate runs all of it; production runs one per step.
 export const SUITE = ['health', 'engines', 'sidestore', 'mary-settings', 'fish-settings', 'voice', 'trading', 'trading-audit',
-  'memory', 'history', 'creation', 'creation-viewport', 'character-accept', 'commands', 'atlas', 'privacy', 'social', 'study', 'projects-audit', 'video', 'rea', 'fish-measure'];
+  'memory', 'history', 'creation', 'creation-viewport', 'character-accept', 'commands', 'atlas', 'arithmetic', 'privacy', 'social', 'study', 'projects-audit', 'video', 'rea', 'fish-measure'];
 
 async function runOne(name) {
   if (PRODUCTION_STEPS[name]) {
