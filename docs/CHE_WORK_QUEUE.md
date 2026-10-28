@@ -33,6 +33,26 @@ Statuses: `open`, `in progress`, `waiting on owner`, `built, not verified`, `ver
 | Q-35 | GPU and 3D world: 25 upgrades | open | `docs/gpu-world-upgrades` | Start with items 1, 4, 5 and 25 in `docs/CHE_GPU_WORLD_UPGRADES.md` (free, local, measurable). Paid GPU (15-19) waits for the owner's spend decision and a cap above $0. | Doc only; nothing built |
 | Q-36 | 10 real-world tools that work together | open | `docs/real-world-tools` | Build tools 1, 4 and 7 first (capability map, permission gate, verifier), then 10 (eval). See `docs/CHE_REAL_WORLD_TOOLS.md`. | Doc only; nothing built |
 | Q-37 | Free 3D parts pipeline (look up, plan, model, show) | open | `docs/free-3d-tools` | Build the parts pipeline with CadQuery, Wikipedia and Three.js first; test with a car and a bicycle. See `docs/CHE_FREE_3D_TOOLS.md`. Verify licenses of tools 2, 3, 7, 8 at source first. | Research only; nothing installed |
+| Q-15 | Car Bluetooth: one audio-session owner | open | `docs/voice-problem-solving-queue` | Stop `speech_to_text` (7.5.0) changing category, mode or activation during CHE turns (`SpeechToTextPlugin.swift:457-528`). Route listening through the native recognizer that already keeps `voiceChat`. Owner test in a car. | Code finding only; not device-tested |
+| Q-16 | Faster first words: stream the reply | open | — | Let the Worker send the first sentence before the full reply is verified, keeping the safety checks (`worker.js` ~14353-14394 buffers everything). Needs a safety review first. | Code map 2026-10-28 |
+| Q-17 | Faster first audio: stream TTS | open | — | Pipeline clips and start playback on the first chunk, not the full file (`preferred_elevenlabs_voice.js:211-242`, `bootstrap.sh:1480`). Target median first audio under 700 ms, measured on the phone. | No timings in repo yet |
+| Q-18 | Shorter end-of-turn wait | open | — | Replace the fixed 3.6 s `pauseFor` (`microphone.dart:586`) with adaptive endpointing based on sentence completeness. | Code map 2026-10-28 |
+| Q-19 | Barge-in on the Flutter recognizer | open | — | Only the native path has barge-in (`bootstrap.sh:1141-1160`). Add echo-guarded barge-in to the Flutter path, cancel queued audio and stale generation. | Code map 2026-10-28 |
+| Q-20 | Voice Diagnostics: real route and latency rows | open | — | Show output and mic, Bluetooth route type, category and mode, last route change, interruptions, last audio error, and real latency medians (`CheLatency` is not shown anywhere). | `che_voice_ui.dart:228-251` |
+| Q-21 | Never claim Bluetooth without reading the route | open | — | CHE states a Bluetooth route only from `AVAudioSession.currentRoute` (`routeSummary`), never from memory or a guess. Test the wording. | Native `routeSummary` exists |
+| Q-22 | Recover after an incoming call | open | — | After an interruption ends, restore the session, output route and recognition without a manual tap (`bootstrap.sh:954-975`). Test the sequence. | Code only; needs a car and a phone call to verify |
+| Q-23 | "What are you working on?" uses real jobs | open | — | Route to the actual active jobs and their status, never an invented list. No literal route exists today. | Grep found no route |
+| Q-24 | "Why can't you hear me?" checks the mic | open | — | Read microphone and voice diagnostics, then answer with the real blocker. | Grep found no route |
+| Q-25 | GPU status and "fix it" follow-up | open | — | "Why isn't my GPU working?" reads GPU connection status and error records. "Fix it" resolves to the last problem and continues the authorized troubleshooting. | Grep found no route |
+| Q-26 | Follow-ups, corrections and earlier references | open | — | Carry the last topic across turns so "it", "that one" and corrections resolve correctly. Regression tests for each. | — |
+| Q-27 | Problem-solving loop | open | — | For a request she can act on: understand, check what she can use, investigate, act within permission, verify, then report briefly. Recovery step on failure. | — |
+| Q-28 | Honest action reports | open | — | Every action is reported aloud with its actual success or failure. Never a success message for an action that did not run. | AGENTS.md owner rule |
+| Q-29 | Problem-solving eval suite | open | — | Realistic owner requests. Score task completion, real evidence, authorized action, recovery, short answers. Not just "did it reply". | — |
+| Q-30 | Voice timing in the deploy probe | open | — | Per-stage timestamps from the Worker (first byte, first clip, full clip), so latency is measured without a phone. | `worker.js:7125-7145` logs per clip only |
+| Q-31 | Private Mode voice test | open | — | Test that no cloud voice or cloud recognizer runs in Private Mode, including the Bluetooth path. | `privacy_mode.js:29-42`, `microphone.dart:581` |
+| Q-32 | Driving-safe voice replies | open | — | Short, spoken-first replies when the route is a car, with no screen steps. | Owner request 13 |
+| Q-33 | Car test script and route log | open | — | A script the owner runs in the car that records each route transition, interruption and failure to a file for review. Needs the owner's car. | Owner request 16 |
+| Q-34 | Native audio changes need an IPA | open | — | Audio-session and route changes are native (Swift). Decide with the owner whether they ship by Shorebird patch or a new IPA. | Owner decision |
 
 ## Owner decisions needed
 - Office swipe (Q-02).
@@ -44,5 +64,6 @@ Statuses: `open`, `in progress`, `waiting on owner`, `built, not verified`, `ver
 - 2026-10-28: Q-37 added (free 3D build tools, `docs/CHE_FREE_3D_TOOLS.md`). Research only.
 - 2026-10-28: Q-36 added (10 real-world tools, `docs/CHE_REAL_WORLD_TOOLS.md`). Nothing built yet.
 - 2026-10-28: Q-35 added (25 GPU and 3D world upgrades, `docs/CHE_GPU_WORLD_UPGRADES.md`). Nothing built yet.
+- 2026-10-28: Q-15 to Q-34 added from the owner's voice, problem-solving and car Bluetooth requests. None built yet. Q-15 is the first to start.
 - 2026-10-27: Q-01 done (#672 merged); Q-07 is PR #700.
 - 2026-10-26: queue created from the day's requests. Earlier work is recorded in the branches above and in `docs/CHE_MISSION_LEDGER.md`.
