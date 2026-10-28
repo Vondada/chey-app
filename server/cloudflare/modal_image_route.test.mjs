@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import test from 'node:test';
-import { finishModalImage, pendingModalImages, listMedia, MODAL_IMAGE_KEY, MODAL_IMAGE_REVISION, MODAL_IMAGE_TIMEOUT_MS, readBlob, startModalImage, generateImage } from './media.js';
+import { finishModalImage, modalImageCheckTimes, pendingModalImages, reconcileModalImages, listMedia, MODAL_IMAGE_KEY, MODAL_IMAGE_REVISION, MODAL_IMAGE_TIMEOUT_MS, readBlob, startModalImage, generateImage } from './media.js';
 
 const HOST = 'https://vondada--che-gpu.us-east.modal.run';
 const ENV_ON = { CHE_MODAL_TXT2IMG: 'enabled', MODAL_TOKEN: `bearer:${'a'.repeat(40)}@${HOST}`, CHE_AI_BOUND: true };
@@ -225,4 +225,46 @@ test('after the app was closed, the pending Modal pictures are listed again; sav
   const jobs = await pendingModalImages(storage);
   assert.deepEqual(jobs.map((j) => j.call_id), ['fc-running0001']);
   assert.deepEqual(Object.keys(jobs[0]).sort(), ['call_id', 'created_at', 'title']);
+});
+
+test('a terminal failure from Modal (HTTP 502, state failed) is recorded with its reason, not treated as a missed answer', async () => {
+  const storage = memoryStorage();
+  const failing = async (url) => {
+    const path = new URL(String(url)).pathname;
+    if (path === '/txt2img') return new Response(JSON.stringify({ call_id: 'fc-abcdef123456' }), { status: 200, headers: { 'content-type': 'application/json' } });
+    return new Response(JSON.stringify({ ok: false, state: 'failed', error: 'CUDA out of memory' }), { status: 502, headers: { 'content-type': 'application/json' } });
+  };
+  await startModalImage(ENV_ON, storage, { prompt: 'a kite' }, failing);
+  const out = await finishModalImage(ENV_ON, storage, 'fc-abcdef123456', failing);
+  assert.equal(out.status, 502);
+  assert.match(out.detail, /CUDA out of memory/);
+  assert.equal((await storage.get(MODAL_IMAGE_KEY))[0].state, 'failed');
+  assert.equal((await listMedia(storage)).length, 0);
+});
+
+test('the alarm saves a finished picture even when no app is polling for it', async () => {
+  const { fetcher } = fakeModal({ result: doneResult() });
+  const storage = memoryStorage();
+  await startModalImage(ENV_ON, storage, { prompt: 'a kite' }, fetcher);
+  await reconcileModalImages(ENV_ON, storage, fetcher);
+  const items = await listMedia(storage);
+  assert.equal(items.length, 1);
+  assert.equal((await storage.get(MODAL_IMAGE_KEY))[0].state, 'saved');
+});
+
+test('the alarm fails a picture past its timeout even when Modal cannot be reached', async () => {
+  const storage = memoryStorage();
+  const down = async () => new Response('busy', { status: 500 });
+  await storage.put(MODAL_IMAGE_KEY, [{ call_id: 'fc-abcdef123456', title: 'a kite', prompt: 'a kite', state: 'started', created_at: new Date(Date.now() - MODAL_IMAGE_TIMEOUT_MS - 60000).toISOString() }]);
+  await reconcileModalImages(ENV_ON, storage, down);
+  const job = (await storage.get(MODAL_IMAGE_KEY))[0];
+  assert.equal(job.state, 'failed');
+  assert.match(job.error, /did not finish in time/);
+});
+
+test('the alarm is woken only while a picture waits', async () => {
+  const storage = memoryStorage();
+  assert.deepEqual(await modalImageCheckTimes(storage), []);
+  await storage.put(MODAL_IMAGE_KEY, [{ call_id: 'fc-abcdef123456', title: 't', state: 'started', created_at: new Date().toISOString() }]);
+  assert.equal((await modalImageCheckTimes(storage)).length, 1);
 });

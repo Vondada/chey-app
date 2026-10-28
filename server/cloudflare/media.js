@@ -373,6 +373,12 @@ export async function startModalImage(env, storage, body, fetcher = fetch) {
   }
   const record = { call_id: started.data.call_id, prompt, title: String(body?.title || prompt).slice(0, 80), state: 'started', created_at: now() };
   await storage.put(MODAL_IMAGE_KEY, [...records, record].slice(-20));
+  // Wake the alarm for the check, unless an earlier wake-up is already set (an earlier wake only runs the scheduler again).
+  if (storage.getAlarm && storage.setAlarm) {
+    const due = Date.now() + MODAL_RECONCILE_MS;
+    const at = await storage.getAlarm().catch(() => null);
+    if (!at || at > due) await storage.setAlarm(due).catch(() => null);
+  }
   return { status: 202, state: 'started', call_id: record.call_id, provider_requested: 'modal', provider_used: 'modal', model: MODAL_IMAGE_MODEL };
 }
 
@@ -391,8 +397,9 @@ export async function finishModalImage(env, storage, callId, fetcher = fetch) {
   const cred = await modalCredential(env, storage);
   if (!cred.exists || !cred.cred) return { status: 503, detail: 'Modal is not connected, so the result cannot be read.' };
   const res = await modalCall(cred.cred, 'POST', '/txt2img/result', { call_id: callId }, fetcher, 30000);
-  // A missed answer is not a failed picture: the job stays as it is, and the caller may ask again (503).
-  if (!res.ok || !res.data) return { status: 503, detail: `Modal did not answer the result check (${res.status || res.error || 'no answer'}). Nothing was saved.` };
+  // A terminal failure from Modal (HTTP 502 with state 'failed') is recorded below. Any other non-answer is a missed answer:
+  // the job stays as it is, and the caller may ask again (503).
+  if (!res.data || (!res.ok && res.data.state !== 'failed')) return { status: 503, detail: `Modal did not answer the result check (${res.status || res.error || 'no answer'}). Nothing was saved.` };
   if (res.data.state === 'running' || res.data.state === 'started') {
     // Modal's own GPU limit is 10 minutes; a job still running after MODAL_IMAGE_TIMEOUT_MS is lost, and is said so.
     if (Date.now() - Date.parse(record.created_at) > MODAL_IMAGE_TIMEOUT_MS) {
@@ -422,6 +429,27 @@ export async function finishModalImage(env, storage, callId, fetcher = fetch) {
   await saveIndex(storage, [item, ...(await listMedia(storage))]);
   await update({ state: 'saved', item: { id, title: item.title, mime_type: item.mime_type, receipt: item.receipt } });
   return { status: 200, item };
+}
+
+/** How often the alarm checks a waiting Modal picture, so it is saved even when no client is polling. */
+export const MODAL_RECONCILE_MS = 30000;
+
+/** The next alarm time for the waiting Modal pictures: [] when none wait. Used by the Durable Object's alarm scheduler. */
+export async function modalImageCheckTimes(storage) {
+  return (await pendingModalImages(storage)).length ? [Date.now() + MODAL_RECONCILE_MS] : [];
+}
+
+/** Asks Modal about each waiting picture and saves or fails it. A job past MODAL_IMAGE_TIMEOUT_MS fails even when Modal cannot be reached. */
+export async function reconcileModalImages(env, storage, fetcher = fetch) {
+  for (const job of await pendingModalImages(storage)) {
+    if (Date.now() - Date.parse(job.created_at) > MODAL_IMAGE_TIMEOUT_MS) {
+      const error = 'The Modal GPU picture did not finish in time. Nothing was saved; no other engine was used.';
+      const records = (await storage.get(MODAL_IMAGE_KEY)) || [];
+      await storage.put(MODAL_IMAGE_KEY, records.map((r) => (r.call_id === job.call_id ? { ...r, state: 'failed', error } : r)));
+      continue;
+    }
+    await finishModalImage(env, storage, job.call_id, fetcher).catch(() => null);
+  }
 }
 
 /** The Modal pictures still waiting, for the app to follow again after it was closed: call ids and titles only. */
