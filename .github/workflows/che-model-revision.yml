@@ -33,3 +33,5 @@ jobs:
           echo "model: ${MODEL}" | tee -a "$GITHUB_STEP_SUMMARY"
           echo "revision (commit sha): ${sha}" | tee -a "$GITHUB_STEP_SUMMARY"
           echo "source: https://huggingface.co/api/models/${MODEL} (field sha)" | tee -a "$GITHUB_STEP_SUMMARY"
+          # The job log is not reachable from outside GitHub; annotations are, through the checks API.
+          echo "::notice title=model-revision::${MODEL} ${sha}"
