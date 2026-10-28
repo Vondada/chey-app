@@ -53,7 +53,7 @@ async function app({ reply = 'Forty-two, sir.' } = {}) {
     const text = items.filter((i) => i.type === 'delta').map((i) => i.delta).join('');
     return { status: res.status, text, done, raw, modelCalls: modelInputs.length - before };
   };
-  return { say };
+  return { say, env, state };
 }
 
 test('a typed sum reaches the controller on the real route: verified answer, receipt, no model call', async () => {
@@ -100,4 +100,14 @@ test('a goal with no verified path falls through to the model, with no invented 
   assert.equal(out.text, 'Madrid, sir.');
   assert.equal(out.modelCalls, 1);
   assert.equal(out.done.execution_receipt, undefined);
+});
+
+test('the live arithmetic probe reads every step through the real route and reports the receipts', async () => {
+  const { arithmeticProbe } = await import('./problem_controller_probe.js');
+  const che = await app();
+  const report = await arithmeticProbe(che.env, new Request('https://che.example/api/arithmetic/probe', { headers: { Authorization: 'Bearer probe-token' } }), 'probe-object');
+  assert.equal(report.ok, true, JSON.stringify(report.steps.filter((s) => !s.pass && !s.optional).map((s) => [s.name, s.reply])));
+  assert.equal(report.total, 4);
+  assert.equal(report.steps[0].receipt.status, 'success');
+  assert.equal(report.steps[2].receipt.status, 'error');
 });

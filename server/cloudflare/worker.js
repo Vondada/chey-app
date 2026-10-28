@@ -279,6 +279,7 @@ import { securityChief, securityChiefIntent, speakChiefReport } from './security
 import { acquire as acquireCapability, applyPolicy as applyCapabilityPolicy, capabilityIntent, engineSummary as capabilityEngineSummary, learnFromOutcome, loadPolicy as loadCapabilityPolicy, populate as populateKnowledge, retrieve as retrieveKnowledge, rollbackTool, savePolicy as saveCapabilityPolicy, projectBlocked, speakCapabilities, speakLearned as speakLearnedKnowledge, useTool, LAST_USED_KEY as KNOWLEDGE_USED_KEY } from './capability_engine.js';
 import { privacyConfirmIntent, privacyIntent, privacyProbe, privacyTurn, privacyVerdict, runWithPrivacy } from './privacy_mode.js';
 import { STUDY_WAKE_KEY, alarmStudy, humorTurn, studyChatTurn, studyPassRoute, studyProbe } from './comedy_study.js';
+import { arithmeticProbe } from './problem_controller_probe.js';
 import { EGRESS_KEY, SNAPSHOT_KEY, holdEgress, installEgressGuard, setEgressOwner, setEgressPolicy, storeEgressPolicy, SESSION_SCOPES, bump as securityBump, checkSession, createSession, dependencyAdvisories, detectThreats, issueNonce, loadSecurity, recordFindings, redact as redactSecretText, redactDeep, respondToIncident, restoreTrustedState, revokeSessions, saveSecurity, securityIntent, snapshotTrustedState, speakStatus as speakSecurityStatus } from './security_intelligence.js';
 import { loadRegistry as loadCapabilityRegistry } from './capability_registry.js';
 import { BrainLedger, answerLedger, decidePending as decideBrainPending, installBrainLedger, ledgerApi, recordGraphConnections, ledgerIntent as brainLedgerIntent, DEFAULT_ZONE as LEDGER_DEFAULT_ZONE } from './brain_ledger.js';
@@ -16242,6 +16243,7 @@ async function routeRequest(request, env, ctx) {
   }
   if (path === '/api/trading/audit/probe' && request.method === 'POST') return voiceProbeAuthorized(request, env) ? json(await env.CHE_STATE.getByName('owner').tradingAuditProbe()) : json({ detail: 'Not found.' }, 404);
   if (path === '/api/privacy/probe' && request.method === 'POST') return voiceProbeAuthorized(request, env) ? json(await privacyProbe(env, request, MEMORY_PROBE_OBJECT)) : json({ detail: 'Not found.' }, 404);
+  if (path === '/api/arithmetic/probe' && request.method === 'POST') return voiceProbeAuthorized(request, env) ? json(await arithmeticProbe(env, request, await probeObjectName(/^Bearer (\S+)$/.exec(request.headers.get('Authorization') || '')?.[1] || ''))) : json({ detail: 'Not found.' }, 404);
   if (path === '/api/study/probe' && request.method === 'POST') return voiceProbeAuthorized(request, env) ? json(await studyProbe(env, request, await probeObjectName(/^Bearer (\S+)$/.exec(request.headers.get('Authorization') || '')?.[1] || ''))) : json({ detail: 'Not found.' }, 404);
   if (path === '/api/memory/probe' && request.method === 'POST') {
     if (!voiceProbeAuthorized(request, env)) return json({ detail: 'Not found.' }, 404);
