@@ -50,6 +50,7 @@ Statuses: `open`, `in progress`, `waiting on owner`, `built, not verified`, `ver
 | Q-32 | Driving-safe voice replies | open | — | Short, spoken-first replies when the route is a car, with no screen steps. | Owner request 13 |
 | Q-33 | Car test script and route log | open | — | A script the owner runs in the car that records each route transition, interruption and failure to a file for review. Needs the owner's car. | Owner request 16 |
 | Q-34 | Native audio changes need an IPA | open | — | Audio-session and route changes are native (Swift). Decide with the owner whether they ship by Shorebird patch or a new IPA. | Owner decision |
+| Q-39 | Universal creation engine: Phase 1 audit done; M2a scene format next | in progress | `docs/creation-engine-audit` | Phase 1 audit in `docs/CHE_UNIVERSAL_CREATION_AUDIT.md`. Next: M2a scene document format with tests. Blockers: iPhone test for touch features; Colab worker status; paid GPU needs approval. | Audit only; no code |
 
 ## Owner decisions needed
 - Office swipe (Q-02).
@@ -58,6 +59,7 @@ Statuses: `open`, `in progress`, `waiting on owner`, `built, not verified`, `ver
 - Whether automatic background runs are allowed (this would change the AGENTS.md rule and use more usage).
 
 ## Log
+- 2026-10-28: Q-39 Phase 1 audit done (`docs/CHE_UNIVERSAL_CREATION_AUDIT.md`). Modal /health verified live; Creation Engine end-to-end was skipped (opt-in) on run 40609806059.
 - 2026-10-28: Q-15 to Q-34 added from the owner's voice, problem-solving and car Bluetooth requests. None built yet. Q-15 is the first to start.
 - 2026-10-27: Q-01 done (#672 merged); Q-07 is PR #700.
 - 2026-10-26: queue created from the day's requests. Earlier work is recorded in the branches above and in `docs/CHE_MISSION_LEDGER.md`.
