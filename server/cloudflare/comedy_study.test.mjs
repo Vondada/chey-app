@@ -264,12 +264,23 @@ test('Wikipedia\'s own Retry-After is the wait before the retry, capped at 10 se
   }
 });
 
+// Retry waits are real time in production; these tests check the behaviour, not the clock, so the wait is instant.
+// Each requested wait is recorded so the test can still assert how long CHE would have waited.
+async function withInstantTimers(run) {
+  const waits = [];
+  const realSetTimeout = globalThis.setTimeout;
+  globalThis.setTimeout = (fn, ms) => { waits.push(ms); return realSetTimeout(fn, 0); };
+  try { return await run(waits); } finally { globalThis.setTimeout = realSetTimeout; }
+}
+
 test('a Wikipedia step that fails during a Wikipedia outage is UPSTREAM_UNAVAILABLE, with the HTTP status, not PASS or FAIL', async () => {
   const { findShow, judgeStudySteps } = await import('./comedy_study.js');
   let calls = 0;
   const down = async () => { calls += 1; return new Response('busy', { status: 503 }); };
   let lastError = null;
-  try { await findShow('Martin', down); } catch (error) { lastError = { at: 'now', message: error.message, upstream: error.upstream }; }
+  await withInstantTimers(async () => {
+    try { await findShow('Martin', down); } catch (error) { lastError = { at: 'now', message: error.message, upstream: error.upstream }; }
+  });
   assert.deepEqual(lastError.upstream, { http_status: 503, attempts: 3 }, 'the evidence keeps the status and every attempt');
   const judged = judgeStudySteps([{ name: 'real search', pass: false, route: 'wikipedia' }], lastError);
   assert.equal(judged[0].status, 'upstream_unavailable');
@@ -297,7 +308,7 @@ test('a failure that is not Wikipedia\'s own 429 or 5xx stays a FAIL, even while
 test('a 429 is an upstream outage too; a 404 is not', async () => {
   const { findShow } = await import('./comedy_study.js');
   const limited = async () => new Response('slow', { status: 429 });
-  await assert.rejects(findShow('Martin', limited), (error) => error.upstream?.http_status === 429);
+  await withInstantTimers(() => assert.rejects(findShow('Martin', limited), (error) => error.upstream?.http_status === 429));
   const missing = async () => new Response('gone', { status: 404 });
-  await assert.rejects(findShow('Martin', missing), (error) => error.upstream === undefined);
+  await withInstantTimers(() => assert.rejects(findShow('Martin', missing), (error) => error.upstream === undefined));
 });
