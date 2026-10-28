@@ -59,6 +59,26 @@ class CheAgentTask {
       );
 }
 
+/// The task an agent's desk headline reports, from its history (newest first, as GET /api/agents/:id returns it).
+/// Work in progress outranks work waiting to start, the same precedence as activeTask() in
+/// server/cloudflare/office_conversation.js: running or reviewing, then waiting for review (or blocked, which the
+/// desk also surfaces), then queued. Among queued tasks the oldest wins, because the runtime starts the oldest
+/// first. With nothing open, the newest task. Null for an empty history.
+CheAgentTask? cheHeadlineTask(List<CheAgentTask> history) {
+  const rank = {'running': 0, 'reviewing': 0, 'review_pending': 1, 'needs_review': 1, 'blocked': 1, 'queued': 2};
+  CheAgentTask? best;
+  var bestRank = 1 << 30;
+  for (final t in history) {
+    final r = rank[t.status];
+    if (r == null) continue;
+    if (r < bestRank || (r == 2 && bestRank == 2)) {
+      best = t;
+      bestRank = r;
+    }
+  }
+  return best ?? (history.isEmpty ? null : history.first);
+}
+
 /// Extra runtime fields the mini-person model doesn't carry.
 class CheAgentProfile {
   const CheAgentProfile({

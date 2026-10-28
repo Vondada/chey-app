@@ -754,7 +754,8 @@ class CheBrainLearning {
 
   /// The one-line state: Learning now / Idle — waiting for work / not loaded.
   String headline(DateTime now) {
-    if (error != null) return 'Learning feed unavailable: $error';
+    // Short and plain; the Worker's own reason is kept in [error] for the details, not in this line.
+    if (error != null) return 'Learning feed unavailable. Tap refresh to retry.';
     if (fetchedAt == null) return 'Checking what CHE is learning…';
     if (events.isEmpty) return 'Idle — waiting for work. Nothing has entered the Brain yet.';
     if (isActive(now)) return 'Learning now: ${events.first.kind.toLowerCase()} · ${events.first.title}';

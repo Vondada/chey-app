@@ -635,10 +635,15 @@ export function matrixState(unit) {
   const st = evidenceState(unit);
   if (st === 'NO DATA' || st === 'N/A') return 'No data';
   if (st === 'NOT READY') return 'Learning';
-  if (st === 'QUALIFIED') return unit.oos.expectancy_r >= 0.3 && (unit.oos.pf ?? 0) >= 1.3 ? 'Strong' : 'Good';
+  // Good and Strong need the look-ahead audit to have passed and a positive whole-history expectancy. A strategy that
+  // loses money over all its trades, or whose audit never ran, is at most Fair (owner, 2026-10-27: no Good without validation).
+  if (st === 'QUALIFIED' && unit.look_ahead === 'passed' && unit.all.expectancy_r > 0) {
+    return unit.oos.expectancy_r >= 0.3 && (unit.oos.pf ?? 0) >= 1.3 ? 'Strong' : 'Good';
+  }
   // MONITOR covers three different things; only a real negative unseen result is Weak.
   if ((unit.oos?.trades || 0) < MIN_OOS_TRADES) return 'Not enough unseen data';
   if (unit.look_ahead === 'FAILED') return 'Audit failed';
+  if (unit.look_ahead !== 'passed') return 'Learning';
   return unit.oos.expectancy_r > -0.05 ? 'Fair' : 'Weak';
 }
 export function decayOf(unit) {

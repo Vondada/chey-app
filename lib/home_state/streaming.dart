@@ -400,6 +400,7 @@ extension _CheHomeStreaming on _CHEHomeState {
     final complete = StringBuffer();
     _streamMediaUrl = null;
     _streamMediaType = null;
+    _streamMediaExtra = {};
     _streamUnderstoodAs = null;
     _streamResponseDetails = null;
     _streamRecordIds = const [];
@@ -658,6 +659,9 @@ extension _CheHomeStreaming on _CHEHomeState {
           _streamMediaUrl = mediaUrl;
           _streamMediaType = mediaType;
         }
+        // A library answer lists several videos with no single media_url, so the media fields are read on their own.
+        final mediaExtra = cheChatMediaExtra(data);
+        if (mediaExtra.isNotEmpty) _streamMediaExtra = {..._streamMediaExtra, ...mediaExtra};
         // "Open it in 3D", "rotate it", "change the color": the Worker built or found the invention's saved 3D model.
         final inventionId = data['invention_id']?.toString().trim() ?? '';
         if (data['open_invention_3d'] == true && inventionId.isNotEmpty && mounted) {
