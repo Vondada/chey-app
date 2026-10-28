@@ -37,6 +37,9 @@ export async function arithmeticProbe(env, request, objectName) {
       ({ reply, done }) => /-\$1\.70/.test(reply) && done.source === 'che_arithmetic' && done.model_calls === 0 && done.execution_receipt?.capability_id === 'math.trade_expectancy' && !/paper journal|evidence pass|portfolios/.test(reply));
     await ask('conflicting hypothetical counts are refused, not calculated', 'A strategy made 100 trades: 70 wins averaging $4 and 25 losses averaging $15. Expected profit per trade?',
       ({ reply, done }) => /make 95 trades, not 100/.test(reply) && done.model_calls === 0 && done.ok === false);
+    // Routing only: the probe asks for a health check, never a render, so a CI run never starts a GPU job.
+    await ask('the Modal command is answered by the Modal report, not deployment status', 'CHE, connect Modal. Verify it with an authenticated health check.',
+      ({ reply, done }) => done.source === 'che_modal_connect' && done.model_calls === 0 && /^Modal is (?:not )?connected/.test(reply) && !/#\d+|pull request/i.test(reply));
     await ask('a sentence about maths goes to the model, with no controller receipt', 'Tell me about 12 times 17 in history',
       ({ reply, done }) => reply.length > 0 && done.source !== 'che_arithmetic' && done.execution_receipt === undefined, true);
   } finally {
