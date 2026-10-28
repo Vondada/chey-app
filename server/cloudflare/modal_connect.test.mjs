@@ -23,7 +23,7 @@ function githubFake({ files = { check: true, deploy: true }, runs = [], dispatch
   return { fetcher, calls };
 }
 // A fake Modal endpoint for the authenticated /health probe.
-function modalFake({ status = 200, body = { app: 'che-gpu', version: 'che-modal-1', gpu: 'T4' } } = {}) {
+function modalFake({ status = 200, body = { app: 'che-gpu', version: 'che-modal-2', gpu: 'T4' } } = {}) {
   return async (url) => { if (!/\/health$/.test(String(url))) throw new Error(`unexpected ${url}`); return json(status, body); };
 }
 const env = (extra = {}) => ({ CHE_GITHUB_TOKEN: 'ghp_test', CHE_GITHUB_REPO: 'Vondada/chey-app', ...extra });

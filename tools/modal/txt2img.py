@@ -8,8 +8,9 @@ import hashlib
 import io
 
 MODEL_ID = "stabilityai/sdxl-turbo"
-# A pinned commit of MODEL_ID, set before any deploy. Empty means the Modal function refuses to load the model.
-MODEL_REVISION = ""
+# The commit of MODEL_ID, read from Hugging Face's model API (the "sha" field) by the "CHE model revision lookup" workflow on
+# GitHub's runner, run 40745995951 (2026-10-28). The function refuses to load any other revision.
+MODEL_REVISION = "71153311d3dbb46851df1931d3ca6e939de83304"
 ALLOWED_SIZES = (512,)
 MAX_PROMPT = 500
 MAX_STEPS = 4
@@ -85,3 +86,19 @@ def result_receipt(args, png, gpu_seconds, gpu_name):
         "gpu": gpu_name,
         "gpu_seconds": round(float(gpu_seconds), 1),
     }
+
+
+def load_pipeline(revision=MODEL_REVISION):
+    """The SDXL-Turbo pipeline at the pinned revision, on the GPU. Only called inside the Modal GPU container."""
+    if revision != MODEL_REVISION:
+        raise ValueError("the model revision is not the pinned one")
+    import torch
+    from diffusers import AutoPipelineForText2Image
+    pipe = AutoPipelineForText2Image.from_pretrained(MODEL_ID, revision=revision, torch_dtype=torch.float16, variant="fp16")
+    return pipe.to("cuda")
+
+
+def run_txt2img(pipe, args):
+    """One picture: the pipeline call, then the PNG bytes. Returns the PNG bytes (checked by the caller with check_png)."""
+    image = pipe(**pipeline_kwargs(args)).images[0]
+    return image_to_png_bytes(image)
