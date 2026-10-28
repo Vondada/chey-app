@@ -5,7 +5,7 @@
 
 import { closedCandles, loadCandles } from './trading_lab.js';
 import { chicagoDayKey } from './chicago_time.js';
-import { paperJournalWinRate } from './atlas_trading.js';
+import { entryRange, paperJournalWinRate } from './atlas_trading.js';
 import { tradeExpectancy } from './trade_expectancy.js';
 import {
   CANDIDATES, FILTERS, COSTS, MIN_TRADES, candleProblems, causalContext, newPortfolio, stepPortfolio,
@@ -142,6 +142,7 @@ export async function evidenceReport(storage, { now = Date.now() } = {}) {
     return [
       `Scope 1, daily evidence pass (paper, daily research, no real money): 0 closed trades recorded. Open now: ${open}.`,
       `Scope 2, forward-paper journal (paper, every portfolio, not pooled): ${journal.text}`,
+      `Time ranges: the daily evidence pass ${entryRange(trades)}; the forward-paper journal ${journal.range}.`,
       'The two counts measure different things, so they do not match and are not added together.',
     ].join('\n');
   }

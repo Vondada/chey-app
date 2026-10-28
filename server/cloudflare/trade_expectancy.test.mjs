@@ -88,3 +88,15 @@ test('the evidence intent does not take a hypothetical with figures; it keeps th
   assert.deepEqual(evidenceIntent('how many paper trades today?'), { kind: 'evidence' });
   assert.deepEqual(evidenceIntent('what is my win rate?'), { kind: 'evidence' });
 });
+
+// Mixed-scope reporting: every dataset carries its own time range, taken from its own records.
+import { entryRange } from './atlas_trading.js';
+test('a dataset\'s time range comes from its own entry dates; an undated set says so', () => {
+  assert.equal(entryRange([]), 'has no dated entries');
+  assert.equal(entryRange([{ entry: { time: '2026-10-03T14:05:00Z' } }]), 'is 2026-10-03');
+  assert.equal(entryRange([
+    { entry: { time: '2026-10-09T10:00:00Z' } },
+    { entry: { time: '2026-10-02T09:30:00Z' } },
+    { entry: { time: 'not a date' } },
+  ]), 'runs 2026-10-02 to 2026-10-09');
+});

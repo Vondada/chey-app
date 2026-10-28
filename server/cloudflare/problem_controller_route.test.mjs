@@ -174,3 +174,20 @@ test('the owner\'s own results still go to the journal route, not the hypothetic
   const res = await che.say("What's my expectancy so far?");
   assert.notEqual(res.done.source, 'che_arithmetic');
 });
+
+// Unseen scenarios (not the owner's numbers): the route calculates from whatever figures the message supplies.
+test('an unseen scenario on the route: 55% win rate, $8 wins, $5 losses is +$2.15 a trade', async () => {
+  const che = await app({ reply: 'Unverified.' });
+  const res = await che.say('A paper strategy has a 55% win rate: wins $8 and loses $5 on average. Should I keep running it? What is the expected profit per trade?');
+  assert.equal(res.modelCalls, 0);
+  assert.equal(res.done.source, 'che_arithmetic');
+  assert.match(res.text, /\$2\.15/);
+});
+
+test('an unseen scenario on the route: 50 wins of $12 and 70 losses of $5 over 120 trades is $2.08 (exactly 25/12) a trade', async () => {
+  const che = await app({ reply: 'Unverified.' });
+  const res = await che.say('A strategy made 120 trades: 50 wins averaging $12 each and 70 losses averaging $5 each. What is the expected profit per trade?');
+  assert.equal(res.modelCalls, 0);
+  assert.match(res.text, /\$2\.08 \(exactly 25\/12 dollars\)/);
+  assert.match(res.text, /-?\$250\.00/);
+});
