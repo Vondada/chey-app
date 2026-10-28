@@ -113,6 +113,30 @@ test('the live arithmetic probe reads every step through the real route and repo
   assert.equal(report.steps[2].receipt.status, 'error');
 });
 
+// Periodic production (the owner's Intelligence Test 1): the same question is answered by the controller with both
+// readings and no model call. CHE previously answered 301 seconds from the model path, which had no check.
+const PRODUCTION = 'A machine produces 3 parts every 4 seconds. After every 12 parts, it stops for 5 seconds. Starting with no parts and no initial delay, what is the minimum time to produce exactly 100 parts?';
+
+test('the periodic-production question is answered by the controller: 176 s batched, 173.33 s continuous, no model call', async () => {
+  const che = await app({ reply: '301 seconds.' });
+  const res = await che.say(PRODUCTION);
+  assert.equal(res.status, 200);
+  assert.equal(res.modelCalls, 0, 'the model must not answer a verified production problem');
+  assert.equal(res.done.source, 'che_arithmetic');
+  assert.equal(res.done.ok, true);
+  assert.equal(res.done.execution_receipt.capability_id, 'math.periodic_production');
+  assert.match(res.text, /176 seconds/);
+  assert.match(res.text, /173\.33 seconds/);
+  assert.match(res.text, /batches of 3/);
+  assert.doesNotMatch(res.text, /301/);
+});
+
+test('a production-like question without every parameter still goes to the model, unanswered by the controller', async () => {
+  const che = await app({ reply: 'It depends on the machine, sir.' });
+  const res = await che.say('A machine produces parts. How long does it take to produce 100 parts?');
+  assert.equal(res.modelCalls, 1);
+  assert.equal(res.done.source === 'che_arithmetic', false);
+});
 // Hypothetical trading figures (Intelligence Test 4): the figures the owner gives are calculated, and the paper journal
 // is not read for them. A question about the owner's own results still reaches the journal routes.
 const HYPOTHETICAL = "A paper trading strategy made 100 trades: 70 wins averaging $4 each and 30 losses averaging $15 each. It has a 70% win rate. Should I keep running it? Calculate its expected profit per trade, identify what the win rate hides, and explain what additional evidence you need.";
