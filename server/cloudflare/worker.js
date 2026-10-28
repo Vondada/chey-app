@@ -40,7 +40,7 @@ import {
 import { discoverKeylessModels, engineStatus, paidAllowed, routedEnv, routeText } from './ai_router.js';
 import { capabilityPromptLine, inferTurnCapabilities, runtimeCapabilityRegistry } from './cognitive_capabilities.js';
 import { identityQuestionIntent, speakIdentity } from './che_maturity.js';
-import { deleteMedia, finishModalImage, generateImage, generateVideo, listMedia, readBlob, saveOwnerFile, upscaleImage, verifyMediaFile } from './media.js';
+import { deleteMedia, finishModalImage, generateImage, modalImageCheckTimes, pendingModalImages, reconcileModalImages, generateVideo, listMedia, readBlob, saveOwnerFile, upscaleImage, verifyMediaFile } from './media.js';
 import { withCheNote, guardEngineClaims, guardSoulClaims, lastReplyRecord, loadSoul, replyProvenanceAnswer, replyProvenanceQuestion, restoreSoul, saveSoul, soulPromptBlock, soulProvenance, soulView, stripPhoneSoul } from './soul.js';
 import { mediaHoldAnswer, mediaHoldIntent, mediaKeepFor, mediaLatestReply, mediaLibraryIntent, mediaLibraryReply, mediaLibraryReport, mediaLatestOpenRow, mediaOpenIntent, mediaOpenMissingReply, mediaOpenReply, mediaOpenRow, mediaRows, mediaSaveIntent, mediaSaveReply, mediaShowLatestIntent, mediaShowReply, verifyMediaRows, wantsLatestVideo } from './media_library.js';
 import { capabilityGap, capabilityReply } from './capability_gap.js';
@@ -4182,6 +4182,7 @@ export class CheState extends DurableObject {
     // Orion's crypto desk wakes after every 5-minute close, weekends included (null while the owner paused it).
     const cryptoAt = await nextCryptoTickAt(this.ctx.storage).catch(() => null);
     if (cryptoAt) times.push(cryptoAt);
+    times.push(...await modalImageCheckTimes(this.ctx.storage).catch(() => []));
     const liveAt = await nextLiveTickAt(this.ctx.storage).catch(() => null);
     // The simulation's next minute (null while paused or before its first pass). Same alarm slot, earliest wins.
     const simAt = await nextStrategySimTickAt(this.ctx.storage).catch(() => null);
@@ -8041,6 +8042,7 @@ export class CheState extends DurableObject {
         const { status, ...rest } = await finishModalImage(this.keyEnv || this.env, this.ctx.storage, String(body.call_id || ''));
         return json(rest, status);
       }
+      if (path === '/api/media/modal/pending' && request.method === 'GET') return json({ jobs: await pendingModalImages(this.ctx.storage) });
       if (path === '/api/media/generate' && request.method === 'POST') {
         const mediaType = String(body.type || body.kind || 'image').toLowerCase();
         const result = mediaType === 'video'
@@ -14544,7 +14546,7 @@ export class CheState extends DurableObject {
     if (minute) {
       await strategySimTick(this.ctx.storage, { now: minuteNow }).catch((error) => console.error('Strategy simulation tick failed:', error?.message || error));
       const simNext = await nextStrategySimTickAt(this.ctx.storage, Date.now()).catch(() => null);
-      const kept = [...minute.others, ...(minute.liveNext ? [minute.liveNext] : []), ...(simNext ? [simNext] : [])];
+      const kept = [...minute.others, ...(minute.liveNext ? [minute.liveNext] : []), ...(simNext ? [simNext] : []), ...await modalImageCheckTimes(this.ctx.storage).catch(() => [])];
       if (kept.length) await this.ctx.storage.setAlarm(Math.min(...kept));
       return;
     }
@@ -14568,6 +14570,8 @@ export class CheState extends DurableObject {
       // Older room records get relationship discovery too, a dozen per alarm until none are left.
       await relinkRecords(this.ctx.storage, alarmBrain).catch(() => null);
     }
+    // Waiting Modal pictures are checked here, so one is saved even when no app is polling for it.
+    await reconcileModalImages(this.keyEnv || this.env, this.ctx.storage).catch(() => null);
     const autonomyOn = Boolean((await this.loadData()).autonomy);
     if (autonomyOn) await this.recoverOpenCodeFailure().catch((error) => console.error('OpenCode recovery watch failed:', error?.message || error));
     // processJobs decides what may run while Office autonomy is paused: the
