@@ -147,7 +147,7 @@ test('acceptance 2: Connected only after an authenticated /health with the expec
   const ok = await connect(s, fm);
   assert.equal(ok.state, 'verified', JSON.stringify(ok));
   assert.equal(ok.outcomes.connection_verified, true);
-  assert.match(ok.speech, /^Connected: CHE's Modal app accepted the access token and answered at ownerws--che-gpu\.modal\.run \(che-gpu che-modal-1/);
+  assert.match(ok.speech, /^Connected: CHE's Modal app accepted the access token and answered at ownerws--che-gpu\.modal\.run \(che-gpu che-modal-2/);
   const health = fm.log.find((l) => l.path === '/health');
   assert.ok(health, 'the probe really ran');
   assert.ok(!JSON.stringify(ok).includes(SECRET), 'the secret is never in a reply');
@@ -165,7 +165,7 @@ test('acceptance 2: Connected only after an authenticated /health with the expec
   // An old app version is not Connected either.
   const s4 = setup(); const old = fakeModal({ version: 'che-modal-0' });
   const rOld = await connect(s4, old);
-  assert.equal(rOld.state, 'failed'); assert.match(rOld.lines[2], /not che-gpu che-modal-1/);
+  assert.equal(rOld.state, 'failed'); assert.match(rOld.lines[2], /not che-gpu che-modal-2/);
   // A format-only key (the old ak-/as- API token, or a token without an endpoint) is refused before anything is sent.
   const s5 = setup(); const fm5 = fakeModal();
   const deploy = await storeSecret(onbCtx(s5, fm5.fetcher), 'modal', { token: 'ak-AbCdEf123456:as-ZyXwVu987654' });
