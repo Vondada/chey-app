@@ -145,6 +145,7 @@ import { ownToolPermissionProblems } from './flagstaff_reply_check.js';
 import { cachedCodeIndex } from './code_index.js';
 import { CHE_SELF_BRIEF, starredFocus, studyLesson } from './che_self_knowledge.js';
 import { connectServiceIntent, onboardingChatReply, onboardingIntent, onboardingRoute } from './service_onboarding.js';
+import { modalServiceReply, serviceCommandIntent } from './modal_connect.js';
 import { privateChatGate, privateTurn } from './private_voice.js';
 import { KEY_PROVIDERS, MEMORY_DB, hasStoredMemoryDatabase, memorySetupIntent, memorySetupSteps, removeMemoryDatabase, saveMemoryDatabase, removeKey, storedKeys, withStoredKeys, cachedAnswer, checkAllKeys, fileLetter, fileTech, forgetAnswer, isLockedDown, listLetters, looksLikeAttack, markLetter, nextLetter, rememberAnswer, resilienceIntent, runScout, saveKey, setLockdown, setupSteps, speakKeyHealth, speakMailboxSummary, speakTech, techItems } from './resilience.js';
 import { modalKeyRowFor, modalProbe } from './modal_gpu.js';
@@ -10488,6 +10489,10 @@ export class CheState extends DurableObject {
         if (relTurn) return relTurn;
         // Deployment and commit questions are answered from GitHub's commit, PR and run records, this Worker's
         // version tag and the phone's report (deploy_receipt.js), before source inspection or the status route.
+        // Service commands run before the GitHub and deployment matchers, which claim "verify" and "deployed" (2026-10-28).
+        const svc = !body.attachment && !body.workflow_step ? serviceCommandIntent(rawMessage) : null;
+        if (svc?.kind === 'connect') return this.onboardingChat(svc.onboard, ownerDevice);
+        if (svc) return ownerDevice ? modalServiceReply(this.env, this.ctx.storage, svc.intent, ndjsonReply) : ownerOnly();
         const commitAsk = !body.attachment && !body.workflow_step ? commitIntent(rawMessage, body.history) : null;
         if (commitAsk) {
           await this.dropHeldActions();

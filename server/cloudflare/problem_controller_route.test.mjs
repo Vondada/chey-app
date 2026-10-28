@@ -107,7 +107,7 @@ test('the live arithmetic probe reads every step through the real route and repo
   const che = await app();
   const report = await arithmeticProbe(che.env, new Request('https://che.example/api/arithmetic/probe', { headers: { Authorization: 'Bearer probe-token' } }), 'probe-object');
   assert.equal(report.ok, true, JSON.stringify(report.steps.filter((s) => !s.pass && !s.optional).map((s) => [s.name, s.reply])));
-  assert.equal(report.total, 6);
+  assert.equal(report.total, 7);
   assert.equal(report.steps[0].receipt.status, 'success');
   assert.equal(report.steps[4].receipt.capability_id, 'math.trade_expectancy');
   assert.equal(report.steps[2].receipt.status, 'error');
@@ -190,4 +190,30 @@ test('an unseen scenario on the route: 50 wins of $12 and 70 losses of $5 over 1
   assert.equal(res.modelCalls, 0);
   assert.match(res.text, /\$2\.08 \(exactly 25\/12 dollars\)/);
   assert.match(res.text, /-?\$250\.00/);
+});
+
+// The Modal command (owner, 2026-10-28): answered by its own report on the real route, never with PR or deploy status.
+test('"CHE, connect Modal ... verify ... test render" is answered by the Modal report on /api/chat, with no model call', async () => {
+  const che = await app({ reply: 'Unverified model reply.' });
+  const res = await che.say('CHE, connect Modal. Verify the deployed service with a real authenticated health check and a small test render.');
+  assert.equal(res.status, 200);
+  assert.equal(res.done.source, 'che_modal_connect');
+  assert.equal(res.modelCalls, 0);
+  assert.match(res.text, /^Modal is not connected yet/);
+  assert.match(res.text, /GitHub is not connected/);
+  assert.match(res.text, /Credential: no Modal connection is saved/);
+  assert.doesNotMatch(res.text, /#743|PR #|pull request|Worker deployment|commit/i);
+});
+
+test('a plain "connect modal" keeps the guided connect flow on the route (not the verification report)', async () => {
+  const che = await app({ reply: 'Unverified model reply.' });
+  const res = await che.say('connect modal');
+  assert.equal(res.done.source, 'che_onboarding');
+  assert.notEqual(res.done.source, 'che_modal_connect');
+});
+
+test('an unrelated question about the Worker deployment still reaches the deployment route, not the Modal report', async () => {
+  const che = await app({ reply: 'Unverified model reply.' });
+  const res = await che.say('Verify the deployed Worker: is PR #743 merged?');
+  assert.notEqual(res.done.source, 'che_modal_connect');
 });
