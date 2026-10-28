@@ -1655,6 +1655,7 @@ extension _CheHomeSend on _CHEHomeState {
       });
 
       _scrollToBottom();
+      if (_streamModalCallId.isNotEmpty) unawaited(_followModalPicture(_streamModalCallId));
 
       _brainLog.logTurn(message, reply.isEmpty ? finalReply : reply,
           source: fromVoice ? 'voice' : 'chat');
@@ -1739,6 +1740,45 @@ extension _CheHomeSend on _CHEHomeState {
   }
 
   /// Sends a CHE chat reply to Claude's mailbox for a fact-check, and says what happened on screen.
+  /// A Modal GPU picture started in chat: follow its job until it is saved, fails, or the wait runs out, then say so in
+  /// the chat. A saved picture is shown from the Worker's image route, and it is in the Gallery by then.
+  Future<void> _followModalPicture(String callId) async {
+    final outcome = await () async {
+      final client = http.Client();
+      try {
+        return await followCheModalPicture(
+          client: client,
+          baseUrl: cheAgentBaseUrl,
+          headers: _authHeaders,
+          callId: callId,
+        );
+      } finally {
+        client.close();
+      }
+    }();
+    if (!mounted) return;
+    _set(() {
+      messages.add(switch (outcome.state) {
+        CheModalPictureState.saved => {
+            'role': 'assistant',
+            'text': "Here is the picture from Modal's GPU, sir. It is saved in your Gallery (job $callId).",
+            'media_url': '$cheAgentBaseUrl${outcome.imagePath}',
+            'media_type': 'image',
+          },
+        CheModalPictureState.failed => {
+            'role': 'assistant',
+            'text': 'The Modal GPU picture failed, sir: ${outcome.detail} (job $callId). Nothing was saved; no other engine was used.',
+          },
+        CheModalPictureState.running => {
+            'role': 'assistant',
+            'text': "The Modal GPU picture is still running, sir (job $callId). I stopped waiting here; the job stays on the Worker, "
+                'and it is saved or marked failed there. It is not in your Gallery yet.',
+          },
+      });
+    });
+    _scrollToBottom();
+  }
+
   Future<void> _sendFactCheckFromChat(String reply, String messageId) async {
     final messenger = ScaffoldMessenger.maybeOf(context);
     HapticFeedback.selectionClick();

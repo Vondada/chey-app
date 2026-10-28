@@ -86,6 +86,7 @@ import 'che_voice_studio.dart';
 import 'che_voice_ui.dart';
 import 'che_app_portal.dart';
 import 'che_video.dart';
+import 'chat_modal_picture.dart';
 import 'che_creations.dart';
 import 'avatar/che_character_generator.dart';
 import 'world/che_world_population_panel.dart';
@@ -1170,6 +1171,8 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
   Map<String, String>? _pendingAttachment;
   String? _streamMediaUrl;
   String? _streamMediaType;
+  // The Modal GPU picture job the reply started (chat_modal_picture.dart), followed after the reply.
+  String _streamModalCallId = '';
   // The saved media ID, thumbnail and library list of the reply (che_chat_media.dart), shown as tiles under it.
   Map<String, String> _streamMediaExtra = {};
   // How CHE read a held or multi-step turn (issue #345), shown quietly under the reply.

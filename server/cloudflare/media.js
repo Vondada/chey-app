@@ -348,6 +348,7 @@ export const MODAL_IMAGE_FLAG = 'CHE_MODAL_TXT2IMG';
 export const MODAL_IMAGE_KEY = 'che:modal_images';
 export const MODAL_IMAGE_MODEL = 'stabilityai/sdxl-turbo';
 export const MODAL_IMAGE_REVISION = '71153311d3dbb46851df1931d3ca6e939de83304';
+export const MODAL_IMAGE_TIMEOUT_MS = 15 * 60 * 1000;
 
 const hexOf = (buffer) => Array.from(new Uint8Array(buffer)).map((b) => b.toString(16).padStart(2, '0')).join('');
 
@@ -390,8 +391,15 @@ export async function finishModalImage(env, storage, callId, fetcher = fetch) {
   const cred = await modalCredential(env, storage);
   if (!cred.exists || !cred.cred) return { status: 503, detail: 'Modal is not connected, so the result cannot be read.' };
   const res = await modalCall(cred.cred, 'POST', '/txt2img/result', { call_id: callId }, fetcher, 30000);
-  if (!res.ok || !res.data) return { status: 502, detail: `Modal did not answer the result check (${res.status || res.error || 'no answer'}). Nothing was saved.` };
-  if (res.data.state === 'running' || res.data.state === 'started') return { status: 202, state: 'running', call_id: callId };
+  // A missed answer is not a failed picture: the job stays as it is, and the caller may ask again (503).
+  if (!res.ok || !res.data) return { status: 503, detail: `Modal did not answer the result check (${res.status || res.error || 'no answer'}). Nothing was saved.` };
+  if (res.data.state === 'running' || res.data.state === 'started') {
+    // Modal's own GPU limit is 10 minutes; a job still running after MODAL_IMAGE_TIMEOUT_MS is lost, and is said so.
+    if (Date.now() - Date.parse(record.created_at) > MODAL_IMAGE_TIMEOUT_MS) {
+      return failed('The Modal GPU picture did not finish in time. Nothing was saved; no other engine was used.');
+    }
+    return { status: 202, state: 'running', call_id: callId };
+  }
   if (res.data.state !== 'done') {
     return failed(`Modal reported the picture failed${res.data.error ? `: ${String(res.data.error).slice(0, 160)}` : ''}. Nothing was saved; no other engine was used.`);
   }

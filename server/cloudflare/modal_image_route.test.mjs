@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import test from 'node:test';
-import { finishModalImage, listMedia, MODAL_IMAGE_KEY, MODAL_IMAGE_REVISION, readBlob, startModalImage, generateImage } from './media.js';
+import { finishModalImage, listMedia, MODAL_IMAGE_KEY, MODAL_IMAGE_REVISION, MODAL_IMAGE_TIMEOUT_MS, readBlob, startModalImage, generateImage } from './media.js';
 
 const HOST = 'https://vondada--che-gpu.us-east.modal.run';
 const ENV_ON = { CHE_MODAL_TXT2IMG: 'enabled', MODAL_TOKEN: `bearer:${'a'.repeat(40)}@${HOST}`, CHE_AI_BOUND: true };
@@ -95,6 +95,33 @@ test('a running call is not saved yet; its state is reported', async () => {
   assert.equal(out.status, 202);
   assert.equal(out.state, 'running');
   assert.equal((await listMedia(storage)).length, 0);
+});
+
+test('a missed Modal answer is retryable (503) and does not fail the picture', async () => {
+  const storage = memoryStorage();
+  const down = async (url, init) => {
+    const path = new URL(String(url)).pathname;
+    if (path === '/txt2img') return new Response(JSON.stringify({ call_id: 'fc-abcdef123456' }), { status: 200, headers: { 'content-type': 'application/json' } });
+    return new Response('busy', { status: 500 });
+  };
+  await startModalImage(ENV_ON, storage, { prompt: 'a kite' }, down);
+  const out = await finishModalImage(ENV_ON, storage, 'fc-abcdef123456', down);
+  assert.equal(out.status, 503);
+  assert.equal((await storage.get(MODAL_IMAGE_KEY))[0].state, 'started');
+});
+
+test('a call still running after the timeout fails with a reason, and nothing is saved', async () => {
+  const { fetcher } = fakeModal({ result: { ok: true, state: 'running' } });
+  const storage = memoryStorage();
+  await startModalImage(ENV_ON, storage, { prompt: 'a kite' }, fetcher);
+  const records = await storage.get(MODAL_IMAGE_KEY);
+  records[0].created_at = new Date(Date.now() - MODAL_IMAGE_TIMEOUT_MS - 60000).toISOString();
+  await storage.put(MODAL_IMAGE_KEY, records);
+  const out = await finishModalImage(ENV_ON, storage, 'fc-abcdef123456', fetcher);
+  assert.equal(out.status, 502);
+  assert.match(out.detail, /did not finish in time/);
+  assert.equal((await listMedia(storage)).length, 0);
+  assert.equal((await storage.get(MODAL_IMAGE_KEY))[0].state, 'failed');
 });
 
 test('a finished picture is saved to the Gallery with its receipt, and reopens with the same bytes', async () => {
