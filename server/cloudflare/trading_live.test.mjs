@@ -7,6 +7,9 @@ import { CONTRACTS, COSTS, INTRADAY_CANDIDATES, fillEntry, exitOn, newPortfolio,
 import { LIVE_EXCLUDED, LIVE_PORTFOLIOS, liveDashboard, liveTick, setLivePaper } from './trading_live.js';
 import { liveIntent } from './trading_live_chat.js';
 import { evidenceReport } from './trading_evidence_runner.js';
+import { haltState } from './strategy_governor.js';
+// These tests cover entry mechanics. The owner's forward-paper halt is tested in strategy_governor.test.mjs.
+haltState.halted = false;
 
 function memoryStorage(saved = new Map()) {
   return {
