@@ -187,7 +187,7 @@ import { loadPackedJson, savePackedJson } from './prompt_compaction.js';
 import { githubWorkshopPieces, workshopAvatar, workshopAvatarIntent, workshopSnapshot } from './workshop.js';
 import { flushOutbox, handleWebMailbox, isOpen as flagstaffOpen, lockMailbox, openMailbox, transcript as flagstaffTranscript, mailboxCode, mailboxLink, postWebMail, readWebMail, rotateMailboxCode } from './web_mailbox.js';
 import { CheLibrary, fetchReadable, libraryContext, libraryIntent } from './library.js';
-import { plainArithmetic } from './arithmetic.js';
+import { answerForChat } from './problem_controller.js';
 import { KnowledgeLibrary, knowledgeIntent, knowledgeReply, knowledgeTaskContext } from './knowledge_library.js';
 import { answerPersonalFact, answerStoredStatement, explicitMemorySave, factCorrectionReply, groundedReply, isQuestionLike, needsStrongEngine, ownerFactTurn, personalFactQuestion, recallPersonalFact, storedStatementQuestion } from './personal_recall.js';
 import { brainRecordIntent, chatgptHistoryIntent, importChatgptBatch, inspectMemory, memoryInspectIntent, ownerMemorySearchIntent, ownerSearchTurn, ownerStatementCandidates, phoneBrainNotes, speakBrainRecord, speakChatgptHistory, speakMemoryInspection } from './owner_recall.js';
@@ -279,6 +279,7 @@ import { securityChief, securityChiefIntent, speakChiefReport } from './security
 import { acquire as acquireCapability, applyPolicy as applyCapabilityPolicy, capabilityIntent, engineSummary as capabilityEngineSummary, learnFromOutcome, loadPolicy as loadCapabilityPolicy, populate as populateKnowledge, retrieve as retrieveKnowledge, rollbackTool, savePolicy as saveCapabilityPolicy, projectBlocked, speakCapabilities, speakLearned as speakLearnedKnowledge, useTool, LAST_USED_KEY as KNOWLEDGE_USED_KEY } from './capability_engine.js';
 import { privacyConfirmIntent, privacyIntent, privacyProbe, privacyTurn, privacyVerdict, runWithPrivacy } from './privacy_mode.js';
 import { STUDY_WAKE_KEY, alarmStudy, humorTurn, studyChatTurn, studyPassRoute, studyProbe } from './comedy_study.js';
+import { arithmeticProbe } from './problem_controller_probe.js';
 import { EGRESS_KEY, SNAPSHOT_KEY, holdEgress, installEgressGuard, setEgressOwner, setEgressPolicy, storeEgressPolicy, SESSION_SCOPES, bump as securityBump, checkSession, createSession, dependencyAdvisories, detectThreats, issueNonce, loadSecurity, recordFindings, redact as redactSecretText, redactDeep, respondToIncident, restoreTrustedState, revokeSessions, saveSecurity, securityIntent, snapshotTrustedState, speakStatus as speakSecurityStatus } from './security_intelligence.js';
 import { loadRegistry as loadCapabilityRegistry } from './capability_registry.js';
 import { BrainLedger, answerLedger, decidePending as decideBrainPending, installBrainLedger, ledgerApi, recordGraphConnections, ledgerIntent as brainLedgerIntent, DEFAULT_ZONE as LEDGER_DEFAULT_ZONE } from './brain_ledger.js';
@@ -10462,8 +10463,16 @@ export class CheState extends DurableObject {
           return ndjsonReply('I did not keep that, sir: it looks like an API key, and keys never go in chat. It may now be exposed, so regenerate it where it came from. A new Alpaca paper key goes in the Trading Room, straight to CHE\'s key store.', { source: 'che_secret_refused', ok: false, model_calls: 0 });
         }
         // Plain arithmetic is computed here: no model guesses it, and no earlier turn can answer it (owner, 2026-10-28).
-        const sum = !body.attachment && !body.workflow_step ? plainArithmetic(rawMessage) : null;
-        if (sum) return ndjsonReply(sum.error || `${sum.result}.`, { source: 'che_arithmetic', ok: !sum.error, model_calls: 0, expression: sum.expression });
+        // Plain arithmetic goes through the universal problem controller (problem_controller.js): exact, checked by a
+        // round trip, with an execution receipt. A goal with no verified path returns null and falls through to the model.
+        const sum = !body.attachment && !body.workflow_step ? answerForChat(rawMessage) : null;
+        if (sum) {
+          const verified = sum.status === 'verified';
+          return ndjsonReply(sum.text, {
+            source: 'che_arithmetic', ok: verified, model_calls: 0, expression: sum.expression,
+            execution_receipt: { tool: 'arithmetic', operation: 'exact_evaluate', status: verified ? 'success' : 'error', capability_id: sum.receipt.capability_id, capability_version: sum.receipt.capability_version, correlation_id: sum.receipt.correlation_id, latency_ms: sum.receipt.latency_ms, steps: sum.receipt.steps },
+          });
+        }
         const privBlock = privateChatGate(rawMessage, body);
         if (privBlock) return privBlock;
         // A family/guest device never reaches the owner's chat routes below.
@@ -16234,6 +16243,7 @@ async function routeRequest(request, env, ctx) {
   }
   if (path === '/api/trading/audit/probe' && request.method === 'POST') return voiceProbeAuthorized(request, env) ? json(await env.CHE_STATE.getByName('owner').tradingAuditProbe()) : json({ detail: 'Not found.' }, 404);
   if (path === '/api/privacy/probe' && request.method === 'POST') return voiceProbeAuthorized(request, env) ? json(await privacyProbe(env, request, MEMORY_PROBE_OBJECT)) : json({ detail: 'Not found.' }, 404);
+  if (path === '/api/arithmetic/probe' && request.method === 'POST') return voiceProbeAuthorized(request, env) ? json(await arithmeticProbe(env, request, await probeObjectName(/^Bearer (\S+)$/.exec(request.headers.get('Authorization') || '')?.[1] || ''))) : json({ detail: 'Not found.' }, 404);
   if (path === '/api/study/probe' && request.method === 'POST') return voiceProbeAuthorized(request, env) ? json(await studyProbe(env, request, await probeObjectName(/^Bearer (\S+)$/.exec(request.headers.get('Authorization') || '')?.[1] || ''))) : json({ detail: 'Not found.' }, 404);
   if (path === '/api/memory/probe' && request.method === 'POST') {
     if (!voiceProbeAuthorized(request, env)) return json({ detail: 'Not found.' }, 404);
