@@ -107,7 +107,46 @@ test('the live arithmetic probe reads every step through the real route and repo
   const che = await app();
   const report = await arithmeticProbe(che.env, new Request('https://che.example/api/arithmetic/probe', { headers: { Authorization: 'Bearer probe-token' } }), 'probe-object');
   assert.equal(report.ok, true, JSON.stringify(report.steps.filter((s) => !s.pass && !s.optional).map((s) => [s.name, s.reply])));
-  assert.equal(report.total, 4);
+  assert.equal(report.total, 6);
   assert.equal(report.steps[0].receipt.status, 'success');
+  assert.equal(report.steps[4].receipt.capability_id, 'math.trade_expectancy');
   assert.equal(report.steps[2].receipt.status, 'error');
+});
+
+// Hypothetical trading figures (Intelligence Test 4): the figures the owner gives are calculated, and the paper journal
+// is not read for them. A question about the owner's own results still reaches the journal routes.
+const HYPOTHETICAL = "A paper trading strategy made 100 trades: 70 wins averaging $4 each and 30 losses averaging $15 each. It has a 70% win rate. Should I keep running it? Calculate its expected profit per trade, identify what the win rate hides, and explain what additional evidence you need.";
+
+test('hypothetical trade figures are calculated on the real route: -$1.70 per trade, no journal, no model call', async () => {
+  const che = await app({ reply: 'Zero trades, sir.' });
+  const res = await che.say(HYPOTHETICAL);
+  assert.equal(res.status, 200);
+  assert.equal(res.modelCalls, 0);
+  assert.equal(res.done.source, 'che_arithmetic');
+  assert.equal(res.done.execution_receipt.capability_id, 'math.trade_expectancy');
+  assert.match(res.text, /-\$1\.70/);
+  assert.match(res.text, /-\$170\.00/);
+  assert.match(res.text, /78\.95%/);
+  assert.doesNotMatch(res.text, /paper journal|evidence pass|portfolios/);
+});
+
+test('a second hypothetical with different figures is calculated the same way (nothing is hardcoded)', async () => {
+  const che = await app({ reply: 'Zero trades, sir.' });
+  const res = await che.say('Suppose a strategy has a 40% win rate, wins $10 and loses $4. What is the expected profit per trade?');
+  assert.equal(res.modelCalls, 0);
+  assert.match(res.text, /\$1\.60/);
+});
+
+test('conflicting hypothetical counts are refused on the route, with no journal figures', async () => {
+  const che = await app({ reply: 'Zero trades, sir.' });
+  const res = await che.say('A strategy made 100 trades: 70 wins averaging $4 and 25 losses averaging $15. Expected profit per trade?');
+  assert.equal(res.modelCalls, 0);
+  assert.equal(res.done.ok, false);
+  assert.match(res.text, /make 95 trades, not 100/);
+});
+
+test('the owner\'s own results still go to the journal route, not the hypothetical calculator', async () => {
+  const che = await app({ reply: 'Unverified model reply.' });
+  const res = await che.say("What's my expectancy so far?");
+  assert.notEqual(res.done.source, 'che_arithmetic');
 });

@@ -33,6 +33,10 @@ export async function arithmeticProbe(env, request, objectName) {
       ({ reply, done }) => reply === '1.' && done.model_calls === 0 && done.execution_receipt?.status === 'success');
     await ask('an undefined sum is an error with a receipt, not a guess', 'what is 5 / 0',
       ({ reply, done }) => /Division by zero/.test(reply) && done.model_calls === 0 && done.execution_receipt?.status === 'error');
+    await ask('a hypothetical trade: the figures given are calculated (-$1.70 a trade), not read from the journal', 'A paper trading strategy made 100 trades: 70 wins averaging $4 each and 30 losses averaging $15 each. It has a 70% win rate. Should I keep running it? Calculate its expected profit per trade.',
+      ({ reply, done }) => /-\$1\.70/.test(reply) && done.source === 'che_arithmetic' && done.model_calls === 0 && done.execution_receipt?.capability_id === 'math.trade_expectancy' && !/paper journal|evidence pass|portfolios/.test(reply));
+    await ask('conflicting hypothetical counts are refused, not calculated', 'A strategy made 100 trades: 70 wins averaging $4 and 25 losses averaging $15. Expected profit per trade?',
+      ({ reply, done }) => /make 95 trades, not 100/.test(reply) && done.model_calls === 0 && done.ok === false);
     await ask('a sentence about maths goes to the model, with no controller receipt', 'Tell me about 12 times 17 in history',
       ({ reply, done }) => reply.length > 0 && done.source !== 'che_arithmetic' && done.execution_receipt === undefined, true);
   } finally {
