@@ -5,16 +5,22 @@
 
 import { ArithmeticError, checkEquations, evaluate, formatRational, parseDecimal, plainArithmetic } from './arithmetic.js';
 import { PROMOTION_CHECKS, emptyRegistry, promote, recordCheck, recordUse, register, serving } from './capability_registry.js';
+import { solveProduction } from './periodic_production.js';
 
 export const ARITHMETIC_ID = 'math.exact_arithmetic';
+export const PRODUCTION_ID = 'math.periodic_production';
 
 const clip = (v, n) => String(v ?? '').slice(0, n);
 
-/** Classifies a goal. Only a bare sum is arithmetic; anything else is unhandled and goes to the model. */
+/**
+ * Classifies a goal. A bare sum is arithmetic; a periodic-production problem with every parameter stated is a production
+ * problem; anything else is unhandled and goes to the model.
+ */
 export function classify(goal = '') {
   const sum = plainArithmetic(goal);
-  if (!sum) return { kind: 'unhandled', expression: null };
-  return { kind: 'arithmetic', expression: sum.expression };
+  if (sum) return { kind: 'arithmetic', expression: sum.expression };
+  if (solveProduction(goal)) return { kind: 'production' };
+  return { kind: 'unhandled', expression: null };
 }
 
 /**
@@ -70,7 +76,48 @@ export function seedRegistry(now = new Date().toISOString()) {
   };
   for (const check of PROMOTION_CHECKS) recordCheck(registry, ARITHMETIC_ID, check, { ok: true, evidence: evidence[check] }, now);
   promote(registry, ARITHMETIC_ID, now);
+  register(registry, {
+    capability_id: PRODUCTION_ID,
+    name: 'Periodic production time',
+    description: 'Time to reach an exact part count when a machine pauses after every K parts (periodic_production.js). Solved by simulation and by a closed form; reported only when both agree. Both batched and continuous readings are stated. No model call, no network.',
+    category: 'mathematics',
+    inputs: ['batch size, batch time, pause interval, pause length, target count'],
+    outputs: ['exact seconds (batched and continuous)', 'verified flag', 'ambiguity statement'],
+    implementation_location: 'server/cloudflare/periodic_production.js',
+    execution: 'internal',
+    risk_level: 'low',
+    permissions: { network: [], credentials: [], files: [], devices: [], actions: [] },
+  }, now);
+  const productionEvidence = {
+    functional: 'periodic_production.test.mjs: parameter variants, off-by-one pauses, batch sizes, units, ambiguity; problem_controller_production.test.mjs: routing and receipts',
+    security: 'pure code: no network, storage or credentials used',
+    resource: 'at most 100000 parts (validated); the simulation is linear in batches',
+    license: 'original CHE code',
+    output: 'simulation and closed form must agree before an answer is shown',
+    regression: 'periodic_production.test.mjs runs on every Worker test run',
+    rollback: 'removing the seed makes needs_model apply',
+  };
+  for (const check of PROMOTION_CHECKS) recordCheck(registry, PRODUCTION_ID, check, { ok: true, evidence: productionEvidence[check] }, now);
+  promote(registry, PRODUCTION_ID, now);
   return registry;
+}
+
+/** A periodic-production goal: solved by two methods, and reported with its ambiguity. Never answered from a guess. */
+function solveProductionGoal(goal, { registry, now, steps, finish }) {
+  const cap = serving(registry, PRODUCTION_ID);
+  steps.push({ step: 'select', capability: PRODUCTION_ID, version: cap?.version ?? null, result: cap ? 'verified capability' : 'none served' });
+  if (!cap) return finish({ status: 'needs_model', reason: 'The production capability is not verified, so it was not used.' });
+  const result = solveProduction(goal);
+  steps.push({ step: 'exact', result: `batched ${result.batched.seconds} s; continuous ${result.continuous.seconds} s` });
+  steps.push({ step: 'verify', result: result.status === 'verified' ? 'methods agree' : 'methods disagree' });
+  recordUse(registry, PRODUCTION_ID, result.status === 'verified', now);
+  return finish({
+    status: result.status === 'verified' ? 'verified' : 'error',
+    production: result,
+    capability_id: PRODUCTION_ID,
+    capability_version: cap.version,
+    ...(result.status === 'verified' ? {} : { error: 'verification_failed', message: 'The two methods disagree, so no answer is given.' }),
+  });
 }
 
 /**
@@ -85,6 +132,8 @@ export function solve(goal, { registry = seedRegistry(), now = new Date().toISOS
   const steps = [{ step: 'classify', result: route.kind }];
   const receipt = { correlation_id: correlationId, goal: clip(goal, 200), route: route.kind, model_calls: 0, steps };
   const finish = (fields) => ({ ...receipt, ...fields, latency_ms: Math.round((performance.now() - started) * 100) / 100 });
+
+  if (route.kind === 'production') return solveProductionGoal(goal, { registry, now, correlationId, started, steps, receipt, finish });
 
   if (route.kind !== 'arithmetic') {
     steps.push({ step: 'select', result: 'no verified deterministic path' });
@@ -129,6 +178,15 @@ export function solve(goal, { registry = seedRegistry(), now = new Date().toISOS
 export function answerForChat(goal, options) {
   const receipt = solve(goal, options);
   if (receipt.status === 'needs_model') return null;
+  if (receipt.production) {
+    const { batched, continuous, ambiguity } = receipt.production;
+    const text = receipt.status === 'verified'
+      ? `${batched.seconds} seconds if the parts come out in batches at the end of each batch, which is the batched reading. `
+        + `If they come out at a steady rate, the time is ${continuous.seconds} seconds (exactly ${continuous.numerator}/${continuous.denominator}). `
+        + `Both include the pauses. ${ambiguity}`
+      : (receipt.message || 'That problem has no answer, sir.');
+    return { text, status: receipt.status, expression: null, receipt };
+  }
   const text = receipt.status === 'verified' ? `${receipt.result}.` : (receipt.message || 'That problem has no answer, sir.');
   return { text, status: receipt.status, expression: receipt.expression, receipt };
 }
