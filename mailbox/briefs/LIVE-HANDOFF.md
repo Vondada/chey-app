@@ -77,6 +77,13 @@ Then, on GitHub:
 
 ## 2. Current position
 
+**Claude, 2026-10-28 (owner: real-time voice + problem solving + car Bluetooth; audit only, no code yet).**
+- Voice map (origin/main bc11dc3a, read-only, no timings in repo): reply is fully buffered before the first byte (worker.js ~14353-14394, no upstream stream); TTS is one non-streaming POST per clip (preferred_elevenlabs_voice.js:211-242); playback waits for the whole clip (bootstrap.sh:1480); end-of-turn wait 3.6 s (microphone.dart:586) or 1.6-3.6 s native (bootstrap.sh:1198-1212); barge-in only on native path, none on the Flutter speech_to_text path.
+- Bluetooth lead (code evidence, NOT device-tested): speech_to_text 7.5.0 on every listen start sets playAndRecord with mode default and on stop calls setActive(false, notifyOthersOnDeactivation) (SpeechToTextPlugin.swift:457-528). CHE's native session is playAndRecord/voiceChat (bootstrap.sh:802-829), re-activated on every clip. Each flip can renegotiate the car route. Likely cause of "car disconnects when she speaks"; fix not built.
+- Not started: problem-solving intents (GPU status, "fix it", "what are you working on", "why can't you hear me") - no literal route found in server/cloudflare; Voice Diagnostics route fields; eval suite; device tests (no iPhone in sandbox).
+- PR #724 (cost audit, head 5c7f8598): staging live re-run still in progress at time of writing.
+- Next: (1) single audio-session owner so speech_to_text stops changing category/mode/active during CHE turns; (2) streamed first reply + streamed TTS; (3) intent routes + regression tests; (4) diagnostics rows; (5) owner runs car test.
+
 **Claude, 2026-10-27 late (owner: finish PR #706 and #722, then trading loss analysis). Verified state.**
 - MERGED and DEPLOYED (deploy verified live, live-commit check passed):
   - #721 trading probe reports feed authentication and verified subscription: merge `b6ab0b53`. Deploy run 40599121604 failed on social Test 5 (model wording), so the Worker went live but the workflow is red; not re-run by me.
