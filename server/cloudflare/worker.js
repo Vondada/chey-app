@@ -168,6 +168,7 @@ import { lastSite, publishSite, saveSite, serveSite, siteBuildIntent, siteEditIn
 import { noteJobActivity } from './job_activity.js';
 import { CODING_CANCEL_SOURCE, cancelQueuedJob, codingCancelIntent, resolveCodingCancel, speakCancelResult, speakUnresolved } from './coding_cancel.js';
 import { PENDING_OWNER_ACTION_KEY, deskOwnedMoney, forbiddenAction, prohibitionSpans, withoutProhibitions, PENDING_OWNER_ACTION_MS, gateOwnerAction, grantForKinds, isOwnerYes, peerActionReply, APPS_GRANTED_KEY, PENDING_APP_ACTION_KEY, PENDING_APP_ACTION_MS, gateAppAccess, classifyAppNeed, classifyExplicitAppOpen, classifyAppAccesses } from './owner_action_gate.js';
+import { authorityCommandReply, authorityGate, parseAuthorityCommand, takePendingAuthority } from './owner_authority.js';
 import { placedOrdersLine, recordDeviceInstall } from './action_receipts.js';
 import { brainTruthSummary, brainTruthView, truthScreenAsk } from './brain_truth.js';
 import { CLOUD_JOB_KIND, CLOUD_SOURCE, approveCloudJob, cancelCloudJob, cloudIntent, cloudJobs, cloudView, latestCloudJob, openPullRequests, parseControl, providerStatuses, requestCloudWork, retryCloudJob, runCloudTask, runFileJob, selectProvider, speakAgentWork, speakBlocked, speakCloudSummary, speakControl, speakInstall, speakPullRequests, speakRender, speakRequest, speakStartResult, startCloudTask, stopCloudJob } from './cloud_computer.js';
@@ -10490,6 +10491,17 @@ export class CheState extends DurableObject {
         // Deployment and commit questions are answered from GitHub's commit, PR and run records, this Worker's
         // version tag and the phone's report (deploy_receipt.js), before source inspection or the status route.
         // Service commands run before the GitHub and deployment matchers, which claim "verify" and "deployed" (2026-10-28).
+        // Live owner authority: only the owner's device can change a rule. A pending grant takes a plain yes; anything else
+        // drops it. An owner rule command is answered here, before any other route, from the stored rules (owner_authority.js).
+        if (ownerDevice && !body.attachment && !body.workflow_step) {
+          const confirmed = await takePendingAuthority(this.ctx.storage, rawMessage, { isYes: isOwnerYes });
+          if (confirmed) return ndjsonReply(confirmed.text, { source: 'che_owner_authority', ok: confirmed.changed, model_calls: 0 });
+          const authCommand = parseAuthorityCommand(rawMessage);
+          if (authCommand) {
+            const answered = await authorityCommandReply(this.ctx.storage, authCommand);
+            return ndjsonReply(answered.text, { source: 'che_owner_authority', ok: answered.changed, model_calls: 0 });
+          }
+        }
         const svc = !body.attachment && !body.workflow_step ? serviceCommandIntent(rawMessage) : null;
         if (svc?.kind === 'connect') return this.onboardingChat(svc.onboard, ownerDevice);
         if (svc) return ownerDevice ? modalServiceReply(this.env, this.ctx.storage, svc.intent, ndjsonReply) : ownerOnly();
@@ -10989,7 +11001,18 @@ export class CheState extends DurableObject {
           // pending action is stored. (orderBrokerReady: true keeps a generic futures order out of this check.)
           const fyeOrder = ownerDevice && !body.attachment && fundyouredgeIntent(message, { orderBrokerReady: true })?.kind === 'order';
           if (fyeOrder) return ndjsonReply(fundyouredgeReply(message, { orderBrokerReady: true }), { source: 'che_brokerage', ok: false, model_calls: 0, order_sent: false });
-          const ownerGate = gateOwnerAction(message, chartOwnedDelete ? { ...deskGrant, delete: true } : deskGrant);
+          let ownerGate = gateOwnerAction(message, chartOwnedDelete ? { ...deskGrant, delete: true } : deskGrant);
+          if (!ownerGate.allowed) {
+            // Live owner rules (owner_authority.js): a deny refuses the action; an allow releases it within its limit.
+            // With no rule, the hold below asks the owner's yes as before.
+            const grantNow = chartOwnedDelete ? { ...deskGrant, delete: true } : deskGrant;
+            const missing = ownerGate.kinds.filter((k) => grantNow[k] !== true);
+            const verdicts = [];
+            for (const k of missing) verdicts.push(await authorityGate(this.ctx.storage, { text: message, capability: k, now: Date.now() }));
+            const refused = verdicts.find((v) => v.decision === 'deny');
+            if (refused) return ndjsonReply(refused.reply, { source: 'che_owner_authority', ok: false, model_calls: 0, order_sent: false });
+            if (missing.length && verdicts.every((v) => v.decision === 'allow')) ownerGate = { allowed: true, kind: '', kinds: [] };
+          }
           if (!ownerGate.allowed) {
             await this.ctx.storage.put(PENDING_OWNER_ACTION_KEY, { kinds: ownerGate.kinds, text: message, at: Date.now() });
             // "Reset my progress" names what the yes would delete, and how much (Knowledge Atlas, #346).
