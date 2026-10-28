@@ -3,6 +3,7 @@ import { moneyPrinterVideo, moneyPrinterStatus, verifyVideoMedia } from './money
 import { createFacelessVideo } from './faceless_video.js';
 import { githubVideoConfigured, startGithubVideo, githubVideoStatus, githubVideoFile } from './github_video_renderer.js';
 import { mediaStore } from './che_media_store.js';
+import { imagePayload, payloadReceipt } from './image_payload.js';
 //   - Owner image connector (CHE_IMAGE_GEN_URL) wins when configured.
 //   - Otherwise Workers AI FLUX.1 [schnell] generates the image on the CHE
 //     server itself (highest step count unless the owner picks draft).
@@ -365,14 +366,19 @@ export async function generateImage(env, storage, body, fetcher = fetch) {
   // owner's own Cloudflare account. Read from Security Intelligence's egress policy, the one internal-only switch.
   let internalOnly = false;
   try { internalOnly = (await storage.get('che:egress_policy'))?.internal_only === true; } catch (_) { internalOnly = false; }
+  // An explicit Modal request is never answered by another engine (owner, 2026-10-28). CHE has no Modal text-to-image
+  // path yet (the Modal app runs CHE's own renders and the health check), so the request is refused, not rerouted.
+  if (body.provider === 'modal') return { status: 503, detail: 'Modal GPU was requested, but CHE has no Modal text-to-image path yet. Nothing was generated, and no other engine was used.', provider_requested: 'modal', provider_used: null };
   const engines = [];
   if (env.CHE_IMAGE_GEN_URL && !internalOnly) engines.push({ id: 'Your image connector', run: async () => ({ url: await connectorImage(env, finalPrompt, fetcher) }) });
   if (!internalOnly && paidMediaEnabled(env) && openAiKey(env)) engines.push({ id: draft ? 'openai-gpt-image-fast' : 'openai-gpt-image-hd', paid: true, run: async () => openAiImage(env, finalPrompt, draft, fetcher) });
   // CHE_AI_BOUND is false when the Worker has no AI binding (routedEnv always exposes an AI member).
   if (env.AI && env.CHE_AI_BOUND !== false) engines.push({ id: draft ? 'CHE image engine (draft)' : 'CHE image engine', run: async () => {
-    const result = await env.AI.run(IMAGE_MODEL, { prompt: finalPrompt.slice(0, 2048), steps: draft ? 4 : 8, seed: Math.floor(Math.random() * 2 ** 31) });
+    // The model's own schema decides the payload: FLUX.1 [schnell] refuses a seed, so it is not sent and the receipt says so.
+    const built = imagePayload(IMAGE_MODEL, { prompt: finalPrompt, steps: draft ? 4 : 8, seed: Math.floor(Math.random() * 2 ** 31) });
+    const result = await env.AI.run(IMAGE_MODEL, built.payload);
     if (!result?.image) throw new Error('The image model returned no image.');
-    return { base64: result.image, mime_type: 'image/jpeg' };
+    return { base64: result.image, mime_type: 'image/jpeg', payload_receipt: payloadReceipt(IMAGE_MODEL, built) };
   } });
   if (!internalOnly && paidMediaEnabled(env) && env.GEMINI_API_KEY) engines.push({ id: 'gemini-image', paid: true, run: async () => {
     const model = env.CHE_GEMINI_IMAGE_MODEL || 'gemini-3.1-flash-image';
@@ -393,7 +399,7 @@ export async function generateImage(env, storage, body, fetcher = fetch) {
   const errors = [];
   let generated;
   for (const engine of engines) {
-    try { generated = await engine.run(); record.engine = engine.id; break; }
+    try { generated = await engine.run(); record.engine = engine.id; if (generated.payload_receipt) record.payload_receipt = generated.payload_receipt; break; }
     catch (error) { errors.push(`${engine.id}: ${error.message}`); console.log('CHE image error:', engine.id, error.message); }
   }
   if (!generated) {
