@@ -36,6 +36,9 @@ const pass = (detail = '') => ({ status: 'pass', detail });
 const warn = (detail) => ({ status: 'warn', detail });
 const fail = (detail) => ({ status: 'fail', detail });
 const skip = (detail) => ({ status: 'skip', detail });
+// External verification that could not run because the outside service was down (for example Wikipedia HTTP 503).
+// Visible and separate from pass and fail; the run is not failed for it, and nothing is claimed as verified.
+const pending = (detail) => ({ status: 'pending', detail });
 
 // POST a probe route with retries; returns { body, error }.
 async function postProbe(path, { attempts = 5, timeoutMs = 90000, waitMs = 4000, headers = bearer(), body } = {}) {
@@ -479,14 +482,25 @@ const PROBES = {
       console.log(`::error title=Study check did not run::The ${WHERE} did not answer (${error}).`);
       return fail(`did not run (${error})`);
     }
-    for (const step of report.steps || []) console.log(`${step.pass ? 'PASS' : step.optional ? 'WARN' : 'FAIL'} ${step.name} [${step.route || '-'} | ${step.ms} ms] ${String(step.reply || '').replace(/\s+/g, ' ').slice(0, 300)}`);
+    const label = (s) => ({ pass: 'PASS', warn: 'WARN', fail: 'FAIL', upstream_unavailable: 'PENDING' })[s.status] || (s.pass ? 'PASS' : s.optional ? 'WARN' : 'FAIL');
+    for (const step of report.steps || []) {
+      const evidence = step.upstream ? ` | upstream HTTP ${step.upstream.http_status} after ${step.upstream.attempts} attempts (${step.upstream.at})` : '';
+      console.log(`${label(step)} ${step.name} [${step.route || '-'} | ${step.ms} ms]${evidence} ${String(step.reply || '').replace(/\s+/g, ' ').slice(0, 300)}`);
+    }
     for (const c of report.coverage || []) console.log(`Coverage: ${c.show}: ${c.covered} of ${c.episodes} episodes (${Object.entries(c.methods || {}).map(([k, v]) => `${v} ${k}`).join(', ')}); watched 0`);
     console.log(`::notice title=Study::${report.passed}/${report.total} live checks passed`);
     summary(`**Study assignment (${WHERE}, real network and model):** ${report.passed}/${report.total} live checks passed. ${(report.coverage || []).map((c) => `${c.show}: ${c.covered}/${c.episodes} episode summaries read`).join('; ')}.`);
     if (!report.ok) {
-      const what = (report.steps || []).filter((s) => !s.pass && !s.optional).map((s) => s.name).join('; ') || report.error || 'see log';
+      const what = (report.steps || []).filter((s) => s.status === 'fail').map((s) => s.name).join('; ') || report.error || 'see log';
       console.log(`::error title=Study check failed::${what}`);
       return fail(what);
+    }
+    if (report.pending?.length) {
+      // Wikipedia was down (HTTP 429/5xx), so these checks could not run against it. Reported as pending, never as passed.
+      const what = report.pending.join('; ');
+      console.log(`::warning title=Study checks pending: Wikipedia unavailable::${what} not verified; Wikipedia answered HTTP 429 or 5xx, which is an outside outage, not a CHE fault. Re-run when Wikipedia answers.`);
+      summary(`**PENDING (external):** ${what} — Wikipedia returned HTTP 429/5xx, so these were not verified. Not counted as passed.`);
+      return pending(`${report.passed}/${report.total} live checks passed; PENDING external verification: ${what}`);
     }
     return pass(`${report.passed}/${report.total} live checks passed`);
   },
@@ -734,11 +748,11 @@ async function main() {
     const count = (s) => results.filter((r) => r.status === s).length;
     summary('');
     summary(`### Live probes on the ${WHERE} (${BASE})`);
-    summary(`${count('pass')} passed, ${count('warn')} warned, ${count('skip')} skipped, ${count('fail')} failed.`);
+    summary(`${count('pass')} passed, ${count('warn')} warned, ${count('pending')} pending external, ${count('skip')} skipped, ${count('fail')} failed.`);
     summary('');
     summary('| Probe | Result | Detail |');
     summary('|---|---|---|');
-    for (const r of results) summary(`| ${r.name} | ${r.status === 'fail' ? '**FAIL**' : r.status} | ${String(r.detail || '').replace(/\|/g, '/').replace(/\s+/g, ' ').slice(0, 300)} |`);
+    for (const r of results) summary(`| ${r.name} | ${r.status === 'fail' ? '**FAIL**' : r.status === 'pending' ? 'PENDING (external)' : r.status} | ${String(r.detail || '').replace(/\|/g, '/').replace(/\s+/g, ' ').slice(0, 300)} |`);
   }
   process.exit(results.some((r) => r.status === 'fail') ? 1 : 0);
 }
