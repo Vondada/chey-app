@@ -290,12 +290,15 @@ if modal is not None:  # pragma: no cover - runs on Modal, not in unit tests
             "CHE_ASSETS_COMMIT": ASSETS_COMMIT, "CHE_ALLOWED_BASES": ",".join(ALLOWED_BASES)}
     def prefetch_txt2img_model():
         """Image build: fetch SDXL-Turbo at the pinned revision (txt2img.py) into the image, so a cold start does not download it."""
+        import sys
+        if "/root" not in sys.path:
+            sys.path.insert(0, "/root")  # where add_local_file put txt2img.py
         from huggingface_hub import snapshot_download
         from txt2img import MODEL_ID, MODEL_REVISION
         snapshot_download(MODEL_ID, revision=MODEL_REVISION, allow_patterns=["*.json", "*.txt", "*.safetensors", "*.model"])
 
     web_image = (modal.Image.debian_slim(python_version="3.11").pip_install("fastapi[standard]==0.115.12")
-                 .add_local_file(os.path.join(os.path.dirname(os.path.abspath(__file__)), "txt2img.py"), "/root/txt2img.py").env(pins))
+                 .add_local_file(os.path.join(os.path.dirname(os.path.abspath(__file__)), "txt2img.py"), "/root/txt2img.py", copy=True).env(pins))
     gpu_image = (modal.Image.debian_slim(python_version="3.11")
                  .apt_install("xz-utils", "ca-certificates", "libxi6", "libxkbcommon0", "libsm6", "libxrender1", "libgl1", "libegl1", "libxxf86vm1", "libxfixes3")
                  .env(pins).run_function(_install))
@@ -335,12 +338,15 @@ if modal is not None:  # pragma: no cover - runs on Modal, not in unit tests
     txt2img_image = (modal.Image.debian_slim(python_version="3.11")
                      .pip_install("torch==2.4.1", "diffusers==0.31.0", "transformers==4.44.2", "accelerate==0.34.2",
                                   "safetensors==0.4.5", "huggingface_hub==0.25.2", "pillow==10.4.0")
-                     .add_local_file(os.path.join(os.path.dirname(os.path.abspath(__file__)), "txt2img.py"), "/root/txt2img.py")
+                     .add_local_file(os.path.join(os.path.dirname(os.path.abspath(__file__)), "txt2img.py"), "/root/txt2img.py", copy=True)
                      .run_function(prefetch_txt2img_model))
 
     @app.function(image=txt2img_image, gpu=GPU, timeout=600, scaledown_window=SCALEDOWN_S, max_containers=1, retries=0)
     def txt2img_gpu(args: dict) -> dict:
         """One SDXL-Turbo picture on the T4. Validated again here; returns the PNG as base64 with its receipt."""
+        import sys
+        if "/root" not in sys.path:
+            sys.path.insert(0, "/root")
         from txt2img import check_png, load_pipeline, result_receipt, run_txt2img, validate_txt2img_args
         args = validate_txt2img_args(args)
         started = time.time()
