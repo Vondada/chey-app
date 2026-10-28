@@ -30,6 +30,7 @@ Statuses: `open`, `in progress`, `waiting on owner`, `built, not verified`, `ver
 | Q-12 | Conversation reliability suite | open | main | Expand Q-09 into multi-turn, follow-up and correction cases, and grade them. | — |
 | Q-13 | Chat: more improvements the owner asked for | open | main | Verdict read-aloud, claim-by-claim split, source-freshness marks, "Ask again" for False verdicts. | — |
 | Q-14 | Cloudflare Workers Builds failures | ignored | — | Owner said to ignore this check. | — |
+| Q-35 | GPU and 3D world: 25 upgrades | open | `docs/gpu-world-upgrades` | Start with items 1, 4, 5 and 25 in `docs/CHE_GPU_WORLD_UPGRADES.md` (free, local, measurable). Paid GPU (15-19) waits for the owner's spend decision and a cap above $0. | Doc only; nothing built |
 | Q-15 | Car Bluetooth: one audio-session owner | open | `docs/voice-problem-solving-queue` | Stop `speech_to_text` (7.5.0) changing category, mode or activation during CHE turns (`SpeechToTextPlugin.swift:457-528`). Route listening through the native recognizer that already keeps `voiceChat`. Owner test in a car. | Code finding only; not device-tested |
 | Q-16 | Faster first words: stream the reply | open | — | Let the Worker send the first sentence before the full reply is verified, keeping the safety checks (`worker.js` ~14353-14394 buffers everything). Needs a safety review first. | Code map 2026-10-28 |
 | Q-17 | Faster first audio: stream TTS | open | — | Pipeline clips and start playback on the first chunk, not the full file (`preferred_elevenlabs_voice.js:211-242`, `bootstrap.sh:1480`). Target median first audio under 700 ms, measured on the phone. | No timings in repo yet |
@@ -60,6 +61,7 @@ Statuses: `open`, `in progress`, `waiting on owner`, `built, not verified`, `ver
 
 ## Log
 - 2026-10-28: Q-39 Phase 1 audit done (`docs/CHE_UNIVERSAL_CREATION_AUDIT.md`). Modal /health verified live; Creation Engine end-to-end was skipped (opt-in) on run 40609806059.
+- 2026-10-28: Q-35 added (25 GPU and 3D world upgrades, `docs/CHE_GPU_WORLD_UPGRADES.md`). Nothing built yet.
 - 2026-10-28: Q-15 to Q-34 added from the owner's voice, problem-solving and car Bluetooth requests. None built yet. Q-15 is the first to start.
 - 2026-10-27: Q-01 done (#672 merged); Q-07 is PR #700.
 - 2026-10-26: queue created from the day's requests. Earlier work is recorded in the branches above and in `docs/CHE_MISSION_LEDGER.md`.
