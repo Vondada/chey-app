@@ -51,6 +51,7 @@ Statuses: `open`, `in progress`, `waiting on owner`, `built, not verified`, `ver
 | Q-32 | Driving-safe voice replies | open | — | Short, spoken-first replies when the route is a car, with no screen steps. | Owner request 13 |
 | Q-33 | Car test script and route log | open | — | A script the owner runs in the car that records each route transition, interruption and failure to a file for review. Needs the owner's car. | Owner request 16 |
 | Q-34 | Native audio changes need an IPA | open | — | Audio-session and route changes are native (Swift). Decide with the owner whether they ship by Shorebird patch or a new IPA. | Owner decision |
+| Q-40 | Create Studio: 7 starts, voice, touch, Apple Pencil, adaptive iPhone and iPad layout | open | `docs/create-studio-requirements` | Build in milestones M2b to M7 in `docs/CHE_CREATE_STUDIO_REQUIREMENTS.md`. Next: M2b (save a character or object into a scene). iPad and iPhone tests are owner-device blockers. | Requirements only |
 
 ## Owner decisions needed
 - Office swipe (Q-02).
@@ -59,6 +60,7 @@ Statuses: `open`, `in progress`, `waiting on owner`, `built, not verified`, `ver
 - Whether automatic background runs are allowed (this would change the AGENTS.md rule and use more usage).
 
 ## Log
+- 2026-10-28: Q-40 added (Create Studio requirements). M2a scene document in PR #731.
 - 2026-10-28: Q-35 added (25 GPU and 3D world upgrades, `docs/CHE_GPU_WORLD_UPGRADES.md`). Nothing built yet.
 - 2026-10-28: Q-15 to Q-34 added from the owner's voice, problem-solving and car Bluetooth requests. None built yet. Q-15 is the first to start.
 - 2026-10-27: Q-01 done (#672 merged); Q-07 is PR #700.
