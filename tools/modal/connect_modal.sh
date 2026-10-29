@@ -74,6 +74,8 @@ if ! (cd "$APP_DIR" && $MODAL deploy che_modal_app.py) > "$WORK/deploy.log" 2>&1
   } >> "$SUMMARY"
   echo "::error::modal deploy failed. Last lines (secrets hidden):" >&2
   redact < "$WORK/deploy.log" | tail -n 40 >&2
+  # The job log is not readable outside GitHub, but annotations are (the checks API): the last lines, redacted, in one annotation.
+  echo "::error title=modal-deploy-last-lines::$(redact < "$WORK/deploy.log" | tail -n 12 | tr '\r' ' ' | tr '\n' ' ' | cut -c1-1500)" >&2
   exit 1
 fi
 echo "modal deploy finished."
