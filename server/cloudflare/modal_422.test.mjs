@@ -99,3 +99,11 @@ test('refusalReason keeps the reason and drops only the closing sentences', () =
   );
   assert.equal(refusalReason(''), '');
 });
+
+test('the budget ledger route is a read-only GET, and the guest allow-list does not open it', async () => {
+  const { readFileSync } = await import('node:fs');
+  const source = readFileSync(new URL('./worker.js', import.meta.url), 'utf8');
+  assert.match(source, /path === '\/api\/media\/modal\/budget' && request\.method === 'GET'\) return json\(await testBudgetReport\(this\.ctx\.storage\)\)/);
+  const guest = source.slice(source.indexOf('export function guestRouteAllowed'), source.indexOf('// The second half of a combined'));
+  assert.doesNotMatch(guest, /api\/media/, 'no media route is open to a guest profile');
+});

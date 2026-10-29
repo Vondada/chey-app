@@ -40,6 +40,7 @@ import {
 import { discoverKeylessModels, engineStatus, paidAllowed, routedEnv, routeText } from './ai_router.js';
 import { capabilityPromptLine, inferTurnCapabilities, runtimeCapabilityRegistry } from './cognitive_capabilities.js';
 import { identityQuestionIntent, speakIdentity } from './che_maturity.js';
+import { testBudgetReport } from './gpu_test_budget.js';
 import { deleteMedia, finishModalImage, generateImage, modalImageCheckTimes, pendingModalImages, reconcileModalImages, generateVideo, listMedia, readBlob, saveOwnerFile, upscaleImage, verifyMediaFile } from './media.js';
 import { withCheNote, guardEngineClaims, guardSoulClaims, lastReplyRecord, loadSoul, replyProvenanceAnswer, replyProvenanceQuestion, restoreSoul, saveSoul, soulPromptBlock, soulProvenance, soulView, stripPhoneSoul } from './soul.js';
 import { mediaHoldAnswer, mediaHoldIntent, mediaKeepFor, mediaLatestReply, mediaLibraryIntent, mediaLibraryReply, mediaLibraryReport, mediaLatestOpenRow, mediaOpenIntent, mediaOpenMissingReply, mediaOpenReply, mediaOpenRow, mediaRows, mediaSaveIntent, mediaSaveReply, mediaShowLatestIntent, mediaShowReply, verifyMediaRows, wantsLatestVideo } from './media_library.js';
@@ -8061,6 +8062,8 @@ export class CheState extends DurableObject {
         return json(rest, status);
       }
       if (path === '/api/media/modal/pending' && request.method === 'GET') return json({ jobs: await pendingModalImages(this.ctx.storage) });
+      // Read-only: the $5 GPU test budget ledger (cap, spent, reserved, remaining) and each job with its cost and provenance.
+      if (path === '/api/media/modal/budget' && request.method === 'GET') return json(await testBudgetReport(this.ctx.storage));
       if (path === '/api/media/generate' && request.method === 'POST') {
         const mediaType = String(body.type || body.kind || 'image').toLowerCase();
         const result = mediaType === 'video'
