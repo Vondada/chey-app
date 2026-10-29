@@ -359,7 +359,10 @@ const hexOf = (buffer) => Array.from(new Uint8Array(buffer)).map((b) => b.toStri
  */
 export function modalReasonOf(started) {
   const d = started?.data;
-  const detail = Array.isArray(d?.detail) ? d.detail.map((x) => x?.msg || JSON.stringify(x)).join('; ') : d?.detail;
+  // A framework item names the field it refused (loc, e.g. body.steps) and why (msg), so both are kept.
+  const detail = Array.isArray(d?.detail)
+    ? d.detail.map((x) => (x?.msg ? `${Array.isArray(x.loc) && x.loc.length ? `${x.loc.join('.')}: ` : ''}${x.msg}` : JSON.stringify(x))).join('; ')
+    : d?.detail;
   const raw = d?.error || detail || started?.refusal_text || '';
   return String(raw).replace(/[^\x20-\x7E]/g, '').slice(0, 160);
 }
