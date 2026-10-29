@@ -91,3 +91,17 @@ test('a plain picture request with no Modal word still uses the picture engine, 
   assert.equal(engineCalls, 1);
   assert.match(out.text, /^Made with Cloudflare Workers AI \(provider: Workers AI\)/);
 });
+
+test('"modal" as part of the picture, or excluded by the owner, is not an explicit Modal request', async () => {
+  const { chatPictureTurn, explicitModalAsk } = await import('./chat_image_provider.js');
+  for (const msg of ['Create a picture of a website with a modal dialog.', 'Create a picture of a blue cube using Workers AI, not Modal.', 'Do not use Modal. Make a picture of a dog.']) {
+    assert.equal(explicitModalAsk(msg), false, msg);
+    let engineCalls = 0;
+    const makeImages = async () => { engineCalls += 1; return [{ number: 1, ok: true, id: 'z', mime_type: 'image/png', title: 't', status: 200 }]; };
+    const out = await chatPictureTurn({}, { get: async () => undefined, put: async () => {} }, { message: msg, origin: 'https://w', makeImages });
+    assert.equal(engineCalls, 1, `${msg}: the picture engine still makes it`);
+    assert.equal(out.meta.nothing_generated, undefined, msg);
+  }
+  assert.equal(explicitModalAsk('Generate one image of a glowing blue cube using Modal GPU.'), true);
+  assert.equal(explicitModalAsk('Make a picture on Modal.'), true);
+});

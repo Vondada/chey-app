@@ -30,6 +30,14 @@ export function workersAiNote(reason) {
   return `Made with Cloudflare Workers AI (provider: Workers AI), because ${reason}. `;
 }
 
+// An affirmative request to use Modal ("using Modal GPU", "on Modal"). A word that is only part of the picture ("a modal dialog") or an exclusion ("not Modal") is not a request.
+const MODAL_PROVIDER_ASK = /\b(?:on|using|via|through|with|by|in)\s+(?:the\s+)?modal\b|\bmodal\s+gpu\b|\bmodal\s+(?:picture|image|render|job)s?\b/i;
+const MODAL_EXCLUDED = /\b(?:not|no|never|without|instead\s+of|rather\s+than)\s+(?:use\s+|using\s+|on\s+|the\s+)?modal\b/i;
+export function explicitModalAsk(message) {
+  const text = String(message || '');
+  return MODAL_PROVIDER_ASK.test(text) && !MODAL_EXCLUDED.test(text);
+}
+
 /**
  * One picture request in chat: the engine is chosen here, the picture is made by it, and the reply says which engine made it.
  * `makeImages(count)` is the Workers AI path (chat_images.js). Returns { text, meta } for the chat.
@@ -38,7 +46,7 @@ export async function chatPictureTurn(env, storage, { message, origin, makeImage
   const count = requestedImageCount(message);
   const choice = await chatImageProvider(env, storage, { count });
   // An explicit Modal request is never answered by another engine: if Modal is not chosen, nothing is made and the reason is said.
-  if (choice.provider !== 'modal' && /\bmodal\b/i.test(String(message || ''))) {
+  if (choice.provider !== 'modal' && explicitModalAsk(message)) {
     return {
       text: `I did not make the picture, sir: you asked for Modal GPU, and ${choice.reason}. No other engine was used, and nothing was generated.`,
       meta: { source: CHAT_IMAGE_SOURCE, ok: false, model_calls: 0, provider_requested: 'modal', provider_used: null, nothing_generated: true, refusal: choice.reason },
