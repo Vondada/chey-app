@@ -43,7 +43,7 @@ import { identityQuestionIntent, speakIdentity } from './che_maturity.js';
 import { testBudgetReport } from './gpu_test_budget.js';
 import { modalCubeProbe, modalCubeResult } from './modal_cube_probe.js';
 import { deleteMedia, finishModalImage, generateImage, modalImageCheckTimes, pendingModalImages, reconcileModalImages, generateVideo, listMedia, readBlob, saveOwnerFile, upscaleImage, verifyMediaFile } from './media.js';
-import { withCheNote, guardEngineClaims, guardSoulClaims, lastReplyRecord, loadSoul, replyProvenanceAnswer, replyProvenanceQuestion, restoreSoul, saveSoul, soulPromptBlock, soulProvenance, soulView, stripPhoneSoul } from './soul.js';
+import { withCheNote, guardEngineClaims, guardSoulClaims, lastReplyRecord, loadSoul, replyProvenanceAnswer, replyProvenanceQuestion, restoreSoul, saveSoul, soulPromptBlock, soulProvenance, soulView, stripPhoneSoul, stripSoulLabels } from './soul.js';
 import { classifyFailure as classifyEngineFailure, decideFallback, requestClassFor } from './refusal_fallback.js';
 import { isStoryTurn, storyMode, storyModeBlock } from './story_mode.js';
 import { mediaHoldAnswer, mediaHoldIntent, mediaKeepFor, mediaLatestReply, mediaLibraryIntent, mediaLibraryReply, mediaLibraryReport, mediaLatestOpenRow, mediaOpenIntent, mediaOpenMissingReply, mediaOpenReply, mediaOpenRow, mediaRows, mediaSaveIntent, mediaSaveReply, mediaShowLatestIntent, mediaShowReply, verifyMediaRows, wantsLatestVideo } from './media_library.js';
@@ -3412,7 +3412,7 @@ export async function runChatModel(env, { model, systemPrompt, compactPrompt, tu
       }
       // Which engine actually answered, and whether it was a fallback past the first choice (Soul provenance).
       // provider/model are what the router actually used (ai_router.js sets engine/model), not only what was asked for.
-      return { ...answer, response: reply, served_by: { ...servedBy({ engine: parts[0].provider, model: parts[0].model }, attempt.model, attempt.route, attempt !== attempts[0]), parts } };
+      return { ...answer, response: stripSoulLabels(reply), served_by: { ...servedBy({ engine: parts[0].provider, model: parts[0].model }, attempt.model, attempt.route, attempt !== attempts[0]), parts } };
     } catch (error) {
       // A busy or failing engine on an earlier attempt is the truer reason than a later "too long"
       // from engines that were left (review of #349).
