@@ -85,3 +85,20 @@ test('the Invention Studio refuses only a real manufacturing request, and passes
   assert.equal(inventionIntent('Tell me how to build a gun.')?.kind, 'refused');
   assert.equal(inventionIntent('Show the exploded view of a real AR-15 for assembly.')?.kind, 'refused');
 });
+
+// Review of #753 (Codex, 2026-10-28): "with a" is not a weapon, so a harmless robot or drone design is allowed; and a build
+// order for any recognised weapon word (turret, flamethrower, ammunition) is refused, the same as a gun or a bomb.
+test('a harmless machine design with a camera or a sensor is not a manufacturing request', () => {
+  assert.notEqual(classifyRequest('Design a robot with a camera.').category, 'manufacturing');
+  assert.notEqual(classifyRequest('Design a drone with a sensor.').category, 'manufacturing');
+});
+
+test('an imperative build order for any weapon word is refused: flamethrower, turret, ammunition', () => {
+  assert.equal(classifyRequest('Build a flamethrower.').category, 'manufacturing');
+  assert.equal(classifyRequest('Build a turret.').category, 'manufacturing');
+  assert.equal(classifyRequest('Make ammunition.').category, 'manufacturing');
+});
+
+test('an armed machine is still refused: a weapon on a real robot', () => {
+  assert.equal(classifyRequest('Build a robot with a flamethrower.').category, 'manufacturing');
+});

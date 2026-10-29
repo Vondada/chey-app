@@ -12,12 +12,14 @@
 
 export const CATEGORIES = Object.freeze(['manufacturing', 'fictional_asset', 'historical_research', 'general_explanation', 'visual_modeling', 'general']);
 
-const WEAPON = /\b(?:blasters?|guns?|firearms?|rifles?|pistols?|handguns?|shotguns?|revolvers?|silencers?|suppressors?|ar-?15|ak-?47|machine\s?guns?|weapons?|explosives?|bombs?|grenades?|ieds?|missiles?|munitions?|ammo|ammunition|flamethrowers?|turrets?|launchers?)\b/i;
+// The weapon words, as one source: the weapon test and the build-order test read the same list.
+const WEAPON_WORD_SRC = /(?:blasters?|guns?|firearms?|rifles?|pistols?|handguns?|shotguns?|revolvers?|silencers?|suppressors?|ar-?15|ak-?47|machine\s?guns?|weapons?|explosives?|bombs?|grenades?|ieds?|missiles?|munitions?|ammo|ammunition|flamethrowers?|turrets?|launchers?)/.source;
+const WEAPON = new RegExp(`\\b${WEAPON_WORD_SRC}\\b`, 'i');
 const BYPASS = /\b(?:bypass|disable)\s+(?:the\s+)?(?:safety|limiter|interlock|governor|lockout)\b/i;
 const MAKE = '(?:build|make|assemble|manufacture|convert|3d[- ]?print|design|reproduce|replicate|finish)';
 // A build order aimed at the owner: "how do I build", "how to build", or a make verb whose object is a weapon noun
 // (up to two words between): "build me a gun", "make a sniper rifle". "Make a picture of a gun" is not one.
-const BUILD_ORDER = new RegExp(`\\b(?:how\\s+(?:do|can|should|would)\\s+(?:i|we|you)\\s+(?:to\\s+)?${MAKE}|how\\s+to\\s+${MAKE}|${MAKE}\\s+(?:me\\s+|us\\s+)?(?:(?:a|an|the|my|your|this|that|one|some|another)\\s+)?(?:[\\w-]+\\s+){0,2}?(?:guns?|rifles?|pistols?|firearms?|bombs?|explosives?|grenades?|weapons?|missiles?|launchers?)\\b)`, 'i');
+const BUILD_ORDER = new RegExp(`\\b(?:how\\s+(?:do|can|should|would)\\s+(?:i|we|you)\\s+(?:to\\s+)?${MAKE}|how\\s+to\\s+${MAKE}|${MAKE}\\s+(?:me\\s+|us\\s+)?(?:(?:a|an|the|my|your|this|that|one|some|another)\\s+)?(?:[\\w-]+\\s+){0,2}?${WEAPON_WORD_SRC}\\b)`, 'i');
 // Taking a real thing apart or drawing its parts for assembly.
 const TAKE_APART = /\b(?:explod\w*|exploded\s+view|disassembl\w*|take\s+(?:it\s+|the\s+\w+\s+|the\s+\w+\s+\w+\s+)?apart|piece\s+by\s+piece|parts?\s+(?:breakdown|diagram|list)|schematics?|blueprints?|dimensions?)\b/i;
 // An armed machine: a weapon on a robot, vehicle, drone or suit (the machine noun and the arming phrase both appear).
@@ -40,7 +42,8 @@ export function classifyRequest(text, { history = [] } = {}) {
   if (BYPASS.test(t)) return { category: 'manufacturing', reason: 'a bypass of a safety limit is never planned or made' };
   const lastOwner = [...(Array.isArray(history) ? history : [])].reverse().find((h) => h?.role === 'user')?.content || '';
   const weapon = WEAPON.test(t);
-  const armed = MACHINE.test(t) && ARMING.test(t);
+  // An armed machine needs a weapon word too: "a robot with a camera" is not one.
+  const armed = weapon && MACHINE.test(t) && ARMING.test(t);
   if (!weapon && !armed) {
     // "Show it exploded" names no weapon, so it takes the kind of the owner's last turn: fiction stays fiction, and a
     // real weapon stays a real one.
