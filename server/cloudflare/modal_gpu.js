@@ -107,9 +107,15 @@ export async function modalCall(cred, method, path, body = null, fetcher = fetch
     const r = await fetcher(`${cred.base}${path}`, { method, headers: { ...(cred.bearer ? { Authorization: `Bearer ${cred.bearer}` } : { 'Modal-Key': cred.id, 'Modal-Secret': cred.secret }), Accept: 'application/json', ...(body ? { 'Content-Type': 'application/json' } : {}) },
       ...(body ? { body: JSON.stringify(body) } : {}), signal: AbortSignal.timeout(timeout) });
     // The body is read once as text, so a refusal that is not JSON (or JSON in another shape) keeps its words too.
-    const text = await r.text().catch(() => '');
+    // A response that can only be read as JSON (a test stand-in) is read that way, as before.
+    let text = '';
     let data = null;
-    try { data = JSON.parse(text); } catch { data = null; }
+    if (typeof r.text === 'function') {
+      text = await r.text().catch(() => '');
+      try { data = JSON.parse(text); } catch { data = null; }
+    } else {
+      data = await r.json().catch(() => null);
+    }
     // Modal's own call ID, when its proxy sends one, so a failure can be found in Modal's logs. Never a secret.
     const upstream = short(r.headers?.get?.('modal-function-call-id') || '', 64).replace(/[^A-Za-z0-9_-]/g, '');
     // A refusal's body, short and printable, for the reason only (the handler's own message, never a secret).
