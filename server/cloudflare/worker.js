@@ -40,7 +40,7 @@ import {
 import { discoverKeylessModels, engineStatus, paidAllowed, routedEnv, routeText } from './ai_router.js';
 import { capabilityPromptLine, inferTurnCapabilities, runtimeCapabilityRegistry } from './cognitive_capabilities.js';
 import { identityQuestionIntent, speakIdentity } from './che_maturity.js';
-import { deleteMedia, generateImage, generateVideo, listMedia, readBlob, saveOwnerFile, upscaleImage, verifyMediaFile } from './media.js';
+import { deleteMedia, finishModalImage, generateImage, modalImageCheckTimes, pendingModalImages, reconcileModalImages, generateVideo, listMedia, readBlob, saveOwnerFile, upscaleImage, verifyMediaFile } from './media.js';
 import { withCheNote, guardEngineClaims, guardSoulClaims, lastReplyRecord, loadSoul, replyProvenanceAnswer, replyProvenanceQuestion, restoreSoul, saveSoul, soulPromptBlock, soulProvenance, soulView, stripPhoneSoul } from './soul.js';
 import { mediaHoldAnswer, mediaHoldIntent, mediaKeepFor, mediaLatestReply, mediaLibraryIntent, mediaLibraryReply, mediaLibraryReport, mediaLatestOpenRow, mediaOpenIntent, mediaOpenMissingReply, mediaOpenReply, mediaOpenRow, mediaRows, mediaSaveIntent, mediaSaveReply, mediaShowLatestIntent, mediaShowReply, verifyMediaRows, wantsLatestVideo } from './media_library.js';
 import { capabilityGap, capabilityReply } from './capability_gap.js';
@@ -145,6 +145,7 @@ import { ownToolPermissionProblems } from './flagstaff_reply_check.js';
 import { cachedCodeIndex } from './code_index.js';
 import { CHE_SELF_BRIEF, starredFocus, studyLesson } from './che_self_knowledge.js';
 import { connectServiceIntent, onboardingChatReply, onboardingIntent, onboardingRoute } from './service_onboarding.js';
+import { modalServiceReply, serviceCommandIntent } from './modal_connect.js';
 import { privateChatGate, privateTurn } from './private_voice.js';
 import { KEY_PROVIDERS, MEMORY_DB, hasStoredMemoryDatabase, memorySetupIntent, memorySetupSteps, removeMemoryDatabase, saveMemoryDatabase, removeKey, storedKeys, withStoredKeys, cachedAnswer, checkAllKeys, fileLetter, fileTech, forgetAnswer, isLockedDown, listLetters, looksLikeAttack, markLetter, nextLetter, rememberAnswer, resilienceIntent, runScout, saveKey, setLockdown, setupSteps, speakKeyHealth, speakMailboxSummary, speakTech, techItems } from './resilience.js';
 import { modalKeyRowFor, modalProbe } from './modal_gpu.js';
@@ -166,6 +167,7 @@ import { APPROVED_SKILLS, handleInstalledSkill, installedSkillIntent, installedS
 import { lastSite, publishSite, saveSite, serveSite, siteBuildIntent, siteEditIntent, sitePreviewIntent, sitePublishIntent, siteUrl, speakSitePublished, speakSiteResult, wantsImmediatePublish, workingHtml, writeSite } from './site_builder.js';
 import { noteJobActivity } from './job_activity.js';
 import { CODING_CANCEL_SOURCE, cancelQueuedJob, codingCancelIntent, resolveCodingCancel, speakCancelResult, speakUnresolved } from './coding_cancel.js';
+import { chatPictureTurn } from './chat_image_provider.js';
 import { PENDING_OWNER_ACTION_KEY, deskOwnedMoney, forbiddenAction, prohibitionSpans, withoutProhibitions, PENDING_OWNER_ACTION_MS, gateOwnerAction, grantForKinds, isOwnerYes, peerActionReply, APPS_GRANTED_KEY, PENDING_APP_ACTION_KEY, PENDING_APP_ACTION_MS, gateAppAccess, classifyAppNeed, classifyExplicitAppOpen, classifyAppAccesses } from './owner_action_gate.js';
 import { placedOrdersLine, recordDeviceInstall } from './action_receipts.js';
 import { brainTruthSummary, brainTruthView, truthScreenAsk } from './brain_truth.js';
@@ -187,6 +189,7 @@ import { loadPackedJson, savePackedJson } from './prompt_compaction.js';
 import { githubWorkshopPieces, workshopAvatar, workshopAvatarIntent, workshopSnapshot } from './workshop.js';
 import { flushOutbox, handleWebMailbox, isOpen as flagstaffOpen, lockMailbox, openMailbox, transcript as flagstaffTranscript, mailboxCode, mailboxLink, postWebMail, readWebMail, rotateMailboxCode } from './web_mailbox.js';
 import { CheLibrary, fetchReadable, libraryContext, libraryIntent } from './library.js';
+import { answerForChat } from './problem_controller.js';
 import { KnowledgeLibrary, knowledgeIntent, knowledgeReply, knowledgeTaskContext } from './knowledge_library.js';
 import { answerPersonalFact, answerStoredStatement, explicitMemorySave, factCorrectionReply, groundedReply, isQuestionLike, needsStrongEngine, ownerFactTurn, personalFactQuestion, recallPersonalFact, storedStatementQuestion } from './personal_recall.js';
 import { brainRecordIntent, chatgptHistoryIntent, importChatgptBatch, inspectMemory, memoryInspectIntent, ownerMemorySearchIntent, ownerSearchTurn, ownerStatementCandidates, phoneBrainNotes, speakBrainRecord, speakChatgptHistory, speakMemoryInspection } from './owner_recall.js';
@@ -278,6 +281,7 @@ import { securityChief, securityChiefIntent, speakChiefReport } from './security
 import { acquire as acquireCapability, applyPolicy as applyCapabilityPolicy, capabilityIntent, engineSummary as capabilityEngineSummary, learnFromOutcome, loadPolicy as loadCapabilityPolicy, populate as populateKnowledge, retrieve as retrieveKnowledge, rollbackTool, savePolicy as saveCapabilityPolicy, projectBlocked, speakCapabilities, speakLearned as speakLearnedKnowledge, useTool, LAST_USED_KEY as KNOWLEDGE_USED_KEY } from './capability_engine.js';
 import { privacyConfirmIntent, privacyIntent, privacyProbe, privacyTurn, privacyVerdict, runWithPrivacy } from './privacy_mode.js';
 import { STUDY_WAKE_KEY, alarmStudy, humorTurn, studyChatTurn, studyPassRoute, studyProbe } from './comedy_study.js';
+import { arithmeticProbe } from './problem_controller_probe.js';
 import { EGRESS_KEY, SNAPSHOT_KEY, holdEgress, installEgressGuard, setEgressOwner, setEgressPolicy, storeEgressPolicy, SESSION_SCOPES, bump as securityBump, checkSession, createSession, dependencyAdvisories, detectThreats, issueNonce, loadSecurity, recordFindings, redact as redactSecretText, redactDeep, respondToIncident, restoreTrustedState, revokeSessions, saveSecurity, securityIntent, snapshotTrustedState, speakStatus as speakSecurityStatus } from './security_intelligence.js';
 import { loadRegistry as loadCapabilityRegistry } from './capability_registry.js';
 import { BrainLedger, answerLedger, decidePending as decideBrainPending, installBrainLedger, ledgerApi, recordGraphConnections, ledgerIntent as brainLedgerIntent, DEFAULT_ZONE as LEDGER_DEFAULT_ZONE } from './brain_ledger.js';
@@ -285,6 +289,7 @@ import { FilmStore, filmIntent, filmProgress, farmProviders, loadRates, loadUsag
 import { GpuQueue, gpuWorkerRoute, speakGpuConnect, speakGpuSummary } from './gpu_queue.js';
 import { recoverCreations } from './creation_orchestrator.js';
 import { CreationStudio, studioOwnerRoute } from './creation_studio.js';
+import { sceneRoute } from './scene_store.js';
 import { populationAnswer, worldPopulationIntent, worldRoute } from './world_population.js';
 import { creationProbeRoute } from './creation_probe.js';
 import { paidWakes, poolRoute, poolSay, reapPaid } from './compute_pool.js';
@@ -4177,6 +4182,7 @@ export class CheState extends DurableObject {
     // Orion's crypto desk wakes after every 5-minute close, weekends included (null while the owner paused it).
     const cryptoAt = await nextCryptoTickAt(this.ctx.storage).catch(() => null);
     if (cryptoAt) times.push(cryptoAt);
+    times.push(...await modalImageCheckTimes(this.ctx.storage).catch(() => []));
     const liveAt = await nextLiveTickAt(this.ctx.storage).catch(() => null);
     // The simulation's next minute (null while paused or before its first pass). Same alarm slot, earliest wins.
     const simAt = await nextStrategySimTickAt(this.ctx.storage).catch(() => null);
@@ -7551,6 +7557,12 @@ export class CheState extends DurableObject {
         if (!ownerDevice) return json({ detail: 'Only the CHE owner can read his brain.' }, 403);
         return json(await brainTruthView(this.ctx.storage));
       }
+      // Create Studio scenes (scene_store.js, M2b): owner only, optimistic versions, refused rather than overwritten.
+      if (path === '/api/scenes' || /^\/api\/scenes\/scene_[a-f0-9]{12}$/.test(path)) {
+        if (!ownerDevice) return json({ detail: 'Only the CHE owner can use the Create Studio.' }, 403);
+        const sceneOut = await sceneRoute({ storage: this.ctx.storage, now: () => new Date().toISOString() }, path, request.method, body);
+        return json(sceneOut.body, sceneOut.status);
+      }
       if (/^\/api\/(gpu|creations)(\/|$)/.test(path)) {
         if (!ownerDevice) return json({ detail: 'Only the CHE owner can use the GPU queue.' }, 403);
         if (path.startsWith('/api/creations/pool')) return (await poolRoute({ storage: this.ctx.storage, env: this.keyEnv || this.env }, path, request, body)) || json({ detail: 'Not found.' }, 404);
@@ -8025,6 +8037,12 @@ export class CheState extends DurableObject {
         const { status, ...rest } = result;
         return json(rest, status);
       }
+      // The result of an explicit Modal picture: saved to the Gallery only once its bytes and hash check out.
+      if (path === '/api/media/modal/result' && request.method === 'POST') {
+        const { status, ...rest } = await finishModalImage(this.keyEnv || this.env, this.ctx.storage, String(body.call_id || ''));
+        return json(rest, status);
+      }
+      if (path === '/api/media/modal/pending' && request.method === 'GET') return json({ jobs: await pendingModalImages(this.ctx.storage) });
       if (path === '/api/media/generate' && request.method === 'POST') {
         const mediaType = String(body.type || body.kind || 'image').toLowerCase();
         const result = mediaType === 'video'
@@ -10460,6 +10478,17 @@ export class CheState extends DurableObject {
         if (BROKER_KEY_RE.test(rawMessage)) {
           return ndjsonReply('I did not keep that, sir: it looks like an API key, and keys never go in chat. It may now be exposed, so regenerate it where it came from. A new Alpaca paper key goes in the Trading Room, straight to CHE\'s key store.', { source: 'che_secret_refused', ok: false, model_calls: 0 });
         }
+        // Plain arithmetic is computed here: no model guesses it, and no earlier turn can answer it (owner, 2026-10-28).
+        // Plain arithmetic goes through the universal problem controller (problem_controller.js): exact, checked by a
+        // round trip, with an execution receipt. A goal with no verified path returns null and falls through to the model.
+        const sum = !body.attachment && !body.workflow_step ? answerForChat(rawMessage) : null;
+        if (sum) {
+          const verified = sum.status === 'verified';
+          return ndjsonReply(sum.text, {
+            source: 'che_arithmetic', ok: verified, model_calls: 0, expression: sum.expression,
+            execution_receipt: { tool: 'arithmetic', operation: 'exact_evaluate', status: verified ? 'success' : 'error', capability_id: sum.receipt.capability_id, capability_version: sum.receipt.capability_version, correlation_id: sum.receipt.correlation_id, latency_ms: sum.receipt.latency_ms, steps: sum.receipt.steps },
+          });
+        }
         const privBlock = privateChatGate(rawMessage, body);
         if (privBlock) return privBlock;
         // A family/guest device never reaches the owner's chat routes below.
@@ -10468,6 +10497,10 @@ export class CheState extends DurableObject {
         if (relTurn) return relTurn;
         // Deployment and commit questions are answered from GitHub's commit, PR and run records, this Worker's
         // version tag and the phone's report (deploy_receipt.js), before source inspection or the status route.
+        // Service commands run before the GitHub and deployment matchers, which claim "verify" and "deployed" (2026-10-28).
+        const svc = !body.attachment && !body.workflow_step ? serviceCommandIntent(rawMessage) : null;
+        if (svc?.kind === 'connect') return this.onboardingChat(svc.onboard, ownerDevice);
+        if (svc) return ownerDevice ? modalServiceReply(this.env, this.ctx.storage, svc.intent, ndjsonReply) : ownerOnly();
         const commitAsk = !body.attachment && !body.workflow_step ? commitIntent(rawMessage, body.history) : null;
         if (commitAsk) {
           await this.dropHeldActions();
@@ -13533,9 +13566,9 @@ export class CheState extends DurableObject {
         // reply is built from those results. The model is not asked here, so it cannot describe a picture that was not made.
         if (requestedCapabilities.includes('image_generation') && !requestedCapabilities.includes('video_generation') && !body.attachment) {
           if (!ownerDevice) return ndjsonReply('Only the CHE owner can make pictures, sir. Nothing was made.', { source: CHAT_IMAGE_SOURCE, ok: false, model_calls: 0 });
-          const results = await makeChatImages(this.keyEnv || this.env, this.ctx.storage, { message, count: requestedImageCount(message) });
-          // media_url is what the iPhone chat shows inline (owner, 2026-10-22: "I'm supposed to see an actual picture").
-          return ndjsonReply(chatImageReply(results), { source: CHAT_IMAGE_SOURCE, ok: results.some((r) => r.ok), model_calls: 0, media: chatImageMedia(results), ...chatImageInline(results, new URL(request.url).origin) });
+          // The engine and the reply are chosen in chat_image_provider.js (the owner sees which engine made a picture).
+          const picture = await chatPictureTurn(this.keyEnv || this.env, this.ctx.storage, { message, origin: new URL(request.url).origin, makeImages: (count) => makeChatImages(this.keyEnv || this.env, this.ctx.storage, { message, count }) });
+          return ndjsonReply(picture.text, picture.meta);
         }
         let imageGeneration = requestedCapabilities.includes('image_generation') &&
           !requestedCapabilities.includes('video_generation')
@@ -14513,7 +14546,7 @@ export class CheState extends DurableObject {
     if (minute) {
       await strategySimTick(this.ctx.storage, { now: minuteNow }).catch((error) => console.error('Strategy simulation tick failed:', error?.message || error));
       const simNext = await nextStrategySimTickAt(this.ctx.storage, Date.now()).catch(() => null);
-      const kept = [...minute.others, ...(minute.liveNext ? [minute.liveNext] : []), ...(simNext ? [simNext] : [])];
+      const kept = [...minute.others, ...(minute.liveNext ? [minute.liveNext] : []), ...(simNext ? [simNext] : []), ...await modalImageCheckTimes(this.ctx.storage).catch(() => [])];
       if (kept.length) await this.ctx.storage.setAlarm(Math.min(...kept));
       return;
     }
@@ -14537,6 +14570,8 @@ export class CheState extends DurableObject {
       // Older room records get relationship discovery too, a dozen per alarm until none are left.
       await relinkRecords(this.ctx.storage, alarmBrain).catch(() => null);
     }
+    // Waiting Modal pictures are checked here, so one is saved even when no app is polling for it.
+    await reconcileModalImages(this.keyEnv || this.env, this.ctx.storage).catch(() => null);
     const autonomyOn = Boolean((await this.loadData()).autonomy);
     if (autonomyOn) await this.recoverOpenCodeFailure().catch((error) => console.error('OpenCode recovery watch failed:', error?.message || error));
     // processJobs decides what may run while Office autonomy is paused: the
@@ -16230,6 +16265,7 @@ async function routeRequest(request, env, ctx) {
   }
   if (path === '/api/trading/audit/probe' && request.method === 'POST') return voiceProbeAuthorized(request, env) ? json(await env.CHE_STATE.getByName('owner').tradingAuditProbe()) : json({ detail: 'Not found.' }, 404);
   if (path === '/api/privacy/probe' && request.method === 'POST') return voiceProbeAuthorized(request, env) ? json(await privacyProbe(env, request, MEMORY_PROBE_OBJECT)) : json({ detail: 'Not found.' }, 404);
+  if (path === '/api/arithmetic/probe' && request.method === 'POST') return voiceProbeAuthorized(request, env) ? json(await arithmeticProbe(env, request, await probeObjectName(/^Bearer (\S+)$/.exec(request.headers.get('Authorization') || '')?.[1] || ''))) : json({ detail: 'Not found.' }, 404);
   if (path === '/api/study/probe' && request.method === 'POST') return voiceProbeAuthorized(request, env) ? json(await studyProbe(env, request, await probeObjectName(/^Bearer (\S+)$/.exec(request.headers.get('Authorization') || '')?.[1] || ''))) : json({ detail: 'Not found.' }, 404);
   if (path === '/api/memory/probe' && request.method === 'POST') {
     if (!voiceProbeAuthorized(request, env)) return json({ detail: 'Not found.' }, 404);

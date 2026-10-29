@@ -96,7 +96,7 @@ test('three pictures are made, saved, and returned as real media records; the re
   assert.equal(out.meta.model_calls, 0);
   assert.equal(out.imageCalls, 3, 'three real generations');
   assert.equal(out.textCalls, 0, 'the model is not asked to describe a picture');
-  assert.equal(out.reply, 'I generated all 3 pictures and saved them to your Creation Room.');
+  assert.match(out.reply, /^Made with Cloudflare Workers AI \(provider: Workers AI\), because [^.]+\. I generated all 3 pictures and saved them to your Creation Room\.$/);
   assert.doesNotMatch(out.reply, FILENAME, 'no file name is claimed');
   assert.equal(out.media.length, 3);
   for (const m of out.media) {
@@ -122,7 +122,7 @@ test('a picture that fails keeps the others: the reply names its number and reas
   const che = await openChe(new Map(), { failImageNumbers: [2] });
   const out = await che.say(BARBER);
   assert.equal(out.media.length, 2, 'the two that worked are kept');
-  assert.match(out.reply, /^I generated 2 of 3 pictures and saved the ones that worked\./);
+  assert.match(out.reply, /^(?:Made with Cloudflare Workers AI \(provider: Workers AI\), because [^.]+\. )?I generated 2 of 3 pictures and saved the ones that worked\./);
   assert.match(out.reply, /Picture 2 failed: /);
   assert.doesNotMatch(out.reply, FILENAME);
   for (const m of out.media) assert.equal((await che.get(m.url, che.token)).status, 200);
@@ -131,7 +131,7 @@ test('a picture that fails keeps the others: the reply names its number and reas
 test('no image engine: nothing is claimed, nothing is saved, and the owner is told what to connect', async () => {
   const che = await openChe(new Map(), { imageEngine: false });
   const out = await che.say(BARBER);
-  assert.match(out.reply, /^I did not make any pictures, sir, because no image engine is connected\./);
+  assert.match(out.reply, /^(?:Made with Cloudflare Workers AI \(provider: Workers AI\), because [^.]+\. )?I did not make any pictures, sir, because no image engine is connected\./);
   assert.equal(out.media.length, 0);
   assert.equal(out.imageCalls, 0);
   assert.equal(out.textCalls, 0, 'the model is never asked to invent pictures');
@@ -143,7 +143,7 @@ test('bytes that are not a picture are refused: nothing is saved and nothing is 
   const che = await openChe(new Map(), { imageBytes: Buffer.from('not a picture at all').toString('base64') });
   const out = await che.say('create a picture of a barber chair');
   assert.equal(out.media.length, 0);
-  assert.match(out.reply, /^I did not generate any pictures, sir\. Nothing was saved\./);
+  assert.match(out.reply, /^(?:Made with Cloudflare Workers AI \(provider: Workers AI\), because [^.]+\. )?I did not generate any pictures, sir\. Nothing was saved\./);
   assert.match(out.reply, /not a PNG, JPEG or WebP picture/);
 });
 

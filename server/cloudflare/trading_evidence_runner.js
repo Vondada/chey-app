@@ -5,7 +5,8 @@
 
 import { closedCandles, loadCandles } from './trading_lab.js';
 import { chicagoDayKey } from './chicago_time.js';
-import { paperJournalWinRate } from './atlas_trading.js';
+import { entryRange, paperJournalWinRate } from './atlas_trading.js';
+import { tradeExpectancy } from './trade_expectancy.js';
 import {
   CANDIDATES, FILTERS, COSTS, MIN_TRADES, candleProblems, causalContext, newPortfolio, stepPortfolio,
   appendTrades, readTrades, summarize, evaluateWalkForward, promotionVerdict, validateTradeRecord,
@@ -105,6 +106,8 @@ export async function evidenceTick(storage, { fetcher = fetch, now = Date.now(),
 // still goes to the existing trading routes.
 export function evidenceIntent(message) {
   const text = String(message || '');
+  // Figures the owner supplies in the message are a hypothetical, not the journal: they are answered from those figures.
+  if (tradeExpectancy(text)) return null;
   if (!/\b(?:paper|trad\w*|NQ|MNQ|nasdaq|futures|strateg\w*|win rate|profit\w*)\b/i.test(text)) return null;
   const asks = /\bhow many\b[\s\S]{0,40}\btrades?\b|\bwin rate\b|\bwhich\b[\s\S]{0,60}\bstrateg\w*\b|\b(?:consistently|consistent)\b[\s\S]{0,30}\bprofit\w*|\bare you (?:becoming|getting)\b|\bmeasured\b[\s\S]{0,40}\b(?:trades?|results?|win)/i;
   return asks.test(text) ? { kind: 'evidence' } : null;
@@ -135,10 +138,12 @@ export async function evidenceReport(storage, { now = Date.now() } = {}) {
   // named as such. Its trades are never reported as "no evidence" (issue #346 audit).
   const journal = trades.length ? null : await paperJournalWinRate(storage);
   if (journal && (journal.trades || journal.text)) {
+    // Two scopes, never added together: the daily evidence pass (one daily set) and the forward-paper journal (every portfolio).
     return [
-      "Paper trades, from CHE's evidence pass (recorded daily research; paper, no real money): none recorded yet.",
-      `Recorded in total: 0 (0 wins, 0 losses, 0 flat). Open now: ${open}.`,
-      journal.text,
+      `Scope 1, daily evidence pass (paper, daily research, no real money): 0 closed trades recorded. Open now: ${open}.`,
+      `Scope 2, forward-paper journal (paper, every portfolio, not pooled): ${journal.text}`,
+      `Time ranges: the daily evidence pass ${entryRange(trades)}; the forward-paper journal ${journal.range}.`,
+      'The two counts measure different things, so they do not match and are not added together.',
     ].join('\n');
   }
   if (!runs.length) {

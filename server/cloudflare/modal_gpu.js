@@ -29,7 +29,7 @@
 import { MODAL_PASTE_REFUSAL, storedKeys } from './resilience.js';
 import { PAID_GPU_PRICES } from './compute_budget.js';
 
-export const MODAL_APP_VERSION = 'che-modal-1';          // tools/modal/che_modal_app.py APP_VERSION
+export const MODAL_APP_VERSION = 'che-modal-3';          // tools/modal/che_modal_app.py APP_VERSION
 export const MODAL_ENV = 'MODAL_TOKEN';                  // the key-store slot "CHE, connect Modal" saves into
 // Modal serves endpoints at <workspace>--che-gpu.modal.run or with one region label (…--che-gpu.us-east.modal.run, which
 // the deploy workflow wrote on 2026-10-25); nothing else, so the token can only ever go to CHE's own app.

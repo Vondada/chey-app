@@ -54,6 +54,7 @@ Statuses: `open`, `in progress`, `waiting on owner`, `built, not verified`, `ver
 | Q-32 | Driving-safe voice replies | open | — | Short, spoken-first replies when the route is a car, with no screen steps. | Owner request 13 |
 | Q-33 | Car test script and route log | open | — | A script the owner runs in the car that records each route transition, interruption and failure to a file for review. Needs the owner's car. | Owner request 16 |
 | Q-34 | Native audio changes need an IPA | open | — | Audio-session and route changes are native (Swift). Decide with the owner whether they ship by Shorebird patch or a new IPA. | Owner decision |
+| Q-42 | CHE continuity loop: snapshot, history, session recovery and owner commands (owner, 2026-10-28) | built, not verified | `feat/che-continuity-loop` | Snapshot `docs/CHE_PROJECT_STATUS.md`, history `docs/CHE_PROJECT_HISTORY.md`, routine and commands in `CLAUDE.md`, loop in `docs/CHE_VIDEO_REVIEW_LOOP.md`. Verified only after a fresh session recovers the facts (see the PR). Refresh the snapshot at each milestone. | Owner request 2026-10-28; `tools/continuity_check.test.mjs` |
 
 ## Owner decisions needed
 - Office swipe (Q-02).

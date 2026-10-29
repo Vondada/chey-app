@@ -7,6 +7,9 @@ import { CONTRACTS, COSTS, INTRADAY_CANDIDATES, fillEntry, exitOn, newPortfolio,
 import { LIVE_EXCLUDED, LIVE_PORTFOLIOS, liveDashboard, liveTick, setLivePaper } from './trading_live.js';
 import { liveIntent } from './trading_live_chat.js';
 import { evidenceReport } from './trading_evidence_runner.js';
+import { haltState } from './strategy_governor.js';
+// These tests cover entry mechanics. The owner's forward-paper halt is tested in strategy_governor.test.mjs.
+haltState.halted = false;
 
 function memoryStorage(saved = new Map()) {
   return {
@@ -158,7 +161,7 @@ test('the daily evidence report does not count intraday paper trades', async () 
   await liveTick(storage, { force: true, load: feedOf(DAY1), now: after(DAY1) });
   await liveTick(storage, { force: true, load: feedOf([...DAY1, ...DAY2]), now: after(DAY2) });
   storage.saved.set('evidence_runs', [{ at: new Date().toISOString(), ok: true }]);
-  assert.match(await evidenceReport(storage), /Recorded in total: 0 /);
+  assert.match(await evidenceReport(storage), /Scope 1, daily evidence pass .*: 0 closed trades recorded\. Open now: \d+\./);
 });
 
 test('no lookahead: every intraday value at a bar is the same with or without later bars', () => {
