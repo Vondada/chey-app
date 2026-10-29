@@ -1617,7 +1617,7 @@ extension _CheHomeSend on _CHEHomeState {
       final stopped = requestSession.cancelled;
       _stopRequested = false;
       final finalReply = reply.isEmpty
-          ? (stopped ? 'Stopped.' : 'I could not generate a response, sir.')
+          ? (stopped ? 'Stopped.' : 'CHE got no reply text from the server, sir. Nothing was run. Ask again and I will answer.')
           : _sanitizeCheReply(reply);
 
       for (final chunk in speechChunker.addCumulative(finalReply)) {
@@ -1700,7 +1700,7 @@ extension _CheHomeSend on _CHEHomeState {
 
       _set(() {
         if (assistantIndex != null && assistantIndex < messages.length) {
-          messages[assistantIndex]['text'] = errorReply;
+          messages[assistantIndex]['text'] = _replyKeepingPartial(messages[assistantIndex]['text'], errorReply);
         } else {
           messages.add({
             'role': 'assistant',
@@ -1720,7 +1720,7 @@ extension _CheHomeSend on _CHEHomeState {
 
       _set(() {
         if (assistantIndex != null && assistantIndex < messages.length) {
-          messages[assistantIndex]['text'] = errorReply;
+          messages[assistantIndex]['text'] = _replyKeepingPartial(messages[assistantIndex]['text'], errorReply);
         } else {
           messages.add({
             'role': 'assistant',
@@ -2087,4 +2087,10 @@ extension _CheHomeSend on _CHEHomeState {
         onRead: (text) => speakText(text, record: false, readOnDemand: true)))));
     await Future<void>.delayed(const Duration(milliseconds: 600));
   }
+}
+
+/// A reply that fails part way keeps the words CHE already said: the error is added after them, never in place of them.
+String _replyKeepingPartial(Object? partial, String errorReply) {
+  final said = partial?.toString().trim() ?? '';
+  return said.isEmpty ? errorReply : '$said\n\n$errorReply';
 }
