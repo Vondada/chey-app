@@ -125,6 +125,13 @@ export function soulPromptBlock(profile) {
   ].filter(Boolean).join('\n');
 }
 
+// The model sometimes copies the Soul's trait labels into a reply ("Warmth: ...", "Directness: ..."). They are CHE's
+// internal settings, never her words, so a leading label is removed. Only the label at the start of a line is touched.
+const SOUL_LABEL = /^[ \t]*(?:warmth|playfulness|formality|directness|initiative)[ \t]*:[ \t]*/gim;
+export function stripSoulLabels(text) {
+  return String(text || '').replace(SOUL_LABEL, '').replace(/^\s+/, '');
+}
+
 // Engine provenance, from routing data only. served_by is what runChatModel (or the rescue/repair call) recorded:
 // { provider, model, route, fallback }. CHE is the product, never an engine, so "CHE itself" is never an answer.
 const PROVIDER_NAMES = {
