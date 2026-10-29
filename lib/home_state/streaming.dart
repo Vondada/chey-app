@@ -400,6 +400,7 @@ extension _CheHomeStreaming on _CHEHomeState {
     final complete = StringBuffer();
     _streamMediaUrl = null;
     _streamMediaType = null;
+    _streamModalCallId = '';
     _streamMediaExtra = {};
     _streamUnderstoodAs = null;
     _streamResponseDetails = null;
@@ -661,6 +662,9 @@ extension _CheHomeStreaming on _CHEHomeState {
           _streamMediaUrl = mediaUrl;
           _streamMediaType = mediaType;
         }
+        // "Create a picture of…" on Modal's GPU: the Worker started the job; the reply follows it to the Gallery.
+        final modalCallId = cheModalPictureCallId(data);
+        if (modalCallId.isNotEmpty) _streamModalCallId = modalCallId;
         // A library answer lists several videos with no single media_url, so the media fields are read on their own.
         final mediaExtra = cheChatMediaExtra(data);
         if (mediaExtra.isNotEmpty) _streamMediaExtra = {..._streamMediaExtra, ...mediaExtra};

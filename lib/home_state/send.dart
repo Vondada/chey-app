@@ -1655,6 +1655,7 @@ extension _CheHomeSend on _CHEHomeState {
       });
 
       _scrollToBottom();
+      if (_streamModalCallId.isNotEmpty) unawaited(_followModalPicture(_streamModalCallId));
 
       _brainLog.logTurn(message, reply.isEmpty ? finalReply : reply,
           source: fromVoice ? 'voice' : 'chat');
@@ -1739,6 +1740,64 @@ extension _CheHomeSend on _CHEHomeState {
   }
 
   /// Sends a CHE chat reply to Claude's mailbox for a fact-check, and says what happened on screen.
+  /// A Modal GPU picture started in chat: follow its job until it is saved, fails, or the wait runs out, then say so in
+  /// the chat. A saved picture is shown from the Worker's image route, and it is in the Gallery by then.
+  Future<void> _followModalPicture(String callId) async {
+    // One job is followed once at a time: a reply and a resume may both ask for it. A repeat returns null.
+    final outcome = await () async {
+      if (!_followingModalCallIds.add(callId)) return null;
+      final client = http.Client();
+      try {
+        return await followCheModalPicture(
+          client: client,
+          baseUrl: cheAgentBaseUrl,
+          headers: _authHeaders,
+          callId: callId,
+        );
+      } finally {
+        client.close();
+        _followingModalCallIds.remove(callId);
+      }
+    }();
+    if (outcome == null) return;
+    if (!mounted) return;
+    _set(() {
+      messages.add(switch (outcome.state) {
+        CheModalPictureState.saved => {
+            'role': 'assistant',
+            'text': "Here is the picture from Modal's GPU, sir. It is saved in your Gallery (job $callId).",
+            'media_url': '$cheAgentBaseUrl${outcome.imagePath}',
+            'media_type': 'image',
+          },
+        CheModalPictureState.failed => {
+            'role': 'assistant',
+            'text': 'The Modal GPU picture failed, sir: ${outcome.detail} (job $callId). Nothing was saved; no other engine was used.',
+          },
+        CheModalPictureState.running => {
+            'role': 'assistant',
+            'text': "The Modal GPU picture is still running, sir (job $callId). I stopped waiting here; the job stays on the Worker, "
+                'and it is saved or marked failed there. It is not in your Gallery yet.',
+          },
+      });
+    });
+    _scrollToBottom();
+  }
+
+  /// Picks up the Modal pictures the Worker still holds as waiting (after the app was closed or interrupted), and follows
+  /// each one that is not already followed here. Nothing is started or charged: this only reads the job list.
+  Future<void> _restorePendingModalPictures() async {
+    final client = http.Client();
+    final List<String> ids;
+    try {
+      ids = await fetchCheModalPendingCallIds(client: client, baseUrl: cheAgentBaseUrl, headers: _authHeaders);
+    } finally {
+      client.close();
+    }
+    for (final id in ids) {
+      if (!_followingModalCallIds.contains(id)) unawaited(_followModalPicture(id));
+    }
+  }
+
   Future<void> _sendFactCheckFromChat(String reply, String messageId) async {
     final messenger = ScaffoldMessenger.maybeOf(context);
     HapticFeedback.selectionClick();
