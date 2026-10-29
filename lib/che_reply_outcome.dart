@@ -49,5 +49,8 @@ String cheFinalReplyText(String reply, CheStreamEnd end) {
   final text = reply.trim();
   if (end == CheStreamEnd.done) return text.isEmpty ? cheNoReplyMessage(CheStreamEnd.done) : text;
   if (text.isEmpty) return cheNoReplyMessage(end);
-  return '$text\n\n(The reply was cut off here, sir.)';
+  // A note written inside an unfinished code fence is hidden from the speech chunker, so the fence is closed first.
+  final fences = RegExp(r'^\s*```', multiLine: true).allMatches(text).length;
+  final body = fences.isOdd ? '$text\n```' : text;
+  return '$body\n\n(The reply was cut off here, sir.)';
 }

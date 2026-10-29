@@ -58,6 +58,20 @@ void main() {
     expect(cheFinalReplyText('', tally.end), cheNoReplyMessage(CheStreamEnd.done));
   });
 
+  test('a cut-off reply inside an unfinished code fence closes the fence before the note, so the note is spoken', () {
+    const partial = 'Here is the code:\n```dart\nvoid main() {';
+    final text = cheFinalReplyText(partial, CheStreamEnd.cutOff);
+    final fences = RegExp(r'^\s*```', multiLine: true).allMatches(text).length;
+    expect(fences.isEven, isTrue, reason: 'every opened fence is closed');
+    // The note comes after the closing fence, outside any code block.
+    expect(text.lastIndexOf('```'), lessThan(text.indexOf('(The reply was cut off')));
+  });
+
+  test('a cut-off reply with its fences already closed is left as it is, plus the note', () {
+    const partial = 'Done:\n```\nx\n```';
+    expect(cheFinalReplyText(partial, CheStreamEnd.cutOff), '$partial\n\n(The reply was cut off here, sir.)');
+  });
+
   test('an owner-approval hold (a plain JSON answer, no type) is complete, not cut off', () {
     final tally = tallyOf(['{"message":"Shall I go ahead?","held_for_owner":true}']);
     expect(tally.end, CheStreamEnd.done);
