@@ -8,7 +8,8 @@ import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import {
-  CATEGORIES, DIFFICULTY_SPLIT, QUESTIONS_PATH, grade, loadQuestions, parseReplyBody, runCertification, validateQuestions,
+  CATEGORIES, DIFFICULTY_SPLIT, QUESTIONS_PATH, grade, loadQuestions, parseReplyBody, runCertification, termFound, termGroups,
+  termListProblem, validateQuestions,
 } from '../../tools/certification/run_certification.mjs';
 
 const RUNNER = fileURLToPath(new URL('../../tools/certification/run_certification.mjs', import.meta.url));
@@ -169,4 +170,89 @@ test('the CLI with no endpoint writes blocked results, prints no token, and exit
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+// ---- grading rules (each rule has its own test) -----------------------------------------------------------------------
+
+const groupItem = (groups, over = {}) => item({ expected: { criteria: 'c', must_contain_any: groups, must_not_contain: [] }, ...over });
+
+test('rule 1: a flat must_contain_any list is one group, so any one of its terms passes', () => {
+  const flat = groupItem(['3/4', 'three quarters', '0.75']);
+  assert.deepEqual(termGroups(['3/4', 'three quarters', '0.75']), [['3/4', 'three quarters', '0.75']]);
+  assert.equal(grade(flat, { status: 200, reply: 'That is three quarters.' }).verdict, 'pass');
+  assert.equal(grade(flat, { status: 200, reply: 'About half.' }).verdict, 'fail');
+});
+
+test('rule 1: with several groups, every group must be satisfied (one term from each)', () => {
+  const two = groupItem([['Paris', 'Lyon'], ['2024', '2025']]);
+  assert.equal(grade(two, { status: 200, reply: 'Paris, in 2024.' }).verdict, 'pass');
+  assert.equal(grade(two, { status: 200, reply: 'Paris, sometime.' }).verdict, 'fail', 'second group missing');
+  assert.equal(grade(two, { status: 200, reply: 'In 2025 it was Lyon-adjacent.' }).verdict, 'pass');
+  assert.equal(grade(two, { status: 200, reply: 'Paris.' }).verdict, 'fail', 'a term from one group is not enough');
+  const reason = grade(two, { status: 200, reply: 'Paris.' }).reason;
+  assert.match(reason, /group 2 of 2/);
+});
+
+test('rule 1: an empty group can never be satisfied, so it never passes', () => {
+  const broken = groupItem([[], ['x']]);
+  assert.equal(grade(broken, { status: 200, reply: 'x' }).verdict, 'fail');
+});
+
+test('rule 1: the validator rejects malformed term lists and accepts both valid shapes', () => {
+  assert.equal(termListProblem(['a', 'b']), '');
+  assert.equal(termListProblem([['a'], ['b', 'c']]), '');
+  assert.equal(termListProblem(undefined), '');
+  assert.match(termListProblem([['a'], []]), /all groups/);
+  assert.match(termListProblem([['a'], 'b']), /all groups/);
+  assert.match(termListProblem(['a', '']), /non-empty strings/);
+  assert.match(termListProblem('a'), /must be an array/);
+  assert.match(termListProblem(['a', 3], { nested: false }), /non-empty strings/);
+  const bad = [...questions];
+  bad[0] = { ...bad[0], expected: { ...bad[0].expected, must_contain_any: [['x'], []] } };
+  assert.ok(validateQuestions(bad).some((p) => p.includes('must_contain_any must be all groups')));
+});
+
+test('rule 2: a forbidden term fails the reply even when every group is satisfied', () => {
+  const withBan = item({ expected: { criteria: 'c', must_contain_any: ['Paris'], must_not_contain: ['London'] } });
+  assert.equal(grade(withBan, { status: 200, reply: 'Paris is right, London is not.' }).verdict, 'fail');
+  assert.match(grade(withBan, { status: 200, reply: 'Paris, and London too.' }).reason, /forbidden text: London/);
+  const groupsWithBan = groupItem([['Paris'], ['France']]);
+  groupsWithBan.expected.must_not_contain = ['Berlin'];
+  assert.equal(grade(groupsWithBan, { status: 200, reply: 'Paris, France, not Berlin.' }).verdict, 'fail');
+  assert.equal(grade(groupsWithBan, { status: 200, reply: 'Paris, France.' }).verdict, 'pass');
+});
+
+test('rule 2: a digit-only term does not match inside a longer number, but does match alone', () => {
+  assert.equal(termFound('the answer is 6.', '6'), true);
+  assert.equal(termFound('in 2026 we', '6'), false);
+  assert.equal(termFound('it is 16', '6'), false);
+  assert.equal(termFound('it is 102', '102'), true);
+  assert.equal(termFound('it is 1102', '102'), false);
+  assert.equal(termFound('Three Quarters', 'three quarters'), true, 'words stay case-insensitive substrings');
+  assert.equal(termFound('the value is 0.75', '0.75'), true);
+  const six = groupItem([['6', 'six']]);
+  assert.equal(grade(six, { status: 200, reply: 'It is 16.' }).verdict, 'fail');
+  assert.equal(grade(six, { status: 200, reply: 'It is six.' }).verdict, 'pass');
+});
+
+test('rule 3: receipt_required passes only with at least one execution receipt', () => {
+  const r = item({ receipt_required: true });
+  assert.equal(grade(r, { status: 200, reply: 'Paris', receipts: [] }).verdict, 'fail');
+  assert.equal(grade(r, { status: 200, reply: 'Paris', receipts: [null, 'x'] }).verdict, 'fail', 'non-object entries are not receipts');
+  assert.equal(grade(r, { status: 200, reply: 'Paris', receipts: [{ id: 'rcpt_9' }] }).verdict, 'pass');
+  assert.equal(grade(item({ receipt_required: false }), { status: 200, reply: 'Paris', receipts: [] }).verdict, 'pass');
+});
+
+test('rule 4: blocked stays blocked (never pass, never fail) and not_run is left alone by grading', async () => {
+  const ok = item();
+  assert.equal(grade(ok, { status: null, reply: 'Paris' }).verdict, 'blocked');
+  assert.equal(grade(ok, { status: 503, reply: 'Paris' }).verdict, 'blocked');
+  assert.equal(grade(ok, { status: 404, reply: 'Paris' }).verdict, 'fail');
+  assert.equal(grade(ok, { status: 200, reply: 'Paris' }).verdict, 'pass');
+  const report = await runCertification({
+    url: 'https://che.example/api/probe/chat', token: 'tok', questions: [ok, item({ id: 'x-02' })],
+    select: (q) => q.id === 'x-02', fetchImpl: async () => jsonResponse(200, { reply: 'Paris' }),
+  });
+  assert.equal(report.results[0].verdict, 'not_run');
+  assert.equal(report.results[1].verdict, 'pass');
 });

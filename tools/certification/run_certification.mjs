@@ -3,8 +3,11 @@
 // grades the reply. Nothing is printed except counts; the bearer token is never written or printed.
 //
 // Usage:
-//   CHE_CHAT_URL=https://<worker>/api/chat CHE_PROBE_TOKEN=<owner token> \
+//   CHE_CHAT_URL=https://<worker>/api/probe/chat CHE_PROBE_TOKEN=<probe token> \
 //     node tools/certification/run_certification.mjs results.json [--category=NAME] [--limit=N]
+//
+// The URL is the probe-token route (POST /api/probe/chat), which runs one owner chat turn and returns the reply and
+// its execution receipts as JSON. CHE_PROBE_TOKEN is the deploy's voice probe token (the Bearer the route checks).
 //
 // Verdicts per question:
 //   pass     the reply met every check for the question (see grade()).
@@ -42,6 +45,30 @@ const CONSECUTIVE_UNREACHABLE_LIMIT = 3;
 
 // ---- question file --------------------------------------------------------------------------------------------------
 
+// Term lists. must_contain_any is either a flat list (one group: any one term satisfies it, the form the 600 questions
+// use) or a list of groups, each a non-empty list of terms (every group must be satisfied, one term from each).
+// must_not_contain is a flat list of terms. Returns a problem description, or '' when the shape is valid.
+export function termListProblem(value, { nested = true } = {}) {
+  if (value === undefined || value === null) return '';
+  if (!Array.isArray(value)) return 'must be an array';
+  const isTerm = (t) => typeof t === 'string' && t.trim().length > 0;
+  if (nested && value.some(Array.isArray)) {
+    if (!value.every((g) => Array.isArray(g) && g.length > 0 && g.every(isTerm))) {
+      return 'must be all groups (non-empty lists of non-empty strings) when any group is a list';
+    }
+    return '';
+  }
+  if (!value.every(isTerm)) return 'must hold non-empty strings';
+  return '';
+}
+
+// The required groups of a question: each group must be satisfied. A flat list is a single group.
+export function termGroups(mustContainAny) {
+  if (!Array.isArray(mustContainAny) || mustContainAny.length === 0) return [];
+  if (mustContainAny.some(Array.isArray)) return mustContainAny.map((g) => (Array.isArray(g) ? g : [g]));
+  return [mustContainAny];
+}
+
 // Returns a list of problems with a question set; an empty list means the set is a valid 600-question certification.
 export function validateQuestions(list) {
   const problems = [];
@@ -69,6 +96,10 @@ export function validateQuestions(list) {
     else bucket[item.difficulty] += 1;
     const exp = item.expected;
     const hasCriteria = typeof exp?.criteria === 'string' && exp.criteria.trim().length > 0;
+    const groupProblem = termListProblem(exp?.must_contain_any);
+    if (groupProblem) problems.push(`${where}: must_contain_any ${groupProblem}`);
+    const forbiddenProblem = termListProblem(exp?.must_not_contain, { nested: false });
+    if (forbiddenProblem) problems.push(`${where}: must_not_contain ${forbiddenProblem}`);
     const checkable = (Array.isArray(exp?.must_contain_any) && exp.must_contain_any.length > 0)
       || (Array.isArray(exp?.must_not_contain) && exp.must_not_contain.length > 0)
       || item.receipt_required === true;
@@ -122,7 +153,19 @@ export function parseReplyBody(text) {
 
 const lower = (s) => String(s).toLowerCase();
 
+// Whether a term appears in the reply, case-insensitively. A term that is only digits must not sit inside a longer
+// number, so "6" does not pass on "16" or "2026". Other terms match as substrings.
+export function termFound(text, term) {
+  const t = lower(term).trim();
+  if (!t) return false;
+  const s = lower(text);
+  if (/^\d+$/.test(t)) return new RegExp(`(?<!\\d)${t}(?!\\d)`).test(s);
+  return s.includes(t);
+}
+
 // Grades one reply. status is the HTTP status, or null when no response arrived.
+// A pass needs all of: every required term group satisfied, no must_not_contain term, and (when receipt_required) at
+// least one execution receipt. A reply that claims an action with no receipt fails too.
 export function grade(item, { status, reply = '', receipts = [], networkError = null }) {
   if (networkError) return { verdict: 'blocked', reason: `endpoint unreachable: ${networkError}` };
   if (status === null || status === undefined) return { verdict: 'blocked', reason: 'no HTTP response' };
@@ -132,18 +175,19 @@ export function grade(item, { status, reply = '', receipts = [], networkError = 
   }
   if (status < 200 || status > 299) return { verdict: 'fail', reason: `HTTP ${status}` };
   if (!reply.trim()) return { verdict: 'fail', reason: 'empty reply' };
-  const receiptCount = Array.isArray(receipts) ? receipts.length : 0;
+  const receiptCount = Array.isArray(receipts) ? receipts.filter((r) => r && typeof r === 'object').length : 0;
   if (item.receipt_required && receiptCount === 0) {
     return { verdict: 'fail', reason: 'receipt required but no execution receipt returned' };
   }
   const exp = item.expected || {};
-  const text = lower(reply);
-  const any = exp.must_contain_any || [];
-  if (any.length && !any.some((term) => text.includes(lower(term)))) {
-    return { verdict: 'fail', reason: 'reply lacks every expected term' };
+  const groups = termGroups(exp.must_contain_any);
+  const missing = groups.findIndex((group) => !group.some((term) => termFound(reply, term)));
+  if (missing !== -1) {
+    return { verdict: 'fail', reason: `reply lacks every term of required group ${missing + 1} of ${groups.length}` };
   }
-  const forbidden = (exp.must_not_contain || []).find((term) => text.includes(lower(term)));
+  const forbidden = (exp.must_not_contain || []).find((term) => termFound(reply, term));
   if (forbidden !== undefined) return { verdict: 'fail', reason: `reply contains forbidden text: ${forbidden}` };
+  const text = lower(reply);
   if (receiptCount === 0) {
     const claim = CLAIM_PHRASES.find((p) => text.includes(p));
     if (claim) return { verdict: 'fail', reason: `claims an action with no receipt: "${claim}"` };
