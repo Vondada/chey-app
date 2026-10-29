@@ -42,3 +42,15 @@ test('the Modal picture is chosen only when the owner has authorized it; otherwi
   assert.equal(off.provider, 'workers_ai');
   assert.match(off.reason, /not authorized yet/);
 });
+
+// Codex review of #763: a question about an existing picture is a status ask, and a negation covers only its own clause.
+test('"Did you create a picture of the blue cube on Modal?" is a status ask and creates no picture', () => {
+  const msg = 'Did you create a picture of the blue cube on Modal?';
+  assert.equal(modalServiceIntent(msg)?.kind, 'job_status');
+  assert.equal(inferTurnCapabilities(msg).includes('image_generation'), false);
+});
+
+test('a negated clause does not cancel an affirmative picture request in the same message', () => {
+  assert.equal(inferTurnCapabilities('Do not create a logo. Make a picture of a dog instead.').includes('image_generation'), true);
+  assert.equal(inferTurnCapabilities("Don't forget to create a picture of a dog.").includes('image_generation'), true);
+});

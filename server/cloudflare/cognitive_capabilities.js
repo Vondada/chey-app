@@ -40,9 +40,11 @@ export function inferTurnCapabilities(message, attachment = null) {
 
   // Plurals and the things made with pictures count: "create three ads with matching pictures" is a picture request
   // (Test 5, 2026-10-21: it went to the model, which invented file names). A verb plus a picture noun, or an ad with pictures.
-  // A negated creation is not a creation: "do not create another blue cube picture" makes no picture.
-  const negatedCreation = /\b(?:do not|don't|dont|never|stop|cancel|no need to)\b[^.?!]{0,30}\b(?:generate|create|make|draw|render|design|produce|paint|sketch)\b/.test(value);
-  if (!negatedCreation && any(value, [
+  // A negated creation is not a creation, and only its own clause is removed: "do not create a logo. Make a picture of a dog"
+  // still makes the dog. "Did you create a picture?" asks about an earlier one: no creation.
+  const withoutNegated = value.replace(/\b(?:do not|don't|dont|never|stop|cancel)\s+(?:(?:another|more|any|a|an|the|this|that|it|one)\s+){0,2}(?:generate|create|make|draw|render|design|produce|paint|sketch)\b[^.?!;,]*/g, ' ');
+  const retrospective = /^\s*(?:did|have|has|had|was|were)\s+(?:you|it|the|that|this|they)\b|\bdid (?:you|it|che)\s+(?:create|make|generate|draw)\b/.test(value);
+  if (!retrospective && any(withoutNegated, [
     /\b(generate|create|make|draw|render|design|visualize)\b[^.]{0,80}\b(images?|pictures?|photos?|art|artwork|mockups?|graphics?|diagrams?|visuals?|thumbnails?|logos?|posters?|banners?)\b/,
     /\b(images?|pictures?|photos?|visuals?)\b[^.]{0,60}\b(generate|generation)\b/,
     /\b(ads?|advertisements?|posters?|flyers?|campaigns?)\b[^.]{0,60}\bwith\b[^.]{0,20}\b(?:matching\s+)?(?:pictures?|images?|photos?|visuals?|graphics?)\b/,
