@@ -169,6 +169,9 @@ export function termFound(text, term) {
 export function grade(item, { status, reply = '', receipts = [], networkError = null }) {
   if (networkError) return { verdict: 'blocked', reason: `endpoint unreachable: ${networkError}` };
   if (status === null || status === undefined) return { verdict: 'blocked', reason: 'no HTTP response' };
+  // The probe route answers 404 when the token does not match (it is closed to anyone else). That is a refused probe,
+  // not a CHE answer: it is not graded as a failure. A deploy rotates the token, which caused 393 of these in run 40942525092.
+  if (status === 404) return { verdict: 'blocked', reason: 'HTTP 404: the probe route refused the token (rotated during the run, or route closed); not graded' };
   if (BLOCKED_STATUS.has(status)) {
     const why = status === 401 || status === 403 ? 'token refused' : 'gateway or origin error';
     return { verdict: 'blocked', reason: `HTTP ${status}: ${why}` };
@@ -226,7 +229,7 @@ function summarise(results) {
 // Runs the selected questions. fetchImpl defaults to the global fetch; tests pass a fake.
 export async function runCertification({
   url, token, questions, fetchImpl = globalThis.fetch, timeoutMs = 90000, select = () => true,
-  onProgress = () => {}, questionsFile = QUESTIONS_PATH,
+  onProgress = () => {}, questionsFile = QUESTIONS_PATH, reuse = new Map(),
 } = {}) {
   const scrub = scrubber(token);
   const started = new Date();
@@ -240,6 +243,11 @@ export async function runCertification({
     const base = { id: item.id, category: item.category, difficulty: item.difficulty, question: item.question };
     if (!select(item)) {
       results.push({ ...base, verdict: 'not_run', reason: 'not selected', http_status: null, latency_ms: 0, reply: '', receipts: [] });
+      continue;
+    }
+    // A question already graded by an earlier run is kept as it was (no second paid turn for it).
+    if (reuse.has(item.id)) {
+      results.push({ ...reuse.get(item.id), reused_from_earlier_run: true });
       continue;
     }
     if (notConfigured.length) {
@@ -266,7 +274,8 @@ export async function runCertification({
       });
       status = res.status;
       body = await res.text();
-      consecutiveUnreachable = 0;
+      // A refused probe (404) counts toward the stop rule, so a rotated token ends the run instead of spending on every question.
+      consecutiveUnreachable = status === 404 ? consecutiveUnreachable + 1 : 0;
     } catch (err) {
       networkError = controller.signal.aborted
         ? `no response within ${timeoutMs} ms`
@@ -298,9 +307,10 @@ export async function runCertification({
 // ---- command line ---------------------------------------------------------------------------------------------------
 
 function parseArgs(argv) {
-  const opts = { out: null, category: null, limit: null };
+  const opts = { out: null, category: null, limit: null, resume: null };
   for (const arg of argv) {
     if (arg.startsWith('--category=')) opts.category = arg.slice('--category='.length);
+    else if (arg.startsWith('--resume=')) opts.resume = arg.slice('--resume='.length);
     else if (arg.startsWith('--limit=')) opts.limit = Number(arg.slice('--limit='.length));
     else if (!arg.startsWith('--') && !opts.out) opts.out = arg;
     else return { error: `unknown argument: ${arg.startsWith('--') ? arg.split('=')[0] : 'extra path'}` };
@@ -332,8 +342,17 @@ async function main(argv) {
   };
   const url = process.env.CHE_CHAT_URL || '';
   const token = process.env.CHE_PROBE_TOKEN || '';
+  // --resume=earlier.json keeps each real graded answer (pass or fail, not a refused probe) and runs only the rest.
+  const reuse = new Map();
+  if (opts.resume) {
+    const earlier = JSON.parse(await readFile(opts.resume, 'utf8'));
+    for (const row of earlier.results || []) {
+      if ((row.verdict === 'pass' || row.verdict === 'fail') && row.http_status !== 404) reuse.set(row.id, row);
+    }
+    console.log(`resuming: ${reuse.size} graded answers kept from ${opts.resume}`);
+  }
   const report = await runCertification({
-    url, token, questions, select,
+    url, token, questions, select, reuse,
     onProgress: (row) => console.log(`${row.id} ${row.verdict}${row.verdict === 'pass' ? '' : ` (${row.reason})`}`),
   });
   const out = opts.out;
