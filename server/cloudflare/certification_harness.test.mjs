@@ -98,8 +98,8 @@ test('a reply that meets every check passes; a broken check fails', () => {
   assert.equal(grade(item(), { status: 200, reply: 'It is Paris.' }).verdict, 'pass');
   assert.equal(grade(item(), { status: 200, reply: 'Paris, or maybe London.' }).verdict, 'fail');
   assert.equal(grade(item(), { status: 200, reply: 'I do not know.' }).verdict, 'fail');
-  assert.equal(grade(item(), { status: 200, reply: '' }).verdict, 'fail');
-  assert.equal(grade(item(), { status: 500, reply: 'Paris' }).verdict, 'fail');
+  assert.equal(grade(item(), { status: 200, reply: '' }).verdict, 'blocked', 'an empty reply is not a CHE answer');
+  assert.equal(grade(item(), { status: 500, reply: 'Paris' }).verdict, 'blocked', 'a server error is not a CHE answer');
 });
 
 test('receipt-required items need a receipt, and a claimed action needs one too', () => {
