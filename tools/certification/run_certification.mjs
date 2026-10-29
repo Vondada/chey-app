@@ -132,10 +132,12 @@ export function parseReplyBody(text) {
       reply: String(obj.reply ?? obj.message ?? obj.text ?? ''),
       receipts: Array.isArray(obj.execution_receipts) ? obj.execution_receipts
         : (Array.isArray(obj.tool_receipts) ? obj.tool_receipts : []),
+      error: obj.error && typeof obj.error === 'object' ? obj.error : null,
     };
   } catch (_) {
     let reply = '';
     const receipts = [];
+    let error = null;
     let sawLine = false;
     for (const line of raw.split('\n')) {
       const t = line.trim();
@@ -146,9 +148,10 @@ export function parseReplyBody(text) {
       if (obj.type === 'delta' && typeof obj.delta === 'string') reply += obj.delta;
       if (typeof obj.reply === 'string' && !reply) reply = obj.reply;
       if (Array.isArray(obj.execution_receipts)) receipts.push(...obj.execution_receipts);
+      if (obj.type === 'error') error = { category: obj.category || null, rules: Array.isArray(obj.rules) ? obj.rules : [] };
     }
-    if (!sawLine) return { reply: raw.trim(), receipts: [] };
-    return { reply, receipts };
+    if (!sawLine) return { reply: raw.trim(), receipts: [], error: null };
+    return { reply, receipts, error };
   }
 }
 
@@ -172,14 +175,16 @@ export function termFound(text, term) {
 //   unverified        CHE answered, but the question needs an execution receipt and none came back.
 //   infrastructure    no answer arrived: no HTTP response, a timeout, or a server or gateway error (5xx).
 //   auth              the probe token was refused (401, 403) or the probe route did not accept it (404).
-//   no_valid_response the request succeeded but CHE returned an empty reply.
-export const CLASSES = ['pass', 'incorrect', 'unverified', 'infrastructure', 'auth', 'no_valid_response'];
+//   no_valid_response the request succeeded but CHE returned an empty reply with no explanation.
+//   no_answer         CHE answered with an error frame: its truth checks removed the whole reply. That is CHE's own
+//                     outcome (the question was not answered), so it is a fail, not a retry.
+export const CLASSES = ['pass', 'incorrect', 'unverified', 'no_answer', 'infrastructure', 'auth', 'no_valid_response'];
 const VERDICT_OF = {
-  pass: 'pass', incorrect: 'fail', unverified: 'fail',
+  pass: 'pass', incorrect: 'fail', unverified: 'fail', no_answer: 'fail',
   infrastructure: 'blocked', auth: 'blocked', no_valid_response: 'blocked',
 };
-// The classes that are a real CHE answer. Only these are kept when a run is resumed.
-export const VALID_ANSWER_CLASSES = new Set(['pass', 'incorrect', 'unverified']);
+// The classes that are a real CHE outcome. Only these are kept when a run is resumed.
+export const VALID_ANSWER_CLASSES = new Set(['pass', 'incorrect', 'unverified', 'no_answer']);
 
 function outcome(classification, reason) {
   return { verdict: VERDICT_OF[classification], classification, reason };
@@ -194,6 +199,7 @@ export function classificationOf(row) {
   if (/^HTTP (401|403|404)\b/.test(reason)) return 'auth';
   if (reason.startsWith('receipt required')) return 'unverified';
   if (/^(reply lacks|reply contains|claims an action)/.test(reason)) return 'incorrect';
+  if (reason.startsWith('CHE\'s checks removed the whole reply')) return 'no_answer';
   if (reason === 'empty reply') return 'no_valid_response';
   return 'infrastructure';
 }
@@ -201,7 +207,7 @@ export function classificationOf(row) {
 // Grades one reply. status is the HTTP status, or null when no response arrived.
 // A pass needs all of: every required term group satisfied, no must_not_contain term, and (when receipt_required) at
 // least one execution receipt. A reply that claims an action with no receipt is incorrect.
-export function grade(item, { status, reply = '', receipts = [], networkError = null }) {
+export function grade(item, { status, reply = '', receipts = [], networkError = null, error = null }) {
   if (networkError) return outcome('infrastructure', `endpoint unreachable: ${networkError}`);
   if (status === null || status === undefined) return outcome('infrastructure', 'no HTTP response');
   // 404 is the probe route refusing the token (it is closed to anyone else). A deploy rotates the token: run 40942525092
@@ -210,6 +216,10 @@ export function grade(item, { status, reply = '', receipts = [], networkError = 
     return outcome('auth', `HTTP ${status}: the probe route refused the token (rotated during the run, or route closed); not an answer`);
   }
   if (status < 200 || status > 299) return outcome('infrastructure', `HTTP ${status}: server or gateway error; not an answer`);
+  if (!reply.trim() && error?.category === 'empty_after_checks') {
+    const rules = (error.rules || []).filter(Boolean).slice(0, 6).join(', ');
+    return outcome('no_answer', `CHE's checks removed the whole reply${rules ? ` (${rules})` : ''}`);
+  }
   if (!reply.trim()) return outcome('no_valid_response', 'empty reply: CHE returned no text');
   const receiptCount = Array.isArray(receipts) ? receipts.filter((r) => r && typeof r === 'object').length : 0;
   if (item.receipt_required && receiptCount === 0) {
@@ -269,10 +279,12 @@ function summarise(results) {
 }
 
 // The earlier rows a resumed run keeps: real CHE answers only. Infrastructure, auth and empty-reply rows are asked again.
-export function reuseFrom(rows) {
+// --rerun=CLASS,... asks again the earlier rows of those classes (for example after a fix), and keeps the rest.
+export function reuseFrom(rows, rerun = new Set()) {
   const kept = new Map();
   for (const row of rows) {
-    if (VALID_ANSWER_CLASSES.has(classificationOf(row))) kept.set(row.id, row);
+    const cls = classificationOf(row);
+    if (VALID_ANSWER_CLASSES.has(cls) && !rerun.has(cls)) kept.set(row.id, row);
   }
   return kept;
 }
@@ -337,10 +349,12 @@ export async function runCertification({
       clearTimeout(timer);
     }
     const latency = Date.now() - t0;
-    const parsed = networkError ? { reply: '', receipts: [] } : parseReplyBody(body);    const reply = scrub(parsed.reply);
+    const parsed = networkError ? { reply: '', receipts: [], error: null } : parseReplyBody(body);
+    const reply = scrub(parsed.reply);
     const receipts = JSON.parse(scrub(parsed.receipts));
-    const verdict = grade(item, { status, reply, receipts, networkError });
-    const row = { ...base, verdict: verdict.verdict, classification: verdict.classification, reason: verdict.reason, http_status: status, latency_ms: latency, reply, receipts };
+    const error = parsed.error ? JSON.parse(scrub(parsed.error)) : null;
+    const verdict = grade(item, { status, reply, receipts, networkError, error });
+    const row = { ...base, verdict: verdict.verdict, classification: verdict.classification, reason: verdict.reason, http_status: status, latency_ms: latency, reply, receipts, error };
     results.push(row);
     onProgress(row);
   }
@@ -359,10 +373,11 @@ export async function runCertification({
 // ---- command line ---------------------------------------------------------------------------------------------------
 
 function parseArgs(argv) {
-  const opts = { out: null, category: null, limit: null, resume: null };
+  const opts = { out: null, category: null, limit: null, resume: null, rerun: new Set() };
   for (const arg of argv) {
     if (arg.startsWith('--category=')) opts.category = arg.slice('--category='.length);
     else if (arg.startsWith('--resume=')) opts.resume = arg.slice('--resume='.length);
+    else if (arg.startsWith('--rerun=')) opts.rerun = new Set(arg.slice('--rerun='.length).split(',').map((c) => c.trim()).filter(Boolean));
     else if (arg.startsWith('--limit=')) opts.limit = Number(arg.slice('--limit='.length));
     else if (!arg.startsWith('--') && !opts.out) opts.out = arg;
     else return { error: `unknown argument: ${arg.startsWith('--') ? arg.split('=')[0] : 'extra path'}` };
@@ -398,12 +413,15 @@ async function main(argv) {
   let reuse = new Map();
   if (opts.resume) {
     const earlier = JSON.parse(await readFile(opts.resume, 'utf8'));
-    reuse = reuseFrom(earlier.results || []);
+    reuse = reuseFrom(earlier.results || [], opts.rerun);
     console.log(`resuming: ${reuse.size} graded answers kept from ${opts.resume}`);
   }
   const report = await runCertification({
     url, token, questions, select, reuse,
-    onProgress: (row) => console.log(`${row.id} ${row.verdict}${row.verdict === 'pass' ? '' : ` (${row.reason})`}`),
+    // Every non-pass prints its class, its reason and the start of CHE's reply, so the failures can be audited from the log.
+    onProgress: (row) => console.log(row.verdict === 'pass'
+      ? `${row.id} pass`
+      : `${row.id} ${row.verdict} [${row.classification}] (${row.reason}) :: ${String(row.reply || '').replace(/\s+/g, ' ').slice(0, 220)}`),
   });
   const out = opts.out;
   await mkdir(dirname(out), { recursive: true });

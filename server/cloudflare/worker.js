@@ -631,6 +631,7 @@ export function emptyReplyStream(requestId, removals = []) {
     category: 'empty_after_checks',
     retryable: true,
     request_id: requestId,
+    rules,
     message: 'I wrote a reply, sir, but my checks removed all of it, so nothing was sent. Ask me again, or ask in smaller parts.',
   }) + '\n', {
     headers: { 'Content-Type': 'application/x-ndjson; charset=utf-8', 'Cache-Control': 'no-store' },
@@ -4115,7 +4116,10 @@ export class CheState extends DurableObject {
     const done = events.length ? ([...events].reverse().find((e) => e.type === 'done') || {}) : (plain && typeof plain === 'object' ? plain : {});
     const reply = events.length ? replyFromNdjson(raw).trim() : String(plain?.reply ?? plain?.message ?? '').trim();
     const receipts = Array.isArray(done.execution_receipts) ? done.execution_receipts : [];
-    return { ok: response.ok, status: response.status, reply, done, execution_receipts: receipts };
+    // An error frame (for example empty_after_checks, when the truth checks removed the whole reply) names its category and rules.
+    const frame = events.find((e) => e.type === 'error') || null;
+    const error = frame ? { category: frame.category || null, rules: Array.isArray(frame.rules) ? frame.rules : [] } : null;
+    return { ok: response.ok, status: response.status, reply, done, execution_receipts: receipts, error };
   }
 
   async modalCubeProbe(body) { return modalCubeProbe(this.keyEnv || this.env, this.ctx.storage, body); }
