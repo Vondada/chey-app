@@ -8,6 +8,7 @@ import {
   recordRate, reserve, sceneMessages, seedFor, segmentSpec, shotList, spend, speakPlan, stillPrompt, validOutline, validSceneShots,
   _internals,
 } from './film_studio.js';
+import { imagePayload } from './image_payload.js';
 import { recordVideoFailed, recordVideoVerified } from './action_receipts.js';
 import { farmTokenOpens, hfClip, kaggleSessionStatus, newFarmToken, startKaggleSession, validateKaggle, ensureHfSpace, HF_SPACE_FILES } from './film_farm.js';
 import { assemblyTokenOpens, filmRenderStatus, newAssemblyJob, startFilmRender, validateGithub, verifyFilmObject } from './film_render.js';
@@ -159,7 +160,7 @@ async function makeStep(ctx, store, film) {
     await Promise.all(wantStill.slice(0, stillsPaid).map(async (shot) => {
       let bytes = null; let check;
       try {
-        const out = await env.AI.run(STILL_MODEL, { prompt: stillPrompt(shot, film.outline, lessons), steps: 4, seed: seedFor(shot, film.outline) });
+        const out = await env.AI.run(STILL_MODEL, imagePayload(STILL_MODEL, { prompt: stillPrompt(shot, film.outline, lessons), steps: 4, seed: seedFor(shot, film.outline) }).payload);
         bytes = out?.image ? b64ToBytes(out.image) : null;
         check = bytes ? checkStill(bytes) : { ok: false, reason: 'the image model returned no picture' };
       } catch (error) { check = { ok: false, reason: String(error?.message || error).slice(0, 120) }; }

@@ -180,13 +180,13 @@ test('live: a session records each question and the reply the owner got, grades 
   assert.equal(buildRegistry({ live: await loadLive(storageFor(che.saved)) }).totals.sessions, before.sessions);
 
   const q = await che.say('What is 17 times 23?');
-  assert.equal(q.route, 'model', 'a test question is answered normally');
+  assert.equal(q.route, 'che_arithmetic', 'arithmetic is computed, and the attempt still counts');
   let reg = buildRegistry({ live: await loadLive(storageFor(che.saved)) });
   assert.equal(reg.totals.sessions, before.sessions + 1);
   assert.equal(reg.totals.attempts, before.attempts + 1);
   const mine = reg.attempts[reg.attempts.length - 1];
   assert.equal(mine.question, 'What is 17 times 23?');
-  assert.equal(mine.reply, 'Three hundred ninety-one.');
+  assert.equal(mine.reply, '391.');
   assert.equal(mine.outcome, 'unknown');
   assert.equal(mine.session_number, before.sessions + 1);
 
@@ -208,7 +208,7 @@ test('live: a session records each question and the reply the owner got, grades 
 
   const closed = await che.say('End the test');
   assert.match(closed.reply, /2 questions; 1 passed[\s\S]*1 not graded yet/);
-  const after = await che.say('What is 2 plus 2?');
+  const after = await che.say('What is the capital of Italy?');
   assert.equal(after.route, 'model');
   assert.equal(buildRegistry({ live: await loadLive(storageFor(che.saved)) }).totals.attempts, before.attempts + 2, 'nothing is recorded once the session is closed');
 });
