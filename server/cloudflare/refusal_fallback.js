@@ -2,6 +2,8 @@
 // The chat router (runChatModel in worker.js) asks decideFallback() after each failed attempt. It does not build a
 // second router: the attempts list stays where it is, and this only decides whether the next attempt may run.
 
+import { classifyFailure as classifyRecoveryFailure } from './recovery_policy.js';
+
 export const MAX_ENGINE_ATTEMPTS = 3;
 
 // What kind of failure this was. A provider's content refusal is kept apart from a technical failure, so a
@@ -20,13 +22,17 @@ export const FAILURES = Object.freeze({
  * The failure kind of one attempt, from what the engine returned or threw.
  * `error` is a thrown error (name, message, status, quota flag); `answer` is a returned value with a refusal flag.
  */
+// One classifier for every stage: recovery_policy.js names the class (A internal, B temporary, C permanent, D
+// authorization) and its kind. This maps that onto the engine failures the fallback needs. Refusal and capability
+// are checked first, because the recovery policy does not know about either.
 export function classifyFailure({ error = null, answer = null } = {}) {
   if (answer?.refused === true) return FAILURES.REFUSAL;
   if (!error) return FAILURES.NONE;
   if (error.quota) return FAILURES.QUOTA;
-  if (error.permission || error.status === 401 || error.status === 403) return FAILURES.PERMISSION;
   if (error.capability || error.category === 'unsupported_capability') return FAILURES.CAPABILITY;
-  if (error.name === 'AbortError' || error.timeout || error.status === 408 || error.status === 504) return FAILURES.TIMEOUT;
+  const { kind } = classifyRecoveryFailure({ status: error.status, message: error.message, quota: error.quota });
+  if (kind === 'permission_or_billing' || kind === 'authentication' || error.permission) return FAILURES.PERMISSION;
+  if (error.name === 'AbortError' || error.timeout || kind === 'provider_or_service' && [408, 504].includes(error.status)) return FAILURES.TIMEOUT;
   return FAILURES.TECHNICAL;
 }
 
