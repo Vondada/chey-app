@@ -22,7 +22,18 @@ export function modalPictureReply(started) {
   if (started?.status === 202 && started.call_id) {
     return `I started the picture on Modal's GPU, sir (provider: Modal, job ${started.call_id}). It is not in your Gallery yet. Nothing is saved until Modal's result passes its checks.`;
   }
-  return `I did not start a Modal GPU picture, sir: ${started?.detail || 'Modal did not answer'}. Nothing was generated; no other engine was used.`;
+  return `I did not start a Modal GPU picture, sir: ${refusalReason(started?.detail) || 'Modal did not answer'}. Nothing was generated; no other engine was used.`;
+}
+
+/**
+ * The reason from a refusal's detail, without the closing sentences ("Nothing was generated", "no other engine was used"),
+ * which the chat reply adds once. So the reply never says the same thing twice.
+ */
+export function refusalReason(detail) {
+  return String(detail || '')
+    .replace(/[,;]?\s*(?:so\s+)?(?:nothing was (?:generated|started|sent)|no other engine was used)\b[^.]*\.?/gi, '')
+    .replace(/[.\s]+$/, '')
+    .trim();
 }
 
 /** The note that goes in front of a Workers AI picture reply, so the owner knows which engine made it and why. */

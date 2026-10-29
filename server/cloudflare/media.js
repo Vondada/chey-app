@@ -377,7 +377,9 @@ export async function startModalImage(env, storage, body, fetcher = fetch) {
   if (!started.ok || !started.data?.call_id) {
     // A 4xx answer means Modal did not start the call (no cost). A network failure might have started it, so the reservation stays.
     if (started.status >= 400 && started.status < 500) await releaseTestBudget(storage, hold.id, `Modal answered ${started.status}: the call did not start`);
-    return refuse(502, `Modal refused to start the picture (${started.status || started.error || 'no answer'}). Nothing was generated; no other engine was used.`);
+    // Modal's own reason for the refusal (its validation message, never a secret), so the owner sees the cause, not just the code.
+    const modalReason = String(started.data?.error || '').replace(/[^\x20-\x7E]/g, '').slice(0, 160);
+    return refuse(502, `Modal refused to start the picture (${started.status || started.error || 'no answer'}${modalReason ? `: ${modalReason}` : ''}). Nothing was generated; no other engine was used.`);
   }
   const record = { call_id: started.data.call_id, prompt, title: String(body?.title || prompt).slice(0, 80), state: 'started', created_at: now(), budget_hold_id: hold.id };
   await storage.put(MODAL_IMAGE_KEY, [...records, record].slice(-20));
