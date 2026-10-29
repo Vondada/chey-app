@@ -101,7 +101,8 @@ test('a request over the intake limit is refused whole with its own category, an
 
 test('a small follow-up gets a normal reply, so a general failure is not blamed on prompt size', async () => {
   const che = await app('Four, sir.');
-  const out = await che.say('What is 2 plus 2?');
+  // Arithmetic is answered without a model (main, #737), so this follow-up asks a question that still goes to the model.
+  const out = await che.say('What is the capital of France?');
   assert.equal(out.status, 200);
   assert.ok(out.modelCalls >= 1, 'the model answered');
   assert.match(out.reply, /Four, sir\./);
