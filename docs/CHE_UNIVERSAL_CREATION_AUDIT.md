@@ -33,12 +33,16 @@ owner's Colab worker, once its session is running.
 ## 3. What is missing for the brief
 
 - **Phase 2 (persistent editable scene and asset system):** no scene-graph format for editable objects, materials, or
-  versions. The creation project format covers characters only.
+  versions. The creation projects already cover characters (`creation_studio.js`), objects and rooms: `createThing` and
+  `editThing` keep versioned object and room specs, with materials, and apply plain-sentence edits (`creation_studio.js`
+  around lines 861-1023). The missing piece is a general scene graph that holds many objects, their materials and their
+  versions together.
 - **Phase 3 (touch editing of terrain, objects and materials):** no brushes, no sculpt, no layers, no masks, no
   symmetry, no snapping in the phone UI.
 - **Phase 4 (character sculpting and materials):** no facial sculpting, skin detail, scars or freckles; the existing
   presets are the only edit path.
-- **Phase 5 (natural-language creation):** plain-sentence edits exist for characters only, not scenes or terrain.
+- **Phase 5 (natural-language creation):** plain-sentence edits already exist for characters, objects and rooms. The gap is
+  scenes and terrain, which have no scene graph to edit.
 - **Phase 6 (physics, animation, game systems):** nothing in the repo.
 - **Phase 7 (Office World integration and end-to-end tests):** the Office viewer is separate from the editor.
 
