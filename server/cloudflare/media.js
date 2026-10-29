@@ -367,7 +367,9 @@ export async function startModalImage(env, storage, body, fetcher = fetch) {
   if (!cred.exists || !cred.cred) return refuse(503, 'Modal is not connected, so nothing was started. No other engine was used.');
   const prompt = String(body?.prompt || '').trim().slice(0, 500);
   if (!prompt) return refuse(400, 'Describe the picture.');
-  const started = await modalCall(cred.cred, 'POST', '/txt2img', { prompt, width: 512, height: 512, steps: 4, seed: Math.floor(Math.random() * 2 ** 31) }, fetcher, 30000);
+  // Square pictures only, 256 or 512 px (512 is the default). The Modal app refuses any other size too.
+  const size = [256, 512].includes(Number(body?.width)) ? Number(body.width) : 512;
+  const started = await modalCall(cred.cred, 'POST', '/txt2img', { prompt, width: size, height: size, steps: 4, seed: Math.floor(Math.random() * 2 ** 31) }, fetcher, 30000);
   if (!started.ok || !started.data?.call_id) {
     return refuse(502, `Modal refused to start the picture (${started.status || started.error || 'no answer'}). Nothing was generated; no other engine was used.`);
   }

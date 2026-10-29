@@ -108,6 +108,11 @@ class Behaviour(unittest.TestCase):
         js = open(os.path.join(HERE, "..", "server", "cloudflare", "modal_gpu.js"), encoding="utf8").read()
         self.assertEqual(re.search(r"export const MODAL_APP_VERSION = '([^']+)'", js).group(1), m.APP_VERSION)
 
+    def test_text_to_image_stops_after_a_short_idle_window(self):
+        self.assertLessEqual(m.TXT2IMG_SCALEDOWN_S, 5)
+        src = open(os.path.join(HERE, "modal", "che_modal_app.py"), encoding="utf8").read()
+        self.assertRegex(src, r"txt2img_image, gpu=GPU, timeout=600, scaledown_window=TXT2IMG_SCALEDOWN_S")
+
 
 class Auth(unittest.TestCase):
     def test_bearer_must_match_a_real_token(self):
