@@ -41,6 +41,7 @@ import { discoverKeylessModels, engineStatus, paidAllowed, routedEnv, routeText 
 import { capabilityPromptLine, inferTurnCapabilities, runtimeCapabilityRegistry } from './cognitive_capabilities.js';
 import { identityQuestionIntent, speakIdentity } from './che_maturity.js';
 import { testBudgetReport } from './gpu_test_budget.js';
+import { modalCubeProbe, modalCubeResult } from './modal_cube_probe.js';
 import { deleteMedia, finishModalImage, generateImage, modalImageCheckTimes, pendingModalImages, reconcileModalImages, generateVideo, listMedia, readBlob, saveOwnerFile, upscaleImage, verifyMediaFile } from './media.js';
 import { withCheNote, guardEngineClaims, guardSoulClaims, lastReplyRecord, loadSoul, replyProvenanceAnswer, replyProvenanceQuestion, restoreSoul, saveSoul, soulPromptBlock, soulProvenance, soulView, stripPhoneSoul } from './soul.js';
 import { mediaHoldAnswer, mediaHoldIntent, mediaKeepFor, mediaLatestReply, mediaLibraryIntent, mediaLibraryReply, mediaLibraryReport, mediaLatestOpenRow, mediaOpenIntent, mediaOpenMissingReply, mediaOpenReply, mediaOpenRow, mediaRows, mediaSaveIntent, mediaSaveReply, mediaShowLatestIntent, mediaShowReply, verifyMediaRows, wantsLatestVideo } from './media_library.js';
@@ -4080,6 +4081,12 @@ export class CheState extends DurableObject {
 
   // Summary for the deploy check: feed, counts, positions and the newest trades, from records.
   async modalProbe() { return modalProbe(this.keyEnv || this.env, this.ctx.storage); }
+
+  async modalBudgetReport() { return testBudgetReport(this.ctx.storage); }
+
+  async modalCubeProbe(body) { return modalCubeProbe(this.keyEnv || this.env, this.ctx.storage, body); }
+
+  async modalCubeResult(body) { return modalCubeResult(this.keyEnv || this.env, this.ctx.storage, body); }
 
   async tradingProbe() {
     const ensured = await this.ensureLivePaper();
@@ -16245,6 +16252,21 @@ async function routeRequest(request, env, ctx) {
   // prints what the records hold (paper only). Exists only for the per-deploy random token.
   // The deploy's Modal check: the authenticated /health with the owner's real MODAL_TOKEN (modal_gpu.js modalProbe).
   if (path === '/api/probe/modal' && request.method === 'POST') return voiceProbeAuthorized(request, env) ? json(await env.CHE_STATE.getByName('owner').modalProbe()) : json({ detail: 'Not found.' }, 404);
+  // The GPU test budget ledger (read-only) and the one authorised blue cube render, both behind the deploy's probe token.
+  // The render is refused unless it carries the exact confirm phrase and the ledger allows it (modal_cube_probe.js).
+  if (path === '/api/probe/modal/budget' && request.method === 'GET') return voiceProbeAuthorized(request, env) ? json(await env.CHE_STATE.getByName('owner').modalBudgetReport()) : json({ detail: 'Not found.' }, 404);
+  if (path === '/api/probe/modal/cube' && request.method === 'POST') {
+    if (!voiceProbeAuthorized(request, env)) return json({ detail: 'Not found.' }, 404);
+    const body = await request.json().catch(() => ({}));
+    const out = await env.CHE_STATE.getByName('owner').modalCubeProbe(body);
+    return json(out, out.sent === false ? 409 : 200);
+  }
+  if (path === '/api/probe/modal/cube/result' && request.method === 'POST') {
+    if (!voiceProbeAuthorized(request, env)) return json({ detail: 'Not found.' }, 404);
+    const body = await request.json().catch(() => ({}));
+    const { status, ...rest } = await env.CHE_STATE.getByName('owner').modalCubeResult(body);
+    return json(rest, status);
+  }
   if (path === '/api/trading/probe' && request.method === 'POST') {
     if (!voiceProbeAuthorized(request, env)) return json({ detail: 'Not found.' }, 404);
     return json(await env.CHE_STATE.getByName('owner').tradingProbe());
