@@ -27,7 +27,7 @@ comment in `lib/che_kokoro_voice.dart`. Nothing in this audit adds one.
 | 2.1 | Generic-phrase check | `server/cloudflare/social_corrections.js:54` (`GENERIC`) | Flags stock phrases in the live social probe; the probe fails on them | Follows 1.2 (owner's Soul rule) | Retained. This is the check that failed on staging once |
 | 2.2 | Profanity and mode-talk check | `social_corrections.js:44,63` | In clean-language mode, the reply may not swear or announce the mode | Yes: owner's clean-language setting | Retained |
 | 2.3 | Refusal-retry | `server/cloudflare/self_development.js:675` (`refusesAnswer`) | A draft that says "I cannot confirm" is retried once with the source re-read. It does not block the reply | Engineering behavior, not a user restriction | Retained |
-| 2.4 | Plan-step prohibition strip | `server/cloudflare/creator_studio.js:367,405` (`BANNED_STEP`) | Removes "do not publish/upload" phrases from plan text before it is shown | Not requested that I can find | **Flagged for your review, not changed.** It edits prohibitions the owner may have written, so it needs your decision |
+| 2.4 | Negated-clause reader | `server/cloudflare/creator_studio.js:367,405` (`BANNED_STEP`, `withoutProhibitions`) | Reads what the owner asks for: the negated clauses ("don't render the pilot") are removed from the text used to recognise an action, and kept in `forbidden`, so a negative command is not read as a request. It does not edit any plan text that is shown | Engineering behavior that protects the owner's "do not" commands | Retained. No owner decision is needed (corrected 2026-10-29 after review of #751) |
 | 2.5 | Manifest safety refusal | `server/cloudflare/manifest_api.js:150,216` | Refuses a build spec the safety check rejects, with the reason | Safety | Retained |
 | 2.6 | Emergency route | `social_corrections.js` (Test 7 safety route) | A serious, high-risk message gets a calm answer that points to emergency services | Safety | Retained |
 
@@ -43,7 +43,7 @@ of paid providers (`cloud_computer.js:150`).
 
 - Removed: none. I did not find a restriction that the owner did not request and that is also not security, privacy,
   money, legal, or accessibility.
-- Flagged for the owner's decision: 2.4 (plan-step prohibition strip). Item 1.1 has two spoken-style rules
+- Corrected (review of #751, 2026-10-29): 2.4 is a negated-clause reader, not an output restriction, so it needs no owner decision. Item 1.1 has two spoken-style rules
   (no bullets or parentheses; no code unless asked) that the owner may want to change. They are part of the owner's
   accessibility rule, so I have not changed them.
 - Model defaults are unchanged. The default model, memory, personality, Office agents and model routing were not
