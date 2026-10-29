@@ -13,13 +13,17 @@ changes them. Do not delete the old values: the change is recorded in `docs/CHE_
 
 | Fact | State | Time | Evidence |
 |---|---|---|---|
-| `main` is `74760ee3` (M2a scene document, #731) | verified | 2026-10-28 ~03:40 UTC | `git fetch origin main`; GitHub `main` commit |
+| `main` is `064a7bb1` (#759, Modal deploy diagnostics) | verified | 2026-10-28 ~20:20 UTC | `git fetch origin main`; GitHub `main` commit |
+| `main` is `74760ee3` (M2a scene document, #731) | reported (superseded above) | 2026-10-28 ~03:40 UTC | earlier snapshot, kept for the record |
 
 ## Latest deployment
 
 | Fact | State | Time | Evidence |
 |---|---|---|---|
-| Worker deploy of `74760ee3` succeeded | verified | 2026-10-28 ~03:00 UTC | deploy run `40616639438` (success) |
+| Worker deploy of `82bcdddc` (#758, includes #756) succeeded | verified | 2026-10-28 20:09 UTC | deploy run `40760792805` (success) |
+| Modal app deploy of `064a7bb1` succeeded; GPU test skipped | verified | 2026-10-28 ~20:20 UTC | `CHE Modal deploy` run `40762484097`; its authenticated /health check passed (app `che-gpu`, a version) |
+| Modal model revision in code is `71153311…` (sdxl-turbo) | verified in code | 2026-10-28 | `tools/modal/txt2img.py`; pinned from run `40745995951` |
+| Worker deploy of `74760ee3` succeeded | reported (superseded above) | 2026-10-28 ~03:00 UTC | deploy run `40616639438` (success) |
 | Live commit check: `74760ee3` is the live Worker | verified | same | deploy job "live commit check: VERIFIED"; Worker version `5b89270f-7fa7-4cba-b37f-bbed1b4506b3` |
 | Live memory, voice and command-center probes passed | verified | same | the same deploy run's live probes |
 | Flutter client on the live iPhone build | unknown | — | only the owner's device can confirm installed behaviour |

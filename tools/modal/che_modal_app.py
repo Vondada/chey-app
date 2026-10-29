@@ -61,11 +61,13 @@ except ImportError:  # pragma: no cover - exercised by the unit test environment
     modal = None
 
 APP_NAME = "che-gpu"
-APP_VERSION = "che-modal-1"            # server/cloudflare/modal_gpu.js MODAL_APP_VERSION must match
+APP_VERSION = "che-modal-3"            # server/cloudflare/modal_gpu.js MODAL_APP_VERSION must match
 ENDPOINT_LABEL = "che-gpu"             # URL: https://<workspace>--che-gpu.modal.run
 GPU = "T4"
 MAX_CALL_S = 45 * 60                   # hard timeout of one GPU call
 SCALEDOWN_S = 60                       # an idle container stops after a minute (scale to zero)
+# The text-to-image function stops after 2 s idle: one picture is one short call, and an idle minute is billed GPU time.
+TXT2IMG_SCALEDOWN_S = 2
 MAX_JOBS_PER_CALL = 3
 DICT_NAME = "che-gpu-jobs"
 
@@ -288,7 +290,17 @@ if modal is not None:  # pragma: no cover - runs on Modal, not in unit tests
 
     pins = {"CHE_BLENDER_VERSION": BLENDER_VERSION, "CHE_MPFB_COMMIT": MPFB_COMMIT, "CHE_POOL_COMMIT": POOL_COMMIT,
             "CHE_ASSETS_COMMIT": ASSETS_COMMIT, "CHE_ALLOWED_BASES": ",".join(ALLOWED_BASES)}
-    web_image = modal.Image.debian_slim(python_version="3.11").pip_install("fastapi[standard]==0.115.12").env(pins)
+    def prefetch_txt2img_model():
+        """Image build: fetch SDXL-Turbo at the pinned revision (txt2img.py) into the image, so a cold start does not download it."""
+        import sys
+        if "/root" not in sys.path:
+            sys.path.insert(0, "/root")  # where add_local_file put txt2img.py
+        from huggingface_hub import snapshot_download
+        from txt2img import MODEL_ID, MODEL_REVISION
+        snapshot_download(MODEL_ID, revision=MODEL_REVISION, allow_patterns=["*.json", "*.txt", "*.safetensors", "*.model"])
+
+    web_image = (modal.Image.debian_slim(python_version="3.11").pip_install("fastapi[standard]==0.115.12")
+                 .add_local_file(os.path.join(os.path.dirname(os.path.abspath(__file__)), "txt2img.py"), "/root/txt2img.py", copy=True).env(pins))
     gpu_image = (modal.Image.debian_slim(python_version="3.11")
                  .apt_install("xz-utils", "ca-certificates", "libxi6", "libxkbcommon0", "libsm6", "libxrender1", "libgl1", "libegl1", "libxxf86vm1", "libxfixes3")
                  .env(pins).run_function(_install))
@@ -323,6 +335,29 @@ if modal is not None:  # pragma: no cover - runs on Modal, not in unit tests
         return {"ok": r.returncode == 0 and bool(out) and out.get("device") != "NONE", "gpu": gpu, "exit_code": r.returncode,
                 "container_seconds": round(time.time() - started, 1), **out}
 
+    # Text-to-image runs on its own image, so the render image above is unchanged. The model revision is pinned in
+    # txt2img.py and fetched at image build time, so a cold start does not download it again.
+    txt2img_image = (modal.Image.debian_slim(python_version="3.11")
+                     .pip_install("torch==2.4.1", "diffusers==0.31.0", "transformers==4.44.2", "accelerate==0.34.2",
+                                  "safetensors==0.4.5", "huggingface_hub==0.25.2", "pillow==10.4.0")
+                     .add_local_file(os.path.join(os.path.dirname(os.path.abspath(__file__)), "txt2img.py"), "/root/txt2img.py", copy=True)
+                     .run_function(prefetch_txt2img_model))
+
+    @app.function(image=txt2img_image, gpu=GPU, timeout=600, scaledown_window=TXT2IMG_SCALEDOWN_S, max_containers=1, retries=0)
+    def txt2img_gpu(args: dict) -> dict:
+        """One SDXL-Turbo picture on the T4. Validated again here; returns the PNG as base64 with its receipt."""
+        import sys
+        if "/root" not in sys.path:
+            sys.path.insert(0, "/root")
+        from txt2img import check_png, load_pipeline, result_receipt, run_txt2img, validate_txt2img_args
+        args = validate_txt2img_args(args)
+        started = time.time()
+        gpu = subprocess.run(["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"], capture_output=True, text=True).stdout.strip()[:80]
+        pipe = load_pipeline()
+        png = run_txt2img(pipe, args)
+        check_png(png)
+        return result_receipt(args, png, time.time() - started, gpu)
+
     @app.function(image=web_image, scaledown_window=SCALEDOWN_S, timeout=60, secrets=[modal.Secret.from_name(AUTH_SECRET_NAME)])
     @modal.asgi_app(label=ENDPOINT_LABEL)
     def api():
@@ -346,9 +381,34 @@ if modal is not None:  # pragma: no cover - runs on Modal, not in unit tests
         def bad(e):
             return JSONResponse({"ok": False, "error": str(e)[:200]}, status_code=422)
 
+        @web.post("/txt2img")
+        async def txt2img_start(request: Request):
+            """Starts one picture and answers at once with its call id. The Worker reads it at /txt2img/result."""
+            from txt2img import validate_txt2img_args
+            try:
+                args = validate_txt2img_args(await body_of(request))
+            except ValueError as e:
+                return bad(e)
+            call = txt2img_gpu.spawn(args)
+            return {"ok": True, "call_id": call.object_id, "model": "stabilityai/sdxl-turbo", "state": "started"}
+
+        @web.post("/txt2img/result")
+        async def txt2img_result(request: Request):
+            body = await body_of(request)
+            call_id = body.get("call_id") if isinstance(body, dict) else None
+            if not isinstance(call_id, str) or not re.fullmatch(r"fc-[A-Za-z0-9]{8,64}", call_id):
+                return bad(ValueError("call_id is required"))
+            try:
+                result = modal.FunctionCall.from_id(call_id).get(timeout=0)
+            except TimeoutError:
+                return {"ok": True, "call_id": call_id, "state": "running"}
+            except Exception as e:
+                return JSONResponse({"ok": False, "call_id": call_id, "state": "failed", "error": f"{type(e).__name__}: {str(e)[:200]}"}, status_code=502)
+            return {"ok": True, "call_id": call_id, "state": "done", **result}
+
         @web.get("/health")
         def health():
-            return {"ok": True, "app": APP_NAME, "version": APP_VERSION, "functions": ["health", "blender_preview"], "gpu": GPU,
+            return {"ok": True, "app": APP_NAME, "version": APP_VERSION, "functions": ["health", "blender_preview", "txt2img"], "gpu": GPU,
                     "blender": BLENDER_VERSION, "mpfb_commit": MPFB_COMMIT, "pool_commit": POOL_COMMIT, "max_call_s": MAX_CALL_S, "scaledown_s": SCALEDOWN_S}
 
         @web.post("/blender_preview")
