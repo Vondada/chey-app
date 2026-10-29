@@ -69,6 +69,15 @@ jobs:
           echo "CHE_PROBE_TOKEN=$token" >> "$GITHUB_ENV"
           sleep 20
 
+      - name: Blue cube asset in the Gallery (read-only check, no render)
+        env:
+          ASSET_ID: "32034371-0221-44f2-8db7-9955b7f9c9c6"
+        run: |
+          code=$(curl -s -o asset.json -w '%{http_code}' --max-time 90 -X POST "$CHE_WORKER/api/probe/media/verify" -H "Authorization: Bearer $CHE_PROBE_TOKEN" -H 'Content-Type: application/json' -d "{\"id\":\"$ASSET_ID\"}")
+          echo "Gallery verify for the blue cube: HTTP $code"
+          cat asset.json; echo
+          [ "$code" = "200" ] || echo "::warning::blue cube asset did not verify (HTTP $code)"
+
       - name: Earlier results to resume from (only when resume_run_id is given)
         if: inputs.resume_run_id != ''
         uses: actions/download-artifact@v4
