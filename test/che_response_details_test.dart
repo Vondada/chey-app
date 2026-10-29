@@ -16,6 +16,7 @@ Map<String, dynamic> modelReply({bool fallback = false}) => {
     };
 
 void main() {
+  _pictureTests();
   test('a model reply lists the Soul version, that it shaped the reply, and the model that answered', () {
     final lines = cheResponseDetailLines(cheResponseDetails({'type': 'done', ...modelReply()})!);
     expect(lines, contains('Soul on record: version 3, fingerprint a1b2c3d4.'));
@@ -79,5 +80,32 @@ void main() {
     expect(find.text('Personality'), findsOneWidget);
     expect(find.text('Answered by the model @cf/meta/llama-test.'), findsOneWidget);
     expect(find.text('Close'), findsOneWidget);
+  });
+}
+
+void _pictureTests() {
+  test('a Modal picture refusal names the handler and the reply layer, and gives Modal\'s own answer and the charge', () {
+    final details = cheResponseDetails({
+      'type': 'done',
+      'source': 'che_image_generation',
+      'handler': 'modal_txt2img',
+      'responder': 'deterministic_composer',
+      'model_calls': 0,
+      'modal_http_status': 422,
+      'modal_reason': 'width and height must be one of [256, 512]',
+      'budget_state': 'released',
+    })!;
+    final lines = cheResponseDetailLines(details);
+    expect(lines, contains('Handled by the CHE tool modal_txt2img (che_image_generation).'));
+    expect(lines, contains('CHE\'s reply layer wrote these words from the recorded facts. No model was called.'));
+    expect(lines, contains('Modal answered HTTP 422.'));
+    expect(lines, contains('Nothing was charged for it.'));
+    expect(lines.join(' '), isNot(contains('Answered by the model')));
+  });
+
+  test('a reply with a handler but no model says so and never names a model', () {
+    final lines = cheResponseDetailLines(cheResponseDetails({'type': 'done', 'handler': 'modal_txt2img', 'responder': 'deterministic_composer'})!);
+    expect(lines.join(' '), contains('No model was called.'));
+    expect(lines.join(' '), isNot(contains('model @')));
   });
 }

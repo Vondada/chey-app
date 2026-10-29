@@ -379,7 +379,11 @@ export async function startModalImage(env, storage, body, fetcher = fetch) {
     if (started.status >= 400 && started.status < 500) await releaseTestBudget(storage, hold.id, `Modal answered ${started.status}: the call did not start`);
     // Modal's own reason for the refusal (its validation message, never a secret), so the owner sees the cause, not just the code.
     const modalReason = String(started.data?.error || '').replace(/[^\x20-\x7E]/g, '').slice(0, 160);
-    return refuse(502, `Modal refused to start the picture (${started.status || started.error || 'no answer'}${modalReason ? `: ${modalReason}` : ''}). Nothing was generated; no other engine was used.`);
+    // The facts behind the detail, kept apart so the chat reply can word them without parsing the text: the HTTP status,
+    // Modal's reason (or null), and whether the reservation was released (nothing charged) or kept (outcome unknown).
+    const http_status = Number(started.status) || null;
+    const budget_state = http_status >= 400 && http_status < 500 ? 'released' : 'reserved';
+    return { ...refuse(502, `Modal refused to start the picture (${started.status || started.error || 'no answer'}${modalReason ? `: ${modalReason}` : ''}). Nothing was generated; no other engine was used.`), http_status, modal_reason: modalReason || null, budget_state };
   }
   const record = { call_id: started.data.call_id, prompt, title: String(body?.title || prompt).slice(0, 80), state: 'started', created_at: now(), budget_hold_id: hold.id };
   await storage.put(MODAL_IMAGE_KEY, [...records, record].slice(-20));

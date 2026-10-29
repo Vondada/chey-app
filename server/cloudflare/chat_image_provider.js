@@ -4,6 +4,7 @@
 import { modalCredential } from './modal_gpu.js';
 import { MODAL_IMAGE_FLAG, MODAL_IMAGE_KEY, startModalImage } from './media.js';
 import { CHAT_IMAGE_SOURCE, chatImageInline, chatImageMedia, chatImageReply, requestedImageCount } from './chat_images.js';
+import { COMPOSER, oncePerSentence, refusedPictureText, startedPictureText } from './execution_reply.js';
 
 /** The engine for one chat picture request: { provider: 'modal' | 'workers_ai', reason }. */
 export async function chatImageProvider(env, storage, { count = 1 } = {}) {
@@ -17,12 +18,14 @@ export async function chatImageProvider(env, storage, { count = 1 } = {}) {
   return { provider: 'modal', reason: 'Modal is connected, authorized and within its cap' };
 }
 
-/** The chat reply for a Modal picture that was started: the job id and what is still to come, never a claim of an image. */
+/**
+ * The chat reply for a Modal picture: the job id and what is still to come when it started, or the handler's own facts
+ * when it was refused. The sentences come from execution_reply.js; a refusal without recorded facts keeps the plain wording.
+ */
 export function modalPictureReply(started) {
-  if (started?.status === 202 && started.call_id) {
-    return `I started the picture on Modal's GPU, sir (provider: Modal, job ${started.call_id}). It is not in your Gallery yet. Nothing is saved until Modal's result passes its checks.`;
-  }
-  return `I did not start a Modal GPU picture, sir: ${refusalReason(started?.detail) || 'Modal did not answer'}. Nothing was generated; no other engine was used.`;
+  if (started?.status === 202 && started.call_id) return startedPictureText(started);
+  if (started?.http_status !== undefined) return refusedPictureText({ http_status: started.http_status, modal_reason: started.modal_reason, budget_state: started.budget_state });
+  return oncePerSentence(`I did not start a Modal GPU picture, sir: ${refusalReason(started?.detail) || 'Modal did not answer'}. Nothing was generated; no other engine was used.`);
 }
 
 /**
@@ -50,6 +53,21 @@ export function explicitModalAsk(message) {
 }
 
 /**
+ * The meta the Details panel reads for a Modal picture: the handler that ran, who composed the words (CHE's reply layer, no
+ * model), and the handler's recorded facts. `modal_http_status` is Modal's own answer; `status` is the Worker's.
+ */
+export function pictureMeta(started) {
+  const ok = started?.status === 202;
+  return {
+    source: CHAT_IMAGE_SOURCE, ok, model_calls: 0,
+    handler: 'modal_txt2img', responder: COMPOSER,
+    provider_requested: 'modal', provider_used: ok ? 'modal' : null,
+    call_id: started?.call_id || null, saved: false,
+    modal_http_status: started?.http_status ?? null, modal_reason: started?.modal_reason ?? null, budget_state: started?.budget_state ?? null,
+  };
+}
+
+/**
  * One picture request in chat: the engine is chosen here, the picture is made by it, and the reply says which engine made it.
  * `makeImages(count)` is the Workers AI path (chat_images.js). Returns { text, meta } for the chat.
  */
@@ -66,7 +84,7 @@ export async function chatPictureTurn(env, storage, { message, origin, makeImage
   if (choice.provider === 'modal') {
     const prompt = String(message || '').replace(/^\s*(?:(?:hey\s+)?(?:che|chay|chey|shay)[,:]?\s+)?/i, '').trim();
     const started = await startModalImage(env, storage, { prompt, title: prompt.slice(0, 60) });
-    return { text: modalPictureReply(started), meta: { source: CHAT_IMAGE_SOURCE, ok: started.status === 202, model_calls: 0, provider_requested: 'modal', provider_used: started.status === 202 ? 'modal' : null, call_id: started.call_id || null, saved: false } };
+    return { text: modalPictureReply(started), meta: pictureMeta(started) };
   }
   const results = await makeImages(count);
   return { text: workersAiNote(choice.reason) + chatImageReply(results), meta: { source: CHAT_IMAGE_SOURCE, ok: results.some((r) => r.ok), model_calls: 0, provider_used: 'workers_ai', media: chatImageMedia(results), ...chatImageInline(results, origin) } };
