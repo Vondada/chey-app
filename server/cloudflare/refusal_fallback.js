@@ -37,6 +37,31 @@ export function classifyFailure({ error = null, answer = null } = {}) {
 //   person, weapons or self-harm instructions). Never moved to another engine, whatever the refusal says.
 export const REQUEST_CLASSES = Object.freeze(['ordinary', 'adult_fiction', 'hard_stop']);
 
+// Hard stops: sexual content involving a minor, sexual content about a real person, and instructions for weapons or
+// self-harm. These are matched first, so a request that also looks like fiction is still a hard stop.
+const HARD_STOP = [
+  /\b(?:minor|underage|child|kid|teen|teenager|14|15|16|17)\b[^.?!]{0,60}\b(?:sex|sexual|nude|naked|porn)\w*/,
+  /\b(?:sex|sexual|nude|naked|porn)\w*\b[^.?!]{0,60}\b(?:minor|underage|child|kid|teen|teenager)\b/,
+  /\b(?:sex|sexual|nude|naked|porn)\w*\b[^.?!]{0,60}\b(?:my (?:ex|neighbou?r|coworker|boss|teacher|sister|cousin|mom|dad)|real (?:person|woman|man|girl|guy))\b/,
+  /\b(?:build|make|synthesi[sz]e|assemble)\b[^.?!]{0,40}\b(?:bomb|explosive|nerve agent|bioweapon|ricin|sarin)\b/,
+  /\b(?:how (?:do i|to|can i)|ways to)\b[^.?!]{0,30}\b(?:kill myself|commit suicide|self[- ]harm)\b/,
+];
+// Adult fiction: an explicit scene asked for as a story, within policy. Only the fiction route can move it.
+const ADULT_FICTION = /\b(?:explicit|erotic|sex scene|steamy scene|love scene)\b/;
+const FICTION_ASK = /\b(?:story|scene|chapter|fiction|novel|roleplay|role ?play)\b/;
+
+/**
+ * The request class for the fallback policy, from the owner's message alone. Unmatched ordinary asks are ordinary.
+ * Hard stops are checked first, so a request matching both a hard stop and adult fiction is a hard stop.
+ */
+export function requestClassFor(message) {
+  const text = String(message || '').toLowerCase().replace(/[’‘`]/g, "'");
+  if (!text.trim()) return 'hard_stop';
+  if (HARD_STOP.some((rule) => rule.test(text))) return 'hard_stop';
+  if (ADULT_FICTION.test(text) && FICTION_ASK.test(text)) return 'adult_fiction';
+  return 'ordinary';
+}
+
 /**
  * Decide whether another attempt may run after one failed.
  *   requestClass   : one of REQUEST_CLASSES. Unknown values are hard_stop.
