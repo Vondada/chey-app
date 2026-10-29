@@ -44,6 +44,7 @@ import { testBudgetReport } from './gpu_test_budget.js';
 import { modalCubeProbe, modalCubeResult } from './modal_cube_probe.js';
 import { deleteMedia, finishModalImage, generateImage, modalImageCheckTimes, pendingModalImages, reconcileModalImages, generateVideo, listMedia, readBlob, saveOwnerFile, upscaleImage, verifyMediaFile } from './media.js';
 import { withCheNote, guardEngineClaims, guardSoulClaims, lastReplyRecord, loadSoul, replyProvenanceAnswer, replyProvenanceQuestion, restoreSoul, saveSoul, soulPromptBlock, soulProvenance, soulView, stripPhoneSoul } from './soul.js';
+import { classifyFailure as classifyEngineFailure, decideFallback, requestClassFor } from './refusal_fallback.js';
 import { isStoryTurn, storyMode, storyModeBlock } from './story_mode.js';
 import { mediaHoldAnswer, mediaHoldIntent, mediaKeepFor, mediaLatestReply, mediaLibraryIntent, mediaLibraryReply, mediaLibraryReport, mediaLatestOpenRow, mediaOpenIntent, mediaOpenMissingReply, mediaOpenReply, mediaOpenRow, mediaRows, mediaSaveIntent, mediaSaveReply, mediaShowLatestIntent, mediaShowReply, verifyMediaRows, wantsLatestVideo } from './media_library.js';
 import { capabilityGap, capabilityReply } from './capability_gap.js';
@@ -77,7 +78,7 @@ import { answerEvidenceReceipt, cachedResearch, evidenceReferenceFollowup, factK
 import { claimMatcher, disprovenContext, downgradeDisproven, externalCorrection, guardCitations, loadDisproven, newsQuestion, newsResearch, reopenArticles, recheckExternalClaim, recordDisproven, verifiedSourcesContext } from './source_verification.js';
 import { recordReliability, reliabilityIntent, reliabilitySummary, speakReliability } from './reliability_ledger.js';
 import { reliabilityApi, reliabilityTurn } from './reliability_registry.js';
-import { answerOwnerMemoryQuestion, auditMemoryProvenance, evidenceQuestion, evidenceReferent, evidenceRequestSplit, explainEvidenceFor, findAnswerEvidence, brainRecordForProvenance, guardOwnerAttributions, guardRememberBlock, guardSpeakerAttributions, latestAnswerEvidence, loadRetractions, RECALL_OUTCOMES, readOutcome, memoryPromptContext, ownerFactCorrection, ownerMemoryQuestion, ownerWords, recordAnswerEvidence, recordRetractions, storedSpeaker, storyRequested } from './memory_provenance.js';
+import { answerOwnerMemoryQuestion, auditMemoryProvenance, evidenceQuestion, evidenceReferent, evidenceRequestSplit, explainEvidenceFor, findAnswerEvidence, brainRecordForProvenance, guardOwnerAttributions, guardRememberBlock, guardSpeakerAttributions, latestAnswerEvidence, loadRetractions, RECALL_OUTCOMES, readOutcome, memoryPromptContext, ownerFactCorrection, ownerMemoryQuestion, ownerWords, recordAnswerEvidence, recordRetractions, storedSpeaker, storyRequested, requestNamesAction } from './memory_provenance.js';
 import { condenseHistory, ownerNotificationPolicy } from './workflow_governor.js';
 import { analyze as tradeAnalyze, backtestAll, candleSpan, loadCandles, paperTick, readBook, speakAnalysis, speakBacktest, speakBook, speakLearning, nextTradingTickAt, tradingIntent, watchSymbol, STRATEGIES } from './trading_lab.js';
 import { intelligenceIntent, intelligenceReport, intelligenceView, speakIntelligence, startStudy, studyAlarm, studyStep } from './historical_intelligence.js';
@@ -3343,7 +3344,7 @@ function servedBy(answer, requestedModel, route, fallback) {
 // Runs the chat model. Route/model selection may change on failure;
 // original rules, requirements and history remain intact on every attempt.
 // cheProvider (e.g. native Grok chat) pins the engine when set.
-async function runChatModel(env, { model, systemPrompt, compactPrompt, turns, message, maxTokens, cheContext = null, cheProvider = '', preferFast = false }) {
+export async function runChatModel(env, { model, systemPrompt, compactPrompt, turns, message, maxTokens, cheContext = null, cheProvider = '', preferFast = false }) {
   const provider = String(cheProvider || '').trim().toLowerCase().slice(0, 40);
   const attempts = chatModelAttempts({
     preferFast,
@@ -3354,7 +3355,10 @@ async function runChatModel(env, { model, systemPrompt, compactPrompt, turns, me
     turns,
   });
   let lastError;
-  for (const attempt of attempts) {
+  // Refusal-aware fallback (refusal_fallback.js): a hard-stop request never moves to another engine, and the attempt limit holds.
+  const requestClass = requestClassFor(message);
+  const sideEffect = requestNamesAction(message);
+  for (const [attemptIndex, attempt] of attempts.entries()) {
     try {
       const baseMessages = [
         { role: 'system', content: attempt.system },
@@ -3413,6 +3417,11 @@ async function runChatModel(env, { model, systemPrompt, compactPrompt, turns, me
       console.error('CHE chat model attempt failed', attempt.model, attempt.system.length, error?.message);
       // Every engine is out of quota: retrying only burns more allowance.
       if (error?.quota) break;
+      const decision = decideFallback({ requestClass, failure: classifyEngineFailure({ error }), attemptsMade: attemptIndex + 1, sideEffect });
+      if (!decision.next) {
+        console.error('CHE chat fallback stopped', decision.reason);
+        break;
+      }
     }
   }
   throw lastError;
