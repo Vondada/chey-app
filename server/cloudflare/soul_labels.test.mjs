@@ -15,6 +15,10 @@ test('a label copied onto its own line in the middle of a reply is removed', () 
 
 test('ordinary text that only mentions a trait is left alone', () => {
   assert.equal(stripSoulLabels('Your warmth toward him is real.'), 'Your warmth toward him is real.');
+  // The live social probe (deploy 3001cbb1) failed on a reply that began "Warmth 7/10: You seem to be in a family-friendly...".
+  assert.equal(stripSoulLabels('Warmth 7/10: You seem to be in a family-friendly environment, sir.'), 'You seem to be in a family-friendly environment, sir.');
+  assert.equal(stripSoulLabels('Directness 8/10: Since you are around kids, plan something fun.'), 'Since you are around kids, plan something fun.');
+  assert.equal(stripSoulLabels('Warmth 7/10 is what I give you, sir.'), 'Warmth 7/10 is what I give you, sir.');
   assert.equal(stripSoulLabels('Detail: the record shows the date.'), 'Detail: the record shows the date.');
   assert.equal(stripSoulLabels('Plain reply.'), 'Plain reply.');
   assert.equal(stripSoulLabels(''), '');

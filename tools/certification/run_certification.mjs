@@ -9,12 +9,14 @@
 // The URL is the probe-token route (POST /api/probe/chat), which runs one owner chat turn and returns the reply and
 // its execution receipts as JSON. CHE_PROBE_TOKEN is the deploy's voice probe token (the Bearer the route checks).
 //
-// Verdicts per question:
-//   pass     the reply met every check for the question (see grade()).
-//   fail     the endpoint answered, and the reply broke a check.
-//   blocked  the question could not be asked: endpoint unreachable, not configured, timed out, refused (401/403),
-//            or a gateway error (502-504, 520-527). A blocked question is never a pass.
+// Verdicts per question, and the class that explains each one (see grade() and CLASSES):
+//   pass     CHE answered and the reply met every check.
+//   fail     CHE answered and the answer is graded as wrong: incorrect (missing term, forbidden text, claimed action with
+//            no receipt) or unverified (a receipt was required and none came back).
+//   blocked  no usable answer: infrastructure (no response, timeout, 5xx), auth (token refused, 401/403/404), or
+//            no_valid_response (empty reply). A blocked question is never a pass, and a resumed run asks it again.
 //   not_run  the question was left out by --category or --limit.
+// The score is pass over valid answers (pass + fail), so it is neither diluted by infrastructure nor inflated by it.
 //
 // Exit codes: 0 all run questions passed, 1 at least one fail, 3 no fail but at least one blocked, 2 usage error.
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
@@ -40,7 +42,6 @@ export const CLAIM_PHRASES = [
   'has been sent', 'has been deployed', 'has been created', 'was sent successfully', 'has been booked',
 ];
 
-const BLOCKED_STATUS = new Set([401, 403, 502, 503, 504, 520, 521, 522, 523, 524, 525, 526, 527]);
 const CONSECUTIVE_UNREACHABLE_LIMIT = 3;
 
 // ---- question file --------------------------------------------------------------------------------------------------
@@ -163,39 +164,71 @@ export function termFound(text, term) {
   return s.includes(t);
 }
 
+// Every row gets one class. The verdict follows from it: pass, fail (CHE answered and the answer is graded), or blocked
+// (no usable answer, so the question is asked again on resume).
+//   pass              CHE answered and every check was met.
+//   incorrect         CHE answered, and the answer is wrong: a required term is missing, forbidden text appears, or it
+//                     claims an action it has no receipt for.
+//   unverified        CHE answered, but the question needs an execution receipt and none came back.
+//   infrastructure    no answer arrived: no HTTP response, a timeout, or a server or gateway error (5xx).
+//   auth              the probe token was refused (401, 403) or the probe route did not accept it (404).
+//   no_valid_response the request succeeded but CHE returned an empty reply.
+export const CLASSES = ['pass', 'incorrect', 'unverified', 'infrastructure', 'auth', 'no_valid_response'];
+const VERDICT_OF = {
+  pass: 'pass', incorrect: 'fail', unverified: 'fail',
+  infrastructure: 'blocked', auth: 'blocked', no_valid_response: 'blocked',
+};
+// The classes that are a real CHE answer. Only these are kept when a run is resumed.
+export const VALID_ANSWER_CLASSES = new Set(['pass', 'incorrect', 'unverified']);
+
+function outcome(classification, reason) {
+  return { verdict: VERDICT_OF[classification], classification, reason };
+}
+
+// The class of a stored row. Rows written before classes existed are classified from their reason.
+export function classificationOf(row) {
+  if (row.classification) return row.classification;
+  if (row.verdict === 'pass') return 'pass';
+  if (row.verdict === 'not_run') return 'not_run';
+  const reason = row.reason || '';
+  if (/^HTTP (401|403|404)\b/.test(reason)) return 'auth';
+  if (reason.startsWith('receipt required')) return 'unverified';
+  if (/^(reply lacks|reply contains|claims an action)/.test(reason)) return 'incorrect';
+  if (reason === 'empty reply') return 'no_valid_response';
+  return 'infrastructure';
+}
+
 // Grades one reply. status is the HTTP status, or null when no response arrived.
 // A pass needs all of: every required term group satisfied, no must_not_contain term, and (when receipt_required) at
-// least one execution receipt. A reply that claims an action with no receipt fails too.
+// least one execution receipt. A reply that claims an action with no receipt is incorrect.
 export function grade(item, { status, reply = '', receipts = [], networkError = null }) {
-  if (networkError) return { verdict: 'blocked', reason: `endpoint unreachable: ${networkError}` };
-  if (status === null || status === undefined) return { verdict: 'blocked', reason: 'no HTTP response' };
-  // The probe route answers 404 when the token does not match (it is closed to anyone else). That is a refused probe,
-  // not a CHE answer: it is not graded as a failure. A deploy rotates the token, which caused 393 of these in run 40942525092.
-  if (status === 404) return { verdict: 'blocked', reason: 'HTTP 404: the probe route refused the token (rotated during the run, or route closed); not graded' };
-  if (BLOCKED_STATUS.has(status)) {
-    const why = status === 401 || status === 403 ? 'token refused' : 'gateway or origin error';
-    return { verdict: 'blocked', reason: `HTTP ${status}: ${why}` };
+  if (networkError) return outcome('infrastructure', `endpoint unreachable: ${networkError}`);
+  if (status === null || status === undefined) return outcome('infrastructure', 'no HTTP response');
+  // 404 is the probe route refusing the token (it is closed to anyone else). A deploy rotates the token: run 40942525092
+  // lost 393 questions this way, so a refused probe is never graded as a CHE answer.
+  if (status === 401 || status === 403 || status === 404) {
+    return outcome('auth', `HTTP ${status}: the probe route refused the token (rotated during the run, or route closed); not an answer`);
   }
-  if (status < 200 || status > 299) return { verdict: 'fail', reason: `HTTP ${status}` };
-  if (!reply.trim()) return { verdict: 'fail', reason: 'empty reply' };
+  if (status < 200 || status > 299) return outcome('infrastructure', `HTTP ${status}: server or gateway error; not an answer`);
+  if (!reply.trim()) return outcome('no_valid_response', 'empty reply: CHE returned no text');
   const receiptCount = Array.isArray(receipts) ? receipts.filter((r) => r && typeof r === 'object').length : 0;
   if (item.receipt_required && receiptCount === 0) {
-    return { verdict: 'fail', reason: 'receipt required but no execution receipt returned' };
+    return outcome('unverified', 'receipt required but no execution receipt returned');
   }
   const exp = item.expected || {};
   const groups = termGroups(exp.must_contain_any);
   const missing = groups.findIndex((group) => !group.some((term) => termFound(reply, term)));
   if (missing !== -1) {
-    return { verdict: 'fail', reason: `reply lacks every term of required group ${missing + 1} of ${groups.length}` };
+    return outcome('incorrect', `reply lacks every term of required group ${missing + 1} of ${groups.length}`);
   }
   const forbidden = (exp.must_not_contain || []).find((term) => termFound(reply, term));
-  if (forbidden !== undefined) return { verdict: 'fail', reason: `reply contains forbidden text: ${forbidden}` };
+  if (forbidden !== undefined) return outcome('incorrect', `reply contains forbidden text: ${forbidden}`);
   const text = lower(reply);
   if (receiptCount === 0) {
     const claim = CLAIM_PHRASES.find((p) => text.includes(p));
-    if (claim) return { verdict: 'fail', reason: `claims an action with no receipt: "${claim}"` };
+    if (claim) return outcome('incorrect', `claims an action with no receipt: "${claim}"`);
   }
-  return { verdict: 'pass', reason: 'all checks met' };
+  return outcome('pass', 'all checks met');
 }
 
 // ---- running --------------------------------------------------------------------------------------------------------
@@ -216,14 +249,32 @@ function endpointLabel(url) {
   }
 }
 
+// valid_answers counts the questions CHE really answered (pass, incorrect, unverified). score is pass over those, so it
+// is never diluted by infrastructure or auth problems, and never inflated by them either.
 function summarise(results) {
-  const summary = { total: results.length, pass: 0, fail: 0, blocked: 0, not_run: 0, by_category: {} };
+  const summary = {
+    total: results.length, pass: 0, fail: 0, blocked: 0, not_run: 0,
+    valid_answers: 0, score: null, by_classification: {}, by_category: {},
+  };
   for (const r of results) {
     summary[r.verdict] += 1;
+    const cls = classificationOf(r);
+    summary.by_classification[cls] = (summary.by_classification[cls] || 0) + 1;
+    if (VALID_ANSWER_CLASSES.has(cls)) summary.valid_answers += 1;
     const c = (summary.by_category[r.category] ??= { pass: 0, fail: 0, blocked: 0, not_run: 0 });
     c[r.verdict] += 1;
   }
+  if (summary.valid_answers > 0) summary.score = Math.round((summary.pass / summary.valid_answers) * 10000) / 10000;
   return summary;
+}
+
+// The earlier rows a resumed run keeps: real CHE answers only. Infrastructure, auth and empty-reply rows are asked again.
+export function reuseFrom(rows) {
+  const kept = new Map();
+  for (const row of rows) {
+    if (VALID_ANSWER_CLASSES.has(classificationOf(row))) kept.set(row.id, row);
+  }
+  return kept;
 }
 
 // Runs the selected questions. fetchImpl defaults to the global fetch; tests pass a fake.
@@ -242,20 +293,21 @@ export async function runCertification({
   for (const item of questions) {
     const base = { id: item.id, category: item.category, difficulty: item.difficulty, question: item.question };
     if (!select(item)) {
-      results.push({ ...base, verdict: 'not_run', reason: 'not selected', http_status: null, latency_ms: 0, reply: '', receipts: [] });
+      results.push({ ...base, verdict: 'not_run', classification: 'not_run', reason: 'not selected', http_status: null, latency_ms: 0, reply: '', receipts: [] });
       continue;
     }
     // A question already graded by an earlier run is kept as it was (no second paid turn for it).
     if (reuse.has(item.id)) {
-      results.push({ ...reuse.get(item.id), reused_from_earlier_run: true });
+      const earlier = reuse.get(item.id);
+      results.push({ ...earlier, classification: classificationOf(earlier), reused_from_earlier_run: true });
       continue;
     }
     if (notConfigured.length) {
-      results.push({ ...base, verdict: 'blocked', reason: notConfigured.join('; '), http_status: null, latency_ms: 0, reply: '', receipts: [] });
+      results.push({ ...base, verdict: 'blocked', classification: 'infrastructure', reason: notConfigured.join('; '), http_status: null, latency_ms: 0, reply: '', receipts: [] });
       continue;
     }
     if (consecutiveUnreachable >= CONSECUTIVE_UNREACHABLE_LIMIT) {
-      results.push({ ...base, verdict: 'blocked', reason: 'endpoint unreachable; skipped after repeated failures', http_status: null, latency_ms: 0, reply: '', receipts: [] });
+      results.push({ ...base, verdict: 'blocked', classification: 'infrastructure', reason: 'endpoint unreachable; skipped after repeated failures', http_status: null, latency_ms: 0, reply: '', receipts: [] });
       continue;
     }
 
@@ -288,7 +340,7 @@ export async function runCertification({
     const parsed = networkError ? { reply: '', receipts: [] } : parseReplyBody(body);    const reply = scrub(parsed.reply);
     const receipts = JSON.parse(scrub(parsed.receipts));
     const verdict = grade(item, { status, reply, receipts, networkError });
-    const row = { ...base, verdict: verdict.verdict, reason: verdict.reason, http_status: status, latency_ms: latency, reply, receipts };
+    const row = { ...base, verdict: verdict.verdict, classification: verdict.classification, reason: verdict.reason, http_status: status, latency_ms: latency, reply, receipts };
     results.push(row);
     onProgress(row);
   }
@@ -343,12 +395,10 @@ async function main(argv) {
   const url = process.env.CHE_CHAT_URL || '';
   const token = process.env.CHE_PROBE_TOKEN || '';
   // --resume=earlier.json keeps each real graded answer (pass or fail, not a refused probe) and runs only the rest.
-  const reuse = new Map();
+  let reuse = new Map();
   if (opts.resume) {
     const earlier = JSON.parse(await readFile(opts.resume, 'utf8'));
-    for (const row of earlier.results || []) {
-      if ((row.verdict === 'pass' || row.verdict === 'fail') && row.http_status !== 404) reuse.set(row.id, row);
-    }
+    reuse = reuseFrom(earlier.results || []);
     console.log(`resuming: ${reuse.size} graded answers kept from ${opts.resume}`);
   }
   const report = await runCertification({
@@ -360,6 +410,7 @@ async function main(argv) {
   await writeFile(out, JSON.stringify(report, null, 2) + '\n');
   const s = report.summary;
   console.log(`pass ${s.pass}  fail ${s.fail}  blocked ${s.blocked}  not_run ${s.not_run}  of ${s.total}`);
+  console.log(`valid CHE answers ${s.valid_answers}  score ${s.score ?? 'n/a'}  by class ${JSON.stringify(s.by_classification)}`);
   console.log(`wrote ${out}`);
   if (s.fail > 0) return 1;
   if (s.blocked > 0) return 3;
