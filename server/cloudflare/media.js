@@ -353,6 +353,17 @@ export const MODAL_IMAGE_TIMEOUT_MS = 15 * 60 * 1000;
 
 const hexOf = (buffer) => Array.from(new Uint8Array(buffer)).map((b) => b.toString(16).padStart(2, '0')).join('');
 
+/**
+ * Modal's reason for a refusal, short and printable. The handler says it in `error`; a framework's own 422 says it in
+ * `detail` (a list of { msg } or a string); anything else is the body's own words. Empty when none of them is there.
+ */
+export function modalReasonOf(started) {
+  const d = started?.data;
+  const detail = Array.isArray(d?.detail) ? d.detail.map((x) => x?.msg || JSON.stringify(x)).join('; ') : d?.detail;
+  const raw = d?.error || detail || started?.refusal_text || '';
+  return String(raw).replace(/[^\x20-\x7E]/g, '').slice(0, 160);
+}
+
 /** Starts one Modal GPU picture and answers with its call id. Nothing is saved until the result is read and checked. */
 export async function startModalImage(env, storage, body, fetcher = fetch) {
   const refuse = (status, detail) => ({ status, detail, provider_requested: 'modal', provider_used: null, nothing_generated: true });
@@ -378,7 +389,7 @@ export async function startModalImage(env, storage, body, fetcher = fetch) {
     // A 4xx answer means Modal did not start the call (no cost). A network failure might have started it, so the reservation stays.
     if (started.status >= 400 && started.status < 500) await releaseTestBudget(storage, hold.id, `Modal answered ${started.status}: the call did not start`);
     // Modal's own reason for the refusal (its validation message, never a secret), so the owner sees the cause, not just the code.
-    const modalReason = String(started.data?.error || '').replace(/[^\x20-\x7E]/g, '').slice(0, 160);
+    const modalReason = modalReasonOf(started);
     // The facts behind the detail, kept apart so the chat reply can word them without parsing the text: the HTTP status,
     // Modal's reason (or null), and whether the reservation was released (nothing charged) or kept (outcome unknown).
     const http_status = Number(started.status) || null;
