@@ -109,6 +109,7 @@ import 'create/che_project_manager.dart';
 import 'create/che_creation_engine_page.dart';
 import 'create/che_scene_client.dart';
 import 'create/che_scene_studio_page.dart';
+import 'create/che_scene_voice.dart';
 import 'create/che_gpu_browser.dart';
 import 'create/che_gpu_connect.dart';
 import 'create/che_live_studio.dart';
@@ -708,6 +709,26 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
     unawaited(Navigator.of(context).push(MaterialPageRoute<void>(
       builder: (_) => CheSceneListPage(client: CheSceneClient(baseUrl: cheAgentBaseUrl, headers: () => _authHeaders)),
     )));
+  }
+
+  /// Voice: "open my last project" opens the newest saved scene (the list is newest first); with none saved, the project list.
+  Future<void> _openLastSceneProject() async {
+    final client = CheSceneClient(baseUrl: cheAgentBaseUrl, headers: () => _authHeaders);
+    List<SceneSummary> scenes;
+    try {
+      scenes = await client.list();
+    } catch (_) {
+      scenes = const [];
+    }
+    if (!mounted) return;
+    if (scenes.isEmpty) {
+      _openSceneProjects();
+      return;
+    }
+    HapticFeedback.selectionClick();
+    await Navigator.of(context).push(MaterialPageRoute<void>(
+      builder: (_) => CheSceneStudioPage(client: client, sceneId: scenes.first.id),
+    ));
   }
 
   /// SECURITY: Home → Security, More → Security, and "open security" by voice.

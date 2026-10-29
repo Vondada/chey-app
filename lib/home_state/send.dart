@@ -327,6 +327,17 @@ extension _CheHomeSend on _CHEHomeState {
     }
     // Creation by voice from any screen, all inside CHE (owner, 2026-10-24: never a website in ordinary use).
     final wake = r'^\W*(?:(?:che|chey|chay)[,:]?\s+)?';
+    // Create Studio projects by voice: the project list, and the newest saved project.
+    switch (sceneVoiceRoute(lower)) {
+      case SceneVoiceRoute.projects:
+        _openSceneProjects();
+        return true;
+      case SceneVoiceRoute.lastProject:
+        unawaited(_openLastSceneProject());
+        return true;
+      case null:
+        break;
+    }
     if (RegExp('$wake(?:create|make|build)(?: me)? (?:a |an )?(?:new )?(?:person|character|human|avatar)\\W*\$').hasMatch(lower)) {
       _openCreativeStudio(say: 'create a person');
       return true;
