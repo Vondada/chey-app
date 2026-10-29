@@ -120,3 +120,20 @@ test('a reply that every check removed is a named error line with the request id
   assert.match(items[0].message, /checks removed all of it/);
   assert.equal(res.headers.get('content-type'), 'application/x-ndjson; charset=utf-8');
 });
+
+// Codex review of #736 (worker.js): the pipeline's removal entries carry the rule in claim_type, not rule. The empty-reply
+// log must name the rule from a real pipeline entry, not "no stage named a rule".
+test('the empty-reply log names the removing rule from a real pipeline entry', async () => {
+  const { guardRemovalEntries } = await import('./hallucination_auditor.js');
+  const warns = [];
+  const original = console.warn;
+  console.warn = (...args) => warns.push(args.join(' '));
+  try {
+    emptyReplyStream('req-9', guardRemovalEntries('unverified_action', [{ rule: 'unverified_action', sentence: 'I merged it.' }]));
+  } finally {
+    console.warn = original;
+  }
+  const log = warns.join('\n');
+  assert.match(log, /unverified_action/);
+  assert.doesNotMatch(log, /no stage named a rule/);
+});

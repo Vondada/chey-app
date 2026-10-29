@@ -615,7 +615,8 @@ function ndjsonReply(reply, meta = {}) {
 // A reply that every truth stage removed is never sent as a blank success. The owner gets a named reason and the
 // request id, and the stage rules that removed it are logged, so the cause can be read in the Worker log.
 export function emptyReplyStream(requestId, removals = []) {
-  const rules = [...new Set((removals || []).map((item) => item?.rule).filter(Boolean))].slice(0, 6);
+  // Pipeline entries (guardRemovalEntries) carry the guard and rule in claim_type; raw entries carry rule.
+  const rules = [...new Set((removals || []).map((item) => item?.rule || item?.claim_type).filter(Boolean))].slice(0, 6);
   console.warn('CHE reply empty after checks', requestId, rules.join(', ') || 'no stage named a rule');
   return new Response(JSON.stringify({
     type: 'error',
