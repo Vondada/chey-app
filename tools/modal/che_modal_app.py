@@ -30,7 +30,9 @@ an idle container for at most a minute, and every GPU call has a hard timeout.
 Deploy: .github/workflows/che-modal-deploy.yml (workflow_dispatch, needs MODAL_TOKEN_ID / MODAL_TOKEN_SECRET).
 Tests: python3 -m unittest discover -s tools -p test_che_modal_app.py (no `modal` package needed).
 """
-from __future__ import annotations
+# Annotations are evaluated now, not postponed: FastAPI resolves `request: Request` from the function's globals, and
+# a postponed annotation cannot see `Request` (imported inside api()), so every request was a 422
+# "query.request: Field required". Python 3.11 (the Modal image) evaluates `str | None` at runtime, so nothing else needs it.
 
 import json
 import os
