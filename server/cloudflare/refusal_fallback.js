@@ -1,0 +1,81 @@
+// Refusal-aware fallback: what CHE does after one engine in her rotation fails. Pure functions, no network.
+// The chat router (runChatModel in worker.js) asks decideFallback() after each failed attempt. It does not build a
+// second router: the attempts list stays where it is, and this only decides whether the next attempt may run.
+
+export const MAX_ENGINE_ATTEMPTS = 3;
+
+// What kind of failure this was. A provider's content refusal is kept apart from a technical failure, so a
+// refusal is never retried as if it were a timeout.
+export const FAILURES = Object.freeze({
+  REFUSAL: 'provider_refusal',
+  CAPABILITY: 'capability_limit',
+  TIMEOUT: 'timeout',
+  TECHNICAL: 'technical_error',
+  PERMISSION: 'permission_restriction',
+  QUOTA: 'quota',
+  NONE: 'none',
+});
+
+/**
+ * The failure kind of one attempt, from what the engine returned or threw.
+ * `error` is a thrown error (name, message, status, quota flag); `answer` is a returned value with a refusal flag.
+ */
+export function classifyFailure({ error = null, answer = null } = {}) {
+  if (answer?.refused === true) return FAILURES.REFUSAL;
+  if (!error) return FAILURES.NONE;
+  if (error.quota) return FAILURES.QUOTA;
+  if (error.permission || error.status === 401 || error.status === 403) return FAILURES.PERMISSION;
+  if (error.capability || error.category === 'unsupported_capability') return FAILURES.CAPABILITY;
+  if (error.name === 'AbortError' || error.timeout || error.status === 408 || error.status === 504) return FAILURES.TIMEOUT;
+  return FAILURES.TECHNICAL;
+}
+
+// How the request may be routed, set by the caller. Anything not listed is treated as hard_stop (fail closed).
+// - ordinary: everyday chat, coding, maths, research, most creative work. May move to another compatible engine.
+// - adult_fiction: adult-oriented fiction within policy. May move to another compatible engine that is authorised for it.
+// - hard_stop: a request the safety rules never serve (sexual content involving minors, sexual content about a real
+//   person, weapons or self-harm instructions). Never moved to another engine, whatever the refusal says.
+export const REQUEST_CLASSES = Object.freeze(['ordinary', 'adult_fiction', 'hard_stop']);
+
+/**
+ * Decide whether another attempt may run after one failed.
+ *   requestClass   : one of REQUEST_CLASSES. Unknown values are hard_stop.
+ *   failure        : a FAILURES value from classifyFailure().
+ *   attemptsMade   : engine attempts already made for this request (including the one that failed).
+ *   sideEffect     : true when the request does something outside the chat (spend, send, upload, render, trade).
+ *   jobAlreadyRan  : true when the job history shows the same request already started a billable or external action.
+ * Returns { next: boolean, reason: string }. `reason` is the plain fact for the Details panel.
+ */
+export function decideFallback({ requestClass, failure, attemptsMade = 1, sideEffect = false, jobAlreadyRan = false } = {}) {
+  const cls = REQUEST_CLASSES.includes(requestClass) ? requestClass : 'hard_stop';
+  if (failure === FAILURES.NONE) return { next: false, reason: 'the attempt succeeded' };
+  if (failure === FAILURES.QUOTA) return { next: false, reason: 'every engine is out of quota; retrying only spends more allowance' };
+  if (failure === FAILURES.PERMISSION) return { next: false, reason: 'the owner has not authorised this engine or action' };
+  if (cls === 'hard_stop') return { next: false, reason: 'the request falls under a safety rule no engine serves' };
+  if (failure === FAILURES.REFUSAL && cls === 'ordinary' && sideEffect) {
+    return { next: false, reason: 'a refused action is not retried elsewhere; the owner decides' };
+  }
+  if (sideEffect && jobAlreadyRan) return { next: false, reason: 'the same billable or external action already ran; not repeated' };
+  if (attemptsMade >= MAX_ENGINE_ATTEMPTS) return { next: false, reason: `reached the limit of ${MAX_ENGINE_ATTEMPTS} engine attempts` };
+  if (failure === FAILURES.REFUSAL && cls === 'adult_fiction') {
+    return { next: true, reason: 'the engine declined adult fiction; trying another engine authorised for it' };
+  }
+  return { next: true, reason: `${failure.replace(/_/g, ' ')}; trying the next compatible engine` };
+}
+
+/**
+ * The Details record for one request: the original engine, every failure, every fallback attempt and the engine that
+ * finally answered. `attempts` is a list of { model, failure, reason } in order. Nothing is invented: a fallback is listed
+ * only if it was really attempted, and `final` is null when no engine completed the request.
+ */
+export function fallbackRecord({ original, attempts = [], final = null, tools = [], costs = [] } = {}) {
+  return {
+    original_model: original || null,
+    attempts: attempts.map((a) => ({ model: a.model || null, failure: a.failure || FAILURES.NONE, reason: a.reason || '' })),
+    final_model: final || null,
+    tools_executed: tools.map((t) => ({ name: t.name, receipt: t.receipt || null })),
+    costs: costs.map((c) => ({ engine: c.engine || null, usd: Number(c.usd) || 0 })),
+    completed: Boolean(final),
+    fallback_used: attempts.length > 1,
+  };
+}
