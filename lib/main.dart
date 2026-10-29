@@ -2443,7 +2443,7 @@ OWNER AGENCY
           hue: kit.CheColors.apps,
         ),
         CheMoreItem(
-          icon: Icons.draw_rounded,
+          icon: Icons.edit_rounded,
           title: 'Create Studio',
           subtitle: 'Character and scene projects: create, edit, save, reopen',
           onTap: _openSceneProjects,

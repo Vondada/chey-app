@@ -143,12 +143,12 @@ class _CheSceneStudioPageState extends State<CheSceneStudioPage> {
           ),
           IconButton(
             tooltip: 'Redo',
-            icon: const Icon(Icons.redo),
+            icon: Transform.flip(flipX: true, child: const Icon(Icons.undo_rounded)),
             onPressed: h != null && h.canRedo && !_busy ? _redo : null,
           ),
           IconButton(
             tooltip: 'Save',
-            icon: const Icon(Icons.save),
+            icon: const Icon(Icons.save_rounded),
             onPressed: h != null && !_busy ? _save : null,
           ),
         ],
