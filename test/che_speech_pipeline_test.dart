@@ -10,6 +10,13 @@ class _Harness {
   final plays = <String, Completer<bool>>{};
   int completes = 0;
   bool? completedCancelled;
+  final unspoken = <String>[];
+
+  /// Chunks whose device-voice fallback reports that it could not speak.
+  final deviceCannotSpeak = <String>{};
+
+  /// Chunks whose device-voice fallback throws.
+  final deviceThrows = <String>{};
 
   late final CheSpeechPipeline<String> pipeline = CheSpeechPipeline<String>(
     synthesize: (text) {
@@ -22,7 +29,12 @@ class _Harness {
     },
     fallback: (text) async {
       events.add('fallback:$text');
-      return true;
+      if (deviceThrows.contains(text)) throw StateError('device voice failed');
+      return !deviceCannotSpeak.contains(text);
+    },
+    onUnspoken: (text) async {
+      unspoken.add(text);
+      events.add('unspoken:$text');
     },
     onComplete: (cancelled) async {
       completes++;
@@ -143,6 +155,35 @@ void main() {
     h.plays['A2']!.complete(true);
     await h.pipeline.done;
     expect(h.events.where((e) => e.startsWith('play:')), ['play:A2']);
+    expect(h.unspoken, isEmpty, reason: 'a device voice that spoke leaves nothing unspoken');
+  });
+
+  test('a device-voice chunk that cannot speak is reported unspoken, and the rest still plays', () async {
+    final h = _Harness()..deviceCannotSpeak.add('one');
+    h.pipeline
+      ..add('one')
+      ..add('two')
+      ..close();
+    await _flush();
+    h.synth['one']!.complete(null);
+    h.synth['two']!.complete('A2');
+    await _flush();
+    expect(h.unspoken, ['one'], reason: 'the failed chunk must not disappear silently');
+    h.plays['A2']!.complete(true);
+    await h.pipeline.done;
+    expect(h.events.where((e) => e.startsWith('play:')), ['play:A2']);
+  });
+
+  test('a device-voice chunk that throws is reported unspoken too', () async {
+    final h = _Harness()..deviceThrows.add('one');
+    h.pipeline
+      ..add('one')
+      ..close();
+    await _flush();
+    h.synth['one']!.complete(null);
+    await h.pipeline.done;
+    expect(h.unspoken, ['one']);
+    expect(h.completes, 1);
   });
 
   test('barge-in cancels queued audio immediately, even mid-synthesis', () async {

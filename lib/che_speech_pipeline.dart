@@ -32,6 +32,7 @@ class CheVoiceClip {
 
 typedef CheSynthesize<A> = Future<A?> Function(String text);
 typedef ChePlayAudio<A> = Future<bool> Function(A audio);
+/// The device voice for one chunk. Returns false (or throws) when it could not speak it.
 typedef CheSpeakFallback = Future<bool> Function(String text);
 
 class CheSpeechPipeline<A> {
@@ -41,6 +42,7 @@ class CheSpeechPipeline<A> {
     required this.fallback,
     Future<void>? ready,
     this.onComplete,
+    this.onUnspoken,
     this.log,
     this.prefetch = 2,
     DateTime Function()? clock,
@@ -55,6 +57,10 @@ class CheSpeechPipeline<A> {
 
   /// Runs once after the last chunk (or on cancel), before [done] completes.
   final Future<void> Function(bool cancelled)? onComplete;
+
+  /// Called with a chunk's text when neither its server clip nor the device
+  /// voice (fallback) could speak it, so the caller can show the words.
+  final Future<void> Function(String text)? onUnspoken;
   final void Function(String message)? log;
 
   /// How many chunks beyond the one playing may be synthesizing at once.
@@ -189,9 +195,16 @@ class CheSpeechPipeline<A> {
         }
         if (!played && !_cancelled) {
           _mark('fallback voice for chunk ${chunk.index}');
+          var spoke = false;
           try {
-            await fallback(chunk.text);
+            spoke = await fallback(chunk.text);
           } catch (_) {}
+          if (!spoke && !_cancelled) {
+            _mark('chunk ${chunk.index} unspoken');
+            try {
+              await onUnspoken?.call(chunk.text);
+            } catch (_) {}
+          }
         }
         _lastPlaybackEndMs = _nowMs;
         _mark('playback ${chunk.index} ended');
