@@ -359,7 +359,10 @@ const hexOf = (buffer) => Array.from(new Uint8Array(buffer)).map((b) => b.toStri
  */
 export function modalReasonOf(started) {
   const d = started?.data;
-  const detail = Array.isArray(d?.detail) ? d.detail.map((x) => x?.msg || JSON.stringify(x)).join('; ') : d?.detail;
+  // A framework item names the field it refused (loc, e.g. body.steps) and why (msg), so both are kept.
+  const detail = Array.isArray(d?.detail)
+    ? d.detail.map((x) => (x?.msg ? `${Array.isArray(x.loc) && x.loc.length ? `${x.loc.join('.')}: ` : ''}${x.msg}` : JSON.stringify(x))).join('; ')
+    : d?.detail;
   const raw = d?.error || detail || started?.refusal_text || '';
   return String(raw).replace(/[^\x20-\x7E]/g, '').slice(0, 160);
 }
@@ -418,7 +421,12 @@ export async function finishModalImage(env, storage, callId, fetcher = fetch) {
     const latest = (await storage.get(MODAL_IMAGE_KEY)) || [];
     await storage.put(MODAL_IMAGE_KEY, latest.map((r) => (r.call_id === callId ? { ...r, ...patch } : r)));
   };
-  const failed = async (error) => { await update({ state: 'failed', error }); return { status: 502, detail: error }; };
+  // The call started, so its reservation is settled at the reserved maximum (the conservative figure), never left open.
+  const failed = async (error) => {
+    await update({ state: 'failed', error });
+    if (record.budget_hold_id) await settleTestBudget(storage, record.budget_hold_id, { actual_usd: null, provenance: 'RESERVED_MAXIMUM' });
+    return { status: 502, detail: error };
+  };
   const cred = await modalCredential(env, storage);
   if (!cred.exists || !cred.cred) return { status: 503, detail: 'Modal is not connected, so the result cannot be read.' };
   const res = await modalCall(cred.cred, 'POST', '/txt2img/result', { call_id: callId }, fetcher, 30000);
@@ -476,6 +484,8 @@ export async function reconcileModalImages(env, storage, fetcher = fetch) {
       const error = 'The Modal GPU picture did not finish in time. Nothing was saved; no other engine was used.';
       const records = (await storage.get(MODAL_IMAGE_KEY)) || [];
       await storage.put(MODAL_IMAGE_KEY, records.map((r) => (r.call_id === job.call_id ? { ...r, state: 'failed', error } : r)));
+      const hold = records.find((r) => r.call_id === job.call_id)?.budget_hold_id;
+      if (hold) await settleTestBudget(storage, hold, { actual_usd: null, provenance: 'RESERVED_MAXIMUM' });
       continue;
     }
     await finishModalImage(env, storage, job.call_id, fetcher).catch(() => null);

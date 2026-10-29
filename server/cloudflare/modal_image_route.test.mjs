@@ -278,3 +278,21 @@ test('the alarm is woken only while a picture waits', async () => {
   await storage.put(MODAL_IMAGE_KEY, [{ call_id: 'fc-abcdef123456', title: 't', state: 'started', created_at: new Date().toISOString() }]);
   assert.equal((await modalImageCheckTimes(storage)).length, 1);
 });
+
+// A Modal call that started and then ended in failure (Modal's own failed state) has a reservation in the $5 test budget.
+// Its money is not released (the call ran), so the reservation must be settled, not left open for ever.
+test('a picture Modal reports failed settles its budget reservation instead of leaving it open', async () => {
+  const { TEST_BUDGET_KEY, budgetTotals } = await import('./gpu_test_budget.js');
+  const failing = async (url) => {
+    const path = new URL(String(url)).pathname;
+    if (path === '/txt2img') return new Response(JSON.stringify({ call_id: 'fc-abcdef123456' }), { status: 200, headers: { 'content-type': 'application/json' } });
+    return new Response(JSON.stringify({ ok: false, state: 'failed', error: 'CUDA out of memory' }), { status: 502, headers: { 'content-type': 'application/json' } });
+  };
+  const storage = memoryStorage();
+  await startModalImage(ENV_ON, storage, { prompt: 'a kite' }, failing);
+  await finishModalImage(ENV_ON, storage, 'fc-abcdef123456', failing);
+  const ledger = await storage.get(TEST_BUDGET_KEY);
+  assert.equal(ledger.jobs.length, 1);
+  assert.notEqual(ledger.jobs[0].state, 'reserved', 'the reservation for a started call is still open');
+  assert.equal(budgetTotals(ledger).reserved_usd, 0);
+});

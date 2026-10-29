@@ -44,6 +44,8 @@ import { testBudgetReport } from './gpu_test_budget.js';
 import { modalCubeProbe, modalCubeResult } from './modal_cube_probe.js';
 import { deleteMedia, finishModalImage, generateImage, modalImageCheckTimes, pendingModalImages, reconcileModalImages, generateVideo, listMedia, readBlob, saveOwnerFile, upscaleImage, verifyMediaFile } from './media.js';
 import { withCheNote, guardEngineClaims, guardSoulClaims, lastReplyRecord, loadSoul, replyProvenanceAnswer, replyProvenanceQuestion, restoreSoul, saveSoul, soulPromptBlock, soulProvenance, soulView, stripPhoneSoul } from './soul.js';
+import { classifyFailure as classifyEngineFailure, decideFallback, requestClassFor } from './refusal_fallback.js';
+import { isStoryTurn, storyMode, storyModeBlock } from './story_mode.js';
 import { mediaHoldAnswer, mediaHoldIntent, mediaKeepFor, mediaLatestReply, mediaLibraryIntent, mediaLibraryReply, mediaLibraryReport, mediaLatestOpenRow, mediaOpenIntent, mediaOpenMissingReply, mediaOpenReply, mediaOpenRow, mediaRows, mediaSaveIntent, mediaSaveReply, mediaShowLatestIntent, mediaShowReply, verifyMediaRows, wantsLatestVideo } from './media_library.js';
 import { capabilityGap, capabilityReply } from './capability_gap.js';
 import { INTERNAL_SOURCE, LAST_RENDER_KEY, internalSceneIntent, internalSceneTurn } from './internal_studio.js';
@@ -76,7 +78,7 @@ import { answerEvidenceReceipt, cachedResearch, evidenceReferenceFollowup, factK
 import { claimMatcher, disprovenContext, downgradeDisproven, externalCorrection, guardCitations, loadDisproven, newsQuestion, newsResearch, reopenArticles, recheckExternalClaim, recordDisproven, verifiedSourcesContext } from './source_verification.js';
 import { recordReliability, reliabilityIntent, reliabilitySummary, speakReliability } from './reliability_ledger.js';
 import { reliabilityApi, reliabilityTurn } from './reliability_registry.js';
-import { answerOwnerMemoryQuestion, auditMemoryProvenance, evidenceQuestion, evidenceReferent, evidenceRequestSplit, explainEvidenceFor, findAnswerEvidence, brainRecordForProvenance, guardOwnerAttributions, guardRememberBlock, guardSpeakerAttributions, latestAnswerEvidence, loadRetractions, RECALL_OUTCOMES, readOutcome, memoryPromptContext, ownerFactCorrection, ownerMemoryQuestion, ownerWords, recordAnswerEvidence, recordRetractions, storedSpeaker, storyRequested } from './memory_provenance.js';
+import { answerOwnerMemoryQuestion, auditMemoryProvenance, evidenceQuestion, evidenceReferent, evidenceRequestSplit, explainEvidenceFor, findAnswerEvidence, brainRecordForProvenance, guardOwnerAttributions, guardRememberBlock, guardSpeakerAttributions, latestAnswerEvidence, loadRetractions, RECALL_OUTCOMES, readOutcome, memoryPromptContext, ownerFactCorrection, ownerMemoryQuestion, ownerWords, recordAnswerEvidence, recordRetractions, storedSpeaker, storyRequested, requestNamesAction } from './memory_provenance.js';
 import { condenseHistory, ownerNotificationPolicy } from './workflow_governor.js';
 import { analyze as tradeAnalyze, backtestAll, candleSpan, loadCandles, paperTick, readBook, speakAnalysis, speakBacktest, speakBook, speakLearning, nextTradingTickAt, tradingIntent, watchSymbol, STRATEGIES } from './trading_lab.js';
 import { intelligenceIntent, intelligenceReport, intelligenceView, speakIntelligence, startStudy, studyAlarm, studyStep } from './historical_intelligence.js';
@@ -3345,7 +3347,7 @@ function servedBy(answer, requestedModel, route, fallback) {
 // Runs the chat model. Route/model selection may change on failure;
 // original rules, requirements and history remain intact on every attempt.
 // cheProvider (e.g. native Grok chat) pins the engine when set.
-async function runChatModel(env, { model, systemPrompt, compactPrompt, turns, message, maxTokens, cheContext = null, cheProvider = '', preferFast = false }) {
+export async function runChatModel(env, { model, systemPrompt, compactPrompt, turns, message, maxTokens, cheContext = null, cheProvider = '', preferFast = false }) {
   const provider = String(cheProvider || '').trim().toLowerCase().slice(0, 40);
   const attempts = chatModelAttempts({
     preferFast,
@@ -3356,7 +3358,10 @@ async function runChatModel(env, { model, systemPrompt, compactPrompt, turns, me
     turns,
   });
   let lastError;
-  for (const attempt of attempts) {
+  // Refusal-aware fallback (refusal_fallback.js): a hard-stop request never moves to another engine, and the attempt limit holds.
+  const requestClass = requestClassFor(message);
+  const sideEffect = requestNamesAction(message);
+  for (const [attemptIndex, attempt] of attempts.entries()) {
     try {
       const baseMessages = [
         { role: 'system', content: attempt.system },
@@ -3415,6 +3420,11 @@ async function runChatModel(env, { model, systemPrompt, compactPrompt, turns, me
       console.error('CHE chat model attempt failed', attempt.model, attempt.system.length, error?.message);
       // Every engine is out of quota: retrying only burns more allowance.
       if (error?.quota) break;
+      const decision = decideFallback({ requestClass, failure: classifyEngineFailure({ error }), attemptsMade: attemptIndex + 1, sideEffect });
+      if (!decision.next) {
+        console.error('CHE chat fallback stopped', decision.reason);
+        break;
+      }
     }
   }
   throw lastError;
@@ -14030,7 +14040,10 @@ export class CheState extends DurableObject {
           ? (this.env.CHE_STRONG_MODEL || STRONG_MODEL)
           : (this.env.CHE_FAST_MODEL || FAST_MODEL);
         const explainLevel = ['simple', 'normal', 'deeper'].includes(body.explain_level) ? body.explain_level : 'simple';
-        const madeAcrossRooms = creations(data, await listMedia(this.ctx.storage)).slice(0, 12)
+        // A story or drama turn is a scene, not a report: no "made across rooms" list, atlas card or next-step offer.
+        const turnMode = storyMode(rawMessage);
+        const storyTurn = isStoryTurn(turnMode);
+        const madeAcrossRooms = storyTurn ? '' : creations(data, await listMedia(this.ctx.storage)).slice(0, 12)
           .map((item) => `${item.maker}: ${item.kind.replace('_', ' ')} \u201c${item.title}\u201d`).join('; ');
         const capabilityRegistry = runtimeCapabilityRegistry(this.env, data);
         // Claims CHE checked and found unsupported, and whether this is a news
@@ -14039,19 +14052,20 @@ export class CheState extends DurableObject {
         const newsAsk = newsQuestion(rawMessage);
         // At most two Knowledge Atlas cards a coding or trading question names (≤ 600 characters), never for
         // a question about the owner's own memories: a card is curated teaching text, not his words.
-        const atlasNote = ownerDevice && !memoryRoute ? atlasPromptContext(message) : '';
+        const atlasNote = ownerDevice && !memoryRoute && !storyTurn ? atlasPromptContext(message) : '';
         const soulProfile = await loadSoul(this.ctx.storage);
         const systemPrompt = [
               'You are CHE, Cognitive Horizon Engine. Your name is spoken and referred to as "CHE" in conversation. "Chay" is only the owner\'s spoken wake word to start a hands-free conversation with you, not how you refer to yourself. Address the owner as sir naturally.',
               'This chat turn is already active. Never ask the owner to say “Hey [assistant name]”, “Ok [assistant name]”, or any generic wake phrase. If the owner says CHE/Chay, answer as CHE instead of teaching a wake phrase.',
               soulPromptBlock(soulProfile) + (ownerDevice ? await humorTurn(this.ctx.storage, rawMessage, body.history) : ''),
+              storyModeBlock(turnMode),
               'No filler, no disclaimers, no preamble. Evidence, tool results, permissions and numbers always outrank the Soul.',
               explainLevel === 'deeper'
                 ? 'EXPLANATION LEVEL: go deeper. Give the reasoning, the details and the trade-offs, clearly organized.'
                 : explainLevel === 'normal'
                   ? 'EXPLANATION LEVEL: normal. Clear and complete, no jargon without a quick explanation.'
                   : 'EXPLANATION LEVEL: simple. Explain like the owner is five: short sentences, everyday words, one idea at a time. He can say \u201cgo deeper\u201d for more.',
-              'NEXT STEP: when you finish real work and a useful next step exists, end with ONE short offer of it. Skip it in casual chat or when nothing useful follows, never repeat the offer from your last reply, and never list several options unless asked.',
+              storyTurn ? '' : 'NEXT STEP: when you finish real work and a useful next step exists, end with ONE short offer of it. Skip it in casual chat or when nothing useful follows, never repeat the offer from your last reply, and never list several options unless asked.',
               madeAcrossRooms
                 ? `ONE CONNECTED WORLD: things made across CHE\u2019s rooms (newest first): ${madeAcrossRooms}. When the owner refers to something made in any room (\u201cthe song Mira made\u201d), use this list; if it is not here, say so honestly.`
                 : '',
