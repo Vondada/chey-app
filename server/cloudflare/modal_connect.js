@@ -30,6 +30,14 @@ const NEW_QUALIFIER = /\b(?:new|another|again|fresh|one more)\b/;
 const START_NOUN = /\b(?:render|renders|rendering|gpu test|gpu check|gpu render|job|jobs)\b/;
 // Nouns a status question can ask about: the same, plus Modal's picture jobs.
 const STATUS_NOUN = /\b(?:render|renders|rendering|gpu test|gpu check|gpu render|job|jobs|picture|pictures|image|images)\b/;
+// A request to make a picture ("create a 256x256 image of a blue glowing cube, on Modal, then verify it"). The picture route
+// makes it. The words "verify", "check", "test" and "done" inside such a request are not a Modal status or health ask.
+const PICTURE_CREATE = /\b(?:create|make|generate|draw|paint|produce|design)\b[^.?!]*\b(?:image|picture|photo|illustration|drawing|pic)s?\b/;
+// A question about a picture that already exists: "did you create a picture of the blue cube on Modal?" is a status ask.
+const RETROSPECTIVE = /^\s*(?:did|have|has|had|was|were)\s+(?:you|it|the|that|this|they)\b|\bdid (?:you|it|che)\s+(?:create|make|generate|draw)\b/;
+// Words that point at an earlier job, or ask for the connection itself, even inside a picture request.
+const EARLIER_REF = /\b(?:previous|prior|last|earlier|existing)\b/;
+const CONNECTION_ASK = /\b(?:connection|connected|health|healthy)\b/;
 // A question or a negation never starts work: "did you run that GPU test again?", "do not start another GPU render".
 const QUESTION = /^(?:did|do|does|is|are|was|were|has|have|had|can|could|would|will|what|where|how|why|when|which)\b|\?\s*$/;
 const NEGATION = /\b(?:not|no|never|don't|dont|stop|cancel|without)\b/;
@@ -49,6 +57,7 @@ export function modalServiceIntent(message = '') {
   // Only Modal, or an explicit GPU test or check, is this route. A plain GPU question ("what are my GPU jobs?") belongs to the
   // GPU job queue, and a picture is never this route.
   if (!MODAL_WORD.test(t) && !(GPU_TEST_WORDS.test(t) && START_NOUN.test(t))) return null;
+  if (PICTURE_CREATE.test(t) && !RETROSPECTIVE.test(t) && !EARLIER_REF.test(t) && !CONNECTION_ASK.test(t)) return null;
   const asks = QUESTION.test(t) || NEGATION.test(t);
   const startsNew = !asks && START_VERB.test(t) && START_NOUN.test(t);
   const refsExisting = JOB_REF.test(t) && STATUS_NOUN.test(t);
