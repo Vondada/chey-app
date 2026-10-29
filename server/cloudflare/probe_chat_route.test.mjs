@@ -17,7 +17,7 @@ test('POST /api/probe/chat returns 404 unless the probe token is presented, like
 test('the probe route runs the owner object chat turn, not a second reasoning path', () => {
   assert.match(source, /return json\(await env\.CHE_STATE\.getByName\('owner'\)\.probeChat\(body\)\);/);
   const start = source.indexOf('  async probeChat(body = {}) {');
-  const method = source.slice(start, source.indexOf('execution_receipts: receipts };', start) + 'execution_receipts: receipts };'.length);
+  const method = source.slice(start, source.indexOf('execution_receipts: receipts, error };', start) + 'execution_receipts: receipts, error };'.length);
   assert.ok(method.includes('return { ok: response.ok'), 'the method body is found');
   assert.match(method, /this\.fetch\(request\)/, 'the turn goes through the owner object fetch, the same path as /api/chat');
   assert.match(method, /new Request\('https:\/\/che\.internal\/api\/chat'/);

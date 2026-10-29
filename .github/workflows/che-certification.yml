@@ -25,6 +25,10 @@ on:
         description: Earlier certification run to resume from (its graded answers are kept; only the rest run)
         type: string
         default: ""
+      rerun_classes:
+        description: With resume_run_id, ask again these classes too (comma list, for example incorrect,unverified,no_answer)
+        type: string
+        default: ""
 
 concurrency:
   group: che-certification
@@ -78,11 +82,13 @@ jobs:
         env:
           CHE_CHAT_URL: https://chey-app.henryjavoni.workers.dev/api/probe/chat
           RESUME_RUN_ID: ${{ inputs.resume_run_id }}
+          RERUN_CLASSES: ${{ inputs.rerun_classes }}
         run: |
           args=(certification-results.json)
           [ -n "$CATEGORY" ] && args+=("--category=$CATEGORY")
           [ -n "$LIMIT" ] && args+=("--limit=$LIMIT")
           [ -n "$RESUME_RUN_ID" ] && args+=("--resume=earlier/certification-results.json")
+          [ -n "$RERUN_CLASSES" ] && args+=("--rerun=$RERUN_CLASSES")
           node tools/certification/run_certification.mjs "${args[@]}" | tee certification-run.log
 
       - name: 3. Summary

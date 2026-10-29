@@ -43,6 +43,7 @@ import { identityQuestionIntent, speakIdentity } from './che_maturity.js';
 import { testBudgetReport } from './gpu_test_budget.js';
 import { modalCubeProbe, modalCubeResult } from './modal_cube_probe.js';
 import { deleteMedia, finishModalImage, generateImage, modalImageCheckTimes, pendingModalImages, reconcileModalImages, generateVideo, listMedia, readBlob, saveOwnerFile, upscaleImage, verifyMediaFile } from './media.js';
+import { mediaVerifyProbe } from './media_verify_probe.js';
 import { withCheNote, guardEngineClaims, guardSoulClaims, lastReplyRecord, loadSoul, replyProvenanceAnswer, replyProvenanceQuestion, restoreSoul, saveSoul, soulPromptBlock, soulProvenance, soulView, stripPhoneSoul, stripSoulLabels } from './soul.js';
 import { classifyFailure as classifyEngineFailure, decideFallback, requestClassFor } from './refusal_fallback.js';
 import { isStoryTurn, storyMode, storyModeBlock } from './story_mode.js';
@@ -631,6 +632,7 @@ export function emptyReplyStream(requestId, removals = []) {
     category: 'empty_after_checks',
     retryable: true,
     request_id: requestId,
+    rules,
     message: 'I wrote a reply, sir, but my checks removed all of it, so nothing was sent. Ask me again, or ask in smaller parts.',
   }) + '\n', {
     headers: { 'Content-Type': 'application/x-ndjson; charset=utf-8', 'Cache-Control': 'no-store' },
@@ -4097,6 +4099,9 @@ export class CheState extends DurableObject {
 
   async modalBudgetReport() { return testBudgetReport(this.ctx.storage); }
 
+  // Read-only Gallery check for the owner probe (media_verify_probe.js).
+  async mediaVerify(body = {}) { return mediaVerifyProbe(this.keyEnv || this.env, this.ctx.storage, body); }
+
   // One owner chat turn for the certification harness (tools/certification). Only the probe-token route calls this.
   // The turn goes through this object's fetch, so it is the owner's own /api/chat path; nothing is re-implemented.
   async probeChat(body = {}) {
@@ -4115,7 +4120,10 @@ export class CheState extends DurableObject {
     const done = events.length ? ([...events].reverse().find((e) => e.type === 'done') || {}) : (plain && typeof plain === 'object' ? plain : {});
     const reply = events.length ? replyFromNdjson(raw).trim() : String(plain?.reply ?? plain?.message ?? '').trim();
     const receipts = Array.isArray(done.execution_receipts) ? done.execution_receipts : [];
-    return { ok: response.ok, status: response.status, reply, done, execution_receipts: receipts };
+    // An error frame (for example empty_after_checks, when the truth checks removed the whole reply) names its category and rules.
+    const frame = events.find((e) => e.type === 'error') || null;
+    const error = frame ? { category: frame.category || null, rules: Array.isArray(frame.rules) ? frame.rules : [] } : null;
+    return { ok: response.ok, status: response.status, reply, done, execution_receipts: receipts, error };
   }
 
   async modalCubeProbe(body) { return modalCubeProbe(this.keyEnv || this.env, this.ctx.storage, body); }
@@ -16308,6 +16316,12 @@ async function routeRequest(request, env, ctx) {
     const body = await request.json().catch(() => ({}));
     const out = await env.CHE_STATE.getByName('owner').modalCubeProbe(body);
     return json(out, out.sent === false ? 409 : 200);
+  }
+  if (path === '/api/probe/media/verify' && request.method === 'POST') {
+    if (!voiceProbeAuthorized(request, env)) return json({ detail: 'Not found.' }, 404);
+    const body = await request.json().catch(() => ({}));
+    const { status, ...rest } = await env.CHE_STATE.getByName('owner').mediaVerify(body);
+    return json(rest, status);
   }
   if (path === '/api/probe/modal/cube/result' && request.method === 'POST') {
     if (!voiceProbeAuthorized(request, env)) return json({ detail: 'Not found.' }, 404);
