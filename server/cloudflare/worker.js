@@ -40,7 +40,7 @@ import {
 import { discoverKeylessModels, engineStatus, paidAllowed, routedEnv, routeText } from './ai_router.js';
 import { capabilityPromptLine, inferTurnCapabilities, runtimeCapabilityRegistry } from './cognitive_capabilities.js';
 import { identityQuestionIntent, speakIdentity } from './che_maturity.js';
-import { deleteMedia, generateImage, generateVideo, listMedia, readBlob, saveOwnerFile, upscaleImage, verifyMediaFile } from './media.js';
+import { deleteMedia, finishModalImage, generateImage, modalImageCheckTimes, pendingModalImages, reconcileModalImages, generateVideo, listMedia, readBlob, saveOwnerFile, upscaleImage, verifyMediaFile } from './media.js';
 import { withCheNote, guardEngineClaims, guardSoulClaims, lastReplyRecord, loadSoul, replyProvenanceAnswer, replyProvenanceQuestion, restoreSoul, saveSoul, soulPromptBlock, soulProvenance, soulView, stripPhoneSoul } from './soul.js';
 import { mediaHoldAnswer, mediaHoldIntent, mediaKeepFor, mediaLatestReply, mediaLibraryIntent, mediaLibraryReply, mediaLibraryReport, mediaLatestOpenRow, mediaOpenIntent, mediaOpenMissingReply, mediaOpenReply, mediaOpenRow, mediaRows, mediaSaveIntent, mediaSaveReply, mediaShowLatestIntent, mediaShowReply, verifyMediaRows, wantsLatestVideo } from './media_library.js';
 import { capabilityGap, capabilityReply } from './capability_gap.js';
@@ -168,6 +168,7 @@ import { lastSite, publishSite, saveSite, serveSite, siteBuildIntent, siteEditIn
 import { noteJobActivity } from './job_activity.js';
 import { CODING_CANCEL_SOURCE, cancelQueuedJob, codingCancelIntent, resolveCodingCancel, speakCancelResult, speakUnresolved } from './coding_cancel.js';
 import { classifyRequest } from './intent_class.js';
+import { chatPictureTurn } from './chat_image_provider.js';
 import { PENDING_OWNER_ACTION_KEY, deskOwnedMoney, forbiddenAction, prohibitionSpans, withoutProhibitions, PENDING_OWNER_ACTION_MS, gateOwnerAction, grantForKinds, isOwnerYes, peerActionReply, APPS_GRANTED_KEY, PENDING_APP_ACTION_KEY, PENDING_APP_ACTION_MS, gateAppAccess, classifyAppNeed, classifyExplicitAppOpen, classifyAppAccesses } from './owner_action_gate.js';
 import { placedOrdersLine, recordDeviceInstall } from './action_receipts.js';
 import { brainTruthSummary, brainTruthView, truthScreenAsk } from './brain_truth.js';
@@ -4182,6 +4183,7 @@ export class CheState extends DurableObject {
     // Orion's crypto desk wakes after every 5-minute close, weekends included (null while the owner paused it).
     const cryptoAt = await nextCryptoTickAt(this.ctx.storage).catch(() => null);
     if (cryptoAt) times.push(cryptoAt);
+    times.push(...await modalImageCheckTimes(this.ctx.storage).catch(() => []));
     const liveAt = await nextLiveTickAt(this.ctx.storage).catch(() => null);
     // The simulation's next minute (null while paused or before its first pass). Same alarm slot, earliest wins.
     const simAt = await nextStrategySimTickAt(this.ctx.storage).catch(() => null);
@@ -8036,6 +8038,12 @@ export class CheState extends DurableObject {
         const { status, ...rest } = result;
         return json(rest, status);
       }
+      // The result of an explicit Modal picture: saved to the Gallery only once its bytes and hash check out.
+      if (path === '/api/media/modal/result' && request.method === 'POST') {
+        const { status, ...rest } = await finishModalImage(this.keyEnv || this.env, this.ctx.storage, String(body.call_id || ''));
+        return json(rest, status);
+      }
+      if (path === '/api/media/modal/pending' && request.method === 'GET') return json({ jobs: await pendingModalImages(this.ctx.storage) });
       if (path === '/api/media/generate' && request.method === 'POST') {
         const mediaType = String(body.type || body.kind || 'image').toLowerCase();
         const result = mediaType === 'video'
@@ -13561,9 +13569,9 @@ export class CheState extends DurableObject {
           if (!ownerDevice) return ndjsonReply('Only the CHE owner can make pictures, sir. Nothing was made.', { source: CHAT_IMAGE_SOURCE, ok: false, model_calls: 0 });
           // A real weapon built or taken apart is never drawn (intent_class.js). A game, history or general request is.
           if (classifyRequest(message).category === 'manufacturing') return ndjsonReply('I will not make pictures of a real weapon being built or taken apart, sir. Nothing was made or saved.', { source: CHAT_IMAGE_SOURCE, ok: false, model_calls: 0 });
-          const results = await makeChatImages(this.keyEnv || this.env, this.ctx.storage, { message, count: requestedImageCount(message) });
-          // media_url is what the iPhone chat shows inline (owner, 2026-10-22: "I'm supposed to see an actual picture").
-          return ndjsonReply(chatImageReply(results), { source: CHAT_IMAGE_SOURCE, ok: results.some((r) => r.ok), model_calls: 0, media: chatImageMedia(results), ...chatImageInline(results, new URL(request.url).origin) });
+          // The engine and the reply are chosen in chat_image_provider.js (the owner sees which engine made a picture).
+          const picture = await chatPictureTurn(this.keyEnv || this.env, this.ctx.storage, { message, origin: new URL(request.url).origin, makeImages: (count) => makeChatImages(this.keyEnv || this.env, this.ctx.storage, { message, count }) });
+          return ndjsonReply(picture.text, picture.meta);
         }
         let imageGeneration = requestedCapabilities.includes('image_generation') &&
           !requestedCapabilities.includes('video_generation')
@@ -14541,7 +14549,7 @@ export class CheState extends DurableObject {
     if (minute) {
       await strategySimTick(this.ctx.storage, { now: minuteNow }).catch((error) => console.error('Strategy simulation tick failed:', error?.message || error));
       const simNext = await nextStrategySimTickAt(this.ctx.storage, Date.now()).catch(() => null);
-      const kept = [...minute.others, ...(minute.liveNext ? [minute.liveNext] : []), ...(simNext ? [simNext] : [])];
+      const kept = [...minute.others, ...(minute.liveNext ? [minute.liveNext] : []), ...(simNext ? [simNext] : []), ...await modalImageCheckTimes(this.ctx.storage).catch(() => [])];
       if (kept.length) await this.ctx.storage.setAlarm(Math.min(...kept));
       return;
     }
@@ -14565,6 +14573,8 @@ export class CheState extends DurableObject {
       // Older room records get relationship discovery too, a dozen per alarm until none are left.
       await relinkRecords(this.ctx.storage, alarmBrain).catch(() => null);
     }
+    // Waiting Modal pictures are checked here, so one is saved even when no app is polling for it.
+    await reconcileModalImages(this.keyEnv || this.env, this.ctx.storage).catch(() => null);
     const autonomyOn = Boolean((await this.loadData()).autonomy);
     if (autonomyOn) await this.recoverOpenCodeFailure().catch((error) => console.error('OpenCode recovery watch failed:', error?.message || error));
     // processJobs decides what may run while Office autonomy is paused: the

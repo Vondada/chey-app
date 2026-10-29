@@ -138,7 +138,7 @@ test('an explicit Modal image request is refused: no Workers AI call, nothing sa
   assert.equal(out.status, 503);
   assert.equal(out.provider_requested, 'modal');
   assert.equal(out.provider_used, null);
-  assert.match(out.detail, /Nothing was generated, and no other engine was used/);
+  assert.match(out.detail, /Modal GPU image generation is off.*nothing was started.*No other engine was used/s);
   assert.equal(calls.length, 0, 'Workers AI was not called for an explicit Modal request');
   assert.equal((await listMedia(storage)).length, 0, 'nothing is saved');
 });
