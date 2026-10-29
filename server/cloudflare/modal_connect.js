@@ -1,37 +1,57 @@
-// "CHE, connect Modal. Verify the deployed service with a real authenticated health check and a small test render."
-// The owner's explicit Modal command. It is answered by its own route, before any GitHub or deployment matcher, and each
-// step reports a receipt or a named blocker. Nothing is reported as connected or rendered without execution evidence:
-//   1. workflows   the repository has the Modal check and deploy workflows (GitHub contents API)
-//   2. credential  CHE has a Modal credential saved (presence only; the value is never read into a reply)
-//   3. health      an authenticated GET /health to the deployed che-gpu app (modalHealth, the same probe as Check Connection)
-//   4. render      the existing "CHE Modal check" workflow runs one short T4 render (gpu_test=true) on GitHub's runner
+// "CHE, connect Modal ..." is answered by its own report, with a receipt for each step. Three different asks, and only one
+// starts work:
+//   connection  "check Modal connection": the authenticated health check. Starts nothing.
+//   job_status  "check the previous GPU render": reads the existing GitHub runs and Modal picture jobs. Starts nothing.
+//   new_render  "start a new test render": the only route that dispatches the GPU check, and it refuses a duplicate.
+// The GPU check (che-modal-check.yml) is a one-off T4 self-test (a Blender cube), not an image. It is never called a render.
 // Owner-only. Deterministic: no model call.
 
 import { gh } from './coding_runtime.js';
+import { MODAL_IMAGE_KEY } from './media.js';
 import { modalCredential, modalHealth } from './modal_gpu.js';
 import { onboardingIntent } from './service_onboarding.js';
 
 export const MODAL_CHECK_WORKFLOW = 'che-modal-check.yml';
 export const MODAL_DEPLOY_WORKFLOW = 'che-modal-deploy.yml';
+// A second new GPU check inside this window is refused: a repeated voice command must not start a second run.
+export const MODAL_CHECK_DEDUPE_MS = 120_000;
+const MODAL_CHECK_DISPATCH_KEY = 'che:modal_check_dispatch';
 
 // "modal" as a service, not the UI word ("the modal dialog", "a modal window").
 const UI_MODAL = /\bmodal\s+(?:dialog|window|sheet|popup|screen|view)\b/;
+const MODAL_WORD = /\bmodal\b/;
+const GPU_WORD = /\bgpu\b/;
+// Words that point at a job that already exists.
+const JOB_REF = /\b(?:previous|prior|last|latest|earlier|existing|old|that|this|status|progress|finished|finish|done|result|results|did it|is it|where is|check on|what happened)\b/;
+// Words that ask for a new job. Only an explicit start verb with a render, picture or GPU noun starts one.
+const START_VERB = /\b(?:start|launch|trigger|queue|kick off|make|create|generate|send|run|do)\b/;
+const NEW_QUALIFIER = /\b(?:new|another|again|fresh|one more)\b/;
+const JOB_NOUN = /\b(?:render|renders|rendering|picture|pictures|image|images|gpu test|gpu check|gpu render|job|jobs)\b/;
+const CHECK_WORD = /\b(?:check|verify|verifying|test|health|connection|connected|working|deployed|deployment)\b/;
 const CONNECT = /\b(?:connect|hook up|link|onboard|reconnect)\b/;
-const VERIFY = /\b(?:verify|verifying|test|check|health|render|rendering|connection|working|deployed service|deployed)\b/;
-const RENDER = /\b(?:render|rendering|test render|small render|gpu test|gpu render)\b/;
 
 /**
- * The Modal verification command: "connect Modal and verify it", "test the Modal render". Null for a plain connect, for any
- * other message, and for a mention of Modal as a UI word.
+ * The Modal command: which of the three asks it is. Null for a plain connect (the guided connect flow), for any other
+ * message, and for a mention of Modal as a UI word.
+ *   connection: "check Modal connection", "verify modal", "is modal connected"
+ *   job_status: "check the previous GPU render", "did the render finish", "status of the last picture"
+ *   new_render: "start a new test render", "run a GPU test"
  */
 export function modalServiceIntent(message = '') {
   const t = String(message || '').toLowerCase().replace(/^(?:hey |ok |okay )?(?:che|chay)[,:]?\s+/, '').trim();
-  if (!t || t.length > 600 || !/\bmodal\b/.test(t) || UI_MODAL.test(t)) return null;
-  const connect = CONNECT.test(t);
-  const verify = VERIFY.test(t);
-  // A plain "connect Modal" keeps the guided connect flow (service_onboarding.js). This report is for a verify or render ask.
-  if (!verify) return null;
-  return { provider: 'modal', connect, verify, render: RENDER.test(t) };
+  if (!t || t.length > 600 || UI_MODAL.test(t)) return null;
+  if (!MODAL_WORD.test(t) && !(GPU_WORD.test(t) && JOB_NOUN.test(t))) return null;
+  const startsNew = START_VERB.test(t) && JOB_NOUN.test(t);
+  const refsExisting = JOB_REF.test(t) && JOB_NOUN.test(t);
+  let kind = null;
+  if (startsNew && NEW_QUALIFIER.test(t)) kind = 'new_render';
+  else if (refsExisting) kind = 'job_status';
+  else if (startsNew) kind = 'new_render';
+  else if (CHECK_WORD.test(t) || CONNECT.test(t)) kind = 'connection';
+  if (!kind) return null;
+  // A plain "connect Modal" with no check word keeps the guided connect flow.
+  if (kind === 'connection' && !CHECK_WORD.test(t)) return null;
+  return { provider: 'modal', kind, connect: CONNECT.test(t), verify: kind !== 'new_render' && CHECK_WORD.test(t), render: kind === 'new_render' };
 }
 
 /** Whether the two Modal workflows are in the repository, by GitHub's contents API. Never reads a secret. */
@@ -53,7 +73,7 @@ export async function modalWorkflowState(env, fetcher = fetch) {
 export async function dispatchModalRender(env, fetcher = fetch, now = Date.now()) {
   const sent = await gh(env, 'POST', `/actions/workflows/${MODAL_CHECK_WORKFLOW}/dispatches`, { ref: 'main', inputs: { gpu_test: 'true' } }, fetcher);
   if (sent.status === 204 || sent.ok) return { ok: true, started_at: new Date(now).toISOString() };
-  return { ok: false, status: sent.status || 0, detail: `GitHub refused the render workflow (${sent.status || 'network'}${sent.data?.message ? `: ${String(sent.data.message).slice(0, 120)}` : ''}).` };
+  return { ok: false, status: sent.status || 0, detail: `GitHub refused the GPU check workflow (${sent.status || 'network'}${sent.data?.message ? `: ${String(sent.data.message).slice(0, 120)}` : ''}).` };
 }
 
 /** The newest run of the Modal check started since `since`, with its real state and conclusion. */
@@ -68,9 +88,100 @@ export async function modalRenderRun(env, since, fetcher = fetch) {
   return { ...base, state: run.conclusion === 'success' ? 'passed' : 'failed', conclusion: run.conclusion };
 }
 
+/** The state of one GPU check run, in CHE's words. The check is a self-test, so it is never called a render. */
+export function checkRunLabel(run) {
+  if (!run) return 'no GPU check run on record';
+  if (run.status === 'queued' || run.status === 'waiting' || run.status === 'requested' || run.status === 'pending') return 'queued';
+  if (run.status === 'in_progress') return 'running the GPU check (a T4 self-test, not an image)';
+  if (run.conclusion === 'success') return 'completed';
+  if (run.conclusion === 'cancelled') return 'cancelled';
+  return 'failed';
+}
+
+/** The state of one Modal picture job from CHE's own record. Modal gives the Worker no queued/rendering split. */
+export function pictureJobLabel(record) {
+  if (record.state === 'saved') return `completed and saved to Gallery as asset ${record.item?.id || 'unknown'}`;
+  if (record.state === 'failed') return `failed: ${record.error || 'no reason recorded'}`;
+  return 'running or queued on Modal (not finished; the Worker cannot tell which)';
+}
+
+/** The newest runs of one workflow on main, newest first. Empty when GitHub does not answer (the caller says so). */
+async function recentRuns(env, workflow, fetcher) {
+  const r = await gh(env, 'GET', `/actions/workflows/${workflow}/runs?branch=main&per_page=5`, null, fetcher);
+  if (!r.ok) return { known: false, runs: [], status: r.status || 0 };
+  return { known: true, runs: r.data?.workflow_runs || [] };
+}
+
+/**
+ * Starts the GPU check once. Refused when one was started in the last MODAL_CHECK_DEDUPE_MS, or when a check run is still
+ * queued or running on GitHub. Nothing is started by a refusal.
+ */
+export async function startModalCheckOnce(env, storage, fetcher = fetch, now = Date.now()) {
+  const last = await storage.get(MODAL_CHECK_DISPATCH_KEY).catch(() => undefined);
+  if (last?.at && now - Date.parse(last.at) < MODAL_CHECK_DEDUPE_MS) {
+    return { started: false, duplicate: true, detail: `A GPU check was already started at ${last.at}. I did not start another.` };
+  }
+  const list = await recentRuns(env, MODAL_CHECK_WORKFLOW, fetcher);
+  if (!list.known) return { started: false, detail: `GitHub did not answer about the GPU check runs (${list.status || 'network'}), so I did not start one.` };
+  const inFlight = list.runs.find((r) => r.status === 'queued' || r.status === 'in_progress' || r.status === 'waiting');
+  if (inFlight) {
+    return { started: false, duplicate: true, detail: `GPU check run ${inFlight.id} is already ${inFlight.status === 'in_progress' ? 'running' : 'queued'}. I did not start another.`, run_id: inFlight.id, html_url: inFlight.html_url || '' };
+  }
+  const sent = await dispatchModalRender(env, fetcher, now);
+  if (!sent.ok) return { started: false, detail: sent.detail };
+  await storage.put(MODAL_CHECK_DISPATCH_KEY, { at: sent.started_at });
+  return { started: true, started_at: sent.started_at };
+}
+
+/**
+ * The status of existing jobs, read only: the latest GPU check run, the latest deploy, the connection, and the Modal
+ * picture jobs on record. It starts nothing, whatever the message says.
+ */
+export async function modalJobStatusReply(env, storage, { fetcher = fetch, now = Date.now() } = {}) {
+  const lines = [];
+  const steps = {};
+  const at = new Date(now).toISOString();
+
+  const checks = await recentRuns(env, MODAL_CHECK_WORKFLOW, fetcher);
+  if (!checks.known) lines.push('GPU check: not read, because GitHub did not answer.');
+  else if (!checks.runs.length) lines.push('GPU check: no run on record.');
+  else {
+    const run = checks.runs[0];
+    steps.gpu_check = { run_id: run.id, status: run.status, conclusion: run.conclusion ?? null, html_url: run.html_url || '' };
+    lines.push(`GPU check: run ${run.id} is ${checkRunLabel(run)}.${run.html_url ? ` ${run.html_url}` : ''}`);
+  }
+
+  const deploys = await recentRuns(env, MODAL_DEPLOY_WORKFLOW, fetcher);
+  if (!deploys.known) lines.push('Deployed: not read, because GitHub did not answer.');
+  else if (!deploys.runs.length) lines.push('Deployed: no Modal deploy run on record.');
+  else {
+    const run = deploys.runs[0];
+    const label = run.status !== 'completed' ? 'deploying' : run.conclusion === 'success' ? 'deployed' : 'deploy failed';
+    steps.deploy = { run_id: run.id, status: run.status, conclusion: run.conclusion ?? null, html_url: run.html_url || '' };
+    lines.push(`Deployed: ${label} (run ${run.id}).${run.html_url ? ` ${run.html_url}` : ''}`);
+  }
+
+  const cred = await modalCredential(env, storage);
+  if (!cred.exists) lines.push('Connected: no Modal connection is saved in CHE.');
+  else {
+    const h = await modalHealth(cred.cred, fetcher);
+    steps.health = { ok: h.ok, auth: h.auth, at };
+    lines.push(h.ok === true ? `Connected: the authenticated health check passed just now (${at}).` : `Connected: no. The health check failed (${h.auth || 'unknown'}).`);
+  }
+
+  const records = ((await storage.get(MODAL_IMAGE_KEY).catch(() => undefined)) || []).filter((r) => r.call_id).slice(-3);
+  if (!records.length) lines.push('Picture jobs: none on record.');
+  for (const r of records) {
+    steps.pictures = [...(steps.pictures || []), { call_id: r.call_id, state: r.state || 'started', asset_id: r.item?.id || null }];
+    lines.push(`Picture job ${r.call_id} (${r.title || 'untitled'}): ${pictureJobLabel(r)}.`);
+  }
+
+  return { text: ['Status of the existing jobs. Nothing was started.', ...lines].join('\n'), steps, at };
+}
+
 /**
  * The reply for the Modal command, with a receipt for each step. `connected` is true only when the authenticated health
- * check passed in this turn. `rendered` is never claimed here: it needs the workflow run to conclude successfully.
+ * check passed in this turn. A GPU check is started only for a `new_render` ask, and only through startModalCheckOnce.
  */
 export async function modalConnectReply(env, storage, intent, { fetcher = fetch, now = Date.now() } = {}) {
   const lines = [];
@@ -81,7 +192,7 @@ export async function modalConnectReply(env, storage, intent, { fetcher = fetch,
   const wf = await modalWorkflowState(env, fetcher);
   steps.workflows = wf.known ? { check: wf.check, deploy: wf.deploy } : { blocked: wf.reason };
   if (!wf.known) lines.push(`Workflows: not checked. ${wf.reason}`);
-  else if (!wf.check) lines.push(`Workflows: the Modal check workflow (${MODAL_CHECK_WORKFLOW}) is missing from the repository, so no render can run.`);
+  else if (!wf.check) lines.push(`Workflows: the GPU check workflow (${MODAL_CHECK_WORKFLOW}) is missing from the repository, so no GPU check can run.`);
   else lines.push(`Workflows: ${MODAL_CHECK_WORKFLOW} and ${MODAL_DEPLOY_WORKFLOW} ${wf.deploy ? 'are present' : `are present, but ${MODAL_DEPLOY_WORKFLOW} is missing`} on main.`);
 
   // 2. Credential (presence only).
@@ -105,24 +216,24 @@ export async function modalConnectReply(env, storage, intent, { fetcher = fetch,
     lines.push('Health: not run, because there is no credential.');
   }
 
-  // 4. Render (only when asked): the existing check workflow, one short T4 render.
-  if (intent.render) {
+  // 4. GPU check: only for an explicit new-run ask, once.
+  if (intent.kind === 'new_render') {
     if (!wf.known || !wf.check) {
-      steps.render = { started: false, blocked: wf.known ? 'the check workflow is missing' : wf.reason };
-      lines.push(`Render: not started. ${steps.render.blocked}`);
+      steps.gpu_check = { started: false, blocked: wf.known ? 'the check workflow is missing' : wf.reason };
+      lines.push(`GPU check: not started. ${steps.gpu_check.blocked}`);
     } else {
-      const sent = await dispatchModalRender(env, fetcher, now);
-      if (!sent.ok) {
-        steps.render = { started: false, blocked: sent.detail };
-        lines.push(`Render: not started. ${sent.detail}`);
+      const sent = await startModalCheckOnce(env, storage, fetcher, now);
+      if (!sent.started) {
+        steps.gpu_check = { started: false, duplicate: sent.duplicate === true, run_id: sent.run_id ?? null, blocked: sent.detail };
+        lines.push(`GPU check: not started. ${sent.detail}${sent.html_url ? ` ${sent.html_url}` : ''}`);
       } else {
         const run = await modalRenderRun(env, sent.started_at, fetcher);
-        steps.render = { started: true, ...run };
+        steps.gpu_check = { started: true, ...run };
         const url = run.html_url ? ` ${run.html_url}` : '';
-        if (run.state === 'passed') lines.push(`Render: passed (run ${run.run_id}).${url}`);
-        else if (run.state === 'failed') lines.push(`Render: failed (run ${run.run_id}, ${run.conclusion}).${url} Open the run for the failed step.`);
-        else if (run.state === 'running') lines.push(`Render: running (run ${run.run_id}).${url} It is not finished, so it is not claimed as rendered.`);
-        else lines.push(`Render: started on main at ${sent.started_at}. The run has not appeared yet, so it is not claimed as rendered. Actions: https://github.com/${env.CHE_GITHUB_REPO}/actions/workflows/${MODAL_CHECK_WORKFLOW}`);
+        if (run.state === 'passed') lines.push(`GPU check: completed (run ${run.run_id}).${url}`);
+        else if (run.state === 'failed') lines.push(`GPU check: failed (run ${run.run_id}, ${run.conclusion}).${url} Open the run for the failed step.`);
+        else if (run.state === 'running') lines.push(`GPU check: running (run ${run.run_id}).${url} It is not finished yet.`);
+        else lines.push(`GPU check: queued on main at ${sent.started_at}. The run has not appeared yet. Actions: https://github.com/${env.CHE_GITHUB_REPO}/actions/workflows/${MODAL_CHECK_WORKFLOW}`);
       }
     }
   }
@@ -133,14 +244,18 @@ export async function modalConnectReply(env, storage, intent, { fetcher = fetch,
   return { text: [headline, ...lines].join('\n'), connected, steps, at };
 }
 
-/** The chat response for the Modal verification command: the report, its source and its receipt. */
+/** The chat response for the Modal command: its report, its source and its receipt. Only a new_render ask can start work. */
 export async function modalServiceReply(env, storage, intent, ndjsonReply) {
+  if (intent.kind === 'job_status') {
+    const status = await modalJobStatusReply(env, storage);
+    return ndjsonReply(status.text, { source: 'che_modal_status', ok: true, model_calls: 0, steps: status.steps });
+  }
   const reply = await modalConnectReply(env, storage, intent);
   return ndjsonReply(reply.text, { source: 'che_modal_connect', ok: reply.connected, model_calls: 0, steps: reply.steps });
 }
 
 /**
- * The explicit service command that runs before the GitHub and deployment matchers: a Modal verify ask ({kind:'modal'}),
+ * The explicit service command that runs before the GitHub and deployment matchers: a Modal ask ({kind:'modal'}),
  * or a connect command for any provider ({kind:'connect'}, the guided connect flow). Null for everything else.
  */
 export function serviceCommandIntent(message) {
