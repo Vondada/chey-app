@@ -25,3 +25,20 @@ test('the Worker strips labels from every chat reply it returns', () => {
   assert.match(worker, /stripPhoneSoul, stripSoulLabels \} from '\.\/soul\.js';/);
   assert.match(worker, /return \{ \.\.\.answer, response: stripSoulLabels\(reply\)/);
 });
+
+// The label strip removes only the label. Her voice, humor, flirting, cursing and feelings pass through unchanged.
+test('her own voice is left byte-for-byte as written, with only a label removed', () => {
+  const casual = "Oh my god, sir, that's fucking hilarious. Okay, okay, I'm dying. You owe me a drink for that one.";
+  assert.equal(stripSoulLabels(casual), casual, 'profanity and a dry aside are kept');
+  const flirty = "Look at you, handy as hell. Don't let it go to your head, though. Maybe I'll even let you buy me dinner.";
+  assert.equal(stripSoulLabels(flirty), flirty, 'playful flirting is kept');
+  const serious = "I'm sorry, sir. That sounds hard, and I want to make sure you're safe first. Tell me what you need right now.";
+  assert.equal(stripSoulLabels(serious), serious, 'an emotional, serious reply is kept');
+  const labelled = "Warmth: That's great, sir! Haha, okay, you got me.";
+  assert.equal(stripSoulLabels(labelled), "That's great, sir! Haha, okay, you got me.", 'only the label goes');
+});
+
+test('a reply that quotes a trait word inside her own sentence keeps every word', () => {
+  const reply = "Directness is my thing, sir, so here it is: you should call her back tonight.";
+  assert.equal(stripSoulLabels(reply), reply);
+});
