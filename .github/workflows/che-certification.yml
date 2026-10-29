@@ -1,0 +1,101 @@
+# CHE 600-question certification, LIVE against the deployed Worker's real chat runtime.
+#
+# Every question goes through POST /api/probe/chat on the deployed Worker (the owner's own chat path: real model
+# rotation, personality, memory and tools). No substitute model, no mock. Every real response is saved as an
+# artifact with its engine, route, latency and fallback, and graded by tools/certification/run_certification.mjs.
+#
+# Read-only for the owner's data: probe turns do not write brain-growth or perf-watch records (see worker.js).
+# Spending: chat turns use CHE's existing model rotation. Each run records the Worker's own AI usage before and after.
+#
+# Manual only (workflow_dispatch). Set `category` or `limit` to run part of the set.
+name: CHE certification (live)
+
+on:
+  workflow_dispatch:
+    inputs:
+      category:
+        description: Only this category (blank = all 600)
+        type: string
+        default: ""
+      limit:
+        description: First N questions only (blank = all)
+        type: string
+        default: ""
+
+concurrency:
+  group: che-certification
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  certify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 340
+    env:
+      CHE_WORKER: https://chey-app.henryjavoni.workers.dev
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: c49b395e8f1138b5fae36ab88222542c
+      CATEGORY: ${{ inputs.category }}
+      LIMIT: ${{ inputs.limit }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: "1. The probe route is closed without a token (must answer 404)"
+        run: |
+          code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 60 -X POST "$CHE_WORKER/api/probe/chat" -H 'Content-Type: application/json' -d '{"message":"ping"}')
+          echo "Public probe route without a token: HTTP $code"
+          [ "$code" = "404" ] || { echo "::error::probe route is not closed without a token (HTTP $code)"; exit 1; }
+
+      - name: Probe token for the Worker's probe routes (masked, never printed)
+        working-directory: server/cloudflare
+        run: |
+          token="$(openssl rand -hex 32)"
+          echo "::add-mask::$token"
+          printf '%s' "$token" | npx --yes wrangler@4 secret put CHE_VOICE_PROBE_TOKEN
+          echo "CHE_PROBE_TOKEN=$token" >> "$GITHUB_ENV"
+          sleep 20
+
+      - name: 2. Run the 600 questions against the live chat route
+        env:
+          CHE_CHAT_URL: https://chey-app.henryjavoni.workers.dev/api/probe/chat
+        run: |
+          args=(certification-results.json)
+          [ -n "$CATEGORY" ] && args+=("--category=$CATEGORY")
+          [ -n "$LIMIT" ] && args+=("--limit=$LIMIT")
+          node tools/certification/run_certification.mjs "${args[@]}" | tee certification-run.log
+
+      - name: 3. Summary
+        if: always()
+        run: |
+          python3 - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import json, os
+          try:
+              r = json.load(open("certification-results.json"))
+          except Exception as e:
+              print(f"### 3. Certification did not produce a report: {e}")
+              raise SystemExit(0)
+          s = r.get("summary", {})
+          print("### 3. Certification (live CHE)")
+          for k in ("total", "pass", "fail", "blocked", "not_run"):
+              if k in s:
+                  print(f"- {k}: {s[k]}")
+          print("")
+          print("Every real response is in the `certification-results` artifact.")
+          PY
+
+      - name: Save the results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: certification-results
+          path: |
+            certification-results.json
+            certification-run.log
+          if-no-files-found: warn
+          retention-days: 30
