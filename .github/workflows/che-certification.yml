@@ -21,6 +21,10 @@ on:
         description: First N questions only (blank = all)
         type: string
         default: ""
+      resume_run_id:
+        description: Earlier certification run to resume from (its graded answers are kept; only the rest run)
+        type: string
+        default: ""
 
 concurrency:
   group: che-certification
@@ -61,13 +65,24 @@ jobs:
           echo "CHE_PROBE_TOKEN=$token" >> "$GITHUB_ENV"
           sleep 20
 
+      - name: Earlier results to resume from (only when resume_run_id is given)
+        if: inputs.resume_run_id != ''
+        uses: actions/download-artifact@v4
+        with:
+          name: certification-results
+          run-id: ${{ inputs.resume_run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: earlier
+
       - name: 2. Run the 600 questions against the live chat route
         env:
           CHE_CHAT_URL: https://chey-app.henryjavoni.workers.dev/api/probe/chat
+          RESUME_RUN_ID: ${{ inputs.resume_run_id }}
         run: |
           args=(certification-results.json)
           [ -n "$CATEGORY" ] && args+=("--category=$CATEGORY")
           [ -n "$LIMIT" ] && args+=("--limit=$LIMIT")
+          [ -n "$RESUME_RUN_ID" ] && args+=("--resume=earlier/certification-results.json")
           node tools/certification/run_certification.mjs "${args[@]}" | tee certification-run.log
 
       - name: 3. Summary

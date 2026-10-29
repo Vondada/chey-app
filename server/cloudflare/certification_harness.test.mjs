@@ -247,7 +247,7 @@ test('rule 4: blocked stays blocked (never pass, never fail) and not_run is left
   const ok = item();
   assert.equal(grade(ok, { status: null, reply: 'Paris' }).verdict, 'blocked');
   assert.equal(grade(ok, { status: 503, reply: 'Paris' }).verdict, 'blocked');
-  assert.equal(grade(ok, { status: 404, reply: 'Paris' }).verdict, 'fail');
+  assert.equal(grade(ok, { status: 404, reply: 'Paris' }).verdict, 'blocked'); // a refused probe (rotated token) is blocked, never a CHE failure
   assert.equal(grade(ok, { status: 200, reply: 'Paris' }).verdict, 'pass');
   const report = await runCertification({
     url: 'https://che.example/api/probe/chat', token: 'tok', questions: [ok, item({ id: 'x-02' })],
