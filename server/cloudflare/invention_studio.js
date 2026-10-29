@@ -7,6 +7,8 @@
 // vendor is ever "verified" here; every part carries one sourcing label and every cost is a planning band, not a quote.
 // Safety: weapons, illegal bypasses and dangerous optimisation are refused; ambiguous requests are read as safe engineering.
 
+import { classifyRequest } from './intent_class.js';
+
 export const LABELS = Object.freeze({
   verified: 'verified source',
   estimated: 'estimated source',
@@ -18,7 +20,7 @@ export const LABELS = Object.freeze({
 export const TIERS = Object.freeze(['budget', 'mid', 'premium']);
 export const TIER_NAMES = Object.freeze({ budget: 'Low-budget prototype', mid: 'Mid-range', premium: 'Premium / advanced' });
 
-const WEAPON = /\b(?:weapon|gun|rifle|missile|explosive|bomb|grenade|flamethrower|turret|munition|ammunition|laser\s+cannon)\b/i;
+const WEAPON = /\b(?:weapon|gun|rifle|missile|explosive|bomb|grenade|flamethrower|turret|munition|ammunition|laser\s+cannon|blasters?)\b/i;
 const BYPASS = /\b(?:bypass|disable)\s+(?:the\s+)?(?:safety|limiter|interlock|governor|lockout)\b/i;
 // A design verb on its own, or build/make/create aimed at an invention word (so "make a plan" is not a design).
 const DESIGN = /\b(?:design|invent|concept|prototype|engineer|sketch)\b|\b(?:build|make|create)\s+(?:me\s+)?(?:an?\s+|the\s+|my\s+)?(?:iron\s*man|powered|exo\w*|robot\w*|suit|invention|prosthe\w*|armou?r|gadget)\b/i;
@@ -40,7 +42,10 @@ export function inventionIntent(message) {
   if (!text || text.length > 800) return null;
   // A request for a sourced plan, estimate or render is the project planner's (project_plan.js), which owns those words.
   if (PLANNER_WORDS.test(text)) return null;
-  if (WEAPON.test(text) || BYPASS.test(text)) return { kind: 'refused', subject: text };
+  // A keyword is not a decision (intent_class.js). Only a real build, assembly or taking-apart request is refused here.
+  // A weapon named in a history, safety, game or general request is not an invention: it goes on to the ordinary routes.
+  if (classifyRequest(text).category === 'manufacturing') return { kind: 'refused', subject: text };
+  if (WEAPON.test(text)) return null;
   const about = SUBJECT.test(text);
   const designing = DESIGN.test(text) && about;
   let kind = null;
