@@ -76,6 +76,8 @@ export async function createScene(storage, { name, template = 'blank', id, now }
   if (!TEMPLATES[template]) return { ok: false, status: 422, detail: `Template must be one of: ${Object.keys(TEMPLATES).join(', ')}.` };
   const map = await loadAll(storage);
   if (Object.keys(map).length >= MAX_SCENES) return { ok: false, status: 409, detail: `CHE keeps at most ${MAX_SCENES} scenes.` };
+  // A create never replaces a saved scene: an existing id is refused, and the saved version is kept.
+  if (id && map[id]) return { ok: false, status: 409, detail: 'A scene with that id already exists, so nothing was replaced. Open it to edit.' };
   const sceneId = id || `scene_${crypto.randomUUID().replace(/-/g, '').slice(0, 12)}`;
   let scene;
   try {

@@ -164,3 +164,18 @@ test('the live scene probe runs create, save, stale-refusal and reopen through t
   assert.equal(report.steps.length, 4);
   assert.deepEqual(report.steps.map((s) => s.ok), [true, true, true, true]);
 });
+
+// Codex review of #735 (scene_store.js): a create that reuses a saved scene's id replaced it with a fresh version 1.
+test('a create that reuses a saved scene id is refused, and the saved version is kept', async () => {
+  const storage = fakeStorage();
+  const made = await createScene(storage, { name: 'Kept', template: 'person', id: 'scene_keep01' });
+  assert.equal(made.ok, true);
+  const saved = await getScene(storage, 'scene_keep01');
+  const again = await createScene(storage, { name: 'Replaced', template: 'blank', id: 'scene_keep01' });
+  assert.equal(again.ok, false);
+  assert.equal(again.status, 409);
+  const after = await getScene(storage, 'scene_keep01');
+  assert.equal(after.version, saved.version);
+  assert.equal(after.scene.name, 'Kept');
+  assert.deepEqual(after.scene.objects, saved.scene.objects);
+});

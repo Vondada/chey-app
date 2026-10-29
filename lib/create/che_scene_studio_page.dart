@@ -186,11 +186,12 @@ class _CheSceneStudioPageState extends State<CheSceneStudioPage> {
   }
 
   Widget _slider(SceneObject o, String name, String label) {
-    final current = (o.props[name] as num?)?.toDouble();
     final range = properties[o.kind]?[name] as List?;
-    if (current == null || range == null) return const SizedBox.shrink();
+    if (range == null) return const SizedBox.shrink();
     final min = (range[0] as num).toDouble();
     final max = (range[1] as num).toDouble();
+    // A property the saved object does not carry yet starts at the bottom of its range, so its control is reachable.
+    final current = (o.props[name] as num?)?.toDouble() ?? min;
     return Semantics(
       slider: true,
       label: label,
