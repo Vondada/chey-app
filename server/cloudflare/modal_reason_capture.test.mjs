@@ -31,7 +31,7 @@ test('the handler\'s own error is the reason', async () => {
 
 test('a framework 422 with a detail list gives its messages as the reason', async () => {
   const out = await refusedWith(422, JSON.stringify({ detail: [{ loc: ['body', 'seed'], msg: 'Input should be a valid integer', type: 'int_type' }] }));
-  assert.equal(out.modal_reason, 'Input should be a valid integer');
+  assert.equal(out.modal_reason, 'body.seed: Input should be a valid integer');
 });
 
 test('a 422 whose body is plain text keeps those words as the reason', async () => {
