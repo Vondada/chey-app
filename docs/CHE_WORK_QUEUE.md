@@ -33,6 +33,7 @@ Statuses: `open`, `in progress`, `waiting on owner`, `built, not verified`, `ver
 | Q-35 | GPU and 3D world: 25 upgrades | open | `docs/gpu-world-upgrades` | Start with items 1, 4, 5 and 25 in `docs/CHE_GPU_WORLD_UPGRADES.md` (free, local, measurable). Paid GPU (15-19) waits for the owner's spend decision and a cap above $0. | Doc only; nothing built |
 | Q-36 | 10 real-world tools that work together | open | `docs/real-world-tools` | Build tools 1, 4 and 7 first (capability map, permission gate, verifier), then 10 (eval). See `docs/CHE_REAL_WORLD_TOOLS.md`. | Doc only; nothing built |
 | Q-37 | Free 3D parts pipeline (look up, plan, model, show) | open | `docs/free-3d-tools` | Build the parts pipeline with CadQuery, Wikipedia and Three.js first; test with a car and a bicycle. See `docs/CHE_FREE_3D_TOOLS.md`. Verify licenses of tools 2, 3, 7, 8 at source first. | Research only; nothing installed |
+| Q-38 | Character and creature menu in the creation room (5 bio tools, 10 more tools, 5 examples) | open | `docs/character-creature-tools` | Check Quaternius and MakeHuman licenses at source; prototype one customizable human in the creation studio on Safari 26; measure load and edit time on the owner's iPhone. See `docs/CHE_CHARACTER_AND_CREATURE_TOOLS.md`. | Research only; nothing built |
 | Q-15 | Car Bluetooth: one audio-session owner | open | `docs/voice-problem-solving-queue` | Stop `speech_to_text` (7.5.0) changing category, mode or activation during CHE turns (`SpeechToTextPlugin.swift:457-528`). Route listening through the native recognizer that already keeps `voiceChat`. Owner test in a car. | Code finding only; not device-tested |
 | Q-16 | Faster first words: stream the reply | open | — | Let the Worker send the first sentence before the full reply is verified, keeping the safety checks (`worker.js` ~14353-14394 buffers everything). Needs a safety review first. | Code map 2026-10-28 |
 | Q-17 | Faster first audio: stream TTS | open | — | Pipeline clips and start playback on the first chunk, not the full file (`preferred_elevenlabs_voice.js:211-242`, `bootstrap.sh:1480`). Target median first audio under 700 ms, measured on the phone. | No timings in repo yet |
@@ -66,6 +67,7 @@ Statuses: `open`, `in progress`, `waiting on owner`, `built, not verified`, `ver
 
 ## Log
 - 2026-10-28: Q-39 Phase 1 audit done (`docs/CHE_UNIVERSAL_CREATION_AUDIT.md`). Modal /health verified live; Creation Engine end-to-end was skipped (opt-in) on run 40609806059.
+- 2026-10-28: Q-38 added (character and creature menu research). Free GPU without login = the owner's own device via WebGPU; server GPUs need an account.
 - 2026-10-28: Q-40 added (Create Studio requirements). M2a scene document in PR #731.
 - 2026-10-28: Q-37 added (free 3D build tools, `docs/CHE_FREE_3D_TOOLS.md`). Research only.
 - 2026-10-28: Q-36 added (10 real-world tools, `docs/CHE_REAL_WORLD_TOOLS.md`). Nothing built yet.
