@@ -20,13 +20,19 @@ const MODAL_CHECK_DISPATCH_KEY = 'che:modal_check_dispatch';
 // "modal" as a service, not the UI word ("the modal dialog", "a modal window").
 const UI_MODAL = /\bmodal\s+(?:dialog|window|sheet|popup|screen|view)\b/;
 const MODAL_WORD = /\bmodal\b/;
-const GPU_WORD = /\bgpu\b/;
+const GPU_TEST_WORDS = /\bgpu (?:test|check)\b/;
 // Words that point at a job that already exists.
 const JOB_REF = /\b(?:previous|prior|last|latest|earlier|existing|old|that|this|status|progress|finished|finish|done|result|results|did it|is it|where is|check on|what happened)\b/;
 // Words that ask for a new job. Only an explicit start verb with a render, picture or GPU noun starts one.
 const START_VERB = /\b(?:start|launch|trigger|queue|kick off|make|create|generate|send|run|do)\b/;
 const NEW_QUALIFIER = /\b(?:new|another|again|fresh|one more)\b/;
-const JOB_NOUN = /\b(?:render|renders|rendering|picture|pictures|image|images|gpu test|gpu check|gpu render|job|jobs)\b/;
+// Nouns that can start a GPU check. Pictures and images are never a GPU check: their requests belong to the picture route.
+const START_NOUN = /\b(?:render|renders|rendering|gpu test|gpu check|gpu render|job|jobs)\b/;
+// Nouns a status question can ask about: the same, plus Modal's picture jobs.
+const STATUS_NOUN = /\b(?:render|renders|rendering|gpu test|gpu check|gpu render|job|jobs|picture|pictures|image|images)\b/;
+// A question or a negation never starts work: "did you run that GPU test again?", "do not start another GPU render".
+const QUESTION = /^(?:did|do|does|is|are|was|were|has|have|had|can|could|would|will|what|where|how|why|when|which)\b|\?\s*$/;
+const NEGATION = /\b(?:not|no|never|don't|dont|stop|cancel|without)\b/;
 const CHECK_WORD = /\b(?:check|verify|verifying|test|health|connection|connected|working|deployed|deployment)\b/;
 const CONNECT = /\b(?:connect|hook up|link|onboard|reconnect)\b/;
 
@@ -40,11 +46,15 @@ const CONNECT = /\b(?:connect|hook up|link|onboard|reconnect)\b/;
 export function modalServiceIntent(message = '') {
   const t = String(message || '').toLowerCase().replace(/^(?:hey |ok |okay )?(?:che|chay)[,:]?\s+/, '').trim();
   if (!t || t.length > 600 || UI_MODAL.test(t)) return null;
-  if (!MODAL_WORD.test(t) && !(GPU_WORD.test(t) && JOB_NOUN.test(t))) return null;
-  const startsNew = START_VERB.test(t) && JOB_NOUN.test(t);
-  const refsExisting = JOB_REF.test(t) && JOB_NOUN.test(t);
+  // Only Modal, or an explicit GPU test or check, is this route. A plain GPU question ("what are my GPU jobs?") belongs to the
+  // GPU job queue, and a picture is never this route.
+  if (!MODAL_WORD.test(t) && !(GPU_TEST_WORDS.test(t) && START_NOUN.test(t))) return null;
+  const asks = QUESTION.test(t) || NEGATION.test(t);
+  const startsNew = !asks && START_VERB.test(t) && START_NOUN.test(t);
+  const refsExisting = JOB_REF.test(t) && STATUS_NOUN.test(t);
   let kind = null;
-  if (startsNew && NEW_QUALIFIER.test(t)) kind = 'new_render';
+  if (asks && STATUS_NOUN.test(t)) kind = 'job_status';
+  else if (startsNew && NEW_QUALIFIER.test(t)) kind = 'new_render';
   else if (refsExisting) kind = 'job_status';
   else if (startsNew) kind = 'new_render';
   else if (CHECK_WORD.test(t) || CONNECT.test(t)) kind = 'connection';
@@ -105,6 +115,20 @@ export function pictureJobLabel(record) {
   return 'running or queued on Modal (not finished; the Worker cannot tell which)';
 }
 
+// The GPU step of che-modal-check.yml. It is skipped on a connection-only run (gpu_test off), so only a step that ran is a GPU test.
+const GPU_STEP = /^GPU test\b/;
+
+/** One check run's GPU step: { ran, status, conclusion }. ran is false for a connection-only run. Null when GitHub does not answer. */
+export async function gpuTestStep(env, runId, fetcher = fetch) {
+  const r = await gh(env, 'GET', `/actions/runs/${runId}/jobs?per_page=10`, null, fetcher);
+  if (!r.ok) return null;
+  const step = (r.data?.jobs || []).flatMap((j) => j.steps || []).find((st) => GPU_STEP.test(st.name || ''));
+  if (!step) return { ran: false, status: null, conclusion: null };
+  // Not started yet: unknown, so the run is neither a GPU test nor a connection-only check yet.
+  if (step.status === 'queued' || step.status === 'pending' || step.status === 'waiting') return { ran: null, status: step.status, conclusion: null };
+  return { ran: step.conclusion !== 'skipped', status: step.status, conclusion: step.conclusion ?? null };
+}
+
 /** The newest runs of one workflow on main, newest first. Empty when GitHub does not answer (the caller says so). */
 async function recentRuns(env, workflow, fetcher) {
   const r = await gh(env, 'GET', `/actions/workflows/${workflow}/runs?branch=main&per_page=5`, null, fetcher);
@@ -142,13 +166,30 @@ export async function modalJobStatusReply(env, storage, { fetcher = fetch, now =
   const steps = {};
   const at = new Date(now).toISOString();
 
+  // The newest GPU test and the newest connection-only check, each from its own step. A connection-only run is never a GPU test.
   const checks = await recentRuns(env, MODAL_CHECK_WORKFLOW, fetcher);
   if (!checks.known) lines.push('GPU check: not read, because GitHub did not answer.');
   else if (!checks.runs.length) lines.push('GPU check: no run on record.');
   else {
-    const run = checks.runs[0];
-    steps.gpu_check = { run_id: run.id, status: run.status, conclusion: run.conclusion ?? null, html_url: run.html_url || '' };
-    lines.push(`GPU check: run ${run.id} is ${checkRunLabel(run)}.${run.html_url ? ` ${run.html_url}` : ''}`);
+    let gpuRun = null;
+    let connectionRun = null;
+    for (const run of checks.runs.slice(0, 3)) {
+      const step = await gpuTestStep(env, run.id, fetcher);
+      if (!step || step.ran === null) continue;
+      if (step.ran && !gpuRun) gpuRun = { run, step };
+      if (!step.ran && !connectionRun) connectionRun = { run };
+      if (gpuRun && connectionRun) break;
+    }
+    if (gpuRun) {
+      const { run } = gpuRun;
+      steps.gpu_check = { run_id: run.id, status: run.status, conclusion: run.conclusion ?? null, html_url: run.html_url || '' };
+      lines.push(`GPU check: run ${run.id} is ${checkRunLabel(run)}.${run.html_url ? ` ${run.html_url}` : ''}`);
+    } else lines.push('GPU check: no GPU test on record (no check run ran the GPU step).');
+    if (connectionRun) {
+      const { run } = connectionRun;
+      steps.connection_check = { run_id: run.id, status: run.status, conclusion: run.conclusion ?? null };
+      lines.push(`Connection check: run ${run.id} is ${run.status === 'completed' ? (run.conclusion || 'completed') : run.status}, connection only (no GPU test ran).`);
+    }
   }
 
   const deploys = await recentRuns(env, MODAL_DEPLOY_WORKFLOW, fetcher);

@@ -25,7 +25,8 @@ function memoryStorage(seed = {}) {
 }
 
 // A fake GitHub. `checkRuns` and `deployRuns` are what each workflow's runs listing returns. Dispatch answers 204.
-function githubFake({ checkRuns = [], deployRuns = [], files = { check: true, deploy: true }, dispatchFails = false } = {}) {
+// `gpuSteps` maps a check run id to its GPU step ({status, conclusion}). A run not listed is connection-only (step skipped).
+function githubFake({ checkRuns = [], deployRuns = [], files = { check: true, deploy: true }, dispatchFails = false, gpuSteps = {} } = {}) {
   const calls = [];
   const fetcher = async (url, init = {}) => {
     const method = init.method || 'GET';
@@ -33,6 +34,11 @@ function githubFake({ checkRuns = [], deployRuns = [], files = { check: true, de
     if (/\/contents\/\.github\/workflows\/che-modal-check\.yml/.test(url)) return json(files.check ? 200 : 404, {});
     if (/\/contents\/\.github\/workflows\/che-modal-deploy\.yml/.test(url)) return json(files.deploy ? 200 : 404, {});
     if (/\/dispatches$/.test(url)) return dispatchFails ? json(422, { message: 'Workflow does not have workflow_dispatch' }) : json(204, {});
+    if (/\/actions\/runs\/(\d+)\/jobs/.test(url)) {
+      const id = Number(url.match(/\/actions\/runs\/(\d+)\/jobs/)[1]);
+      const step = gpuSteps[id] || { status: 'completed', conclusion: 'skipped' };
+      return json(200, { jobs: [{ steps: [{ name: 'Endpoint answers and refuses an unauthenticated request', status: 'completed', conclusion: 'success' }, { name: 'GPU test (gpu_check once on the deployed app)', ...step }] }] });
+    }
     if (/che-modal-check\.yml\/runs\?/.test(url)) return json(200, { workflow_runs: checkRuns });
     if (/che-modal-deploy\.yml\/runs\?/.test(url)) return json(200, { workflow_runs: deployRuns });
     throw new Error(`unexpected ${url}`);
@@ -47,11 +53,11 @@ const runAt = (id, extra = {}) => ({ id, created_at: new Date(NOW + 5000).toISOS
 
 // The owner's repeated messages, each as its own test case (wording as the owner sent it, where it was recorded).
 const STATUS_ASKS = [
-  'CHE, check my previous GPU render.',
+  'CHE, check my previous Modal GPU render.',
   'check the previous Modal render',
-  'check the last GPU render again',
-  'did the GPU render finish',
-  "what's the status of the GPU render",
+  'check the last Modal GPU render again',
+  'did the Modal GPU render finish',
+  "what's the status of the Modal GPU render",
 ];
 const CONNECTION_ASKS = ['check modal connection', 'is modal connected', 'verify modal'];
 const NEW_RUN_ASKS = ['start a new GPU test render', 'run a GPU test'];
@@ -90,8 +96,48 @@ test('a plain connect keeps the guided connect flow; a non-Modal message is not 
   assert.equal(modalServiceIntent('connect Hugging Face'), null);
 });
 
+test('questions and negations never start a run, even when they name a new run', () => {
+  const asks = [
+    'did you run that GPU test again?',
+    'Do not start another Modal GPU render',
+    'could you start a new GPU test render?',
+    'please do not run a GPU test',
+  ];
+  for (const msg of asks) assert.equal(modalServiceIntent(msg)?.kind, 'job_status', msg);
+});
+
+test('a plain GPU question stays with the GPU job queue, and is not a Modal route', () => {
+  assert.equal(modalServiceIntent('What are my GPU jobs?'), null);
+  assert.equal(modalServiceIntent('check my previous GPU render'), null, 'no Modal word and no GPU test: the job queue answers it');
+});
+
+test('a picture request is never a GPU self-test, even when it mentions a GPU', () => {
+  assert.equal(modalServiceIntent('Create a picture of a GPU'), null);
+  assert.equal(modalServiceIntent('create a picture with modal'), null, 'the picture route answers it');
+  assert.equal(modalServiceIntent('make a picture on the GPU'), null);
+  assert.equal(modalServiceIntent('check the previous Modal picture')?.kind, 'job_status');
+});
+
+test('a connection-only check run is never reported as a GPU test', async () => {
+  const gh = githubFake({ checkRuns: [runAt(9010, { status: 'completed', conclusion: 'success' })] });
+  const r = await modalJobStatusReply(env(), memoryStorage(), { fetcher: gh.fetcher, now: NOW });
+  assert.match(r.text, /GPU check: no GPU test on record/);
+  assert.match(r.text, /Connection check: run 9010 is success, connection only \(no GPU test ran\)\./);
+  assert.doesNotMatch(r.text, /GPU check: run 9010 is completed/);
+});
+
+test('the newest GPU test is reported from its own GPU step, past a newer connection-only run', async () => {
+  const gh = githubFake({
+    checkRuns: [runAt(9011, { status: 'completed', conclusion: 'success' }), runAt(9012, { status: 'completed', conclusion: 'success' })],
+    gpuSteps: { 9012: { status: 'completed', conclusion: 'success' } },
+  });
+  const r = await modalJobStatusReply(env(), memoryStorage(), { fetcher: gh.fetcher, now: NOW });
+  assert.match(r.text, /GPU check: run 9012 is completed\./);
+  assert.match(r.text, /Connection check: run 9011 is success, connection only/);
+});
+
 test('the repeated status asks start nothing, however many times they are sent', async () => {
-  const gh = githubFake({ checkRuns: [runAt(9001, { status: 'in_progress', conclusion: null })] });
+  const gh = githubFake({ checkRuns: [runAt(9001, { status: 'in_progress', conclusion: null })], gpuSteps: { 9001: { status: 'in_progress', conclusion: null } } });
   const modal = modalFake();
   const fetcher = async (url, init) => (/modal\.run/.test(String(url)) ? modal(url, init) : gh.fetcher(url, init));
   const storage = memoryStorage({ [MODAL_IMAGE_KEY]: [] });
@@ -104,7 +150,7 @@ test('the repeated status asks start nothing, however many times they are sent',
 });
 
 test('the status reply names the real GPU check run and its state, and calls it a check, not an image', async () => {
-  const gh = githubFake({ checkRuns: [runAt(9001, { status: 'in_progress', conclusion: null })] });
+  const gh = githubFake({ checkRuns: [runAt(9001, { status: 'in_progress', conclusion: null })], gpuSteps: { 9001: { status: 'in_progress', conclusion: null } } });
   const r = await modalJobStatusReply(env(), memoryStorage(), { fetcher: gh.fetcher, now: NOW });
   assert.match(r.text, /GPU check: run 9001 is running the GPU check \(a T4 self-test, not an image\)\./);
   assert.match(r.text, /https:\/\/github\.com\/Vondada\/chey-app\/actions\/runs\/9001/);
@@ -117,7 +163,7 @@ test('deployed, queued, completed and failed are told apart; a saved picture sho
   assert.equal(checkRunLabel({ status: 'completed', conclusion: 'failure' }), 'failed');
   assert.equal(pictureJobLabel({ state: 'saved', item: { id: 'pic-7' } }), 'completed and saved to Gallery as asset pic-7');
   assert.match(pictureJobLabel({ state: 'failed', error: 'CUDA out of memory' }), /failed: CUDA out of memory/);
-  const gh = githubFake({ checkRuns: [runAt(9002, { status: 'completed', conclusion: 'success' })], deployRuns: [runAt(9100, { status: 'completed', conclusion: 'success' })] });
+  const gh = githubFake({ checkRuns: [runAt(9002, { status: 'completed', conclusion: 'success' })], gpuSteps: { 9002: { status: 'completed', conclusion: 'success' } }, deployRuns: [runAt(9100, { status: 'completed', conclusion: 'success' })] });
   const storage = memoryStorage({ [MODAL_IMAGE_KEY]: [{ call_id: 'fc-abcdef123456', title: 'a kite', state: 'saved', item: { id: 'pic-7' } }] });
   const r = await modalJobStatusReply(env(), storage, { fetcher: gh.fetcher, now: NOW });
   assert.match(r.text, /GPU check: run 9002 is completed\./);
@@ -242,7 +288,7 @@ test('the workflow state is unknown, not false, when GitHub does not answer', as
 });
 
 test('the dispatch: a Modal ask goes to the Modal report; a plain connect goes to the guided connect flow', () => {
-  assert.equal(serviceCommandIntent('CHE, check my previous GPU render.').kind, 'modal');
+  assert.equal(serviceCommandIntent('CHE, check my previous Modal GPU render.').kind, 'modal');
   const plain = serviceCommandIntent('connect modal');
   assert.equal(plain.kind, 'connect');
   assert.equal(plain.onboard.provider, 'modal');
