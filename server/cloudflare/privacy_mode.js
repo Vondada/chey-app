@@ -150,6 +150,15 @@ async function storePrivacy(storage, next, now) {
 
 // ─── The owner's words ───
 const KNOX = /^(?:(?:hey|yo|ok(?:ay)?)[\s,]+)?(?:knox|nox|knocks)[\s,:.!?-]*/i;
+// What a grant would let the company receive, stated before the owner says yes (owner, 2026-10-28: "show exactly what data
+// would be transmitted"). Modal's grant is the render and health path only; nothing else is sent to it.
+export const TRANSMITS = Object.freeze({
+  modal: Object.freeze([
+    'the Modal access token CHE holds for your che-gpu app, in the request header (the value is never shown to you or spoken)',
+    'for a render you ask for: the render prompt and the image settings (size, steps) you gave, nothing else',
+    'for a health check: no prompt, no memory, no conversation text, no file',
+  ]),
+});
 const PROVIDER_WORDS = [
   ['anthropic', /\b(?:claude|anthropic)\b/i], ['openai', /\b(?:chat ?gpt|openai|gpt)\b/i], ['google', /\b(?:gemini|google)\b/i],
   ['xai', /\b(?:grok|xai|x\.ai)\b/i], ['groq', /\bgroq\b/i], ['mistral', /\bmistral\b/i], ['openrouter', /\bopenrouter\b/i],
@@ -235,7 +244,11 @@ export async function privacyTurn(storage, ask, { devices = [], security = null,
     const what = ask.action === 'grant'
       ? `let ${PROVIDERS[ask.provider].name} receive what you send it ${ask.standing ? 'from now on, until you revoke it' : `for ${Math.round(ask.ms / 60_000) >= 60 ? `${Math.round(ask.ms / HOUR)} hour${Math.round(ask.ms / HOUR) === 1 ? '' : 's'}` : `${Math.round(ask.ms / 60_000)} minutes`}`}`
       : 'turn Private Mode off, so OpenAI, Anthropic, Google and the other outside AI and voice companies can receive your conversations again';
-    return { text: `Just to confirm, sir: that would ${what}. Say "yes" to do it, or "no" to keep things private.`, meta: meta({ pending: true, ok: true }) };
+    // The exact data, listed for a grant to a company that has a stated list. Only that company's requests are allowed.
+    const shows = ask.action === 'grant' && TRANSMITS[ask.provider]
+      ? ` Exactly what would be sent to ${PROVIDERS[ask.provider].name}: ${TRANSMITS[ask.provider].map((line, i) => `${i + 1}) ${line}`).join('; ')}. Nothing else leaves; no other company is opened.`
+      : '';
+    return { text: `Just to confirm, sir: that would ${what}.${shows} Say "yes" to do it, or "no" to keep things private.`, meta: meta({ pending: true, ok: true, transmits: ask.action === 'grant' ? TRANSMITS[ask.provider] || null : null }) };
   }
   if (ask.action === 'cancel') {
     await storage.delete(PENDING_KEY);

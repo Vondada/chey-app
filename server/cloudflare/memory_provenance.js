@@ -443,6 +443,9 @@ export function guardOwnerAttributions(reply, { records = [], ownerTurns = [], m
   return { text: body.length >= 40 || contentWords(body).length >= 2 ? `${kept}\n\n${correction}` : `${correction} If you tell me now, I'll keep it as your own statement.${kept.includes('```') ? `\n\n${kept.match(/```[\s\S]*?```/g).join('\n')}` : ''}`, removed };
 }
 
+const SPECULATIVE = /\b(?:likely|probably|maybe|might|may|possibly|perhaps|seems?|appears?|i\s+think|i\s+guess|i\s+suspect|assum\w*|guess\w*|speculat\w*|presum\w*|could\s+be|unverified|not\s+confirmed|unconfirmed)\b/i;
+const INTERNAL_RUN = /\b(?:retriev\w*|cached|cache|searched|researched|fetched|looked\s+up|executed|ran\s+(?:a|the|my)\b|accessed)\b/i;
+
 /**
  * Keeps only ```che-remember lines the owner actually said (in this message
  * or a recent turn of his). A fact the model inferred never reaches the brain.
@@ -454,6 +457,12 @@ export function guardRememberBlock(reply, { ownerTurns = [], retracted = [] } = 
     const keep = body.split('\n').filter((line) => {
       const fact = line.replace(/^\s*[-*•]\s*/, '').replace(/^\[[^\]]{1,30}\]\s*/, '').trim();
       if (!fact) return false;
+      // A hedged guess is never a fact, whatever the owner said (owner, 2026-10-28). Nor is a claim about what CHE
+      // looked up or ran: that is recorded by tool receipts, not by a memory line.
+      if (SPECULATIVE.test(fact) || INTERNAL_RUN.test(fact)) {
+        dropped.push(clip(fact, 200));
+        return false;
+      }
       const isRetracted = retracted.some((item) => supportedBy(fact, [item.snippet || '']));
       if (!isRetracted && supportedBy(fact, ownerTurns) && contentWords(fact).length) return true;
       dropped.push(clip(fact, 200));

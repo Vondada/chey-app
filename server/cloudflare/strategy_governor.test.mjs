@@ -9,7 +9,7 @@ import { roomEventRecord } from './brain_rooms.js';
 import { liveTick, readLivePortfolios, setLivePaper } from './trading_live.js';
 import { matrixState } from './trading_research.js';
 import {
-  GOV_STATE, cleanSettings, fillProblems, governedGate, governorAction, independentTrades, lossCauses, performance, readDecisions,
+  GOV_STATE, FORWARD_ENTRIES_HALTED, HALT_REASON, haltState, cleanSettings, fillProblems, governedGate, governorAction, independentTrades, lossCauses, performance, readDecisions,
   queueAllocationFollowUp, recurringLosses, repeatedMistakes, runGovernor, simulationAllocation, speakGovernor, streakProbability, tradeDecisions, verdict,
 } from './strategy_governor.js';
 
@@ -175,6 +175,8 @@ test('simulation allocation keeps a floor for every strategy and leans to better
 });
 
 test('the gate refuses only new forward-paper signals of a paused strategy; owner overrides and settings are logged and bounded', async () => {
+  haltState.halted = false; // the pause logic alone (the halt is tested below)
+  try {
   const paused = new Map([['ema-pullback-5m|MNQ|5m', 'losing']]);
   const gate = governedGate(() => null, paused);
   assert.match(gate({ candidate: 'ema-pullback-5m', contract: 'MNQ', resolution: '5m' }, { stage: 'signal' }), /strategy governor paused it/);
@@ -191,6 +193,7 @@ test('the gate refuses only new forward-paper signals of a paused strategy; owne
   assert.deepEqual(cleanSettings({ z_pause: 'x' }), {});
   const log = await readDecisions(storage);
   assert.deepEqual(log.map((d) => [d.action, d.by]).sort(), [['modify', 'owner'], ['pause', 'owner']]);
+  } finally { haltState.halted = FORWARD_ENTRIES_HALTED; }
 });
 
 // The same bars as trading_controls.test.mjs: CME day 2 sweeps day 1's low (pdhl-sweep-5m) on a verified feed.
@@ -209,6 +212,8 @@ const feedOf = (bars) => async () => ({ status: 'LIVE', authenticated: true, sub
 const after = (bars) => Date.parse(bars.at(-1).t) + 6 * 60_000;
 
 test('in the real forward-paper tick a paused strategy is not traded and its setup is journalled as skipped with the reason', async () => {
+  haltState.halted = false; // the pause logic alone (the halt is tested below)
+  try {
   const sweep = async (storage) => (await readTrades(storage, (t) => t.strategy === 'pdhl-sweep-5m'));
   const control = memoryStorage();
   await setLivePaper(control, true, Date.parse('2026-10-19T21:59:00Z'));
@@ -228,6 +233,7 @@ test('in the real forward-paper tick a paused strategy is not traded and its set
   const brain = storage.saved.get(ROOM_EVENTS_KEY).filter((e) => e.kind === 'trade_decision');
   assert.ok(brain.length >= 1);
   assert.match(brain.map((e) => e.body).join('\n'), /previous-day high\/low sweep long: skipped \(blocked: the strategy governor paused it/);
+  } finally { haltState.halted = FORWARD_ENTRIES_HALTED; }
 });
 
 test('matrix: fewer than 15 unseen trades is "Not enough unseen data", not Weak', () => {
@@ -247,4 +253,16 @@ test('better-supported strategies get an extra daily research job (NQ and 15m); 
   assert.equal(job.market, 'NQ');
   assert.ok(job.remaining.every((u) => u.startsWith('ema-pullback-5m|')));
   assert.equal(await queueAllocationFollowUp(s2, now + 3600_000), null, 'once a day');
+});
+
+test('the owner halt refuses every new forward-paper entry, even for a strategy the governor has not paused, and keeps the reason', () => {
+  assert.equal(FORWARD_ENTRIES_HALTED, true, 'the directive is in force');
+  let inner = 0;
+  const gate = governedGate(() => { inner += 1; return null; }, new Map());
+  const pf = { candidate: 'orb-15m', contract: 'MNQ', resolution: '5m' };
+  assert.equal(gate(pf, { stage: 'signal' }), HALT_REASON, 'a fresh, unpaused strategy is halted too');
+  assert.equal(inner, 0, 'the inner gate is not reached while halted');
+  assert.equal(gate(pf, { stage: 'fill' }), null, 'an order already placed is not cancelled');
+  const lifted = governedGate(() => null, new Map(), {}, { halted: false });
+  assert.equal(lifted(pf, { stage: 'signal' }), null, 'with the halt lifted, the normal gate decides again');
 });

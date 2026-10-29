@@ -70,7 +70,9 @@ export class CheLibrary {
     const body = String(text || '').slice(0, MAX_DOC_CHARS);
     if (body.trim().length < 20) return { error: 'There was nothing readable to save.' };
     const id = crypto.randomUUID();
-    const name = String(title || 'Untitled').trim().slice(0, 200) || 'Untitled';
+    // No title given: the first line names it, so a saved text is never listed as "Untitled".
+    const firstLine = body.trim().split('\n')[0].replace(/\s+/g, ' ').slice(0, 60).trim();
+    const name = String(title || firstLine || 'Untitled').trim().slice(0, 200) || 'Untitled';
     const chunks = chunkText(body);
     chunks.forEach((chunk, n) => {
       this.sql.exec('INSERT INTO lib_chunks (doc_id, n, body) VALUES (?, ?, ?)', id, n, chunk);
@@ -134,8 +136,15 @@ export class CheLibrary {
 
 // Owner phrases: "memorize this …", "store this page https://…", "read and
 // remember this script: …", "save all of this to your memory".
+// A save request leads the message ("memorize this page …", "CHE, remember this: …"). A question or a control
+// command that merely mentions saving or a link (owner, 2026-10-28: "why is autonomy paused … keep this in mind …
+// https://…" was saved as an "Untitled" page) is never a save. Autonomy and coding-job words are never a save.
+const SAVE_LEAD = /^(?:(?:chay|chey|shay|che)[, ]+)?(?:please[, ]+)?(?:memori[sz]e|remember|store|save|keep|learn|read)\b/i;
+const CONTROL_WORDS = /\b(?:autonomy|paused?|pausing|resume|resuming|coding\s+jobs?|job\s+[0-9a-f]{6,}|authori[sz]ed|why\s+(?:is|are|did|does|won't|isn't)|status)\b/i;
+
 export function libraryIntent(message) {
   const text = String(message || '').trim();
+  if (!SAVE_LEAD.test(text) || CONTROL_WORDS.test(text)) return null;
   if (!/\b(?:memori[sz]e|remember|store|save|keep|learn|read)\b[\s\S]{0,80}\b(?:this|that|these|it|page|script|book|series|episode|chapter|article|document|text|transcript)\b[\s\S]{0,60}\b(?:memory|memory bank|library|brain|remember|memori[sz]e)?/i.test(text)) return null;
   if (!/\b(?:memori[sz]e|remember|store|save|keep|library|memory)\b/i.test(text)) return null;
   const url = /https?:\/\/[^\s<>"')]+/i.exec(text)?.[0] || '';
