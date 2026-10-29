@@ -43,6 +43,7 @@ import { identityQuestionIntent, speakIdentity } from './che_maturity.js';
 import { testBudgetReport } from './gpu_test_budget.js';
 import { modalCubeProbe, modalCubeResult } from './modal_cube_probe.js';
 import { deleteMedia, finishModalImage, generateImage, modalImageCheckTimes, pendingModalImages, reconcileModalImages, generateVideo, listMedia, readBlob, saveOwnerFile, upscaleImage, verifyMediaFile } from './media.js';
+import { mediaVerifyProbe } from './media_verify_probe.js';
 import { withCheNote, guardEngineClaims, guardSoulClaims, lastReplyRecord, loadSoul, replyProvenanceAnswer, replyProvenanceQuestion, restoreSoul, saveSoul, soulPromptBlock, soulProvenance, soulView, stripPhoneSoul, stripSoulLabels } from './soul.js';
 import { classifyFailure as classifyEngineFailure, decideFallback, requestClassFor } from './refusal_fallback.js';
 import { isStoryTurn, storyMode, storyModeBlock } from './story_mode.js';
@@ -4097,6 +4098,9 @@ export class CheState extends DurableObject {
   async modalProbe() { return modalProbe(this.keyEnv || this.env, this.ctx.storage); }
 
   async modalBudgetReport() { return testBudgetReport(this.ctx.storage); }
+
+  // Read-only Gallery check for the owner probe (media_verify_probe.js).
+  async mediaVerify(body = {}) { return mediaVerifyProbe(this.keyEnv || this.env, this.ctx.storage, body); }
 
   // One owner chat turn for the certification harness (tools/certification). Only the probe-token route calls this.
   // The turn goes through this object's fetch, so it is the owner's own /api/chat path; nothing is re-implemented.
@@ -16312,6 +16316,12 @@ async function routeRequest(request, env, ctx) {
     const body = await request.json().catch(() => ({}));
     const out = await env.CHE_STATE.getByName('owner').modalCubeProbe(body);
     return json(out, out.sent === false ? 409 : 200);
+  }
+  if (path === '/api/probe/media/verify' && request.method === 'POST') {
+    if (!voiceProbeAuthorized(request, env)) return json({ detail: 'Not found.' }, 404);
+    const body = await request.json().catch(() => ({}));
+    const { status, ...rest } = await env.CHE_STATE.getByName('owner').mediaVerify(body);
+    return json(rest, status);
   }
   if (path === '/api/probe/modal/cube/result' && request.method === 'POST') {
     if (!voiceProbeAuthorized(request, env)) return json({ detail: 'Not found.' }, 404);
