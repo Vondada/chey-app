@@ -53,6 +53,7 @@ Statuses: `open`, `in progress`, `waiting on owner`, `built, not verified`, `ver
 | Q-32 | Driving-safe voice replies | open | — | Short, spoken-first replies when the route is a car, with no screen steps. | Owner request 13 |
 | Q-33 | Car test script and route log | open | — | A script the owner runs in the car that records each route transition, interruption and failure to a file for review. Needs the owner's car. | Owner request 16 |
 | Q-34 | Native audio changes need an IPA | open | — | Audio-session and route changes are native (Swift). Decide with the owner whether they ship by Shorebird patch or a new IPA. | Owner decision |
+| Q-40 | Create Studio: 7 starts, voice, touch, Apple Pencil, adaptive iPhone and iPad layout | open | `docs/create-studio-requirements` | Build in milestones M2b to M7 in `docs/CHE_CREATE_STUDIO_REQUIREMENTS.md`. Next: M2b (save a character or object into a scene). iPad and iPhone tests are owner-device blockers. | Requirements only |
 | Q-42 | CHE continuity loop: snapshot, history, session recovery and owner commands (owner, 2026-10-28) | built, not verified | `feat/che-continuity-loop` | Snapshot `docs/CHE_PROJECT_STATUS.md`, history `docs/CHE_PROJECT_HISTORY.md`, routine and commands in `CLAUDE.md`, loop in `docs/CHE_VIDEO_REVIEW_LOOP.md`. Verified only after a fresh session recovers the facts (see the PR). Refresh the snapshot at each milestone. | Owner request 2026-10-28; `tools/continuity_check.test.mjs` |
 
 ## Owner decisions needed
@@ -62,6 +63,7 @@ Statuses: `open`, `in progress`, `waiting on owner`, `built, not verified`, `ver
 - Whether automatic background runs are allowed (this would change the AGENTS.md rule and use more usage).
 
 ## Log
+- 2026-10-28: Q-40 added (Create Studio requirements). M2a scene document in PR #731.
 - 2026-10-28: Q-37 added (free 3D build tools, `docs/CHE_FREE_3D_TOOLS.md`). Research only.
 - 2026-10-28: Q-36 added (10 real-world tools, `docs/CHE_REAL_WORLD_TOOLS.md`). Nothing built yet.
 - 2026-10-28: Q-35 added (25 GPU and 3D world upgrades, `docs/CHE_GPU_WORLD_UPGRADES.md`). Nothing built yet.
