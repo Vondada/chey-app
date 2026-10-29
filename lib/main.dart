@@ -103,6 +103,7 @@ import 'che_world_hub.dart';
 import 'che_immersive_hub_shell.dart';
 import 'devices_hub_scene.dart';
 import 'music_studio_scene.dart';
+import 'che_reply_outcome.dart';
 import 'create/che_code_workspace.dart';
 import 'create/che_creative_studio.dart';
 import 'create/che_project_manager.dart';
@@ -1173,6 +1174,8 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
   String? _streamMediaType;
   // The Modal GPU picture job the reply started (chat_modal_picture.dart), followed after the reply.
   String _streamModalCallId = '';
+  // How the last chat stream ended: done, cut off after its work started, or with no frames at all (che_reply_outcome.dart).
+  CheStreamEnd _streamEnd = CheStreamEnd.done;
   final Set<String> _followingModalCallIds = {};
   // The saved media ID, thumbnail and library list of the reply (che_chat_media.dart), shown as tiles under it.
   Map<String, String> _streamMediaExtra = {};

@@ -1616,9 +1616,10 @@ extension _CheHomeSend on _CHEHomeState {
 
       final stopped = requestSession.cancelled;
       _stopRequested = false;
-      final finalReply = reply.isEmpty
-          ? (stopped ? 'Stopped.' : 'CHE got no reply text from the server, sir. Nothing was run. Ask again and I will answer.')
-          : _sanitizeCheReply(reply);
+      // A stream that ended early keeps its partial text; with no text, the message says only what the stream showed.
+      final finalReply = stopped && reply.isEmpty
+          ? 'Stopped.'
+          : _sanitizeCheReply(cheFinalReplyText(reply, stopped ? CheStreamEnd.done : _streamEnd));
 
       for (final chunk in speechChunker.addCumulative(finalReply)) {
         enqueueSpoken(chunk);
