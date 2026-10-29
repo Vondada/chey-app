@@ -384,6 +384,9 @@ const EVIDENCE_SPLIT_REQUESTS = new WeakSet();
 // created, and they can reach /api/chat and nothing else.
 const COMMAND_REQUESTS = new WeakSet();
 const WORKFLOW_STEP_REQUESTS = new WeakSet();
+// The certification probe's chat turn (POST /api/probe/chat): created only by the owner's Durable Object after the probe
+// token is checked. It runs as the owner through this same /api/chat path, and its turn does not grow the owner's brain.
+const PROBE_CHAT_REQUESTS = new WeakSet();
 // Wrong pairing codes allowed per 15 minutes across every address.
 const PAIR_FAILURES_GLOBAL_LIMIT = 30;
 // A command's own reply saying it could not do the work: the step failed.
@@ -4094,6 +4097,27 @@ export class CheState extends DurableObject {
 
   async modalBudgetReport() { return testBudgetReport(this.ctx.storage); }
 
+  // One owner chat turn for the certification harness (tools/certification). Only the probe-token route calls this.
+  // The turn goes through this object's fetch, so it is the owner's own /api/chat path; nothing is re-implemented.
+  async probeChat(body = {}) {
+    const message = typeof body?.message === 'string' ? body.message : '';
+    const history = Array.isArray(body?.history) ? body.history : [];
+    const request = new Request('https://che.internal/api/chat', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message, history, client: { platform: 'web' } }),
+    });
+    PROBE_CHAT_REQUESTS.add(request);
+    const response = await this.fetch(request);
+    const raw = await response.text().catch(() => '');
+    const events = raw.split('\n').filter(Boolean).map((line) => { try { return JSON.parse(line); } catch (_) { return null; } }).filter(Boolean);
+    let plain = null;
+    try { plain = events.length ? null : JSON.parse(raw); } catch (_) { plain = null; }
+    const done = events.length ? ([...events].reverse().find((e) => e.type === 'done') || {}) : (plain && typeof plain === 'object' ? plain : {});
+    const reply = events.length ? replyFromNdjson(raw).trim() : String(plain?.reply ?? plain?.message ?? '').trim();
+    const receipts = Array.isArray(done.execution_receipts) ? done.execution_receipts : [];
+    return { ok: response.ok, status: response.status, reply, done, execution_receipts: receipts };
+  }
+
   async modalCubeProbe(body) { return modalCubeProbe(this.keyEnv || this.env, this.ctx.storage, body); }
 
   async modalCubeResult(body) { return modalCubeResult(this.keyEnv || this.env, this.ctx.storage, body); }
@@ -5441,7 +5465,7 @@ export class CheState extends DurableObject {
     const isChat = request.method === 'POST' && new URL(request.url).pathname === '/api/chat';
     // The deploy's memory-truth check talks to its own isolated CHE; its test
     // conversation never grows the owner's shared vector memory.
-    const probeRun = isChat && isMemoryProbeRequest(request, this.env);
+    const probeRun = isChat && (isMemoryProbeRequest(request, this.env) || PROBE_CHAT_REQUESTS.has(request));
     const sent = isChat ? request.clone().json().catch(() => null) : null;
     const startedAt = Date.now();
     let response = await this.handleRequest(request);
@@ -6964,16 +6988,19 @@ export class CheState extends DurableObject {
       const authorization = request.headers.get('Authorization') || '';
       const match = /^Bearer ([A-Za-z0-9_-]{40,160})$/.exec(authorization);
       const workflowStep = WORKFLOW_STEP_REQUESTS.has(request) && path === '/api/chat';
-      const tokenHash = match && !workflowStep ? await digest(match[1]) : '';
-      if (!workflowStep && !Object.hasOwn(data.devices, tokenHash)) {
+      // The certification probe's turn is the owner's, with no device token of its own (see probeChat).
+      const probeChat = PROBE_CHAT_REQUESTS.has(request) && path === '/api/chat';
+      const ownerInternal = workflowStep || probeChat;
+      const tokenHash = match && !ownerInternal ? await digest(match[1]) : '';
+      if (!ownerInternal && !Object.hasOwn(data.devices, tokenHash)) {
         // Security Intelligence telemetry: refused tokens are counted (never stored), revoked devices separately.
         const revokedTry = Boolean(tokenHash && ensurePlatform(data).devices[tokenHash]?.revoked_at);
         await this.securityCount(revokedTry ? 'revoked_device' : 'unknown_token');
         return json({ detail: 'Pair your phone to CHE.' }, 401);
       }
-      const platformDevice = workflowStep ? null : touchDevice(data, tokenHash);
+      const platformDevice = ownerInternal ? null : touchDevice(data, tokenHash);
       if (platformDevice?.revoked_at) return json({ detail: 'This CHE device was revoked.' }, 401);
-      const activeTenant = workflowStep ? ensurePlatform(data).tenants[OWNER_TENANT_ID] : tenantForDevice(data, tokenHash);
+      const activeTenant = ownerInternal ? ensurePlatform(data).tenants[OWNER_TENANT_ID] : tenantForDevice(data, tokenHash);
       // Repository writes, merges, deploys and rollbacks are the owner's
       // consequential actions. Family/guest tenants (and anything they relay)
       // can never authorize them.
@@ -16266,6 +16293,13 @@ async function routeRequest(request, env, ctx) {
   // prints what the records hold (paper only). Exists only for the per-deploy random token.
   // The deploy's Modal check: the authenticated /health with the owner's real MODAL_TOKEN (modal_gpu.js modalProbe).
   if (path === '/api/probe/modal' && request.method === 'POST') return voiceProbeAuthorized(request, env) ? json(await env.CHE_STATE.getByName('owner').modalProbe()) : json({ detail: 'Not found.' }, 404);
+  // The certification harness's owner chat turn (tools/certification): one /api/chat turn as the owner, returning the
+  // reply, the done frame's fields and the execution receipts. Behind the probe token; never in guestRouteAllowed.
+  if (path === '/api/probe/chat' && request.method === 'POST') {
+    if (!voiceProbeAuthorized(request, env)) return json({ detail: 'Not found.' }, 404);
+    const body = await request.json().catch(() => ({}));
+    return json(await env.CHE_STATE.getByName('owner').probeChat(body));
+  }
   // The GPU test budget ledger (read-only) and the one authorised blue cube render, both behind the deploy's probe token.
   // The render is refused unless it carries the exact confirm phrase and the ledger allows it (modal_cube_probe.js).
   if (path === '/api/probe/modal/budget' && request.method === 'GET') return voiceProbeAuthorized(request, env) ? json(await env.CHE_STATE.getByName('owner').modalBudgetReport()) : json({ detail: 'Not found.' }, 404);
