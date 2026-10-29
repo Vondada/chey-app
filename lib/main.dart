@@ -731,6 +731,14 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
     ));
   }
 
+  /// Voice: "create a character" opens the character editor in the Creation Room, with a new person.
+  void _openNewCharacter() {
+    HapticFeedback.selectionClick();
+    unawaited(Navigator.of(context).push(MaterialPageRoute<void>(
+      builder: (_) => CheSceneStudioPage(client: CheSceneClient(baseUrl: cheAgentBaseUrl, headers: () => _authHeaders), template: 'person'),
+    )));
+  }
+
   /// SECURITY: Home → Security, More → Security, and "open security" by voice.
   Future<void> _openSecurity({String? section}) async {
     HapticFeedback.selectionClick();
