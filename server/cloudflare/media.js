@@ -5,6 +5,7 @@ import { githubVideoConfigured, startGithubVideo, githubVideoStatus, githubVideo
 import { mediaStore } from './che_media_store.js';
 import { imagePayload, payloadReceipt } from './image_payload.js';
 import { modalCall, modalCredential } from './modal_gpu.js';
+import { TXT2IMG_WORST_CASE_USD, COLD_START_S, IDLE_SCALEDOWN_S, T4_USD_PER_S, reserveTestBudget, settleTestBudget, releaseTestBudget } from './gpu_test_budget.js';
 //   - Owner image connector (CHE_IMAGE_GEN_URL) wins when configured.
 //   - Otherwise Workers AI FLUX.1 [schnell] generates the image on the CHE
 //     server itself (highest step count unless the owner picks draft).
@@ -369,11 +370,16 @@ export async function startModalImage(env, storage, body, fetcher = fetch) {
   if (!prompt) return refuse(400, 'Describe the picture.');
   // Square pictures only, 256 or 512 px (512 is the default). The Modal app refuses any other size too.
   const size = [256, 512].includes(Number(body?.width)) ? Number(body.width) : 512;
+  // The $5 GPU test budget: reserve this job's worst case before it is sent. A refused reservation sends nothing.
+  const hold = await reserveTestBudget(storage, { label: `picture: ${prompt.slice(0, 60)}`, max_usd: TXT2IMG_WORST_CASE_USD });
+  if (!hold.ok) return refuse(402, hold.reason);
   const started = await modalCall(cred.cred, 'POST', '/txt2img', { prompt, width: size, height: size, steps: 4, seed: Math.floor(Math.random() * 2 ** 31) }, fetcher, 30000);
   if (!started.ok || !started.data?.call_id) {
+    // A 4xx answer means Modal did not start the call (no cost). A network failure might have started it, so the reservation stays.
+    if (started.status >= 400 && started.status < 500) await releaseTestBudget(storage, hold.id, `Modal answered ${started.status}: the call did not start`);
     return refuse(502, `Modal refused to start the picture (${started.status || started.error || 'no answer'}). Nothing was generated; no other engine was used.`);
   }
-  const record = { call_id: started.data.call_id, prompt, title: String(body?.title || prompt).slice(0, 80), state: 'started', created_at: now() };
+  const record = { call_id: started.data.call_id, prompt, title: String(body?.title || prompt).slice(0, 80), state: 'started', created_at: now(), budget_hold_id: hold.id };
   await storage.put(MODAL_IMAGE_KEY, [...records, record].slice(-20));
   // Wake the alarm for the check, unless an earlier wake-up is already set (an earlier wake only runs the scheduler again).
   if (storage.getAlarm && storage.setAlarm) {
@@ -429,6 +435,11 @@ export async function finishModalImage(env, storage, callId, fetcher = fetch) {
   };
   Object.assign(item, await storeBlob(env, storage, id, d.png_base64, 'image/png', 'image'));
   await saveIndex(storage, [item, ...(await listMedia(storage))]);
+  // Settle the $5 test budget: measured GPU seconds plus the cold start and idle time Modal bills, or the reserved maximum.
+  if (record.budget_hold_id) {
+    const measured = Number.isFinite(d.gpu_seconds) ? (d.gpu_seconds + COLD_START_S + IDLE_SCALEDOWN_S) * T4_USD_PER_S : null;
+    await settleTestBudget(storage, record.budget_hold_id, { actual_usd: measured, provenance: measured == null ? 'RESERVED_MAXIMUM' : 'MEASURED_SECONDS_PLUS_OVERHEAD' });
+  }
   await update({ state: 'saved', item: { id, title: item.title, mime_type: item.mime_type, receipt: item.receipt } });
   return { status: 200, item };
 }
