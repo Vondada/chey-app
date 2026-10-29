@@ -240,7 +240,7 @@ test('K5: an ad request never describes visuals as made or posts as scheduled wh
   // Test 5 (2026-10-21): a visual request makes the real pictures or says none were made. The model's claims are never shown.
   assert.doesNotMatch(out.reply, /generated 3 visuals|scheduled them|Here are your ads/);
   assert.equal(out.meta.source, 'che_image_generation', 'the picture route answers, not the model');
-  assert.match(out.reply, /^I did not generate any pictures, sir\. Nothing was saved\./);
+  assert.match(out.reply, /^(?:Made with Cloudflare Workers AI \(provider: Workers AI\), because [^.]+\. )?I did not generate any pictures, sir\. Nothing was saved\./);
   assert.doesNotMatch(out.reply, /\.(?:png|jpe?g|webp)\b/i, 'no file name is claimed');
   assert.doesNotMatch(out.reply, /scheduled|published|posted/i, 'nothing is claimed as scheduled or published');
 });

@@ -3,6 +3,8 @@ import { moneyPrinterVideo, moneyPrinterStatus, verifyVideoMedia } from './money
 import { createFacelessVideo } from './faceless_video.js';
 import { githubVideoConfigured, startGithubVideo, githubVideoStatus, githubVideoFile } from './github_video_renderer.js';
 import { mediaStore } from './che_media_store.js';
+import { imagePayload, payloadReceipt } from './image_payload.js';
+import { modalCall, modalCredential } from './modal_gpu.js';
 //   - Owner image connector (CHE_IMAGE_GEN_URL) wins when configured.
 //   - Otherwise Workers AI FLUX.1 [schnell] generates the image on the CHE
 //     server itself (highest step count unless the owner picks draft).
@@ -336,6 +338,130 @@ export async function saveFilmVideo(storage, { key, title = 'Film', prompt = '',
 }
 
 // mode: new | variation | refine. parent_id links versions of one piece.
+
+// ── Modal GPU text-to-image (owner, 2026-10-28) ─────────────────────────────────────────────────────────────────
+// An explicit provider 'modal' request is answered only by the Modal GPU function (tools/modal/che_modal_app.py, /txt2img).
+// It never falls back to another engine. A real GPU call costs money, so it is off until the owner turns it on with
+// CHE_MODAL_TXT2IMG=enabled, and it stops at CHE_MODAL_TXT2IMG_MAX calls (default 1). A picture is saved to the Gallery
+// only after its bytes are checked: a PNG whose SHA-256 matches the one Modal sent, from the pinned model revision.
+export const MODAL_IMAGE_FLAG = 'CHE_MODAL_TXT2IMG';
+export const MODAL_IMAGE_KEY = 'che:modal_images';
+export const MODAL_IMAGE_MODEL = 'stabilityai/sdxl-turbo';
+export const MODAL_IMAGE_REVISION = '71153311d3dbb46851df1931d3ca6e939de83304';
+export const MODAL_IMAGE_TIMEOUT_MS = 15 * 60 * 1000;
+
+const hexOf = (buffer) => Array.from(new Uint8Array(buffer)).map((b) => b.toString(16).padStart(2, '0')).join('');
+
+/** Starts one Modal GPU picture and answers with its call id. Nothing is saved until the result is read and checked. */
+export async function startModalImage(env, storage, body, fetcher = fetch) {
+  const refuse = (status, detail) => ({ status, detail, provider_requested: 'modal', provider_used: null, nothing_generated: true });
+  if (String(env[MODAL_IMAGE_FLAG] || '') !== 'enabled') {
+    return refuse(503, 'Modal GPU image generation is off, sir, so nothing was started. It turns on only when you approve one render. No other engine was used.');
+  }
+  const records = (await storage.get(MODAL_IMAGE_KEY)) || [];
+  const max = Math.max(1, Number(env.CHE_MODAL_TXT2IMG_MAX) || 1);
+  if (records.filter((r) => r.call_id).length >= max) {
+    return refuse(429, `The Modal GPU picture cap is ${max} call${max === 1 ? '' : 's'}, so nothing was started. No other engine was used.`);
+  }
+  const cred = await modalCredential(env, storage);
+  if (!cred.exists || !cred.cred) return refuse(503, 'Modal is not connected, so nothing was started. No other engine was used.');
+  const prompt = String(body?.prompt || '').trim().slice(0, 500);
+  if (!prompt) return refuse(400, 'Describe the picture.');
+  // Square pictures only, 256 or 512 px (512 is the default). The Modal app refuses any other size too.
+  const size = [256, 512].includes(Number(body?.width)) ? Number(body.width) : 512;
+  const started = await modalCall(cred.cred, 'POST', '/txt2img', { prompt, width: size, height: size, steps: 4, seed: Math.floor(Math.random() * 2 ** 31) }, fetcher, 30000);
+  if (!started.ok || !started.data?.call_id) {
+    return refuse(502, `Modal refused to start the picture (${started.status || started.error || 'no answer'}). Nothing was generated; no other engine was used.`);
+  }
+  const record = { call_id: started.data.call_id, prompt, title: String(body?.title || prompt).slice(0, 80), state: 'started', created_at: now() };
+  await storage.put(MODAL_IMAGE_KEY, [...records, record].slice(-20));
+  // Wake the alarm for the check, unless an earlier wake-up is already set (an earlier wake only runs the scheduler again).
+  if (storage.getAlarm && storage.setAlarm) {
+    const due = Date.now() + MODAL_RECONCILE_MS;
+    const at = await storage.getAlarm().catch(() => null);
+    if (!at || at > due) await storage.setAlarm(due).catch(() => null);
+  }
+  return { status: 202, state: 'started', call_id: record.call_id, provider_requested: 'modal', provider_used: 'modal', model: MODAL_IMAGE_MODEL };
+}
+
+/** Reads a Modal picture's result and saves it to the Gallery, only when its bytes and hash check out. */
+export async function finishModalImage(env, storage, callId, fetcher = fetch) {
+  const records = (await storage.get(MODAL_IMAGE_KEY)) || [];
+  const record = records.find((r) => r.call_id === callId);
+  if (!record) return { status: 404, detail: 'No Modal picture has that call id.' };
+  if (record.state === 'saved') return { status: 200, item: record.item };
+  if (record.state === 'failed') return { status: 502, detail: record.error };
+  const update = async (patch) => {
+    const latest = (await storage.get(MODAL_IMAGE_KEY)) || [];
+    await storage.put(MODAL_IMAGE_KEY, latest.map((r) => (r.call_id === callId ? { ...r, ...patch } : r)));
+  };
+  const failed = async (error) => { await update({ state: 'failed', error }); return { status: 502, detail: error }; };
+  const cred = await modalCredential(env, storage);
+  if (!cred.exists || !cred.cred) return { status: 503, detail: 'Modal is not connected, so the result cannot be read.' };
+  const res = await modalCall(cred.cred, 'POST', '/txt2img/result', { call_id: callId }, fetcher, 30000);
+  // A terminal failure from Modal (HTTP 502 with state 'failed') is recorded below. Any other non-answer is a missed answer:
+  // the job stays as it is, and the caller may ask again (503).
+  if (!res.data || (!res.ok && res.data.state !== 'failed')) return { status: 503, detail: `Modal did not answer the result check (${res.status || res.error || 'no answer'}). Nothing was saved.` };
+  if (res.data.state === 'running' || res.data.state === 'started') {
+    // Modal's own GPU limit is 10 minutes; a job still running after MODAL_IMAGE_TIMEOUT_MS is lost, and is said so.
+    if (Date.now() - Date.parse(record.created_at) > MODAL_IMAGE_TIMEOUT_MS) {
+      return failed('The Modal GPU picture did not finish in time. Nothing was saved; no other engine was used.');
+    }
+    return { status: 202, state: 'running', call_id: callId };
+  }
+  if (res.data.state !== 'done') {
+    return failed(`Modal reported the picture failed${res.data.error ? `: ${String(res.data.error).slice(0, 160)}` : ''}. Nothing was saved; no other engine was used.`);
+  }
+  const d = res.data;
+  if (d.model_revision !== MODAL_IMAGE_REVISION || d.model !== MODAL_IMAGE_MODEL) {
+    return failed('The picture came from a model revision CHE did not ask for, so nothing was saved.');
+  }
+  let png;
+  try { png = b64ToBytes(String(d.png_base64 || '')); } catch (_) { png = null; }
+  if (!png || imageMimeFromBase64(d.png_base64) !== 'image/png') return failed('The picture from Modal is not a PNG, so nothing was saved.');
+  const sha = hexOf(await crypto.subtle.digest('SHA-256', png));
+  if (sha !== d.png_sha256) return failed('The picture from Modal failed its hash check, so nothing was saved.');
+  const id = crypto.randomUUID();
+  const item = {
+    id, root_id: id, parent_id: null, title: record.title, prompt: record.prompt, mode: 'new', draft: false, version: 1,
+    created_at: now(), engine: 'modal-sdxl-turbo', provider: 'modal', mime_type: 'image/png',
+    receipt: { provider: 'modal', execution_id: callId, model: MODAL_IMAGE_MODEL, model_revision: MODAL_IMAGE_REVISION, png_sha256: sha, gpu: d.gpu || '', gpu_seconds: d.gpu_seconds ?? null, width: d.width, height: d.height, steps: d.steps, seed: d.seed },
+  };
+  Object.assign(item, await storeBlob(env, storage, id, d.png_base64, 'image/png', 'image'));
+  await saveIndex(storage, [item, ...(await listMedia(storage))]);
+  await update({ state: 'saved', item: { id, title: item.title, mime_type: item.mime_type, receipt: item.receipt } });
+  return { status: 200, item };
+}
+
+/** How often the alarm checks a waiting Modal picture, so it is saved even when no client is polling. */
+export const MODAL_RECONCILE_MS = 30000;
+
+/** The next alarm time for the waiting Modal pictures: [] when none wait. Used by the Durable Object's alarm scheduler. */
+export async function modalImageCheckTimes(storage) {
+  return (await pendingModalImages(storage)).length ? [Date.now() + MODAL_RECONCILE_MS] : [];
+}
+
+/** Asks Modal about each waiting picture and saves or fails it. A job past MODAL_IMAGE_TIMEOUT_MS fails even when Modal cannot be reached. */
+export async function reconcileModalImages(env, storage, fetcher = fetch) {
+  for (const job of await pendingModalImages(storage)) {
+    if (Date.now() - Date.parse(job.created_at) > MODAL_IMAGE_TIMEOUT_MS) {
+      const error = 'The Modal GPU picture did not finish in time. Nothing was saved; no other engine was used.';
+      const records = (await storage.get(MODAL_IMAGE_KEY)) || [];
+      await storage.put(MODAL_IMAGE_KEY, records.map((r) => (r.call_id === job.call_id ? { ...r, state: 'failed', error } : r)));
+      continue;
+    }
+    await finishModalImage(env, storage, job.call_id, fetcher).catch(() => null);
+  }
+}
+
+/** The Modal pictures still waiting, for the app to follow again after it was closed: call ids and titles only. */
+export async function pendingModalImages(storage) {
+  const records = (await storage.get(MODAL_IMAGE_KEY)) || [];
+  return records
+    .filter((r) => r.call_id && (r.state === 'started' || r.state === 'running' || !r.state))
+    .map((r) => ({ call_id: r.call_id, title: r.title || '', created_at: r.created_at || null }));
+}
+
 export async function generateImage(env, storage, body, fetcher = fetch) {
   const prompt = String(body.prompt || '').trim().slice(0, 2000);
   const mode = ['variation', 'refine'].includes(body.mode) ? body.mode : 'new';
@@ -365,14 +491,19 @@ export async function generateImage(env, storage, body, fetcher = fetch) {
   // owner's own Cloudflare account. Read from Security Intelligence's egress policy, the one internal-only switch.
   let internalOnly = false;
   try { internalOnly = (await storage.get('che:egress_policy'))?.internal_only === true; } catch (_) { internalOnly = false; }
+  // An explicit Modal request is never answered by another engine (owner, 2026-10-28). CHE has no Modal text-to-image
+  // path yet (the Modal app runs CHE's own renders and the health check), so the request is refused, not rerouted.
+  if (body.provider === 'modal') return startModalImage(env, storage, body, fetcher);
   const engines = [];
   if (env.CHE_IMAGE_GEN_URL && !internalOnly) engines.push({ id: 'Your image connector', run: async () => ({ url: await connectorImage(env, finalPrompt, fetcher) }) });
   if (!internalOnly && paidMediaEnabled(env) && openAiKey(env)) engines.push({ id: draft ? 'openai-gpt-image-fast' : 'openai-gpt-image-hd', paid: true, run: async () => openAiImage(env, finalPrompt, draft, fetcher) });
   // CHE_AI_BOUND is false when the Worker has no AI binding (routedEnv always exposes an AI member).
   if (env.AI && env.CHE_AI_BOUND !== false) engines.push({ id: draft ? 'CHE image engine (draft)' : 'CHE image engine', run: async () => {
-    const result = await env.AI.run(IMAGE_MODEL, { prompt: finalPrompt.slice(0, 2048), steps: draft ? 4 : 8, seed: Math.floor(Math.random() * 2 ** 31) });
+    // The model's own schema decides the payload: FLUX.1 [schnell] refuses a seed, so it is not sent and the receipt says so.
+    const built = imagePayload(IMAGE_MODEL, { prompt: finalPrompt, steps: draft ? 4 : 8, seed: Math.floor(Math.random() * 2 ** 31) });
+    const result = await env.AI.run(IMAGE_MODEL, built.payload);
     if (!result?.image) throw new Error('The image model returned no image.');
-    return { base64: result.image, mime_type: 'image/jpeg' };
+    return { base64: result.image, mime_type: 'image/jpeg', payload_receipt: payloadReceipt(IMAGE_MODEL, built) };
   } });
   if (!internalOnly && paidMediaEnabled(env) && env.GEMINI_API_KEY) engines.push({ id: 'gemini-image', paid: true, run: async () => {
     const model = env.CHE_GEMINI_IMAGE_MODEL || 'gemini-3.1-flash-image';
@@ -393,7 +524,7 @@ export async function generateImage(env, storage, body, fetcher = fetch) {
   const errors = [];
   let generated;
   for (const engine of engines) {
-    try { generated = await engine.run(); record.engine = engine.id; break; }
+    try { generated = await engine.run(); record.engine = engine.id; if (generated.payload_receipt) record.payload_receipt = generated.payload_receipt; break; }
     catch (error) { errors.push(`${engine.id}: ${error.message}`); console.log('CHE image error:', engine.id, error.message); }
   }
   if (!generated) {

@@ -408,9 +408,18 @@ export async function pausedUnits(storage) {
   return new Map(Object.entries(state).filter(([, s]) => s.status === 'paused').map(([k, s]) => [k, s.reason]));
 }
 
-/** Wraps the owner's entry gate for forward paper only: a paused strategy's signals are refused and journalled as skipped. */
-export function governedGate(gate, paused, { market = 'MNQ', timeframe = '5m' } = {}) {
+// Owner directive (2026-10-28): forward-paper entries are halted while the paper journal is reconciled. Research,
+// simulation, replay and read-only analysis keep running. Refused signals are still journalled as skipped, with this
+// reason, so the evidence remains. Lifting the halt is a deliberate code change, reviewed and deployed.
+export const FORWARD_ENTRIES_HALTED = true;
+// The halt in force. Tests of the pause logic set it off for their own run and restore it; production never does.
+export const haltState = { halted: FORWARD_ENTRIES_HALTED };
+export const HALT_REASON = 'new forward-paper entries are halted by the owner (2026-10-28) while the paper journal is reconciled';
+
+/** Wraps the owner's entry gate for forward paper only: a halt or a paused strategy refuses new signals, journalled as skipped. */
+export function governedGate(gate, paused, { market = 'MNQ', timeframe = '5m' } = {}, { halted = haltState.halted } = {}) {
   return (pf, info) => {
+    if (halted && info.stage === 'signal') return HALT_REASON;
     const reason = paused.get(`${pf.candidate}|${pf.contract || market}|${pf.resolution || timeframe}`);
     if (reason && info.stage === 'signal') return `the strategy governor paused it from forward paper: ${reason}`;
     return gate ? gate(pf, info) : null;
