@@ -456,7 +456,7 @@ test('Modal is Connected only after its app answers an authenticated /health; a 
   assert.match(deploy.detail, /Modal API token, the deploy key/);
   const cred = 'wk-AbCdEf123456:ws-ZyXwVu987654@https://ownerws--che-gpu.modal.run';
   globalThis.fetch = async (url, init = {}) => (String(url) === 'https://ownerws--che-gpu.modal.run/health' && init.headers?.['Modal-Key'] === 'wk-AbCdEf123456'
-    ? new Response(JSON.stringify({ ok: true, app: 'che-gpu', version: 'che-modal-1', gpu: 'T4' }), { status: 200 }) : new Response('{}', { status: 404 }));
+    ? new Response(JSON.stringify({ ok: true, app: 'che-gpu', version: 'che-modal-3', gpu: 'T4' }), { status: 200 }) : new Response('{}', { status: 404 }));
   const m = await che.post('/api/onboarding/modal/secret', { token: cred });
   globalThis.fetch = offline;
   assert.equal(m.state, 'verified', JSON.stringify(m));

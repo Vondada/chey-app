@@ -1160,6 +1160,13 @@ function barsAnswer(intent, records) {
  * records and portfolios the Knowledge Atlas reads (one portfolio at a time, never pooled). Trades: 0 and
  * text: null when the journal has no closed trade, so the caller can say so. Records are read, never written.
  */
+/** The first and last entry dates of a set of trades, from the records themselves. A set with no dated entry says so. */
+export function entryRange(trades = []) {
+  const days = trades.map((t) => String(t?.entry?.time ?? '').slice(0, 10)).filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d)).sort();
+  if (!days.length) return 'has no dated entries';
+  return days[0] === days[days.length - 1] ? `is ${days[0]}` : `runs ${days[0]} to ${days[days.length - 1]}`;
+}
+
 export async function paperJournalWinRate(storage) {
   const records = await loadTradingRecords(storage);
   if (records.unreadable) return { trades: 0, text: 'I could not read CHE\'s paper journal just now, sir, so I give no win rate.' };
@@ -1175,7 +1182,7 @@ export async function paperJournalWinRate(storage) {
     lines.push(`Across the ${list.length} portfolios, the win rate ranged ${Math.min(...rates)}% to ${Math.max(...rates)}%.`);
   }
   lines.push(top.s.trades < MIN_TRADES ? `That is fewer than the ${MIN_TRADES} trades needed, so it is anecdote, not evidence.` : 'A win rate means little without the payoff: ask "what is my expectancy" for both together.');
-  return { trades: total, text: lines.join(' ') };
+  return { trades: total, text: lines.join(' '), range: entryRange(records.paper || []) };
 }
 
 /** The reply to a tradingAtlasIntent result, in knowledge_atlas.js's reply shape. Records are read, never written. */

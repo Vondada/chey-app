@@ -223,3 +223,103 @@ test('the live check passes against this code', async () => {
   assert.equal(report.ok, true, JSON.stringify(report.steps.filter((s) => !s.pass && !s.optional)));
   assert.deepEqual(report.coverage.map((x) => [x.show, x.episodes, x.covered]), [['Martin (TV series)', 3, 3], ['The Fresh Prince of Bel-Air', 2, 2]]);
 });
+
+test('a Wikipedia 503 that clears is retried, so the study does not stop on a blip', async () => {
+  const { findShow } = await import('./comedy_study.js');
+  let calls = 0;
+  const flaky = async (input) => {
+    calls += 1;
+    if (calls === 1) return new Response('busy', { status: 503, headers: { 'Retry-After': '1' } });
+    return fakeWiki(String(input?.url || input));
+  };
+  const found = await findShow('Martin', flaky);
+  assert.equal(calls, 2, 'the 503 was retried once');
+  assert.ok(found.title, 'the show was found after the retry');
+});
+
+test('a Wikipedia outage that lasts still stops the pass with its wait, after bounded retries', async () => {
+  const { findShow } = await import('./comedy_study.js');
+  let calls = 0;
+  const down = async () => { calls += 1; return new Response('busy', { status: 503, headers: { 'Retry-After': '120' } }); };
+  await assert.rejects(findShow('Martin', down), (error) => error.retryAfter === 120 && /Wikipedia returned 503/.test(error.message));
+  assert.equal(calls, 3, 'one try and two bounded retries, then it stops');
+});
+
+test('Wikipedia\'s own Retry-After is the wait before the retry, capped at 10 seconds', async () => {
+  const { findShow } = await import('./comedy_study.js');
+  const waits = [];
+  const realSetTimeout = globalThis.setTimeout;
+  globalThis.setTimeout = (fn, ms) => { waits.push(ms); return realSetTimeout(fn, 0); };
+  try {
+    let calls = 0;
+    const throttled = async (input) => {
+      calls += 1;
+      if (calls === 1) return new Response('busy', { status: 503, headers: { 'Retry-After': '2' } });
+      return fakeWiki(String(input?.url || input));
+    };
+    await findShow('Martin', throttled);
+    assert.deepEqual(waits, [2000], 'the server asked for 2 seconds, so 2 seconds are waited');
+  } finally {
+    globalThis.setTimeout = realSetTimeout;
+  }
+});
+
+// Retry waits are real time in production; these tests check the behaviour, not the clock, so the wait is instant.
+// Each requested wait is recorded so the test can still assert how long CHE would have waited.
+async function withInstantTimers(run) {
+  const waits = [];
+  const realSetTimeout = globalThis.setTimeout;
+  globalThis.setTimeout = (fn, ms) => { waits.push(ms); return realSetTimeout(fn, 0); };
+  try { return await run(waits); } finally { globalThis.setTimeout = realSetTimeout; }
+}
+
+test('a Wikipedia step that fails during a Wikipedia outage is UPSTREAM_UNAVAILABLE, with the HTTP status, not PASS or FAIL', async () => {
+  const { findShow, judgeStudySteps } = await import('./comedy_study.js');
+  let calls = 0;
+  const down = async () => { calls += 1; return new Response('busy', { status: 503 }); };
+  let lastError = null;
+  await withInstantTimers(async () => {
+    try { await findShow('Martin', down); } catch (error) { lastError = { at: 'now', message: error.message, upstream: error.upstream }; }
+  });
+  assert.deepEqual(lastError.upstream, { http_status: 503, attempts: 3 }, 'the evidence keeps the status and every attempt');
+  const judged = judgeStudySteps([{ name: 'real search', pass: false, route: 'wikipedia' }], lastError);
+  assert.equal(judged[0].status, 'upstream_unavailable');
+  assert.equal(judged[0].pass, false, 'pending is never a pass');
+  assert.equal(judged[0].upstream.http_status, 503);
+});
+
+test('a failure that is not Wikipedia\'s own 429 or 5xx stays a FAIL, even while Wikipedia is also down', async () => {
+  const { judgeStudySteps } = await import('./comedy_study.js');
+  const upstream = { http_status: 503, attempts: 3 };
+  const steps = [
+    { name: 'search found the article', pass: false, route: 'wikipedia' },
+    { name: 'status reply', pass: false, route: 'che_study' },
+    { name: 'joke', pass: true, route: 'model', optional: true },
+  ];
+  const judged = judgeStudySteps(steps, { at: 'now', message: 'Wikipedia returned 503', upstream });
+  assert.equal(judged[1].status, 'fail', 'a CHE reply that is wrong is a fault, not an outage');
+  assert.equal(judged[2].status, 'pass');
+  const noOutage = judgeStudySteps([{ name: 'search', pass: false, route: 'wikipedia' }], { at: 'now', message: 'Wikipedia: invalid response' });
+  assert.equal(noOutage[0].status, 'fail', 'a parse error from Wikipedia is not an outage');
+  const passing = judgeStudySteps([{ name: 'search', pass: true, route: 'wikipedia' }], { at: 'now', message: 'x', upstream });
+  assert.equal(passing[0].status, 'pass', 'a step that passed is never changed');
+});
+
+test('a 429 is an upstream outage too; a 404 is not', async () => {
+  const { findShow } = await import('./comedy_study.js');
+  const limited = async () => new Response('slow', { status: 429 });
+  await withInstantTimers(() => assert.rejects(findShow('Martin', limited), (error) => error.upstream?.http_status === 429));
+  const missing = async () => new Response('gone', { status: 404 });
+  await withInstantTimers(() => assert.rejects(findShow('Martin', missing), (error) => error.upstream === undefined));
+});
+
+test('a lesson check that depends on Wikipedia is pending during an outage, and a lesson check with no outage is still a FAIL', async () => {
+  const { judgeStudySteps } = await import('./comedy_study.js');
+  const upstream = { http_status: 503, attempts: 3 };
+  const lastError = { at: 'now', message: 'Wikipedia returned 503', upstream };
+  const steps = [{ name: 'learned lessons', pass: false, route: 'che_study', external: 'wikipedia' }];
+  assert.equal(judgeStudySteps(steps, lastError)[0].status, 'upstream_unavailable', 'lessons need the episode reads that Wikipedia blocked');
+  assert.equal(judgeStudySteps(steps, null)[0].status, 'fail', 'with no outage, missing lessons are a real fault');
+  const reply = [{ name: 'status', pass: false, route: 'che_study' }];
+  assert.equal(judgeStudySteps(reply, lastError)[0].status, 'fail', 'a CHE reply without the external tag stays a fault');
+});

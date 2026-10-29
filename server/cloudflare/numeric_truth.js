@@ -10,6 +10,8 @@
 // not absurd), contradicted (arithmetic disagrees, or far outside the range). Corrections are appended beside the
 // reply by the numeric_check stage in truth_pipeline.js; the owner's text is never silently rewritten.
 
+import { checkEquations } from './arithmetic.js';
+
 export const C_M_PER_S = 299792458; // exact (SI definition of the metre)
 const JULIAN_YEAR_S = 31557600; // 365.25 days
 export const LIGHT_YEAR_M = C_M_PER_S * JULIAN_YEAR_S; // 9.4607e15 m, the light-year used by the IAU
@@ -202,7 +204,7 @@ export function checkNumericClaims(text = '') {
   for (const sentence of String(text || '').split(SENTENCE_SPLIT)) {
     if (!sentence.trim()) continue;
     const qs = quantitiesIn(sentence);
-    claims.push(...checkConversion(sentence, qs), ...checkTravel(sentence, qs), ...checkConstant(sentence, qs), ...checkReference(sentence));
+    claims.push(...checkConversion(sentence, qs), ...checkTravel(sentence, qs), ...checkConstant(sentence, qs), ...checkReference(sentence), ...checkEquations(sentence));
   }
   // Internal consistency: the same reference subject stated twice with figures more than 2x apart.
   const seen = new Map();
