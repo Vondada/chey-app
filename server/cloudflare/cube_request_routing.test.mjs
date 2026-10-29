@@ -54,3 +54,40 @@ test('a negated clause does not cancel an affirmative picture request in the sam
   assert.equal(inferTurnCapabilities('Do not create a logo. Make a picture of a dog instead.').includes('image_generation'), true);
   assert.equal(inferTurnCapabilities("Don't forget to create a picture of a dog.").includes('image_generation'), true);
 });
+
+// The five routing cases of the blue cube mission (2026-10-29): creating an image, checking a picture job, checking Modal
+// connectivity, checking GitHub Actions, and cancelling or refusing. Each reaches its own handler and nothing else.
+test('creating an image goes to the picture route; a picture job, Modal connectivity, GitHub Actions and a refusal each keep their own route', () => {
+  const create = 'Generate one 256x256 image of a glowing blue cube using Modal GPU.';
+  assert.equal(inferTurnCapabilities(create).includes('image_generation'), true);
+  assert.equal(modalServiceIntent(create), null);
+  assert.equal(modalServiceIntent('Check the previous picture job on Modal.')?.kind, 'job_status');
+  assert.equal(modalServiceIntent('Check Modal connection.')?.kind, 'connection');
+  const gh = "What's the status of the GitHub Actions run?";
+  assert.equal(modalServiceIntent(gh), null, 'GitHub Actions is answered by the deploy and commit receipts, not Modal');
+  assert.equal(inferTurnCapabilities(gh).includes('image_generation'), false);
+  const refuse = 'Do not generate the blue cube picture.';
+  assert.equal(inferTurnCapabilities(refuse).includes('image_generation'), false, 'a refusal makes no picture');
+  assert.equal(modalServiceIntent(refuse), null);
+});
+
+// An explicit Modal request is never answered by another engine (owner's rule: no silent provider switching).
+test('an explicit Modal picture request with Modal off makes nothing and names the reason; no other engine runs', async () => {
+  const { chatPictureTurn } = await import('./chat_image_provider.js');
+  let engineCalls = 0;
+  const makeImages = async () => { engineCalls += 1; return [{ number: 1, ok: true, id: 'x', mime_type: 'image/png', title: 't', status: 200 }]; };
+  const out = await chatPictureTurn({}, { get: async () => undefined, put: async () => {} }, { message: 'Generate one 256x256 image of a glowing blue cube using Modal GPU.', origin: 'https://w', makeImages });
+  assert.equal(engineCalls, 0);
+  assert.match(out.text, /I did not make the picture, sir: you asked for Modal GPU/);
+  assert.equal(out.meta.nothing_generated, true);
+  assert.equal(out.meta.provider_used, null);
+});
+
+test('a plain picture request with no Modal word still uses the picture engine, with its engine note', async () => {
+  const { chatPictureTurn } = await import('./chat_image_provider.js');
+  let engineCalls = 0;
+  const makeImages = async () => { engineCalls += 1; return [{ number: 1, ok: true, id: 'y', mime_type: 'image/png', title: 't', status: 200 }]; };
+  const out = await chatPictureTurn({}, { get: async () => undefined, put: async () => {} }, { message: 'Generate one 256x256 image of a glowing blue cube.', origin: 'https://w', makeImages });
+  assert.equal(engineCalls, 1);
+  assert.match(out.text, /^Made with Cloudflare Workers AI \(provider: Workers AI\)/);
+});

@@ -37,6 +37,13 @@ export function workersAiNote(reason) {
 export async function chatPictureTurn(env, storage, { message, origin, makeImages }) {
   const count = requestedImageCount(message);
   const choice = await chatImageProvider(env, storage, { count });
+  // An explicit Modal request is never answered by another engine: if Modal is not chosen, nothing is made and the reason is said.
+  if (choice.provider !== 'modal' && /\bmodal\b/i.test(String(message || ''))) {
+    return {
+      text: `I did not make the picture, sir: you asked for Modal GPU, and ${choice.reason}. No other engine was used, and nothing was generated.`,
+      meta: { source: CHAT_IMAGE_SOURCE, ok: false, model_calls: 0, provider_requested: 'modal', provider_used: null, nothing_generated: true, refusal: choice.reason },
+    };
+  }
   if (choice.provider === 'modal') {
     const prompt = String(message || '').replace(/^\s*(?:(?:hey\s+)?(?:che|chay|chey|shay)[,:]?\s+)?/i, '').trim();
     const started = await startModalImage(env, storage, { prompt, title: prompt.slice(0, 60) });
