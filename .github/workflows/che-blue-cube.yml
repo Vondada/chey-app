@@ -1,0 +1,153 @@
+# The blue cube, run by hand (owner, 2026-10-29). Manual only: nothing runs on a push or a schedule.
+#
+# Read-only unless `confirm` is exactly one-blue-cube-256. Then it makes ONE 256 px Modal render, and only if the Worker's
+# $5 test budget ledger shows no open reservation, no earlier blue cube job, and room for one render. The Worker checks
+# all of that again before it sends anything; a refused start sends nothing to Modal and costs nothing.
+#
+# It reports, with no secret value printed:
+#   1. connectivity from GitHub's network to the Worker and to the Modal endpoint;
+#   2. the ledger before and after (cap, spent, reserved, remaining, each job's state and cost);
+#   3. Modal's own 422 validation reason, if Modal refuses the start;
+#   4. the render's Modal job (call id), its state, and the saved asset (id, SHA-256, size) when it is saved.
+#
+# The probe token is the one the existing deploy probes use: this workflow makes a fresh one and stores it on the Worker
+# (the same step che-worker-logs.yml takes). It is masked, and it is never printed.
+name: CHE blue cube
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: Type one-blue-cube-256 to make the one authorised render. Leave empty for a read-only check.
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+# Never two renders at once, and never alongside a Worker deploy that writes the same probe token.
+concurrency:
+  group: che-blue-cube
+  cancel-in-progress: false
+
+jobs:
+  cube:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      CHE_WORKER: https://chey-app.henryjavoni.workers.dev
+      MODAL_ENDPOINT: https://vondada--che-gpu.us-east.modal.run
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: c49b395e8f1138b5fae36ab88222542c
+      CONFIRM: ${{ inputs.confirm }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: 1. Connectivity from GitHub's network
+        run: |
+          w=$(curl -s -o /tmp/w.json -w '%{http_code}' --max-time 60 "$CHE_WORKER/health" || true)
+          m=$(curl -s -o /tmp/m.json -w '%{http_code}' --max-time 60 "$MODAL_ENDPOINT/health" || true)
+          echo "Worker $CHE_WORKER/health (unauthenticated): HTTP $w"
+          echo "Modal $MODAL_ENDPOINT/health (unauthenticated): HTTP $m $(head -c 120 /tmp/m.json)"
+          {
+            echo "### 1. Connectivity (from GitHub's network)"
+            echo "- Worker /health: HTTP $w"
+            echo "- Modal /health: HTTP $m (401 means the app is up and requires its token)"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Probe token for the Worker's probe routes (masked, never printed)
+        working-directory: server/cloudflare
+        run: |
+          token="$(openssl rand -hex 32)"
+          echo "::add-mask::$token"
+          printf '%s' "$token" | npx --yes wrangler@4 secret put CHE_VOICE_PROBE_TOKEN
+          echo "CHE_PROBE_TOKEN=$token" >> "$GITHUB_ENV"
+          sleep 20
+
+      - name: 2. The GPU test budget ledger before the render
+        run: |
+          code=$(curl -s -o "$RUNNER_TEMP/ledger-before.json" -w '%{http_code}' --max-time 60 \
+            -H "Authorization: Bearer $CHE_PROBE_TOKEN" "$CHE_WORKER/api/probe/modal/budget")
+          echo "Ledger route: HTTP $code"
+          [ "$code" = "200" ] || { echo "::error::ledger route answered $code; the Worker with the probe routes is not deployed yet"; exit 1; }
+          python3 - "$RUNNER_TEMP/ledger-before.json" <<'PY' | tee -a "$GITHUB_STEP_SUMMARY"
+          import json, sys
+          d = json.load(open(sys.argv[1]))
+          print("### 2. Ledger before")
+          print(f"- cap ${d.get('cap_usd', 5)}; spent ${d.get('spent_usd')}; reserved ${d.get('reserved_usd')}; remaining ${d.get('remaining_usd')}")
+          print("- one 256 px render may cost up to $0.108494 (reserved before anything is sent)")
+          for j in d.get("jobs", []):
+              print(f"- job {j.get('id')}: {j.get('label')} | state {j.get('state')} | cost ${j.get('actual_usd')}")
+          if not d.get("jobs"):
+              print("- no jobs recorded")
+          PY
+
+      - name: "Gate - stop before any spend unless the ledger is clear"
+        run: |
+          if [ "$CONFIRM" != "one-blue-cube-256" ]; then
+            echo "Read-only run: no confirm phrase, so no render was sent." | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          python3 - "$RUNNER_TEMP/ledger-before.json" <<'PY'
+          import json, sys
+          d = json.load(open(sys.argv[1]))
+          problems = []
+          if d.get("reserved_usd", 0) > 0: problems.append("an earlier GPU job still holds a reserve")
+          if any("blue cube" in str(j.get("label", "")).lower() and j.get("state") != "released" for j in d.get("jobs", [])): problems.append("an earlier blue cube job exists")
+          if d.get("remaining_usd", 0) < 0.108494: problems.append("the remaining budget is below one render")
+          if problems:
+              print("::error::Not rendering: " + "; ".join(problems))
+              sys.exit(1)
+          print("Ledger clear: no open reserve, no earlier blue cube job, budget covers one render.")
+          PY
+
+      - name: 3 and 4a. One 256 px render, through the Worker's ledger
+        if: inputs.confirm == 'one-blue-cube-256'
+        run: |
+          curl -s -o "$RUNNER_TEMP/start.json" -w '%{http_code}' --max-time 120 -X POST \
+            -H "Authorization: Bearer $CHE_PROBE_TOKEN" -H 'Content-Type: application/json' \
+            -d '{"confirm":"one-blue-cube-256"}' "$CHE_WORKER/api/probe/modal/cube" > "$RUNNER_TEMP/start.code"
+          echo "Render start: HTTP $(cat "$RUNNER_TEMP/start.code")"
+          python3 - "$RUNNER_TEMP/start.json" <<'PY' | tee -a "$GITHUB_STEP_SUMMARY"
+          import json, sys
+          d = json.load(open(sys.argv[1]))
+          print("### 3. Render start")
+          print(f"- sent to Modal: {d.get('sent')}; ok: {d.get('ok')}")
+          if d.get("refusal"): print(f"- refused before sending: {d['refusal']}")
+          if d.get("call_id"): print(f"- Modal job (call id): {d['call_id']}")
+          if d.get("modal_http_status") is not None: print(f"- Modal's HTTP status: {d['modal_http_status']}")
+          if d.get("modal_reason"): print(f"- Modal's validation reason: {d['modal_reason']}")
+          if d.get("budget_state"): print(f"- budget: {d['budget_state']}")
+          if d.get("reply"): print(f"- CHE's reply: {d['reply']}")
+          if d.get("call_id"): open(sys.argv[1] + ".call", "w").write(d["call_id"])
+          PY
+
+      - name: 4b. Wait for the picture to finish and be checked
+        if: inputs.confirm == 'one-blue-cube-256'
+        run: |
+          if [ ! -s "$RUNNER_TEMP/start.json.call" ]; then echo "No Modal job was started, so there is nothing to wait for."; exit 0; fi
+          call_id="$(cat "$RUNNER_TEMP/start.json.call")"
+          for i in $(seq 1 30); do
+            code=$(curl -s -o "$RUNNER_TEMP/result.json" -w '%{http_code}' --max-time 90 -X POST \
+              -H "Authorization: Bearer $CHE_PROBE_TOKEN" -H 'Content-Type: application/json' \
+              -d "{\"call_id\":\"$call_id\"}" "$CHE_WORKER/api/probe/modal/cube/result")
+            echo "check $i: HTTP $code"
+            [ "$code" = "202" ] || break
+            sleep 30
+          done
+          python3 - "$RUNNER_TEMP/result.json" "$code" <<'PY' | tee -a "$GITHUB_STEP_SUMMARY"
+          import json, sys
+          d = json.load(open(sys.argv[1])); code = sys.argv[2]
+          print("### 4. The picture")
+          print(f"- result check: HTTP {code}")
+          item = d.get("item") or {}
+          for k in ("id", "title", "mime_type", "sha256", "bytes", "width", "height", "model", "model_revision", "call_id"):
+              if item.get(k) is not None: print(f"- {k}: {item[k]}")
+          if d.get("detail"): print(f"- detail: {d['detail']}")
+          print(f"- ledger after: spent ${d.get('budget', {}).get('spent_usd')}, reserved ${d.get('budget', {}).get('reserved_usd')}, remaining ${d.get('budget', {}).get('remaining_usd')}")
+          PY
+          if [ "$code" != "200" ]; then echo "::warning::the picture is not saved yet (last check HTTP $code)"; fi
