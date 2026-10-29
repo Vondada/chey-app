@@ -86,6 +86,40 @@ test('settling or releasing an unknown job changes nothing', async () => {
   assert.equal(JSON.stringify(await testBudgetReport(storage)), before);
 });
 
+test('pruning old records never lowers the lifetime spend: cheap settled jobs past 200 records still count in full', async () => {
+  const storage = memoryStorage();
+  let accepted = 0;
+  // Each job reserves its worst case first, so the loop ends when the next worst case no longer fits the cap.
+  for (let i = 0; i < 1000; i += 1) {
+    const r = await reserveTestBudget(storage, { label: `job ${i}`, max_usd: TXT2IMG_MAX });
+    if (!r.ok) break;
+    accepted += 1;
+    await settleTestBudget(storage, r.id, { actual_usd: 0.011997, provenance: 'MEASURED_SECONDS_PLUS_OVERHEAD' });
+  }
+  assert.ok(accepted > 200, `the run must pass the 200-record limit (accepted ${accepted})`);
+  const report = await testBudgetReport(storage);
+  assert.equal(report.jobs.length, 200, 'only the newest 200 records are kept');
+  assert.equal(report.spent_usd, Math.round(accepted * 0.011997 * 1e6) / 1e6, 'every accepted job still counts in full');
+  assert.ok(report.spent_usd > 4.8 && report.spent_usd <= 5, 'the spend is under the cap and close to it');
+  const refused = await reserveTestBudget(storage, { label: 'after the cap', max_usd: TXT2IMG_MAX });
+  assert.equal(refused.ok, false, 'nothing is sent once the lifetime spend is at the cap');
+});
+
+test('an open reservation is never pruned to make room', async () => {
+  const storage = memoryStorage();
+  const first = await reserveTestBudget(storage, { label: 'open', max_usd: TXT2IMG_MAX, id: 'open-one' });
+  assert.equal(first.ok, true);
+  for (let i = 0; i < 199; i += 1) {
+    const r = await reserveTestBudget(storage, { label: `job ${i}`, max_usd: 0.000001 });
+    await settleTestBudget(storage, r.id, { actual_usd: 0 });
+  }
+  await reserveTestBudget(storage, { label: 'one more', max_usd: 0.000001 });
+  const report = await testBudgetReport(storage);
+  assert.ok(report.jobs.some((j) => j.id === 'open-one' && j.state === 'reserved'), 'the reservation is still open');
+  // The open job plus the last tiny reservation: both are still reserved, neither was pruned.
+  assert.equal(report.reserved_usd, 0.108495);
+});
+
 test('totals with an empty ledger: the whole $5 is left', () => {
   assert.deepEqual(budgetTotals({ jobs: [] }), { cap_usd: 5, spent_usd: 0, reserved_usd: 0, remaining_usd: 5, jobs: 0 });
 });
