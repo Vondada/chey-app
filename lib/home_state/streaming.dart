@@ -102,6 +102,8 @@ extension _CheHomeStreaming on _CHEHomeState {
     required void Function(String text) onPartial,
   }) async {
     debugPrint('TRACE skill: enter _streamCheResponse');
+    // A turn that answers without the stream (a local answer, a project made here) is complete; only the stream sets this otherwise.
+    _streamEnd = CheStreamEnd.done;
     // The brain restore is local and normally instant. The owner's first reply is never held past 800 ms for it:
     // a slow restore just means that turn starts without the restored context, as a failed restore already does.
     await _cognitionReady.timeout(const Duration(milliseconds: 800), onTimeout: () {});
@@ -405,6 +407,7 @@ extension _CheHomeStreaming on _CHEHomeState {
     _streamUnderstoodAs = null;
     _streamResponseDetails = null;
     _streamRecordIds = const [];
+    final tally = CheStreamTally();
 
     await for (final line in response.stream
         .transform(utf8.decoder)
@@ -414,6 +417,7 @@ extension _CheHomeStreaming on _CHEHomeState {
       if (trimmed.isEmpty) continue;
 
       final data = jsonDecode(trimmed);
+      tally.add(Map<String, dynamic>.from(data));
       final type = data['type']?.toString();
 
       // Owner-approval holds are ordinary JSON from the Worker, not NDJSON
@@ -709,6 +713,7 @@ extension _CheHomeStreaming on _CHEHomeState {
       }
     }
 
+    _streamEnd = tally.end;
     _pendingScreenContext = null;
     final hadAttachment = _pendingAttachment != null;
     _pendingAttachment = null;
