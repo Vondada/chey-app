@@ -29,6 +29,10 @@ on:
         description: With resume_run_id, ask again these classes too (comma list, for example incorrect,unverified,no_answer)
         type: string
         default: ""
+      questions_file:
+        description: Another question set in the repo (blank = the 600-question baseline). For unseen regression sets, for example tools/certification/unseen_tool_questions.json
+        type: string
+        default: ""
 
 concurrency:
   group: che-certification
@@ -46,6 +50,7 @@ jobs:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: c49b395e8f1138b5fae36ab88222542c
       CATEGORY: ${{ inputs.category }}
+      QUESTIONS_FILE: ${{ inputs.questions_file }}
       LIMIT: ${{ inputs.limit }}
     steps:
       - uses: actions/checkout@v4
@@ -98,6 +103,7 @@ jobs:
           [ -n "$LIMIT" ] && args+=("--limit=$LIMIT")
           [ -n "$RESUME_RUN_ID" ] && args+=("--resume=earlier/certification-results.json")
           [ -n "$RERUN_CLASSES" ] && args+=("--rerun=$RERUN_CLASSES")
+          [ -n "$QUESTIONS_FILE" ] && args+=("--questions=$QUESTIONS_FILE")
           node tools/certification/run_certification.mjs "${args[@]}" | tee certification-run.log
 
       - name: 3. Summary

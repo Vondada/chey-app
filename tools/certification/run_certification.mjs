@@ -71,6 +71,22 @@ export function termGroups(mustContainAny) {
 }
 
 // Returns a list of problems with a question set; an empty list means the set is a valid 600-question certification.
+/** Shape check for an unseen set: unique ids, a question, and an expected block the grader reads. */
+export function validateUnseen(list) {
+  if (!Array.isArray(list) || !list.length) return ['questions must be a non-empty array'];
+  const problems = [];
+  const ids = new Set();
+  for (const item of list) {
+    const where = item?.id ?? '(no id)';
+    if (typeof item?.id !== 'string' || !item.id) problems.push(`${where}: missing id`);
+    else if (ids.has(item.id)) problems.push(`${where}: duplicate id`);
+    else ids.add(item.id);
+    if (typeof item?.question !== 'string' || !item.question.trim()) problems.push(`${where}: missing question`);
+    if (!item?.expected || typeof item.expected !== 'object') problems.push(`${where}: missing expected`);
+  }
+  return problems;
+}
+
 export function validateQuestions(list) {
   const problems = [];
   if (!Array.isArray(list)) return ['questions must be an array'];
@@ -382,9 +398,10 @@ export async function runCertification({
 // ---- command line ---------------------------------------------------------------------------------------------------
 
 function parseArgs(argv) {
-  const opts = { out: null, category: null, limit: null, resume: null, rerun: new Set() };
+  const opts = { out: null, category: null, limit: null, resume: null, rerun: new Set(), questions: null };
   for (const arg of argv) {
-    if (arg.startsWith('--category=')) opts.category = arg.slice('--category='.length);
+    if (arg.startsWith('--questions=')) opts.questions = arg.slice('--questions='.length);
+    else if (arg.startsWith('--category=')) opts.category = arg.slice('--category='.length);
     else if (arg.startsWith('--resume=')) opts.resume = arg.slice('--resume='.length);
     else if (arg.startsWith('--rerun=')) opts.rerun = new Set(arg.slice('--rerun='.length).split(',').map((c) => c.trim()).filter(Boolean));
     else if (arg.startsWith('--limit=')) opts.limit = Number(arg.slice('--limit='.length));
@@ -403,8 +420,10 @@ async function main(argv) {
     console.error(opts.error);
     return 2;
   }
-  const questions = await loadQuestions();
-  const problems = validateQuestions(questions);
+  // --questions=path runs another set (unseen regression questions) with the same grader. Its shape is checked here, not
+  // against the 600-question layout, and the 600-question baseline file is never changed by it.
+  const questions = opts.questions ? JSON.parse(await readFile(opts.questions, 'utf8')) : await loadQuestions();
+  const problems = opts.questions ? validateUnseen(questions) : validateQuestions(questions);
   if (problems.length) {
     console.error(`questions.json is invalid:\n  ${problems.slice(0, 10).join('\n  ')}`);
     return 2;
@@ -426,7 +445,7 @@ async function main(argv) {
     console.log(`resuming: ${reuse.size} graded answers kept from ${opts.resume}`);
   }
   const report = await runCertification({
-    url, token, questions, select, reuse,
+    url, token, questions, select, reuse, questionsFile: opts.questions || QUESTIONS_PATH,
     // Every non-pass prints its class, its reason and the start of CHE's reply, so the failures can be audited from the log.
     onProgress: (row) => console.log(row.verdict === 'pass'
       ? `${row.id} pass`
