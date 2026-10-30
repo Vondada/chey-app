@@ -14,7 +14,10 @@ const baseCtx = (storage) => ({ storage, body: {}, data: {}, env: {}, rawMessage
 
 test('the stage order is exactly the order worker.js ran before the pipeline existed', () => {
   assert.deepEqual([...TRUTH_STAGE_ORDER], [
-    'truth_layer', 'research_actions', 'owner_actions', 'citations', 'grounding', 'asset_truth', 'capability_gap',
+    'truth_layer', 'research_actions', 'owner_actions',
+    // added with device_action_claims.js: a timer, app or device claim needs a completed connector receipt this turn
+    'device_actions',
+    'citations', 'grounding', 'asset_truth', 'capability_gap',
     'attribution', 'agent_task', 'answer_receipt', 'wake_text', 'pretend_tool_call', 'execution_claims', 'auditor',
     'engine_claims', 'vision_note',
     // added after the historical order: numeric arithmetic on the final text (numeric_truth.js), so nothing strips it
