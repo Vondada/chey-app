@@ -44,6 +44,8 @@ test('an old row with the same reason is classed no_answer, so it is not asked a
 test('the Worker names the rules in the empty_after_checks frame, and the probe returns the error frame', () => {
   const worker = readFileSync(new URL('./worker.js', import.meta.url), 'utf8');
   assert.match(worker, /category: 'empty_after_checks',\n\s+retryable: true,\n\s+request_id: requestId,\n\s+rules,/);
-  assert.match(worker, /const frame = events\.find\(\(e\) => e\.type === 'error'\)/);
+  const reader = readFileSync(new URL('./probe_reply.js', import.meta.url), 'utf8');
+  assert.match(reader, /const frame = events\.find\(\(event\) => event\.type === 'error'\)/);
+  assert.match(worker, /const \{ reply, done, receipts, error \} = parseProbeChatBody\(raw\);/);
   assert.match(worker, /return \{ ok: response\.ok, status: response\.status, reply, done, execution_receipts: receipts, error \};/);
 });

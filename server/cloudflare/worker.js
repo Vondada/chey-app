@@ -44,6 +44,7 @@ import { testBudgetReport } from './gpu_test_budget.js';
 import { modalCubeProbe, modalCubeResult } from './modal_cube_probe.js';
 import { deleteMedia, finishModalImage, generateImage, modalImageCheckTimes, pendingModalImages, reconcileModalImages, generateVideo, listMedia, readBlob, saveOwnerFile, upscaleImage, verifyMediaFile } from './media.js';
 import { mediaVerifyProbe } from './media_verify_probe.js';
+import { parseProbeChatBody } from './probe_reply.js';
 import { withCheNote, guardEngineClaims, guardSoulClaims, lastReplyRecord, loadSoul, replyProvenanceAnswer, replyProvenanceQuestion, restoreSoul, saveSoul, soulPromptBlock, soulProvenance, soulView, stripPhoneSoul, stripSoulLabels } from './soul.js';
 import { classifyFailure as classifyEngineFailure, decideFallback, requestClassFor } from './refusal_fallback.js';
 import { isStoryTurn, storyMode, storyModeBlock } from './story_mode.js';
@@ -4113,16 +4114,11 @@ export class CheState extends DurableObject {
     });
     PROBE_CHAT_REQUESTS.add(request);
     const response = await this.fetch(request);
+    // The stream's delta frames are the owner's reply; a single JSON body (a queued or refused turn) is read as its
+    // reply or detail, so the probe grades what the owner sees (probe_reply.js). An error frame (for example
+    // empty_after_checks) names its category and rules.
     const raw = await response.text().catch(() => '');
-    const events = raw.split('\n').filter(Boolean).map((line) => { try { return JSON.parse(line); } catch (_) { return null; } }).filter(Boolean);
-    let plain = null;
-    try { plain = events.length ? null : JSON.parse(raw); } catch (_) { plain = null; }
-    const done = events.length ? ([...events].reverse().find((e) => e.type === 'done') || {}) : (plain && typeof plain === 'object' ? plain : {});
-    const reply = events.length ? replyFromNdjson(raw).trim() : String(plain?.reply ?? plain?.message ?? '').trim();
-    const receipts = Array.isArray(done.execution_receipts) ? done.execution_receipts : [];
-    // An error frame (for example empty_after_checks, when the truth checks removed the whole reply) names its category and rules.
-    const frame = events.find((e) => e.type === 'error') || null;
-    const error = frame ? { category: frame.category || null, rules: Array.isArray(frame.rules) ? frame.rules : [] } : null;
+    const { reply, done, receipts, error } = parseProbeChatBody(raw);
     return { ok: response.ok, status: response.status, reply, done, execution_receipts: receipts, error };
   }
 
