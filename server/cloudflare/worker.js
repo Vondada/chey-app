@@ -161,7 +161,7 @@ import { intentFrame, understoodAs } from './intent_frame.js';
 import { replyHijacksOwnerRequest, usageIntent, usageReport, speakUsage } from './usage_tracker.js';
 import { newestStarredIntent, speakNewestStarred, autoImproveScan, analyticalRepositoryQuestion, chatOnlyResponseIntent, currentTurnActionPolicy, codeScoutIntent, fetchRepoFile, inspectReferenceRepo, inspirationUpgradeContext, listOwnerStarredRepos, readRepoSource, referenceSourceBlock, codingFollowupKind, codingHistoryIntent, codingTimingNote, hypotheticalChange, repositoryImplementationIntent, repositoryInspectionIntent, scoutCode, selectStudyRepos, speakScout, speakStarredRepos, starredRepoIntent, starredStudyList, studySelectionIntent } from './code_scout.js';
 import { agentReportTurn, codingHistoryReceipt, completedWorkProof, namedJobAnswer, otherAgentWorkAsk, otherAgentWorkReply, proofAsked } from './coding_history.js';
-import { EMERGENCY_REPLY, emergencyMoment, languageLine, readRegister, readSocial, socialProbe, socialTurn } from './social_corrections.js';
+import { EMERGENCY_REPLY, cleanLanguageReply, emergencyMoment, languageLine, readRegister, readSocial, socialProbe, socialTurn } from './social_corrections.js';
 import { codingAuditApi, codingAuditProbe, codingAuditTurn, noStoredJobReceipt } from './coding_audit.js';
 import { inventionFollowUpAllowed, inventionIntent, inventionReply, planInvention, refusalReply } from './invention_studio.js';
 import { continuingInvention, inventionVisualIntent, inventionVisualRoute, makeConcept, visualTurn } from './invention_visuals.js';
@@ -14467,6 +14467,10 @@ export class CheState extends DurableObject {
         });
         if (verified.earlyResponse) return verified.earlyResponse;
         reply = verified.text;
+        // A clean-language turn never carries a swear word, even one the model repeated from earlier turns (social_corrections.js).
+        const beforeClean = reply;
+        if (social?.clean) reply = cleanLanguageReply(reply);
+        const cleanSwapped = reply !== beforeClean;
         if (!String(reply || '').trim()) return emptyReplyStream(executionRequestId, verified.removals);
         const { steps, answerReceipt, sourced } = verified;
         // This answer's own receipt, keyed to its text, for "how do you know that?".
@@ -14482,6 +14486,8 @@ export class CheState extends DurableObject {
             engine: model,
             request_id: executionRequestId,
             execution_receipts: skillResults.map((r) => r.execution_receipt),
+            // The model repeated a swear word on a clean turn; the swap above replaced it. The social probe fails on this.
+            clean_swapped: cleanSwapped,
             // What the source check did: articles opened by research, pages
             // backing the reply, sentences removed as unverifiable.
             news_articles: Array.isArray(research?.articles) ? research.articles.filter((a) => a.ok).length : 0,
