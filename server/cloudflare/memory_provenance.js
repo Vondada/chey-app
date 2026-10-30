@@ -125,6 +125,7 @@ export function splitAsk(message) {
 
 // Words that put a memory in a subject area, so "my music preferences" finds "I love 90s R&B".
 const SUBJECT_AREAS = [
+  [/\b(?:city|town|live|lives|living|lived|home|hometown|location|address)\b/, /\b(?:live|lives|living|lived|city|town|based|home|hometown|address|located|moved|neighborhood)\b/],
   [/\b(?:music|musical|songs?|singers?|bands?|artists?|albums?|playlists?|genres?|tunes)\b/, /\b(?:music|songs?|singers?|bands?|artists?|albums?|playlists?|genres?|jazz|blues|rock|hip ?hop|rap|r ?b|r&b|soul|funk|country|classical|lo ?fi|edm|techno|house|reggae|gospel|metal|pop|spotify|concerts?|tracks?|listen\w*|sing\w*)\b/],
   [/\b(?:food|foods|meals?|eat|eating|cuisine|dishes)\b/, /\b(?:food|meals?|eat\w*|cuisine|dish\w*|pizza|pasta|sushi|tacos?|burgers?|steak|chicken|salad|dessert|breakfast|lunch|dinner|cook\w*|restaurant\w*)\b/],
   [/\b(?:movies?|films?|shows?|tv|series)\b/, /\b(?:movies?|films?|shows?|tv|series|netflix|actor|actress|director|watch\w*)\b/],
@@ -132,8 +133,12 @@ const SUBJECT_AREAS = [
 ];
 
 /** True when a memory text is about the asked topic: most of its words, or the same subject area. */
+// A topic made only of generic verbs ('i live in' gives 'live') says nothing about its subject: it matches by subject area only.
+const GENERIC_TOPIC_WORDS = new Set(['live', 'work', 'like', 'want', 'say', 'said', 'tell', 'know', 'name'].flatMap((w) => contentWords(w)));
 export function topicMatches(topic, text) {
-  if (supportedBy(topic, [text])) return true;
+  const words = contentWords(topic);
+  const generic = words.length <= 1 && words.every((w) => GENERIC_TOPIC_WORDS.has(w));
+  if (!generic && supportedBy(topic, [text])) return true;
   const t = plainWords(topic);
   const body = String(text || '').toLowerCase();
   return SUBJECT_AREAS.some(([asks, about]) => asks.test(t) && about.test(body));
@@ -150,7 +155,10 @@ export function agentAuthor(textOrRecord) {
   const r = textOrRecord && typeof textOrRecord === 'object' ? textOrRecord : null;
   const declared = String(r?.author || r?.source_author || '').trim();
   if (declared && !/^(?:owner|me|you|user)$/i.test(declared)) return declared;
-  const m = AGENT_AUTHORED.exec(String(r ? r.text ?? r.body ?? '' : textOrRecord ?? '').slice(0, 400));
+  const text = String(r ? r.text ?? r.body ?? '' : textOrRecord ?? '');
+  // A research note labelled "Research · Atlas · ..." is an agent's output, never a statement the owner made.
+  if (/^\s*research\s*[·•|]\s*atlas\b/i.test(text)) return 'Atlas';
+  const m = AGENT_AUTHORED.exec(text.slice(0, 400));
   const name = m ? (m[1] || m[2] || m[3] || '') : '';
   return name ? name[0].toUpperCase() + name.slice(1).toLowerCase() : '';
 }

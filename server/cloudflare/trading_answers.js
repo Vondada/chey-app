@@ -14,6 +14,8 @@ const MAX_STATUS_TURN = 400;
 const RITHMIC = /\brithmic\b/i;
 const RITHMIC_STATE = /\b(?:connect\w*|live|working|receiv\w*|status|feed|data|running|online|logged|up|on)\b/i;
 const MEMORY = /\bmemor(?:y|ies)\b/i;
+// Asking CHE to recall, forget or fill in what she remembers is a memory question, not a status check. Those go to the recall route.
+const MEMORY_RECALL = /\b(?:remember|recall|forget|fill in|blanks?|from memory|tell me what|what (?:did|do|have|was|is|were|are) i|what (?:is|was) my|i (?:said|told you)|my (?:birthday|cousin|job|city|voice))\b/i;
 const MEMORY_STATE = /\b(?:working|works|status|health|saved|stored|records?|how\s+many|count|check|is\s+(?:your|the)|are\s+(?:your|the)|available|on)\b/i;
 const LATEST = /\b(?:latest|last|newest|most\s+recent)\s+(?:paper\s+)?trade\b|\b(?:show|read|tell)\s+me\s+(?:your|the)\s+(?:latest|last|newest|most\s+recent)\b[\s\S]{0,15}\btrade\b/i;
 const FEED = /\b(?:real[-\s]?time|live)\s+(?:market\s+)?(?:data|feed|prices?|quotes?|bars?)\b|\b(?:receiv\w*|getting|get|have)\s+(?:any\s+|real[-\s]?time\s+)?(?:market\s+)?(?:data|prices?|bars?)\b|\b(?:is|are)\s+(?:your|the)\s+(?:trading|feed|market\s+data|data)\s+(?:live|on|connected|running|working|status)\b|\b(?:is|are)\s+(?:you|your\s+trading)\s+live\b/i;
@@ -30,7 +32,7 @@ export function tradingStatusIntent(message) {
   // Replays, proofs and explanations of a trade belong to the evidence and why routes, not the status route.
   if (EVIDENCE_WORDS.test(text)) return null;
   if (RITHMIC.test(text) && RITHMIC_STATE.test(text)) return { kind: 'rithmic' };
-  if (MEMORY.test(text) && MEMORY_STATE.test(text)) return { kind: 'memory' };
+  if (MEMORY.test(text) && MEMORY_STATE.test(text) && !MEMORY_RECALL.test(text)) return { kind: 'memory' };
   if (LATEST.test(text)) return { kind: 'latest' };
   if (FEED.test(text)) return { kind: 'live' };
   if (LEARNED.test(text)) return { kind: 'learning' };
