@@ -34,8 +34,11 @@ on:
         type: string
         default: ""
 
+# Same group as the Worker deploy (che-worker-deploy.yml). Both set CHE_VOICE_PROBE_TOKEN, so a deploy that starts while a
+# certification runs rotates the token mid-run: the probe then answers 404 and the rows are blocked (run 41112199301:
+# 18 blocked, 15 infrastructure, 550 not run). One group makes them run one at a time.
 concurrency:
-  group: che-certification
+  group: che-worker-deploy
   cancel-in-progress: false
 
 permissions:
