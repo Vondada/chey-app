@@ -142,3 +142,34 @@ export function guardPretendedOrOverclaimed(reply, { message = '', actionResults
   const rest = kept.join(' ').trim();
   return { text: rest ? `${rest} ${note}` : note, removed };
 }
+
+// A model-only reply (no tool, connector, plugin or office result this turn) that says a tool-type action is done: "I've set
+// the volume", "I've run the diagnostic", "I've searched the repository", "The timer has been set for five minutes". Nothing ran
+// in this turn, so the completion is a model statement and not evidence (certification run 41118807594: ter-19, ter-13, ter-22,
+// ter-36, ter-48). A reply with any tool result is left to the tool's own checks.
+const MODEL_DONE = new RegExp([
+  String.raw`\b(?:i['’]ve|i\s+have)\s+(?:now\s+|just\s+|already\s+)?(?:set|saved|checked|searched|run|re-run|rerun|added|updated|opened|started|created|scheduled|adjusted|changed|turned|dimmed|muted|booked|launched|triggered|sent|found|read|looked\s+up)\b`,
+  String.raw`\b(?:timer|alarm|reminder|volume|brightness|temperature)\s+(?:has\s+been|is|was|now)\s+(?:set|running|on|off|changed|adjusted|at\s+\d+)\b`,
+  String.raw`\bset\s+the\s+(?:volume|brightness|temperature|timer|alarm)\s+(?:to|at)\s+\d+`,
+].join('|'), 'i');
+
+/** Removes model-only completion sentences when no tool or connector result exists in this turn. */
+export function guardModelOnlyCompletions(reply, { skillResults = [], actionResults = [], plugins = [], officeResults = [] } = {}) {
+  const text = String(reply || '');
+  const ranSomething = [skillResults, actionResults, plugins, officeResults].some((list) => Array.isArray(list) && list.length > 0);
+  if (ranSomething) return { text, removed: [] };
+  const kept = [];
+  const removed = [];
+  for (const sentence of splitSentences(text)) {
+    const plain = sentence.trim();
+    if (!MODEL_DONE.test(plain) || NEGATED.test(plain.slice(0, (MODEL_DONE.exec(plain) || { index: 0 }).index)) || /\?\s*$/.test(plain)) {
+      kept.push(sentence);
+      continue;
+    }
+    removed.push(plain);
+  }
+  if (!removed.length) return { text, removed };
+  const rest = kept.join(' ').trim();
+  const note = 'Nothing was done, sir: no tool ran for that, so I have no record that it happened.';
+  return { text: rest ? `${rest} ${note}` : note, removed };
+}
