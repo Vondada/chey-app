@@ -51,6 +51,14 @@ const CLAIM = new RegExp([
   String.raw`\b(?:light|lights|lamp|tv|heater|fan|speakers?|music|thermostat)s?\s+(?:is|are|was|were)\s+(?:now\s+)?on\b`,
 ].join('|'), 'i');
 
+// A claim made while the action is in progress ("I am triggering the image generator", "starting the timer for you now").
+// It is checked whatever the request was, so a multi-task reply cannot slip a timer or app start past the guard.
+const IN_PROGRESS = new RegExp([
+  String.raw`\b(?:i['’]m|i\s+am)\s+(?:now\s+)?(?:triggering|opening|launching|starting|setting\s+up|turning|switching|locking|unlocking|dimming|playing|pausing)\b`,
+  String.raw`\b(?:starting|setting|set|start)\s+(?:up\s+)?(?:the\s+|a\s+|an\s+|your\s+|my\s+)?(?:timer|alarm|reminder)\b[^.!?]*\b(?:for you|now)\b`,
+  String.raw`\b(?:timer|alarm)\s+is\s+(?:now\s+)?running\b`,
+].join('|'), 'i');
+
 const BARE_DONE = /^(?:done|all set|it['’]?s done|consider it done|got it)[,.!]?(?:\s+sir[.!]?)?$/i;
 const CLAIM_NEARBY = CLAIM;
 
@@ -79,15 +87,16 @@ export function deviceActionNote(states = []) {
  */
 export function guardClaimedDeviceActions(reply, { message = '', actionResults = [] } = {}) {
   const text = String(reply || '');
-  if (!isDeviceActionRequest(message)) return { text, removed: [] };
+  const request = isDeviceActionRequest(message);
   const states = (Array.isArray(actionResults) ? actionResults : []).map(actionState);
   if (states.includes('completed')) return { text, removed: [] };
   const kept = [];
   const removed = [];
   for (const sentence of splitSentences(text)) {
     // A bare "Done, sir." is a claim only when the same reply also names the device, app or timer: it is then a verdict on it.
-    const bare = BARE_DONE.test(sentence.trim()) && CLAIM_NEARBY.test(text);
-    const claim = bare ? { index: 0 } : CLAIM.exec(sentence);
+    const bare = request && BARE_DONE.test(sentence.trim()) && CLAIM_NEARBY.test(text);
+    // Outside a device request only an in-progress claim counts; a plain fact about a timer is not removed.
+    const claim = bare ? { index: 0 } : (request ? CLAIM.exec(sentence) : null) || IN_PROGRESS.exec(sentence);
     if (!claim || (!bare && NEGATED.test(sentence.slice(0, claim.index))) || /\?\s*$/.test(sentence.trim())) {
       kept.push(sentence);
       continue;
