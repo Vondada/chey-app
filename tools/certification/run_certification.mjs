@@ -158,7 +158,8 @@ export function parseReplyBody(text) {
   }
 }
 
-const lower = (s) => String(s).toLowerCase();
+// Curly apostrophes (U+2019, U+2018) read as straight ones, so "don’t" matches a term written "don't".
+const lower = (s) => String(s).toLowerCase().replace(/[‘’]/g, "'");
 
 // Whether a term appears in the reply, case-insensitively. A term that is only digits must not sit inside a longer
 // number, so "6" does not pass on "16" or "2026". Other terms match as substrings.
