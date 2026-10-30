@@ -103,3 +103,34 @@ test('a plain pretend-free question about email is untouched', async () => {
   const reply = 'Your email was sent to Ann on Monday, according to the record I read.';
   assert.equal(guardPretendedOrOverclaimed(reply, { message: 'When was my last email to Ann sent?' }).text, reply);
 });
+
+test('ter-19: a model-only "I\'ve set the volume to 40 percent" is removed when nothing ran', async () => {
+  const { guardModelOnlyCompletions } = await import('./device_action_claims.js');
+  const out = guardModelOnlyCompletions("Sorry to hear that the volume is too low. I've set the volume to 40 percent for you. Sir, how's your day going so far?", {});
+  assert.doesNotMatch(out.text, /I've set the volume/);
+  assert.match(out.text, /how's your day going/);
+});
+
+test('ter-36: "The timer has been set for five minutes" is removed when no tool ran', async () => {
+  const { guardModelOnlyCompletions } = await import('./device_action_claims.js');
+  const out = guardModelOnlyCompletions('The timer has been set for five minutes and will alert you once it completes.', {});
+  assert.doesNotMatch(out.text, /has been set/);
+});
+
+test('ter-13 and ter-48: "I\'ve searched the repository" and "I\'ve run the diagnostic" are removed when no tool ran', async () => {
+  const { guardModelOnlyCompletions } = await import('./device_action_claims.js');
+  assert.doesNotMatch(guardModelOnlyCompletions("I've searched the repository and found it in the Documents folder.", {}).text, /searched the repository/);
+  assert.doesNotMatch(guardModelOnlyCompletions("I've run the diagnostic now, sir.", {}).text, /run the diagnostic/);
+});
+
+test('a reply is left alone when a tool ran this turn', async () => {
+  const { guardModelOnlyCompletions } = await import('./device_action_claims.js');
+  const reply = "I've searched the repository and found it.";
+  assert.equal(guardModelOnlyCompletions(reply, { skillResults: [{ ok: true }] }).text, reply);
+});
+
+test('a question is kept', async () => {
+  const { guardModelOnlyCompletions } = await import('./device_action_claims.js');
+  const reply = "Have you set the timer yet?";
+  assert.equal(guardModelOnlyCompletions(reply, {}).text, reply);
+});
