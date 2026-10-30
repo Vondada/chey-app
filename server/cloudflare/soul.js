@@ -127,7 +127,7 @@ export function soulPromptBlock(profile) {
 
 // The model sometimes copies the Soul's trait labels into a reply ("Warmth: ...", "Directness: ..."). They are CHE's
 // internal settings, never her words, so a leading label is removed. Only the label at the start of a line is touched.
-const SOUL_LABEL = /^[ \t]*(?:warmth|playfulness|formality|directness|initiative)(?:[ \t]+\d{1,2}\/10)?[ \t]*:[ \t]*/gim;
+const SOUL_LABEL = /^[ \t]*(?:warmth|playfulness|formality|directness|initiative)(?:[ \t]+\d{1,2}\/10[ \t]*[:.,\u2013\u2014-]|[ \t]*:)[ \t]*/gim;
 export function stripSoulLabels(text) {
   return String(text || '').replace(SOUL_LABEL, '').replace(/^\s+/, '');
 }

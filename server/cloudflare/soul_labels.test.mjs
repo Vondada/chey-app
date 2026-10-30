@@ -19,6 +19,10 @@ test('ordinary text that only mentions a trait is left alone', () => {
   assert.equal(stripSoulLabels('Warmth 7/10: You seem to be in a family-friendly environment, sir.'), 'You seem to be in a family-friendly environment, sir.');
   assert.equal(stripSoulLabels('Directness 8/10: Since you are around kids, plan something fun.'), 'Since you are around kids, plan something fun.');
   assert.equal(stripSoulLabels('Warmth 7/10 is what I give you, sir.'), 'Warmth 7/10 is what I give you, sir.');
+  // The deployed Worker's live replies (certification run 40976828862) began "Warmth 9/10. ..." and "Warmth 9/10, sir." too.
+  assert.equal(stripSoulLabels('Warmth 9/10. That is a fun one.'), 'That is a fun one.');
+  assert.equal(stripSoulLabels('Warmth 9/10, sir. I am glad you asked.'), 'sir. I am glad you asked.');
+  assert.equal(stripSoulLabels('Directness 8/10 - keep it short.'), 'keep it short.');
   assert.equal(stripSoulLabels('Detail: the record shows the date.'), 'Detail: the record shows the date.');
   assert.equal(stripSoulLabels('Plain reply.'), 'Plain reply.');
   assert.equal(stripSoulLabels(''), '');
