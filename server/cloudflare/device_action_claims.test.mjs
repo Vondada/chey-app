@@ -71,3 +71,15 @@ test('only a device, app or timer request is checked', () => {
   assert.equal(isDeviceActionRequest('Can you tell me how a timer works?'), false);
   assert.equal(isDeviceActionRequest('Tell me about the solar calendar.'), false);
 });
+
+test('ter-36: an in-progress claim is removed even when the request is not a device request', () => {
+  const reply = 'I am triggering the image generator, opening the email interface to prepare a draft, and starting the timer for you now. I have not sent any emails.';
+  const out = guardClaimedDeviceActions(reply, { message: 'Generate an image, draft an email and start a timer.', actionResults: [] });
+  assert.doesNotMatch(out.text, /starting the timer for you now/);
+  assert.match(out.text, /I have not sent any emails/);
+});
+
+test('a plain timer fact outside a device request is kept', () => {
+  const fact = 'The timer on the oven is set for 20 minutes.';
+  assert.equal(guardClaimedDeviceActions(fact, { message: 'What did I put in the oven?', actionResults: [] }).text, fact);
+});
