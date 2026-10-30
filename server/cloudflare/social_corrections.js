@@ -50,6 +50,20 @@ const NEGATED_LIFT = /\b(?:don'?t|do not|not|never|can'?t|cannot|no)\b[^.!?]{0,2
 const MODE_TALK = /\b(?:(?:family[- ]friendly|clean|safe|polite|kid[- ]friendly) mode|mode (?:on|activated|enabled)|switching (?:to|into) (?:clean|family))\b/i;
 
 export const hasProfanity = (text) => PROFANITY.test(String(text || ''));
+
+// A clean-language turn is checked on the reply itself: the model can repeat a swear word from earlier turns despite the
+// instruction (live social probe, Test 5 turn 2). Each swear word is swapped for a plain word; the rest of the reply stays.
+const CLEAN_SWAPS = [
+  [/^motherf\w*$/i, 'freaking'], [/^fuck\w*$/i, 'freaking'], [/^bullshit$/i, 'nonsense'], [/^shit\w*$/i, 'stuff'],
+  [/^bitch\w*$/i, 'jerk'], [/^goddamn$/i, 'darn'], [/^damn\w*$/i, 'darn'], [/^asshole$/i, 'jerk'], [/^asses$/i, 'butts'],
+  [/^ass$/i, 'butt'], [/^dick\w*$/i, 'jerk'], [/^pussy$/i, 'wimp'], [/^bastard$/i, 'jerk'], [/^crap$/i, 'junk'],
+];
+export function cleanLanguageReply(text) {
+  return String(text ?? '').replace(new RegExp(PROFANITY.source, 'gi'), (word) => {
+    const swap = CLEAN_SWAPS.find(([pattern]) => pattern.test(word));
+    return swap ? swap[1] : 'darn';
+  });
+}
 // Stock assistant phrasing the owner does not want from CHE (soul.js SOUL_VOICE).
 const GENERIC = /\b(?:as an ai\b|i'?m (?:just )?an ai\b|great question|i'?d be (?:happy|glad) to help|certainly!|i hope this helps|let me know if (?:you need|there'?s) anything else|how (?:can|may) i (?:help|assist) you today)/i;
 export const soundsGeneric = (text) => GENERIC.test(String(text || ''));
@@ -189,7 +203,8 @@ export async function socialProbe(env, request, objectName) {
     const started = Date.now();
     const out = await say(message);
     const registerOk = (clean === undefined || Boolean(out.register?.clean) === clean) && (flirt === undefined || out.flirt === flirt);
-    const replyOk = (!clean || (!hasProfanity(out.reply) && !announcesMode(out.reply))) && !soundsGeneric(out.reply) && (!check || check(out.reply, message));
+    // A clean turn fails when the model swore: cleanLanguageReply swapped the word out, so the reply reads clean, but the model did not keep it clean.
+    const replyOk = (!clean || (!hasProfanity(out.reply) && !out.done?.clean_swapped && !announcesMode(out.reply))) && !soundsGeneric(out.reply) && (!check || check(out.reply, message));
     steps.push({ name, optional, pass: out.status === 200 && Boolean(out.reply) && registerOk && replyOk, ms: Date.now() - started, route: out.done.source || 'model', model_calls: out.done.model_calls ?? null, register: out.register ? `clean (${out.register.id}, ${out.register.scope})` : 'normal', flirt: out.flirt, profanity: hasProfanity(out.reply), reply: out.reply.slice(0, 400) });
   };
   try {
