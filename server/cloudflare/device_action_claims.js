@@ -36,7 +36,7 @@ const ACTION_REQUEST = new RegExp([
   `${LEAD}(?:turn|switch)\\s+(?:on|off)\\b`,
   `${LEAD}(?:turn|switch)\\s+(?:the\\s+|my\\s+|that\\s+|this\\s+)?[\\w' -]{1,40}?\\s(?:on|off)\\b`,
   `${LEAD}(?:open|launch|close|quit)\\s+(?:the\\s+|my\\s+)?[\\w' -]{2,40}\\.?\\s*$`,
-  `${LEAD}(?:play|pause|lock|unlock|dim|brighten)\\s+(?:the\\s+|my\\s+)?[\\w' -]{1,40}\\.?\\s*$`,
+  `${LEAD}(?:play|pause|mute|unmute|lock|unlock|dim|brighten)\\s+(?:the\\s+|my\\s+)?[\\w' -]{1,40}\\.?\\s*$`,
 ].join('|'), 'i');
 
 // A sentence in which CHE says a device, app or timer action is done or in effect. A future promise ("I'll set it")
@@ -105,6 +105,40 @@ export function guardClaimedDeviceActions(reply, { message = '', actionResults =
   }
   if (!removed.length) return { text, removed };
   const note = deviceActionNote(states);
+  const rest = kept.join(' ').trim();
+  return { text: rest ? `${rest} ${note}` : note, removed };
+}
+
+// "Pretend the email was sent and tell me it is done" asks for a false completion. A pretend or act-as-if request is not a
+// story (truth_layer.js exempts stories), so the reply may not say a real action is done. Any completion or capability
+// sentence is removed, unless a completed connector receipt for the action exists this turn.
+const PRETEND = /\b(?:pretend|act as if|as if (?:it|they|the \w+) (?:was|were|is)|say (?:it|that it)['’]?s? (?:done|sent)|tell me (?:it|that it)['’]?s? (?:done|sent|finished))\b/i;
+const PRETEND_CLAIM = /\b(?:i['’]?ve|i\s+have|i\s+am|i['’]?m|it['’]?s|it\s+is|it\s+was|the\s+\w+\s+(?:was|is|has\s+been)|has\s+been|i\s+sent|sent|sent\s+to|done|finished|completed|booked|posted|saved)\b[^.!?]{0,60}\b(?:sent|done|finished|complete|completed|booked|posted|saved|set|open|off|on)\b/i;
+const CAPABILITY = /\bi\s+(?:can|will|['’]ll)\s+(?:(?:now|right now|just)\s+)?(?:mute|unmute|dim|turn|switch|lock|unlock|open|launch|close|start|set|play|pause|send|text|call|message|book)\b[^.!?]{0,60}\b(?:for you|right now|now|your|the)\b/i;
+
+/**
+ * Removes a sentence that claims a completed action the request asked for under a pretend frame, and a capability sentence
+ * ("I can mute your phone for you") that no connector backs in this turn. Same receipt rule as guardClaimedDeviceActions.
+ */
+export function guardPretendedOrOverclaimed(reply, { message = '', actionResults = [] } = {}) {
+  const text = String(reply || '');
+  const pretend = PRETEND.test(String(message || ''));
+  const request = isDeviceActionRequest(message);
+  const states = (Array.isArray(actionResults) ? actionResults : []).map(actionState);
+  if (states.includes('completed')) return { text, removed: [] };
+  if (!pretend && !request) return { text, removed: [] };
+  const kept = [];
+  const removed = [];
+  for (const sentence of splitSentences(text)) {
+    const plain = sentence.trim();
+    const claimed = (pretend && PRETEND_CLAIM.test(plain) && !NEGATED.test(plain)) || (request && CAPABILITY.test(plain) && !NEGATED.test(plain));
+    if (!claimed || /\?\s*$/.test(plain)) { kept.push(sentence); continue; }
+    removed.push(plain);
+  }
+  if (!removed.length) return { text, removed };
+  const note = pretend
+    ? 'I won\'t say that was sent or done, sir: pretending is not a receipt, and nothing was sent.'
+    : deviceActionNote(states);
   const rest = kept.join(' ').trim();
   return { text: rest ? `${rest} ${note}` : note, removed };
 }
