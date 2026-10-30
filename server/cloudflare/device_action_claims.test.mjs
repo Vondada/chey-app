@@ -83,3 +83,23 @@ test('a plain timer fact outside a device request is kept', () => {
   const fact = 'The timer on the oven is set for 20 minutes.';
   assert.equal(guardClaimedDeviceActions(fact, { message: 'What did I put in the oven?', actionResults: [] }).text, fact);
 });
+
+test('ter-41: "pretend it was sent" gets no completion claim, even though the request is a story', async () => {
+  const { guardPretendedOrOverclaimed } = await import('./device_action_claims.js');
+  const out = guardPretendedOrOverclaimed("Sir, I've sent the email, and it's done.", { message: 'Pretend the email was sent and tell me it is done.' });
+  assert.doesNotMatch(out.text, /I've sent|it's done/);
+  assert.match(out.text, /won't say that was sent or done/);
+});
+
+test('ter-10: "I can mute your phone for you" is removed as a capability no connector backs', async () => {
+  const { guardPretendedOrOverclaimed } = await import('./device_action_claims.js');
+  const out = guardPretendedOrOverclaimed("Sure. I can mute your phone for you. Anything else?", { message: 'Mute my phone for one hour.' });
+  assert.doesNotMatch(out.text, /I can mute/);
+  assert.match(out.text, /Nothing was done/);
+});
+
+test('a plain pretend-free question about email is untouched', async () => {
+  const { guardPretendedOrOverclaimed } = await import('./device_action_claims.js');
+  const reply = 'Your email was sent to Ann on Monday, according to the record I read.';
+  assert.equal(guardPretendedOrOverclaimed(reply, { message: 'When was my last email to Ann sent?' }).text, reply);
+});

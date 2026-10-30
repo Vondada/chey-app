@@ -10,7 +10,7 @@
 // pipeline with a finished Response (the pretend-tool picture path).
 
 import { adRequest, adStatusLines, assetTruthReply } from './asset_truth.js';
-import { guardClaimedDeviceActions } from './device_action_claims.js';
+import { guardClaimedDeviceActions, guardPretendedOrOverclaimed } from './device_action_claims.js';
 import { replyRepeatsAgentTask } from './agent_task_guard.js';
 import { capabilityGap, capabilityReply } from './capability_gap.js';
 import { CHAT_IMAGE_SOURCE, chatImageInline, chatImageMedia, chatImageReply, makeChatImages, pretendToolCall } from './chat_images.js';
@@ -79,8 +79,10 @@ export const TRUTH_STAGES = Object.freeze([
   // (device_action_claims.js). The model's "I've got it set" is removed when no connector ran.
   { name: 'device_actions', run(reply, ctx) {
     const claimed = guardClaimedDeviceActions(reply, { message: ctx.rawMessage, actionResults: ctx.actionResults });
-    if (claimed.removed.length) console.log('CHE truth layer removed device claims', JSON.stringify(claimed.removed).slice(0, 800));
-    return { text: claimed.text, removed: claimed.removed };
+    const pretend = guardPretendedOrOverclaimed(claimed.text, { message: ctx.rawMessage, actionResults: ctx.actionResults });
+    const removed = [...claimed.removed, ...pretend.removed];
+    if (removed.length) console.log('CHE truth layer removed device claims', JSON.stringify(removed).slice(0, 800));
+    return { text: pretend.text, removed };
   } },
   // Every link, headline, outlet and date must match a page CHE opened this turn. A broken citation is recorded so
   // it is never repeated as fact. Links the owner gave or a connector returned are their own receipts.
