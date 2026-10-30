@@ -133,11 +133,13 @@ export function parseReplyBody(text) {
       receipts: Array.isArray(obj.execution_receipts) ? obj.execution_receipts
         : (Array.isArray(obj.tool_receipts) ? obj.tool_receipts : []),
       error: obj.error && typeof obj.error === 'object' ? obj.error : null,
+      done: obj.done && typeof obj.done === 'object' ? obj.done : null,
     };
   } catch (_) {
     let reply = '';
     const receipts = [];
     let error = null;
+    let done = null;
     let sawLine = false;
     for (const line of raw.split('\n')) {
       const t = line.trim();
@@ -149,9 +151,10 @@ export function parseReplyBody(text) {
       if (typeof obj.reply === 'string' && !reply) reply = obj.reply;
       if (Array.isArray(obj.execution_receipts)) receipts.push(...obj.execution_receipts);
       if (obj.type === 'error') error = { category: obj.category || null, rules: Array.isArray(obj.rules) ? obj.rules : [] };
+      if (obj.type === 'done') done = obj;
     }
-    if (!sawLine) return { reply: raw.trim(), receipts: [], error: null };
-    return { reply, receipts, error };
+    if (!sawLine) return { reply: raw.trim(), receipts: [], error: null, done: null };
+    return { reply, receipts, error, done };
   }
 }
 
@@ -349,12 +352,15 @@ export async function runCertification({
       clearTimeout(timer);
     }
     const latency = Date.now() - t0;
-    const parsed = networkError ? { reply: '', receipts: [], error: null } : parseReplyBody(body);
+    const parsed = networkError ? { reply: '', receipts: [], error: null, done: null } : parseReplyBody(body);
     const reply = scrub(parsed.reply);
     const receipts = JSON.parse(scrub(parsed.receipts));
     const error = parsed.error ? JSON.parse(scrub(parsed.error)) : null;
     const verdict = grade(item, { status, reply, receipts, networkError, error });
-    const row = { ...base, verdict: verdict.verdict, classification: verdict.classification, reason: verdict.reason, http_status: status, latency_ms: latency, reply, receipts, error };
+    // Which path produced the answer (the done frame's source and route), so an empty or odd reply can be traced.
+    const source = parsed.done?.source ?? null;
+    const route = parsed.done?.route ?? null;
+    const row = { ...base, verdict: verdict.verdict, classification: verdict.classification, reason: verdict.reason, http_status: status, latency_ms: latency, reply, receipts, error, source, route };
     results.push(row);
     onProgress(row);
   }
@@ -421,7 +427,7 @@ async function main(argv) {
     // Every non-pass prints its class, its reason and the start of CHE's reply, so the failures can be audited from the log.
     onProgress: (row) => console.log(row.verdict === 'pass'
       ? `${row.id} pass`
-      : `${row.id} ${row.verdict} [${row.classification}] (${row.reason}) :: ${String(row.reply || '').replace(/\s+/g, ' ').slice(0, 220)}`),
+      : `${row.id} ${row.verdict} [${row.classification}] (${row.reason}) source=${row.source ?? 'none'} route=${row.route ?? 'none'} :: ${String(row.reply || '').replace(/\s+/g, ' ').slice(0, 600)}`),
   });
   const out = opts.out;
   await mkdir(dirname(out), { recursive: true });
