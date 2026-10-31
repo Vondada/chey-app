@@ -12,7 +12,8 @@ export function parseProbeChatBody(raw) {
     const reply = String(body.reply ?? body.message ?? body.detail ?? '').trim();
     return {
       reply,
-      done: {},
+      // A turn held for the owner's yes is a single JSON body; the certification counts it as awaiting approval.
+      done: body.held_for_owner === true ? { held_for_owner: true } : {},
       receipts: Array.isArray(body.execution_receipts) ? body.execution_receipts : [],
       error: body.category ? { category: body.category, rules: [] } : null,
     };
@@ -23,7 +24,9 @@ export function parseProbeChatBody(raw) {
     .join('')
     .trim();
   const done = [...events].reverse().find((event) => event.type === 'done') || {};
-  const receipts = Array.isArray(done.execution_receipts) ? done.execution_receipts : [];
+  // Most routes send one receipt as execution_receipt (timer, arithmetic, commit lookup); it is a receipt too.
+  const receipts = [...(Array.isArray(done.execution_receipts) ? done.execution_receipts : []),
+    ...(done.execution_receipt && typeof done.execution_receipt === 'object' ? [done.execution_receipt] : [])];
   const frame = events.find((event) => event.type === 'error') || null;
   const error = frame ? { category: frame.category || null, rules: Array.isArray(frame.rules) ? frame.rules : [] } : null;
   return { reply, done, receipts, error };
