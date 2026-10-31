@@ -379,6 +379,8 @@ extension _CheHomeMemory on _CHEHomeState {
                     if (savedMemories.isNotEmpty)
                       TextButton.icon(
                         onPressed: () async {
+                          // Owner rule: ask before deleting anything, the whole list most of all.
+                          if (!await _confirmDelete('all ${savedMemories.length} memories')) return;
                           await clearAllMemories();
                           setModalState(() {});
                         },

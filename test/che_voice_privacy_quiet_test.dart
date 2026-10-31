@@ -116,6 +116,11 @@ void main() {
     final memory = File('lib/home_state/memory.dart').readAsStringSync();
     expect(memory, contains('Future<bool> _confirmDelete(String what)'));
     expect(memory, contains("if (!await _confirmDelete('this memory')) return;"));
+    // CLEAR ALL MEMORIES asks first too; the clear request is sent only after the yes.
+    final clearAll = memory.indexOf("'CLEAR ALL MEMORIES'");
+    final ask = memory.lastIndexOf("if (!await _confirmDelete('all \${savedMemories.length} memories')) return;", clearAll);
+    expect(ask, greaterThan(0));
+    expect(memory.indexOf('await clearAllMemories();', ask), lessThan(clearAll));
     expect(memory, contains("if (!await _confirmDelete('this project')) return;"));
     expect(memory, contains("if (!await _confirmDelete('this vault note')) return;"));
     expect(memory, contains("'Deleted that memory, sir.'"));
