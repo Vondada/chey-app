@@ -24,6 +24,7 @@ changes them. Do not delete the old values: the change is recorded in `docs/CHE_
 | Fact | State | Time | Evidence |
 |---|---|---|---|
 | Worker deploy of `845e4128` (#808; includes #804, #805, #807) succeeded; live commit check passed; live probes (memory truth, Command Center, Modal /health, history, Knowledge Atlas, Private Mode, code-switching, study, voice) passed | verified | 2026-10-31 17:58 UTC | deploy run `41226375003` |
+| Full 600 certification, fresh, on `fd757ec5`: 420 pass, 180 fail, 0 blocked | verified | 2026-10-31 21:30 UTC | run `41242161747` |
 | Full 600 certification, fresh, on `2a93c35b`: 413 pass, 187 fail, 0 blocked | verified | 2026-10-31 19:34 UTC | run `41233462389` |
 | Worker deploy of `2a93c35b` (#813) succeeded, live commit checked | verified | 2026-10-31 19:14 UTC | deploy run `41232517948` |
 | Full 600 certification, fresh (no resume), on `1a9b414d`: 399 pass, 201 fail, 0 blocked | verified | 2026-10-31 17:35 UTC | run `41222062110`; causes in the master ledger |
@@ -39,9 +40,9 @@ changes them. Do not delete the old values: the change is recorded in `docs/CHE_
 
 | PR | Title (short) | State | Time |
 |---|---|---|---|
-| #814 | backtest data from Coinbase and Yahoo | checks running | 2026-10-31 ~20:15 UTC |
+| #818 | Coinbase 429 retry for backtests | checks running | 2026-10-31 ~21:40 UTC |
 
-#809-#813 merged on 2026-10-31; see the master ledger.
+#809-#817 merged on 2026-10-31; see the master ledger.
 
 ## Current CI
 

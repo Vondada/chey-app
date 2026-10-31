@@ -55,7 +55,11 @@ wrote into the repo and the mailbox), the live Worker's stored state (Brain, Off
 | #811 Workshop look only on a look command (ir-15) | merged `c6781786` | deploy `41230680818` |
 | #812 this ledger | merged `7c2a371e` | docs |
 | #813 example git commands are not an execution claim (csd-05) | merged `2a93c35b` | deploy `41232517948` |
-| #814 backtest data from Coinbase and Yahoo | in-progress | full suite 5102 + new test |
+| #814 backtest data from Coinbase and Yahoo | merged `ed2bd7dd` | deploy `41239477132`; Codex finding (negative futures prices) fixed |
+| #815 ledger, run 2 | merged `d7ee3bc6` | docs |
+| #816 leaked che-remember text | merged `fd757ec5` | deploy `41240208168`; two Codex findings fixed |
+| #817 word problems are not purchases; probes queue no jobs | merged `6c2ea3a4` | Codex P1 (commands inside a word problem) fixed before merge |
+| #818 Coinbase 429 retry | in-progress | full suite 5108/0 |
 
 ## Recovery candidates: closed unmerged, code not on main
 
@@ -215,6 +219,19 @@ failed_execution 2, awaiting_approval 10, missing_capability 8, false_completion
 
 Still failing for a code reason: 8 real backtest commands answered "The free data source did not answer" (Binance
 refuses US-hosted servers; Stooq no longer answers): **#814** moves backtest data to Coinbase and Yahoo.
+
+### Third fresh run, after #814 and #816
+
+| Run | Commit | Result |
+|---|---|---|
+| `41242161747` | `fd757ec5` (after #814, #816; before #817) | **420 pass, 180 fail, 0 blocked** (score 0.70) |
+
+42 rows went from fail to pass and 35 from pass to fail. All 35 regressions are answered by the model (source none), so
+they are run-to-run variance. No reply contains leaked "che-remember" text (#816). The SPY buy-and-hold backtest
+(thb-22) returned a real result over about 34 years (#814). Crypto backtests still failed with "Coinbase HTTP 429;
+Binance HTTP 451", which confirms Binance refuses the Worker and shows Coinbase rate-limits the paged history:
+**#818** retries once and keeps the pages already read. ir-12 and the probe-queued job (ivg-47) ran before #817 was
+deployed.
 
 ### The four measures, kept apart (run `41222062110`)
 
