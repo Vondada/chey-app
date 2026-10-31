@@ -31,17 +31,29 @@ const matches = (words, ...texts) => {
 };
 const stamp = (iso) => (iso ? `${String(iso).slice(0, 16).replace('T', ' at ')} UTC` : 'an unrecorded time');
 
-/** The answer, from the job records and the saved Gallery items. */
+// Only CHE's pictures count: the media index also holds videos and the owner's uploaded files (Codex, PR #806).
+const isPicture = (i) => i && i.kind !== 'upload' && (i.kind === 'image' || /^image\//.test(String(i.mime_type || '')));
+const time = (x) => Date.parse(x?.created_at || '') || 0;
+
+/**
+ * The answer, from the job records and the saved Gallery pictures. The newest matching record wins, whichever store
+ * holds it, and a finished job's picture is checked against the Gallery now, because deleting it leaves the job record.
+ */
 export function pictureStatusReply({ words = [] } = {}, { jobs = [], items = [] } = {}) {
   const named = words.length ? `"${words.join(' ')}" ` : '';
-  const job = [...jobs].reverse().find((j) => matches(words, j.title || '', j.prompt || ''));
-  if (job) {
+  const pictures = (Array.isArray(items) ? items : []).filter(isPicture);
+  const job = [...(Array.isArray(jobs) ? jobs : [])].sort((a, b) => time(b) - time(a)).find((j) => matches(words, j.title || '', j.prompt || ''));
+  const item = [...pictures].sort((a, b) => time(b) - time(a)).find((i) => matches(words, i.title || '', i.prompt || ''));
+  const jobItemId = job?.item?.id || null;
+  if (job && !(item && time(item) > time(job) && item.id !== jobItemId)) {
     const id = job.call_id ? ` (job ${job.call_id})` : '';
-    if (job.state === 'saved') return { state: 'saved', text: `Yes, sir: the ${named}picture finished${id}. It is saved in the Gallery as ID ${job.item?.id || 'unknown'}, started ${stamp(job.created_at)}.`, media_id: job.item?.id || null };
+    if (job.state === 'saved') {
+      if (jobItemId && pictures.some((i) => i.id === jobItemId)) return { state: 'saved', text: `Yes, sir: the ${named}picture finished${id}. It is saved in the Gallery as ID ${jobItemId}, started ${stamp(job.created_at)}.`, media_id: jobItemId };
+      return { state: 'removed', text: `The ${named}picture finished${id}, sir, started ${stamp(job.created_at)}, but it is no longer in the Gallery${jobItemId ? ` (ID ${jobItemId} was removed)` : ''}. Nothing new was started.` };
+    }
     if (job.state === 'failed') return { state: 'failed', text: `No, sir: the ${named}picture failed${id}: ${job.error || 'no reason was recorded'}. Nothing was saved, and I started nothing new.` };
     return { state: 'running', text: `Not yet, sir: the ${named}picture${id} was started ${stamp(job.created_at)} and has no result recorded yet. I check it on the next pass; nothing new was started.` };
   }
-  const item = [...items].sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || ''))).find((i) => matches(words, i.title || '', i.prompt || ''));
   if (item) return { state: 'saved', text: `Yes, sir: a ${named}picture is saved in the Gallery as ID ${item.id}, created ${stamp(item.created_at)}.`, media_id: item.id };
   return { state: 'none', text: `I have no picture job or saved picture ${named ? `matching ${named.trim()}` : 'on record'}, sir, so I can't say it finished. Nothing new was started.` };
 }

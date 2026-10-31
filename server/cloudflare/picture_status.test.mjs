@@ -19,19 +19,47 @@ test('picture-status questions are recognized, with the words that name the pict
     assert.equal(pictureStatusIntent(not), null, not);
 });
 
+const CUBE = { id: '6f04f2f8', kind: 'image', mime_type: 'image/png', title: 'blue cube', created_at: '2026-10-30T12:01:00Z' };
+
 test('each job state is answered from its record; nothing is started', () => {
-  assert.match(pictureStatusReply({ words: ['blue', 'cube'] }, { jobs: JOBS }).text, /^Yes, sir: the "blue cube" picture finished \(job fc-cube\)\. It is saved in the Gallery as ID 6f04f2f8/);
+  assert.match(pictureStatusReply({ words: ['blue', 'cube'] }, { jobs: JOBS, items: [CUBE] }).text, /^Yes, sir: the "blue cube" picture finished \(job fc-cube\)\. It is saved in the Gallery as ID 6f04f2f8/);
   assert.match(pictureStatusReply({ words: ['dog'] }, { jobs: JOBS }).text, /^Not yet, sir: .*job fc-dog.*nothing new was started/);
   assert.match(pictureStatusReply({ words: ['racing', 'car'] }, { jobs: JOBS }).text, /^No, sir: .*failed \(job fc-car\): Modal GPU limit reached\. Nothing was saved/);
 });
 
 test('a saved Gallery item answers when no job matches; an unknown picture is never called finished', () => {
-  const items = [{ id: 'b1', title: 'sunset over water', created_at: '2026-10-30T08:00:00Z' }];
+  const items = [{ id: 'b1', kind: 'image', mime_type: 'image/png', title: 'sunset over water', created_at: '2026-10-30T08:00:00Z' }];
   assert.match(pictureStatusReply({ words: ['sunset'] }, { jobs: JOBS, items }).text, /^Yes, sir: a "sunset" picture is saved in the Gallery as ID b1/);
   const none = pictureStatusReply({ words: ['green', 'dragon'] }, { jobs: JOBS, items });
   assert.equal(none.state, 'none');
   assert.match(none.text, /no picture job or saved picture matching "green dragon".*Nothing new was started/);
   assert.doesNotMatch(none.text, /^Yes/);
+});
+
+// Codex review on PR #806: three ways the first version reported the wrong picture.
+test('only pictures count, the newest record wins, and a deleted picture is not called saved', () => {
+  // A saved video or an uploaded file is not a picture.
+  const video = { id: 'v1', kind: 'video', mime_type: 'video/mp4', title: 'a sunset', created_at: '2026-10-31T09:00:00Z' };
+  const pdf = { id: 'u1', kind: 'upload', mime_type: 'application/pdf', title: 'sunset notes', created_at: '2026-10-31T09:00:00Z' };
+  const onlyOthers = pictureStatusReply({ words: ['sunset'] }, { jobs: [], items: [video, pdf] });
+  assert.equal(onlyOthers.state, 'none');
+  assert.equal(onlyOthers.media_id, undefined);
+  assert.equal(pictureStatusReply({ words: [] }, { jobs: [], items: [video] }).state, 'none');
+
+  // An old failed Modal job, then a newer picture saved by another engine: the newer picture answers.
+  const oldFail = { call_id: 'fc-1', title: 'a lighthouse', state: 'failed', created_at: '2026-10-30T10:00:00Z', error: 'timeout' };
+  const newer = { id: 'w1', kind: 'image', mime_type: 'image/png', title: 'a lighthouse', engine: 'workers-ai', created_at: '2026-10-31T10:00:00Z' };
+  const latest = pictureStatusReply({ words: [] }, { jobs: [oldFail], items: [newer] });
+  assert.equal(latest.state, 'saved');
+  assert.equal(latest.media_id, 'w1');
+  // The other way round, the newer failed job answers.
+  assert.equal(pictureStatusReply({ words: ['lighthouse'] }, { jobs: [{ ...oldFail, created_at: '2026-10-31T11:00:00Z' }], items: [newer] }).state, 'failed');
+
+  // A finished job whose picture was deleted from the Gallery.
+  const gone = pictureStatusReply({ words: ['blue', 'cube'] }, { jobs: JOBS, items: [] });
+  assert.equal(gone.state, 'removed');
+  assert.match(gone.text, /finished \(job fc-cube\).*no longer in the Gallery \(ID 6f04f2f8 was removed\)/);
+  assert.equal(gone.media_id, undefined);
 });
 
 test('through the real /api/chat: the question reaches che_picture_status with no model call', async () => {
@@ -43,7 +71,7 @@ test('through the real /api/chat: the question reaches che_picture_status with n
   let mod;
   try { mod = await import(gen.href); } finally { try { unlinkSync(gen); } catch (_) {} }
   const { default: worker, CheState } = mod;
-  const saved = new Map([['che:modal_images', [{ call_id: 'fc-cube', title: 'a blue glowing cube', state: 'saved', created_at: '2026-10-30T12:00:00Z', item: { id: '6f04f2f8' } }]]]);
+  const saved = new Map([['che:modal_images', [{ call_id: 'fc-cube', title: 'a blue glowing cube', state: 'saved', created_at: '2026-10-30T12:00:00Z', item: { id: '6f04f2f8' } }]], ['media_index', [{ id: '6f04f2f8', kind: 'image', mime_type: 'image/png', title: 'a blue glowing cube', created_at: '2026-10-30T12:01:00Z' }]]]);
   const storage = {
     get: async (k) => (Array.isArray(k) ? new Map(k.filter((x) => saved.has(x)).map((x) => [x, structuredClone(saved.get(x))])) : structuredClone(saved.get(k))),
     put: async (k, v) => { if (k && typeof k === 'object') for (const [a, b] of Object.entries(k)) saved.set(a, b); else saved.set(k, structuredClone(v)); },
