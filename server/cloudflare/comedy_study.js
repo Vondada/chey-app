@@ -207,10 +207,33 @@ export function copiesSource(text, source, n = 8) {
 
 const LESSON_PROMPT = 'You study comedy craft for CHE, a witty assistant who wants her own sense of humor. From the public episode summaries and show notes below, name the comedy techniques at work: playful teasing, quick comebacks, sarcasm, witty observation, timing, escalation, callbacks and running jokes, character foils, humor between people who know each other well, and knowing when to stop joking and get real. For each, write a short principle in your own words, when it works, and when to stop. Never quote the show, never write its dialogue, never imitate an actor or character voice. Reply with JSON only: {"lessons":[{"technique":"...","principle":"...","use_when":"...","stop_when":"...","seen_in":["episode title", "..."]}]} with at most 5 lessons.';
 
-function parseLessons(raw) {
-  const text = String(raw?.response ?? raw ?? '');
+// Workers AI hands back the lessons in several shapes: a JSON string, the parsed object itself (JSON-mode engines),
+// an OpenAI-style choices list, or a reply cut off at max_tokens. Staging run 41173590118 (attempt 2) read 48 episode
+// summaries and kept 0 lessons because only the first shape was read. A cut-off reply keeps its complete lessons.
+export function parseLessons(raw) {
+  const response = raw?.response ?? raw?.choices?.[0]?.message?.content ?? raw;
+  if (response && typeof response === 'object') return Array.isArray(response.lessons) ? response.lessons : Array.isArray(response) ? response : [];
+  const text = String(response ?? '');
   const json = text.slice(text.indexOf('{'), text.lastIndexOf('}') + 1);
-  try { return Array.isArray(JSON.parse(json).lessons) ? JSON.parse(json).lessons : []; } catch (_) { return []; }
+  try {
+    const parsed = JSON.parse(json);
+    if (Array.isArray(parsed?.lessons)) return parsed.lessons;
+  } catch (_) { /* cut off or wrapped: salvage the complete lesson objects below */ }
+  const start = text.indexOf('[');
+  if (start < 0) return [];
+  const lessons = [];
+  let depth = 0, from = -1, inString = false, escaped = false;
+  for (let i = start + 1; i < text.length; i += 1) {
+    const ch = text[i];
+    if (inString) { if (escaped) escaped = false; else if (ch === '\\') escaped = true; else if (ch === '"') inString = false; continue; }
+    if (ch === '"') inString = true;
+    else if (ch === '{') { if (depth === 0) from = i; depth += 1; }
+    else if (ch === '}' && depth > 0) {
+      depth -= 1;
+      if (depth === 0 && from >= 0) { try { lessons.push(JSON.parse(text.slice(from, i + 1))); } catch (_) { /* skip a broken one */ } from = -1; }
+    } else if (ch === ']' && depth === 0) break;
+  }
+  return lessons;
 }
 
 // ─── Assignment state ───
