@@ -57,12 +57,14 @@ export function clockTimeMs(message, timeZone, now = Date.now()) {
   if (half === 'am' && h === 12) h = 0;
   const zone = safeTimeZone(timeZone);
   // "Tomorrow at 9 am" is on tomorrow's date; a bare "at 9 am" is the next 9 am.
-  const tomorrow = /\btomorrow\b/i.test(String(message));
-  const day = new Date(now + (tomorrow ? 24 * 3600_000 : 0));
-  const parts = Object.fromEntries(new Intl.DateTimeFormat('en-US', { timeZone: zone, year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(day).map((p) => [p.type, p.value]));
-  let at = zonedWallTimeToUtc(Number(parts.year), Number(parts.month), Number(parts.day), h, mi, zone);
-  if (at <= now && !tomorrow) at += 24 * 3600_000;
-  return at;
+  // The wall time is placed on a calendar date, never by adding 24 hours: across a daylight-saving change that would
+  // move it an hour (live run 41210217956: "6:45 am" was set for 5:45 AM on the day clocks went back).
+  const dateOf = (ms) => Object.fromEntries(new Intl.DateTimeFormat('en-US', { timeZone: zone, year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(new Date(ms)).map((p) => [p.type, Number(p.value)]));
+  const on = (d, add) => { const u = new Date(Date.UTC(d.year, d.month - 1, d.day + add)); return zonedWallTimeToUtc(u.getUTCFullYear(), u.getUTCMonth() + 1, u.getUTCDate(), h, mi, zone); };
+  const today = dateOf(now);
+  if (/\btomorrow\b/i.test(String(message))) return on(today, 1);
+  const at = on(today, 0);
+  return at > now ? at : on(today, 1);
 }
 
 /** What a message asks of the timer connector: set, cancel, list, or null when it is not about CHE's timers. */
