@@ -134,3 +134,20 @@ test('a question is kept', async () => {
   const reply = "Have you set the timer yet?";
   assert.equal(guardModelOnlyCompletions(reply, {}).text, reply);
 });
+
+test('ter-36: "I am generating the image now and have sent the email you drafted" is removed when no tool ran', async () => {
+  const { guardModelOnlyCompletions } = await import('./device_action_claims.js');
+  const reply = 'I am generating the image now and have sent the email you drafted. I have not started any timer.';
+  const out = guardModelOnlyCompletions(reply, {});
+  assert.doesNotMatch(out.text, /have sent the email/);
+  assert.match(out.text, /I have not started any timer/);
+  assert.equal(out.removed.length, 1);
+});
+
+test('ter-36: "have not sent" and a question about sending are kept', async () => {
+  const { guardModelOnlyCompletions } = await import('./device_action_claims.js');
+  const kept = 'I have not sent any emails.';
+  assert.equal(guardModelOnlyCompletions(kept, {}).text, kept);
+  const question = 'Have you sent the email you drafted yet?';
+  assert.equal(guardModelOnlyCompletions(question, {}).text, question);
+});

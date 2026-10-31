@@ -149,6 +149,8 @@ export function guardPretendedOrOverclaimed(reply, { message = '', actionResults
 // ter-36, ter-48). A reply with any tool result is left to the tool's own checks.
 const MODEL_DONE = new RegExp([
   String.raw`\b(?:i['’]ve|i\s+have)\s+(?:now\s+|just\s+|already\s+)?(?:set|saved|checked|searched|run|re-run|rerun|added|updated|opened|started|created|scheduled|adjusted|changed|turned|dimmed|muted|booked|launched|triggered|sent|found|read|looked\s+up)\b`,
+  // "and have sent the email you drafted": the subject is the same "I", so it is not repeated.
+  String.raw`\b(?:and\s+|then\s+)?(?:have|has)\s+(?:now\s+|just\s+|already\s+)?(?:sent|emailed|texted|posted|booked)\s+(?:the|your|it|that|an?|my)\b`,
   String.raw`\b(?:timer|alarm|reminder|volume|brightness|temperature)\s+(?:has\s+been|is|was|now)\s+(?:set|running|on|off|changed|adjusted|at\s+\d+)\b`,
   String.raw`\bset\s+the\s+(?:volume|brightness|temperature|timer|alarm)\s+(?:to|at)\s+\d+`,
 ].join('|'), 'i');
