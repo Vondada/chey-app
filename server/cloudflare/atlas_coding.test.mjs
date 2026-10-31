@@ -996,3 +996,13 @@ test('summary: every language that could run here did', () => {
   if (HAS_PYTHON && sqlite) assert.ok(SKIPPED.every((s) => /dart/.test(s) || atlasCard(s.split(' ')[0])?.example?.language === 'dart' || EXERCISES.some(({ x }) => x.id === s && x.language === 'dart')), SKIPPED.join(', '));
   assert.ok(CODING_CARDS.length >= 18);
 });
+
+// Certification run 41233462389 (csd-39): a programming exercise queued a coding job.
+test('a general programming exercise is answered in chat; a change to CHE\'s own code still builds', () => {
+  for (const ask of ['Refactor a function with eight nested ifs into guard clauses and show the pattern.', 'Write a function that flattens a nested list.']) {
+    assert.equal(currentTurnActionPolicy(ask).codingJobAllowed, false, ask);
+  }
+  for (const ask of ['Fix the login bug and add a regression test.', 'Refactor the router to extract a helper function.', 'Fix a bug in the login screen.', 'Refactor your router to use guard clauses.', 'Add a test for the memory route in your worker.', 'Fix a function in worker.js that drops replies.']) {
+    assert.equal(currentTurnActionPolicy(ask).codingJobAllowed, true, ask);
+  }
+});
