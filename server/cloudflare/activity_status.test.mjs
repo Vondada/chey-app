@@ -98,3 +98,12 @@ test('comprehension audit: "is any coding job running right now?" reads the job 
   assert.equal(activityStatusIntent('are there any jobs running'), 'active');
   assert.equal(activityStatusIntent('Is a job interview running late?'), '');
 });
+
+test('the owner asks about CHE in the third person: the same job records answer', () => {
+  for (const ask of ['What is CHE doing right now?', "What's Che working on?", 'what is chey up to at the moment', 'Hey CHE, what is CHE busy with now?']) {
+    assert.equal(activityStatusIntent(ask), 'active', ask);
+  }
+  for (const other of ['What is CHE doing tonight?', 'What is CHE?', 'What is CHE doing to my calendar?', 'what is she doing right now']) {
+    assert.equal(activityStatusIntent(other), '', other);
+  }
+});

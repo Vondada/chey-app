@@ -10,14 +10,14 @@ const FINISHED = new Set(['complete', 'failed', 'cancelled']);
 const DAY_MS = 24 * 3_600_000;
 
 // Whole questions only, so "what are you doing tonight?" or "what is running on port 8080?"
-// keep their own meaning.
+// keep their own meaning. The owner also asks in the third person: "What is CHE doing right now?".
 const WAKE = "(?:(?:hey\\s+)?(?:che|chay|chey|shay)[,:]?\\s+)?";
 // "today" belongs to finished work only: "what are you doing today?" is a personal question.
 // "What's happening?" (news, a chart, a photo) and "what have you done?" (often about an
 // action CHE just took in chat, which is not a job) stay with their own routes.
 const NOW_WORDS = '(?:\\s+(?:right\\s+now|now|currently|at\\s+the\\s+moment))?';
 const DAY_WORDS = '(?:\\s+(?:right\\s+now|now|currently|at\\s+the\\s+moment|today|so\\s+far))?';
-const ACTIVE_ASK = new RegExp(`^${WAKE}(?:what\\s+(?:are|r)\\s+(?:you|u)\\s+(?:doing|working\\s+on|up\\s+to|busy\\s+with)|what(?:['’]s|\\s+is)\\s+(?:running|in\\s+progress)|(?:is\\s+)?anything\\s+running|what\\s+jobs\\s+are\\s+running|(?:is|are)\\s+(?:there\\s+)?(?:any|a)\\s+(?:coding\\s+|background\\s+)?jobs?\\s+(?:running|in\\s+progress|queued))${NOW_WORDS}[?.!\\s]*$`, 'i');
+const ACTIVE_ASK = new RegExp(`^${WAKE}(?:what\\s+(?:are|r)\\s+(?:you|u)\\s+(?:doing|working\\s+on|up\\s+to|busy\\s+with)|what(?:['’]s|\\s+is)\\s+(?:che|chay|chey|shay)\\s+(?:doing|working\\s+on|up\\s+to|busy\\s+with)|what(?:['’]s|\\s+is)\\s+(?:running|in\\s+progress)|(?:is\\s+)?anything\\s+running|what\\s+jobs\\s+are\\s+running|(?:is|are)\\s+(?:there\\s+)?(?:any|a)\\s+(?:coding\\s+|background\\s+)?jobs?\\s+(?:running|in\\s+progress|queued))${NOW_WORDS}[?.!\\s]*$`, 'i');
 const FINISHED_ASK = new RegExp(`^${WAKE}(?:what(?:['’]s|\\s+is)\\s+(?:finished|done|completed)|what\\s+(?:did|have)\\s+(?:you|u)\\s+(?:finish(?:ed)?|complete(?:d)?))${DAY_WORDS}[?.!\\s]*$`, 'i');
 
 export function activityStatusIntent(message) {
