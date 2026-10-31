@@ -28,6 +28,8 @@ const READS = [
   // "How did my paper trades do today?", "what's my paper trading balance?" (comprehension audit).
   ['performance', /\btrading\s+performance\b|\bread\s+me\s+your\s+(?:trading\s+|paper\s+)?(?:results|performance)\b|\bhow\s+(?:did|are|have)\s+(?:your|my|the)\s+paper\s+trades?\s+(?:do|doing|done|going|gone)\b|\bpaper[\s-]*trad\w*\s+(?:balance|results|profit|p\s*&\s*l|pnl)\b|\bpaper\s+(?:balance|p\s*&\s*l|pnl)\b|\bhow\s+(?:(?:is|are|was|were|has|have|'s|s)\s+)?(?:my|your|the)\s+(?:paper[\s-]*trad\w*|forward\s+(?:paper\s+)?(?:trades?|trading|results?|account|performance)|paper\s+(?:account|results?|performance|numbers?|returns?))\s+(?:is\s+|are\s+)?(?:going|doing|done|gone|performing|working|looking|been|going\s+so\s+far)\b|\bhow\s+(?:is|are|was|did)\s+(?:my|your|the)\s+(?:paper|forward)\s+(?:trading|trades?|results?|performance|account|numbers?)\b|\b(?:what\s+(?:are|were|is)|give\s+me|tell\s+me|show\s+me|read\s+me)\s+(?:my|your|the)\s+(?:paper\s+)?(?:results|numbers|returns?|p\s*&\s*l|profits?|losses|stats|statistics)\b[\s\S]{0,40}\b(?:paper|forward|trading|trades?)\b|\b(?:what\s+(?:are|were|is)|give\s+me|tell\s+me|show\s+me|read\s+me)\s+(?:my|your)\s+paper\s+(?:results|numbers|returns?|p\s*&\s*l|profits?|losses|stats|statistics)\b|\bpaper[\s-]*trad\w*\s+(?:going|doing|performance|numbers|returns?|stats|statistics|results)\b/i],
   ['evidence', /\b(?:show|read)\b[\s\S]{0,15}\btrading\s+evidence\b/i],
+  // "Is the MNQ data live?" is answered from the feed record (status, source, age of the last bar), never the model.
+  ['feed', /\b(?:is|are)\s+(?:the\s+|your\s+|my\s+)?(?:mnq|nq|futures|cme)\s+(?:market\s+)?(?:data|feeds?|prices?|bars?|chart)\s+(?:still\s+)?(?:live|delayed|real[\s-]?time|current|fresh|up\s+to\s+date|working)\b|\b(?:mnq|nq|futures|cme)\s+(?:data|feed)\s+(?:status|freshness)\b/i],
   ['open', /^(?:please\s+)?open\s+(?:up\s+)?(?:your\s+|the\s+)?trading\s+room\b/i],
   // "Is paper trading still on?" reads the switch and never flips it. "Is paper trading on NQ
   // profitable?" is not about the switch.
@@ -120,11 +122,19 @@ const when = (iso) => {
   return new Intl.DateTimeFormat('en-US', { timeZone: 'America/Chicago', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }).format(new Date(iso)) + ' Central';
 };
 
-function feedLine(d) {
+// The feed answer is read against the clock now: a stored status is only the last recorded one. The stored
+// latency_s is how late a bar was when it was read, not how old it is now (Codex, PR #805).
+const ago = (ms) => (ms < 90 * 60000 ? `${Math.round(ms / 60000)} minutes` : ms < 48 * 3600000 ? `${Math.round(ms / 3600000)} hours` : `${Math.round(ms / 86400000)} days`);
+export function feedLine(d, now = Date.now()) {
   const f = d.feed;
   if (!f) return `No market data has been read yet. ${d.feed_blocker}`;
-  const lag = f.latency_s == null ? '' : `, last bar about ${Math.max(0, Math.round(f.latency_s / 60))} minutes old`;
-  return `Data: ${f.status} ${f.provider_symbol} (${f.contract || 'front month'}) from ${f.provider}${lag}. ${f.status === 'LIVE' ? '' : 'Delayed data is research only, not execution evidence. '}Market: ${d.session.state}.`;
+  const src = `${f.provider_symbol} (${f.contract || 'front month'}) from ${f.provider}`;
+  const research = f.status === 'LIVE' ? '' : 'Delayed data is research only, not execution evidence. ';
+  const barStart = Date.parse(f.last_bar_time || d.bars?.[d.bars.length - 1]?.t || '');
+  if (!Number.isFinite(barStart)) return `Last recorded data status: ${f.status} ${src}; the newest bar time was not recorded, so I can't say it is current. ${research}Market: ${d.session.state}.`;
+  const age = Math.max(0, now - barStart - 300000); // a 5-minute bar is complete five minutes after it starts
+  if (age <= 10 * 60000) return `Data: ${f.status} ${src}, last bar closed about ${Math.round(age / 60000)} minutes ago. ${research}Market: ${d.session.state}.`;
+  return `Last recorded data status: ${f.status} ${src}, but the newest bar closed at ${when(new Date(barStart + 300000).toISOString())}, about ${ago(age)} ago, so it is not current now. ${research}Market: ${d.session.state}.`;
 }
 
 export function tradeLine(t) {

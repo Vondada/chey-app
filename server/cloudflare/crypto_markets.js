@@ -540,7 +540,8 @@ export function speakCrypto(v, { now = Date.now(), action = null, tf = '5m', not
 
 const CRYPTO_WORD = /\b(?:crypto(?:currency|currencies)?|bitcoin|btc|ethereum|eth|ether)\b/;
 // "Backtest bitcoin" is the chart lab's (trading_lab.js tradingIntent), so a bare backtest is not a desk word.
-const DESK_WORD = /\b(?:research|paper|trad(?:e|es|ing)|strateg(?:y|ies)|journal|desk|weekend|24\/7|around the clock|positions?|p\s*&\s*l|pnl|results?|status|performance|doing|going)\b/;
+// "Is the crypto feed live?" reads the stored feed status (speakCrypto), never the model.
+const DESK_WORD = /\b(?:research|paper|trad(?:e|es|ing)|strateg(?:y|ies)|journal|desk|weekend|24\/7|around the clock|positions?|p\s*&\s*l|pnl|results?|status|performance|doing|going|feeds?)\b/;
 
 /**
  * Owner phrasing about Orion's crypto desk. Plain price questions and anything without a desk word are left alone.
