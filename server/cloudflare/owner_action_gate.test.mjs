@@ -366,3 +366,13 @@ test('a message to everyone keeps the standing permission to send messages (AGEN
     assert.equal(gateOwnerAction(s).allowed, true, s);
   }
 });
+
+// Certification run 41233462389 (ir-12): a maths word problem was held for "your yes" because it says "buy".
+test('a word problem about buying is not a purchase; a real purchase inside a question still asks', () => {
+  for (const story of ['I have 3 apples, eat one, then buy two dozen more. How many do I have?', 'If I buy 4 pens at $2 each, how much do I spend?', 'Tom bought 3 shirts for $12 each. What is the total?']) {
+    assert.deepEqual(classifyOwnerActions(story), [], story);
+  }
+  for (const ask of ['Buy two apples. How many do I have now?', 'I have a coupon, buy the cheapest TV. How much will I save?', 'I have 3 apples. Then buy two dozen more for me.', 'Can you buy me two dozen apples? How much will that be?']) {
+    assert.deepEqual(classifyOwnerActions(ask), ['money'], ask);
+  }
+});
