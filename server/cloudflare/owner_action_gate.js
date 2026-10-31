@@ -224,8 +224,14 @@ function wordProblem(t) {
   if (t.length > 400 || !(NARRATION_START.test(story) || NAMED_NARRATION_START.test(story)) || !WORD_PROBLEM_QUESTION.test(t)) return false;
   // Every purchase in the story is a counted quantity ("buy two dozen more", "buy 4 pens"). "Buy the cheapest TV" is a
   // purchase of a thing, and keeps the hold even inside a question.
-  const buys = [...t.matchAll(/\b(?:buy|buys|buying|bought|purchase[sd]?|purchasing|order(?:s|ed)?|pay(?:s)?|paid|spend(?:s)?|spent)\b\s*(\S+(?:\s+\S+)?)?/gi)];
-  return buys.every((m) => /^(?:\$?\d|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|a\s+dozen|dozen|half|another\s+\S|more\b|each\b|for\s+\$?\d|at\s+\$?\d)/i.test(m[1] || ''));
+  // Codex on #817: only buying, selling or spending counted things can be story; a transfer, payment, order, donation or
+  // subscription always asks, and so does anything done "for me", or a sentence that is itself a command.
+  if (/\b(?:transfer\w*|wire[sd]?|wiring|send\w*|withdr\w*|donat\w*|subscrib\w*|pay|pays|paying|order\w*|charg\w*|check\s*out|checkout|renew\w*|upgrad\w*|top\s+up|sign\w*\s+up|cash\s+out)\b/i.test(t)) return false;
+  if (/\b(?:for\s+(?:me|us)|on\s+(?:my|our)\s+behalf)\b/i.test(t)) return false;
+  const COMMAND = /^(?:(?:please|pls|now|then|and|also|just|ok(?:ay)?|go\s+ahead\s+and)\s+)*(?:(?:can|could|would|will)\s+you\s+(?:please\s+)?)?(?:buy|purchase|spend|sell|get\s+me)\b/i;
+  if (t.split(/[.!?;]+/).some((sentence) => COMMAND.test(sentence.trim().replace(new RegExp(`^${VOCATIVE}`, 'i'), '')))) return false;
+  const buys = [...t.matchAll(/\b(?:buy|buys|buying|bought|purchase[sd]?|purchasing|spend(?:s)?|spent|sell(?:s)?|sold)\b\s*(\S+(?:\s+\S+)?)?/gi)];
+  return buys.length > 0 && buys.every((m) => /^(?:\$?\d|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|a\s+dozen|dozen|half|another\s+\S|more\b|each\b|for\s+\$?\d|at\s+\$?\d)/i.test(m[1] || ''));
 }
 
 // Every kind of consequential action the text asks for, in a stable order.
