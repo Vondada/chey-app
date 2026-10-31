@@ -240,7 +240,7 @@
     {"d":"apps","say":"Watch my latest videos on YouTube.","route":"held","effect":"hold:app"},
     {"d":"apps","say":"Analyze the Spotify app.","route":"che_rea","effect":"act","allow":["started"]},
     {"d":"apps","say":"Open YouTube.","route":"model","ban":["opened"]},
-    {"d":"apps","say":"Open the Notes app.","route":"model","ban":["opened"]},
+    {"d":"apps","say":"Open the Notes app.","route":"che_connector_gate","ban":["opened"]},
     {"d":"apps","say":"Read my last note in Notes.","route":"held","effect":"hold:app"},
     {"d":"apps","say":"Don't open anything, just tell me what apps you can open.","route":"model"},
     {"d":"apps","say":"Can you open apps for me?","route":"model"},

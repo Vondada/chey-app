@@ -177,6 +177,7 @@ import { classifyRequest } from './intent_class.js';
 import { chatPictureTurn } from './chat_image_provider.js';
 import { PENDING_OWNER_ACTION_KEY, deskOwnedMoney, forbiddenAction, prohibitionSpans, withoutProhibitions, PENDING_OWNER_ACTION_MS, gateOwnerAction, grantForKinds, isOwnerYes, peerActionReply, APPS_GRANTED_KEY, PENDING_APP_ACTION_KEY, PENDING_APP_ACTION_MS, gateAppAccess, classifyAppNeed, classifyExplicitAppOpen, classifyAppAccesses } from './owner_action_gate.js';
 import { placedOrdersLine, recordDeviceInstall } from './action_receipts.js';
+import { receiptGate } from './action_connectors.js';
 import { brainTruthSummary, brainTruthView, truthScreenAsk } from './brain_truth.js';
 import { CLOUD_JOB_KIND, CLOUD_SOURCE, approveCloudJob, cancelCloudJob, cloudIntent, cloudJobs, cloudView, latestCloudJob, openPullRequests, parseControl, providerStatuses, requestCloudWork, retryCloudJob, runCloudTask, runFileJob, selectProvider, speakAgentWork, speakBlocked, speakCloudSummary, speakControl, speakInstall, speakPullRequests, speakRender, speakRequest, speakStartResult, startCloudTask, stopCloudJob } from './cloud_computer.js';
 import { auditLedger, knowVsGuessQuestion, knowVsGuessReply, MEMORY_CLAIM_MS, memorySavedQuestion, memorySavedReply } from './hallucination_auditor.js';
@@ -13839,6 +13840,8 @@ export class CheState extends DurableObject {
           );
         }
 
+        const connectorGate = receiptGate(rawMessage, this.keyEnv || this.env);
+        if (connectorGate) return ndjsonReply(connectorGate.text, { source: 'che_connector_gate', model_calls: 0, action_domain: connectorGate.domain });
         const shouldResearch = !body.private && (requestedCapabilities.includes('web_research') ||
           requestedCapabilities.includes('innovation_mode') ||
           /\b(research|latest|current|novel|prior art|feasib|humanly possible|artistically possible)\b/i.test(message));
