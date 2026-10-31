@@ -12,5 +12,9 @@ test('a look word in passing changes nothing; a look command still does', () => 
   assert.deepEqual(d.workshop_avatars, {});
   assert.match(workshopAvatarIntent('CHE, give Knox a new look', d).reply, /Knox/);
   assert.match(workshopAvatarIntent('Put on a hat', d).reply, /Workshop look/);
+  // Codex on #811: a polite request keeps its named target instead of changing CHE.
+  const polite = workshopAvatarIntent('Can you give Knox a new look?', d);
+  assert.match(polite.reply, /^Knox's Workshop look/);
+  assert.equal(polite.saved.id, 'knox');
   assert.match(workshopAvatarIntent('Change your workshop outfit to the red jacket', d).reply, /Workshop look/);
 });
