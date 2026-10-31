@@ -342,7 +342,7 @@
     {"d":"google","say":"Read my last email out loud.","route":"che_google"},
     {"d":"google","say":"Do I have anything on my calendar Friday?","route":"che_google"},
     {"d":"google","say":"Send Sarah an email.","route":"che_google"},
-    {"d":"google","say":"Text my wife that I'm on my way.","route":["twilio_sms","model","che_google"],"effect":"any"},
+    {"d":"google","say":"Text my wife that I'm on my way.","route":["che_connector_gate","twilio_sms","model","che_google"],"effect":"any"},
     {"d":"coding","say":"Is the voice fix merged yet?","route":["che_self_update","che_coding_history"]},
     {"d":"coding","say":"Don't merge anything, what's the PR status?","route":"che_self_update"},
     {"d":"coding","say":"Write me a Python script that renames files.","route":"model"},
