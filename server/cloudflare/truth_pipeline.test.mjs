@@ -152,3 +152,20 @@ test('Codex (#511): the auditor stage keeps a story the owner asked for, in both
   const factual = await verifyReply(story, { ...baseCtx(memStorage()), rawMessage: 'did you read the book', message: 'did you read the book' }, { stages: [auditor] });
   assert.doesNotMatch(factual.text, /I read the book/, 'without a story request the claim still needs a receipt');
 });
+
+// Certification run 41233462389: probe turns queued real self-development jobs (oac-49, eer-46).
+test('the capability_gap stage queues a job for the owner but never for a certification probe turn', async () => {
+  const stage = TRUTH_STAGES.find((s) => s.name === 'capability_gap');
+  const refusal = "I don't have anywhere to store pictures, sir.";
+  const make = (probe) => {
+    const queued = [];
+    return { queued, ctx: { ownerDevice: true, probe, rawMessage: 'Can you store my pictures for me?', data: {}, storage: { put: async () => {} },
+      self: { scheduleWork: async () => {} }, helpers: { enqueueJob: (data, fields) => { queued.push(fields); return { job: { id: 'job-1' } }; } } } };
+  };
+  const owner = make(false);
+  assert.match((await stage.run(refusal, owner.ctx)).text, /Job job-1 is queued/);
+  assert.equal(owner.queued.length, 1);
+  const probe = make(true);
+  assert.equal((await stage.run(refusal, probe.ctx)).text, refusal);
+  assert.equal(probe.queued.length, 0);
+});

@@ -211,6 +211,29 @@ function onlyOwnPlanMoney(t) {
   return own;
 }
 
+// A word problem: a narrated situation that ends asking for a quantity ("I have 3 apples, eat one, then buy two dozen
+// more. How many do I have?"). Its money words are part of the story, not a request to CHE (certification run
+// 41233462389, ir-12, was held for "your yes"). The story must open as narration, so "Buy two apples. How many?" and
+// "Can you buy ... ? How much is it?" still ask first.
+const WORD_PROBLEM_QUESTION = /(?:^|[.!?,;]\s+)(?:so\s+|then\s+|now\s+|and\s+)?(?:how\s+(?:many|much|long|far|old)|what\s+(?:is|['’]s|was|will\s+be)\s+the\s+(?:total|cost|price|change|answer|difference|sum|remainder)|what\s+do(?:es)?\s+(?:it|they|the\s+[\w-]+|[\w-]+)\s+cost)\b[^.!?]*\?\s*$/i;
+const NARRATION_START = /^(?:(?:if|suppose|imagine|assume|say)\b|(?:i|we|you|he|she|they)\s+(?:have|has|had|own|owned|start|started|begin|began|buy|buys|bought|get|gets|got|eat|eats|ate|earn|earns|earned|spend|spends|spent|pay|pays|paid|sell|sells|sold)\b|(?:a|an|the|my|his|her|their|our|there)\s+[\w-]+\s+(?:has|have|had|is|are|was|were|costs?|sells?)\b)/i;
+// A story about a named person: "Tom bought 3 shirts". Case matters here, so "Buy two" is not a name.
+const NAMED_NARRATION_START = /^[A-Z][a-z]+\s+(?:has|had|buys|bought|sells|sold|earns|earned|spends|spent|pays|paid)\b/;
+function wordProblem(t) {
+  const story = t.replace(new RegExp(`^${VOCATIVE}`, 'i'), '');
+  if (t.length > 400 || !(NARRATION_START.test(story) || NAMED_NARRATION_START.test(story)) || !WORD_PROBLEM_QUESTION.test(t)) return false;
+  // Every purchase in the story is a counted quantity ("buy two dozen more", "buy 4 pens"). "Buy the cheapest TV" is a
+  // purchase of a thing, and keeps the hold even inside a question.
+  // Codex on #817: only buying, selling or spending counted things can be story; a transfer, payment, order, donation or
+  // subscription always asks, and so does anything done "for me", or a sentence that is itself a command.
+  if (/\b(?:transfer\w*|wire[sd]?|wiring|send\w*|withdr\w*|donat\w*|subscrib\w*|pay|pays|paying|order\w*|charg\w*|check\s*out|checkout|renew\w*|upgrad\w*|top\s+up|sign\w*\s+up|cash\s+out)\b/i.test(t)) return false;
+  if (/\b(?:for\s+(?:me|us)|on\s+(?:my|our)\s+behalf)\b/i.test(t)) return false;
+  const COMMAND = /^(?:(?:please|pls|now|then|and|also|just|ok(?:ay)?|go\s+ahead\s+and)\s+)*(?:(?:can|could|would|will)\s+you\s+(?:please\s+)?)?(?:buy|purchase|spend|sell|get\s+me)\b/i;
+  if (t.split(/[.!?;]+/).some((sentence) => COMMAND.test(sentence.trim().replace(new RegExp(`^${VOCATIVE}`, 'i'), '')))) return false;
+  const buys = [...t.matchAll(/\b(?:buy|buys|buying|bought|purchase[sd]?|purchasing|spend(?:s)?|spent|sell(?:s)?|sold)\b\s*(\S+(?:\s+\S+)?)?/gi)];
+  return buys.length > 0 && buys.every((m) => /^(?:\$?\d|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|a\s+dozen|dozen|half|another\s+\S|more\b|each\b|for\s+\$?\d|at\s+\$?\d)/i.test(m[1] || ''));
+}
+
 // Every kind of consequential action the text asks for, in a stable order.
 // Returns [] when the request is ordinary.
 export function classifyOwnerActions(text) {
@@ -220,7 +243,7 @@ export function classifyOwnerActions(text) {
   // Unpunctuated speech has no clause marks, so what is left once the prohibitions are out is read too:
   // "dont pay attention to the price buy the tickets".
   const asked = withoutProhibitions(t);
-  if (((hasVerb(MONEY_RE, t) || hasVerb(MONEY_RE, asked)) && !onlyOwnPlanMoney(t)) || paidPromotion(asked)) kinds.push('money');
+  if ((((hasVerb(MONEY_RE, t) || hasVerb(MONEY_RE, asked)) && !onlyOwnPlanMoney(t)) || paidPromotion(asked)) && !wordProblem(t)) kinds.push('money');
   if (hasVerb(DELETE_RE, t) || hasVerb(DELETE_RE, asked)) kinds.push('delete');
   if ([SIGNUP_RE, SIGNUP_NAMED_RE, PAYMENT_SERVICE_SIGNUP_RE].some((re) => hasVerb(re, t) || hasVerb(re, asked))) kinds.push('signup');
   return kinds;

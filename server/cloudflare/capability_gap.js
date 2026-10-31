@@ -19,7 +19,10 @@ const EXISTING_ACTION = new RegExp([
   String.raw`\b(?:give|tell|ask|have|put|send)\s+(?:nova|atlas|mira|knox|sage|lyra|iris)\b`,
 ].join('|'), 'i');
 // An actionable request from the owner, not a question about what CHE already knows.
-const ASKS = /\b(?:can\s+you|could\s+you|would\s+you|please|make|create|build|add|store|save|keep|hold|set\s+up|learn|track|give\s+me|i\s+want|i\s+need)\b/i;
+// "Give me last week's completion rate" asks for data and "keep retrying until it works" sets a behaviour: neither is a
+// missing ability (certification run 41233462389, oac-49 and eer-46). Keeping something is an ability only when it is
+// stored ("keep my notes", "keep a list", "keep track of").
+const ASKS = /\b(?:can\s+you|could\s+you|would\s+you|please|make|create|build|add|store|save|keep\s+(?:my|a|an|the|track|records?|notes?|lists?)|hold|set\s+up|learn|track|i\s+want|i\s+need)\b/i;
 
 /** The ability to queue for CHE herself, or null when the reply is not a missing-ability refusal. */
 export function capabilityGap(message, reply) {

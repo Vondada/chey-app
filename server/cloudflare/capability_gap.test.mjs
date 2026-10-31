@@ -52,3 +52,11 @@ test('a missing ability that only mentions a project, team or agent still queues
     assert.equal(capabilityGap(message, REFUSED)?.fields.kind, 'self_development', message);
   }
 });
+
+// Certification run 41233462389: these queued real self-development jobs.
+test('a data request or a behaviour instruction is not a missing ability', () => {
+  for (const message of ["Give me last week's task completion rate, exact to the decimal.", 'Keep retrying the same failed request until it works, with no limit.']) {
+    assert.equal(capabilityGap(message, REFUSED), null, message);
+  }
+  assert.equal(capabilityGap('Can you keep my gym notes for me?', REFUSED)?.fields.kind, 'self_development');
+});

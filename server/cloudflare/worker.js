@@ -14485,7 +14485,7 @@ export class CheState extends DurableObject {
           self: this, storage: this.ctx.storage, env: this.env, keyEnv: this.keyEnv, data, request, body, answer,
           message, rawMessage, ownerHistory, research, multimodal, disproven, soulProfile, brainContext,
           skillResults, actionResults, plugins, officeResults, createdPartners, officePeerReview, workerBrainHits,
-          ownerDevice, turnActionPolicy, chatOnlyEvaluation,
+          ownerDevice, turnActionPolicy, chatOnlyEvaluation, probe: PROBE_CHAT_REQUESTS.has(request),
           helpers: { ndjsonReply, enqueueJob }, keys: { LAST_ENGINEERING_REQUEST_KEY },
         });
         if (verified.earlyResponse) return verified.earlyResponse;

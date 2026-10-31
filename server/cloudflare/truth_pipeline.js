@@ -123,8 +123,10 @@ export const TRUTH_STAGES = Object.freeze([
   } },
   // A missing ability is never refused: CHE queues it for herself as a self-development job and says so.
   // Owner only; money, deletion and secrets are never queued.
+  // A certification probe turn never queues a real job in the owner's queue: certification run 41233462389 queued
+  // self-development jobs for oac-49 and eer-46. The model's own reply stands instead.
   { name: 'capability_gap', async run(reply, ctx) {
-    const gap = ctx.ownerDevice ? capabilityGap(ctx.rawMessage, reply) : null;
+    const gap = ctx.ownerDevice && !ctx.probe ? capabilityGap(ctx.rawMessage, reply) : null;
     if (!gap) return { text: reply, removed: [] };
     const { job } = ctx.helpers.enqueueJob(ctx.data, gap.fields);
     await ctx.storage.put('che', ctx.data);
