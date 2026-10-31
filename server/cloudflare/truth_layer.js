@@ -65,8 +65,13 @@ export function guardExecutionClaims(reply, { message = '', receipts = [], docum
   const identifiers = /\b(?:PRs?|pull requests?)\s*(?:numbers?\s*)?(?:#\s*)?\d+\b|\b[0-9a-f]{16,64}\b|\bcommit\s+[0-9a-f]{7,64}\b|\b(?:SHA|commit(?:\s+hash)?)\s*[:=]\s*\S+|\/path\/to\//i;
   const execution = /\b(?:I|we|CHE)\s+(?:(?:have|just|successfully|actually|already)\s+)*(?:executed|ran|invoked|dispatched|verified|checked\s+(?:GitHub|the\s+(?:repo|terminal))|retrieved\s+(?:the\s+)?(?:handoff|LIVE-HANDOFF))\b|\b(?:terminal|shell|command|tool|job|workflow|deployment)\b[^\n.!?]{0,100}\b(?:succeeded|successful|executed|completed|dispatched|verified)\b|\b(?:execution|invocation|job|workflow|deployment)[_ -]id\s*[:=]|\b(?:according to|verified (?:by|on|from))\s+GitHub\b/i;
   const repoEvidence = /\b(?:GitHub|LIVE-HANDOFF\.md|che-mailbox)\b[^\n.!?]{0,140}\b(?:verified|merged|unmerged|deployed|retrieved|read|commit|branch|completed)\b/i;
-  const transcript = /(?:^|\n)\s*(?:[$>]\s*)?(?:git\s|gh\s+(?:api|pr)\b|(?:stdout|exit code|exit status)\s*:)|"(?:tool|command|operation|invocation_id|job_id|commit_sha|merge_commit_sha|head_sha)"\s*:/i;
-  const repoClaim = requireEvidence || identifiers.test(text) || execution.test(text) || repoEvidence.test(text) || transcript.test(text);
+  const transcript = /(?:^|\n)\s*(?:[$>]\s*)?(?:stdout|exit code|exit status)\s*:|"(?:tool|command|operation|invocation_id|job_id|commit_sha|merge_commit_sha|head_sha)"\s*:/i;
+  // A git or gh command line on its own is an instruction ("git stash pop" in an answer to "What does git stash do?"),
+  // not a claim that it ran: it counts only beside output or an execution claim. Certification run 41222062110 (csd-05):
+  // the whole explanation was replaced by the not-evidence notice.
+  const commandLine = /(?:^|\n)\s*(?:[$>]\s*)?(?:git\s|gh\s+(?:api|pr)\b)/i;
+  const ranClaim = execution.test(text) || transcript.test(text);
+  const repoClaim = requireEvidence || identifiers.test(text) || ranClaim || repoEvidence.test(text) || (commandLine.test(text) && ranClaim);
   const sourceClaim = sourceClaimIn(text, verifiedPaths);
   // Record claims are judged sentence by sentence, so one honest "not" elsewhere never covers a fabrication.
   const retrieval = guardRetrievalClaims(text, { documentRead, verifiedText });
