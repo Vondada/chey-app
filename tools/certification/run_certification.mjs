@@ -83,6 +83,7 @@ export function validateUnseen(list) {
     else ids.add(item.id);
     if (typeof item?.question !== 'string' || !item.question.trim()) problems.push(`${where}: missing question`);
     if (!item?.expected || typeof item.expected !== 'object') problems.push(`${where}: missing expected`);
+    if (item?.expected_action !== undefined && !ACTION_OUTCOMES.includes(item.expected_action)) problems.push(`${where}: unknown expected_action ${JSON.stringify(item.expected_action)}`);
   }
   return problems;
 }
@@ -150,6 +151,7 @@ export function parseReplyBody(text) {
         : (Array.isArray(obj.tool_receipts) ? obj.tool_receipts : []),
       error: obj.error && typeof obj.error === 'object' ? obj.error : null,
       done: obj.done && typeof obj.done === 'object' ? obj.done : null,
+      held: obj.held_for_owner === true || obj.done?.held_for_owner === true,
     };
   } catch (_) {
     let reply = '';
@@ -167,10 +169,14 @@ export function parseReplyBody(text) {
       if (typeof obj.reply === 'string' && !reply) reply = obj.reply;
       if (Array.isArray(obj.execution_receipts)) receipts.push(...obj.execution_receipts);
       if (obj.type === 'error') error = { category: obj.category || null, rules: Array.isArray(obj.rules) ? obj.rules : [] };
-      if (obj.type === 'done') done = obj;
+      if (obj.type === 'done') {
+        done = obj;
+        // Most routes send one receipt as execution_receipt (timer, arithmetic, commit lookup); it is a receipt too.
+        if (obj.execution_receipt && typeof obj.execution_receipt === 'object') receipts.push(obj.execution_receipt);
+      }
     }
-    if (!sawLine) return { reply: raw.trim(), receipts: [], error: null, done: null };
-    return { reply, receipts, error, done };
+    if (!sawLine) return { reply: raw.trim(), receipts: [], error: null, done: null, held: false };
+    return { reply, receipts, error, done, held: false };
   }
 }
 
@@ -263,6 +269,26 @@ export function grade(item, { status, reply = '', receipts = [], networkError = 
   return outcome('pass', 'all checks met');
 }
 
+// What happened to the action a question asked for, kept apart from pass/fail so a refusal is never counted as an
+// executed action. Read from receipts and the done frame, never from the reply's wording:
+//   executed            a receipt with a success status came back
+//   failed_execution    a receipt came back with a failure status
+//   awaiting_approval   the owner-approval gate held the request for his yes
+//   missing_capability  the connector gate answered: no connector can run it
+//   false_completion    the reply claims an action and no receipt came back
+//   no_action           none of the above (an answer, a question back, a model reply with no action)
+export const ACTION_OUTCOMES = ['executed', 'failed_execution', 'awaiting_approval', 'missing_capability', 'false_completion', 'no_action'];
+export function actionOutcome({ classification = '', reason = '', receipts = [], done = null, held = false } = {}) {
+  const list = (Array.isArray(receipts) ? receipts : []).filter((r) => r && typeof r === 'object');
+  const status = (r) => String(r.status || '').toLowerCase();
+  if (classification === 'incorrect' && String(reason).startsWith('claims an action')) return 'false_completion';
+  if (list.some((r) => ['failed', 'failure', 'error', 'timeout'].includes(status(r)))) return 'failed_execution';
+  if (list.some((r) => ['success', 'succeeded', 'completed', 'done', 'ok'].includes(status(r)))) return 'executed';
+  if (held) return 'awaiting_approval';
+  if (done?.source === 'che_connector_gate') return 'missing_capability';
+  return 'no_action';
+}
+
 // ---- running --------------------------------------------------------------------------------------------------------
 
 function scrubber(token) {
@@ -286,13 +312,14 @@ function endpointLabel(url) {
 function summarise(results) {
   const summary = {
     total: results.length, pass: 0, fail: 0, blocked: 0, not_run: 0,
-    valid_answers: 0, score: null, by_classification: {}, by_category: {},
+    valid_answers: 0, score: null, by_classification: {}, by_category: {}, by_action_outcome: {},
   };
   for (const r of results) {
     summary[r.verdict] += 1;
     const cls = classificationOf(r);
     summary.by_classification[cls] = (summary.by_classification[cls] || 0) + 1;
     if (VALID_ANSWER_CLASSES.has(cls)) summary.valid_answers += 1;
+    if (r.action_outcome) summary.by_action_outcome[r.action_outcome] = (summary.by_action_outcome[r.action_outcome] || 0) + 1;
     const c = (summary.by_category[r.category] ??= { pass: 0, fail: 0, blocked: 0, not_run: 0 });
     c[r.verdict] += 1;
   }
@@ -371,7 +398,7 @@ export async function runCertification({
       clearTimeout(timer);
     }
     const latency = Date.now() - t0;
-    const parsed = networkError ? { reply: '', receipts: [], error: null, done: null } : parseReplyBody(body);
+    const parsed = networkError ? { reply: '', receipts: [], error: null, done: null, held: false } : parseReplyBody(body);
     const reply = scrub(parsed.reply);
     const receipts = JSON.parse(scrub(parsed.receipts));
     const error = parsed.error ? JSON.parse(scrub(parsed.error)) : null;
@@ -379,7 +406,14 @@ export async function runCertification({
     // Which path produced the answer (the done frame's source and route), so an empty or odd reply can be traced.
     const source = parsed.done?.source ?? null;
     const route = parsed.done?.route ?? null;
-    const row = { ...base, verdict: verdict.verdict, classification: verdict.classification, reason: verdict.reason, http_status: status, latency_ms: latency, reply, receipts, error, source, route };
+    const action = VALID_ANSWER_CLASSES.has(verdict.classification)
+      ? actionOutcome({ classification: verdict.classification, reason: verdict.reason, receipts, done: parsed.done, held: parsed.held }) : null;
+    // An unseen question may name the outcome it needs (expected_action: "executed"): a passing reply with any other
+    // outcome fails, so a well-worded refusal never passes a question that asks for a real action.
+    if (verdict.verdict === 'pass' && item.expected_action && action !== item.expected_action) {
+      Object.assign(verdict, outcome('incorrect', `action outcome ${action}, expected ${item.expected_action}`));
+    }
+    const row = { ...base, verdict: verdict.verdict, classification: verdict.classification, reason: verdict.reason, http_status: status, latency_ms: latency, reply, receipts, error, source, route, action_outcome: action };
     results.push(row);
     onProgress(row);
   }
@@ -448,8 +482,8 @@ async function main(argv) {
     url, token, questions, select, reuse, questionsFile: opts.questions || QUESTIONS_PATH,
     // Every non-pass prints its class, its reason and the start of CHE's reply, so the failures can be audited from the log.
     onProgress: (row) => console.log(row.verdict === 'pass'
-      ? `${row.id} pass`
-      : `${row.id} ${row.verdict} [${row.classification}] (${row.reason}) source=${row.source ?? 'none'} route=${row.route ?? 'none'} :: ${String(row.reply || '').replace(/\s+/g, ' ').slice(0, 600)}`),
+      ? `${row.id} pass action=${row.action_outcome ?? "none"} source=${row.source ?? "none"}`
+      : `${row.id} ${row.verdict} [${row.classification}] action=${row.action_outcome ?? "none"} (${row.reason}) source=${row.source ?? 'none'} route=${row.route ?? 'none'} :: ${String(row.reply || '').replace(/\s+/g, ' ').slice(0, 600)}`),
   });
   const out = opts.out;
   await mkdir(dirname(out), { recursive: true });
@@ -457,6 +491,7 @@ async function main(argv) {
   const s = report.summary;
   console.log(`pass ${s.pass}  fail ${s.fail}  blocked ${s.blocked}  not_run ${s.not_run}  of ${s.total}`);
   console.log(`valid CHE answers ${s.valid_answers}  score ${s.score ?? 'n/a'}  by class ${JSON.stringify(s.by_classification)}`);
+  console.log(`action outcomes ${JSON.stringify(s.by_action_outcome)}`);
   console.log(`wrote ${out}`);
   if (s.fail > 0) return 1;
   if (s.blocked > 0) return 3;

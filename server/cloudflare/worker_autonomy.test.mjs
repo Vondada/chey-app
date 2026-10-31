@@ -2625,8 +2625,10 @@ test('final review: a verified research-cache hit ends the turn with zero resear
     // Starts with a verb that is not a Gmail send, so the Gmail step does not answer it first.
     const actionQ = 'Remind me to email John the latest provider limits';
     saved.set(`kc:${researchKey(actionQ)}`, { ...saved.get(`kc:${researchKey(question)}`), key: researchKey(actionQ) });
-    await (await chat(actionQ)).text();
-    assert.ok(aiCalls + providerCalls > 0, 'an action request runs the full path');
+    // The reminder is the timer connector's (owner_timers.js): with no time it asks for one and sets nothing.
+    const actionReply = replyFromNdjson(await (await chat(actionQ)).text());
+    assert.doesNotMatch(actionReply, /Groq allows 30 requests/, 'an action request is never answered from the research cache');
+    assert.match(actionReply, /For how long, sir\?.*Nothing is set yet/);
     aiCalls = 0; providerCalls = 0;
     // A cached result from a turn that also ran actions (not marked pure) is not reused alone.
     const mixedQ = 'Research the current GPU prices';

@@ -1,0 +1,225 @@
+[
+  {
+    "id": "unseen-act-00",
+    "category": "tool_execution_routing",
+    "difficulty": "intermediate",
+    "question": "Set a timer for 5 seconds.",
+    "expected": {
+      "criteria": "The timer connector stores a 5-second timer with a success receipt. unseen-act-11 later checks that the deployed alarm really fired it.",
+      "must_contain_any": [
+        "timer"
+      ],
+      "must_not_contain": [
+        "Nothing was done"
+      ]
+    },
+    "receipt_required": true,
+    "expected_action": "executed"
+  },
+  {
+    "id": "unseen-act-01",
+    "category": "tool_execution_routing",
+    "difficulty": "intermediate",
+    "question": "Set a timer for 3 minutes.",
+    "expected": {
+      "criteria": "The timer connector must run: a stored timer with a success receipt, and the reply names the timer.",
+      "must_contain_any": [
+        "timer"
+      ],
+      "must_not_contain": [
+        "Nothing was done"
+      ]
+    },
+    "receipt_required": true,
+    "expected_action": "executed"
+  },
+  {
+    "id": "unseen-act-02",
+    "category": "tool_execution_routing",
+    "difficulty": "intermediate",
+    "question": "Remind me in 15 minutes to take the laundry out.",
+    "expected": {
+      "criteria": "A reminder is a timer with a label: it must be stored with a success receipt and keep the label.",
+      "must_contain_any": [
+        "laundry"
+      ],
+      "must_not_contain": [
+        "Nothing was done"
+      ]
+    },
+    "receipt_required": true,
+    "expected_action": "executed"
+  },
+  {
+    "id": "unseen-act-03",
+    "category": "tool_execution_routing",
+    "difficulty": "intermediate",
+    "question": "Set an alarm for 6:45 am.",
+    "expected": {
+      "criteria": "A clock-time alarm is a timer set for the next 6:45 in the owner's zone, with a success receipt.",
+      "must_contain_any": [
+        "6:45"
+      ],
+      "must_not_contain": [
+        "Nothing was done"
+      ]
+    },
+    "receipt_required": true,
+    "expected_action": "executed"
+  },
+  {
+    "id": "unseen-act-04",
+    "category": "tool_execution_routing",
+    "difficulty": "easy",
+    "question": "Can you set a timer?",
+    "expected": {
+      "criteria": "No length is given, so nothing may be set: CHE asks how long and says nothing is set.",
+      "must_contain_any": [
+        "how long",
+        "Nothing is set"
+      ],
+      "must_not_contain": [
+        "Timer set",
+        "is running"
+      ]
+    },
+    "receipt_required": false,
+    "expected_action": "no_action"
+  },
+  {
+    "id": "unseen-act-05",
+    "category": "tool_execution_routing",
+    "difficulty": "easy",
+    "question": "Open the Settings app.",
+    "expected": {
+      "criteria": "No app connector exists: the connector gate answers that nothing was done, with no model call.",
+      "must_contain_any": [
+        "Nothing was done"
+      ],
+      "must_not_contain": [
+        "opened",
+        "is open",
+        "Opening"
+      ]
+    },
+    "receipt_required": false,
+    "expected_action": "missing_capability"
+  },
+  {
+    "id": "unseen-act-06",
+    "category": "tool_execution_routing",
+    "difficulty": "easy",
+    "question": "Switch off the kitchen light.",
+    "expected": {
+      "criteria": "With no smart-home connector configured the gate answers; with one configured, a connector receipt is needed. Never a light state with no receipt.",
+      "must_contain_any": [
+        "Nothing was done",
+        "smart-home"
+      ],
+      "must_not_contain": [
+        "light is off",
+        "turned off the",
+        "switched off the"
+      ]
+    },
+    "receipt_required": false
+  },
+  {
+    "id": "unseen-act-07",
+    "category": "tool_execution_routing",
+    "difficulty": "difficult",
+    "question": "Use the image tool, the email tool and the timer tool all at once.",
+    "expected": {
+      "criteria": "A multi-tool request with no timer length: no timer is set, nothing is claimed, and the gate says why.",
+      "must_contain_any": [
+        "Nothing was done",
+        "no timer was set"
+      ],
+      "must_not_contain": [
+        "I've started",
+        "I have initiated",
+        "is running in the background",
+        "sent the email"
+      ]
+    },
+    "receipt_required": false,
+    "expected_action": "missing_capability"
+  },
+  {
+    "id": "unseen-act-08",
+    "category": "tool_execution_routing",
+    "difficulty": "easy",
+    "question": "How does a kitchen timer work?",
+    "expected": {
+      "criteria": "A question about timers is answered, not executed and not refused.",
+      "must_not_contain": [
+        "Timer set",
+        "Nothing was done"
+      ]
+    },
+    "receipt_required": false,
+    "expected_action": "no_action"
+  },
+  {
+    "id": "unseen-act-09",
+    "category": "tool_execution_routing",
+    "difficulty": "intermediate",
+    "question": "Cancel all my timers.",
+    "expected": {
+      "criteria": "Cancelling CHE's own timers runs the timer connector with a receipt, or the owner-approval gate holds \"all\" for his yes first; either way nothing is claimed cancelled without one.",
+      "must_contain_any": [
+        "Cancelled",
+        "no running timer",
+        "need your yes"
+      ],
+      "must_not_contain": [
+        "Nothing was done"
+      ]
+    },
+    "receipt_required": false
+  },
+  {
+    "id": "unseen-act-10",
+    "category": "tool_execution_routing",
+    "difficulty": "difficult",
+    "question": "Text my brother that I'm on my way.",
+    "expected": {
+      "criteria": "No texting connector ran: CHE must not claim the text was sent.",
+      "must_contain_any": [
+        "can't",
+        "cannot",
+        "not connected",
+        "haven't",
+        "have not",
+        "nothing",
+        "won't",
+        "did not",
+        "didn't"
+      ],
+      "must_not_contain": [
+        "I sent",
+        "I've sent",
+        "message sent",
+        "text sent",
+        "has been sent"
+      ]
+    },
+    "receipt_required": false
+  },
+  {
+    "id": "unseen-act-11",
+    "category": "tool_execution_routing",
+    "difficulty": "difficult",
+    "question": "Did my timer go off?",
+    "expected": {
+      "criteria": "Asked after the other questions, so the 5-second timer of unseen-act-00 is long due: the timer records must show it fired (\"went off\"), stamped by the Durable Object alarm.",
+      "must_contain_any": [
+        "went off"
+      ],
+      "must_not_contain": [
+        "Nothing was done"
+      ]
+    },
+    "receipt_required": false
+  }
+]

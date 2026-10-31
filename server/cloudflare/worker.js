@@ -178,6 +178,7 @@ import { chatPictureTurn } from './chat_image_provider.js';
 import { PENDING_OWNER_ACTION_KEY, deskOwnedMoney, forbiddenAction, prohibitionSpans, withoutProhibitions, PENDING_OWNER_ACTION_MS, gateOwnerAction, grantForKinds, isOwnerYes, peerActionReply, APPS_GRANTED_KEY, PENDING_APP_ACTION_KEY, PENDING_APP_ACTION_MS, gateAppAccess, classifyAppNeed, classifyExplicitAppOpen, classifyAppAccesses } from './owner_action_gate.js';
 import { placedOrdersLine, recordDeviceInstall } from './action_receipts.js';
 import { receiptGate } from './action_connectors.js';
+import { PROBE_TIMERS_KEY, TIMERS_KEY, TIMER_KEYS, fireDueTimers, nextTimerAt, takeTimerAnnouncement, timerChatTurn } from './owner_timers.js';
 import { brainTruthSummary, brainTruthView, truthScreenAsk } from './brain_truth.js';
 import { CLOUD_JOB_KIND, CLOUD_SOURCE, approveCloudJob, cancelCloudJob, cloudIntent, cloudJobs, cloudView, latestCloudJob, openPullRequests, parseControl, providerStatuses, requestCloudWork, retryCloudJob, runCloudTask, runFileJob, selectProvider, speakAgentWork, speakBlocked, speakCloudSummary, speakControl, speakInstall, speakPullRequests, speakRender, speakRequest, speakStartResult, startCloudTask, stopCloudJob } from './cloud_computer.js';
 import { auditLedger, knowVsGuessQuestion, knowVsGuessReply, MEMORY_CLAIM_MS, memorySavedQuestion, memorySavedReply } from './hallucination_auditor.js';
@@ -4224,6 +4225,10 @@ export class CheState extends DurableObject {
     times.push(...officeTasks.filter((t) => ['running', 'reviewing'].includes(t.status))
       .map((t) => Math.max(Date.now() + 250, (Date.parse(t.updated_at) || Date.now()) + 5 * 60_000 + 1000)));
     // Film and creation share the alarm.
+    for (const key of TIMER_KEYS) {
+      const at = await nextTimerAt(this.ctx.storage, key).catch(() => 0);
+      if (at) times.push(Math.max(Date.now() + 250, at));
+    }
     for (const key of ['film:wake', 'gpu:wake_at', STUDY_WAKE_KEY]) {
       const at = Number(await this.ctx.storage.get(key)) || 0;
       if (at) times.push(Math.max(Date.now() + 250, at));
@@ -5491,7 +5496,8 @@ export class CheState extends DurableObject {
     // A trade alert the owner has not heard yet is said first, in the reply
     // to whatever he says next (there is no phone push for it yet).
     if (isChat && response?.ok && OWNER_CHAT_REQUESTS.has(request)) {
-      const alert = await takeAnnouncement(this.ctx.storage).catch(() => '');
+      // A certification probe turn never hears (and so never uses up) the owner's own alerts.
+      const alert = [probeRun ? '' : await takeAnnouncement(this.ctx.storage).catch(() => ''), await takeTimerAnnouncement(this.ctx.storage, this.env.CHE_TIMEZONE, probeRun ? PROBE_TIMERS_KEY : TIMERS_KEY).catch(() => '')].filter(Boolean).join(' ');
       if (alert) response = prefixNdjson(response, `${alert}\n\n`);
     }
     // Command Center: after the owner's reply has been sent, at most two
@@ -13840,7 +13846,9 @@ export class CheState extends DurableObject {
           );
         }
 
-        const connectorGate = receiptGate(rawMessage, this.keyEnv || this.env);
+        const timerTurn = await timerChatTurn(this.ctx.storage, message, { timeZone: this.env.CHE_TIMEZONE, wake: () => this.scheduleWork(), key: PROBE_CHAT_REQUESTS.has(request) ? PROBE_TIMERS_KEY : TIMERS_KEY });
+        if (timerTurn) return ndjsonReply(timerTurn.text, timerTurn.meta);
+        const connectorGate = receiptGate(message, this.keyEnv || this.env);
         if (connectorGate) return ndjsonReply(connectorGate.text, { source: 'che_connector_gate', model_calls: 0, action_domain: connectorGate.domain });
         const shouldResearch = !body.private && (requestedCapabilities.includes('web_research') ||
           requestedCapabilities.includes('innovation_mode') ||
@@ -14624,6 +14632,8 @@ export class CheState extends DurableObject {
 
   async alarmInner() {
     await this.refreshKeyEnv();
+    // Owner timers first: a timer is marked fired when the alarm really ran (owner_timers.js).
+    for (const key of TIMER_KEYS) await fireDueTimers(this.ctx.storage, Date.now(), key).catch((error) => console.error('Timer firing failed:', error?.message || error));
     // A minute-only wake-up: the simulation's minute is the only work due. It runs that one pass and makes no
     // mailbox (GitHub), job, Tradovate, hourly or live call. Those keep their own wake-up times and run on them.
     const minuteNow = Date.now();

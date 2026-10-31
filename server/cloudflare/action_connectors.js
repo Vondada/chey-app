@@ -4,13 +4,13 @@
 // Nothing here calls a model or a network.
 //
 // Domains and the connector that backs each one (the same environment variable actionPanel in worker.js reads):
-//   timer       no connector exists in the code: nothing can run it
+//   timer       built in (owner_timers.js): worker.js answers timer requests before this gate, with receipts
 //   app_open    no connector exists in the code: nothing can run it
 //   smart_home  CHE_SMART_HOME_URL; without it no device is controlled
 // Music is not gated: CHE plays music through a browser route when no music connector is set (brain_rooms.js).
 
 export const ACTION_DOMAINS = Object.freeze({
-  timer: { label: 'timer', connector: null, reason: 'CHE has no timer connector, so nothing can set or run a timer here' },
+  timer: { label: 'timer', connector: 'builtin', reason: 'my timer needs one clear length or time, like "set a timer for 10 minutes", so no timer was set from this request' },
   app_open: { label: 'app', connector: null, reason: 'CHE has no app connector, so nothing can open or close an app here' },
   smart_home: { label: 'smart-home', connector: 'CHE_SMART_HOME_URL', reason: 'no smart-home connector is configured (CHE_SMART_HOME_URL), so no device is controlled here' },
 });
@@ -43,6 +43,7 @@ export function actionDomainOf(message = '') {
 export function connectorConnected(domain, env = {}) {
   const spec = ACTION_DOMAINS[domain];
   if (!spec || !spec.connector) return false;
+  if (spec.connector === 'builtin') return true;
   return Boolean(env && env[spec.connector]);
 }
 
@@ -52,8 +53,9 @@ export function connectorConnected(domain, env = {}) {
  */
 export function receiptGate(message = '', env = {}) {
   const domain = actionDomainOf(message);
-  if (!domain || connectorConnected(domain, env)) return null;
   const spec = ACTION_DOMAINS[domain];
+  // A built-in connector answers its own requests before this gate; one that reaches here is one it declined.
+  if (!domain || (spec.connector !== 'builtin' && connectorConnected(domain, env))) return null;
   return {
     domain,
     text: `Nothing was done, sir: ${spec.reason}. I have no receipt that anything ran, so nothing is running.`,

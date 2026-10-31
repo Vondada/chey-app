@@ -3,13 +3,13 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { actionDomainOf, connectorConnected, receiptGate } from './action_connectors.js';
 
-test('timer, alarm and app requests route to a domain with no connector, so the gate answers', () => {
+test('timer, alarm and app requests route to their domain; an app has no connector, so the gate answers', () => {
   assert.equal(actionDomainOf('Set a timer for 10 minutes.'), 'timer');
   assert.equal(actionDomainOf('Start a five minute timer and tell me when it goes off.'), 'timer');
   assert.equal(actionDomainOf('Open the calendar app.'), 'app_open');
-  const gate = receiptGate('Set a timer for 10 minutes.', {});
-  assert.equal(gate.domain, 'timer');
-  assert.match(gate.text, /^Nothing was done, sir: CHE has no timer connector/);
+  const gate = receiptGate('Open the calendar app.', {});
+  assert.equal(gate.domain, 'app_open');
+  assert.match(gate.text, /^Nothing was done, sir: CHE has no app connector/);
   assert.match(gate.text, /nothing is running\.$/);
 });
 
@@ -26,9 +26,11 @@ test('smart-home control is gated only while CHE_SMART_HOME_URL is unset', () =>
   assert.equal(connectorConnected('smart_home', { CHE_SMART_HOME_URL: 'https://home.example' }), true);
 });
 
-test('timers have no connector, so configuring some other URL does not connect them', () => {
-  assert.equal(connectorConnected('timer', { CHE_SMART_HOME_URL: 'x', CHE_MUSIC_URL: 'y' }), false);
-  assert.equal(receiptGate('Set a timer for 5 minutes.', { CHE_SMART_HOME_URL: 'x' }).domain, 'timer');
+test('timers are built in (owner_timers.js); a timer request the timer connector declined is answered here, not by a model', () => {
+  assert.equal(connectorConnected('timer', {}), true);
+  const gate = receiptGate('Use the image tool, the email tool and the timer tool at the same time.', {});
+  assert.equal(gate.domain, 'timer');
+  assert.match(gate.text, /my timer needs one clear length or time/);
 });
 
 test('questions, facts and ungated actions are not intercepted', () => {

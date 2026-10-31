@@ -366,7 +366,7 @@
     {"d":"money","say":"Yes.","route":"model"},
     {"d":"money","say":"Pay Sarah back $20.","route":"held","effect":"hold:money"},
     {"d":"money","say":"Order more printer paper but don't pay more than $30.","route":"held","effect":"hold:money"},
-    {"d":"money","say":"I paid the electric bill, can you remind me next month?","route":"model"},
+    {"d":"money","say":"I paid the electric bill, can you remind me next month?","route":"che_timer"},
     {"d":"money","say":"Delete it.","route":"held","effect":"hold:delete"},
     {"d":"money","say":"Don't delete anything, just list my notes.","route":"model"},
     {"d":"money","say":"Cancel my 3pm meeting.","route":"held","effect":"hold:delete"},
