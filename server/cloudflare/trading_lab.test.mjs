@@ -281,4 +281,9 @@ test('a question about backtests, or a request to fake one, is not a backtest co
   assert.equal(tradingIntent('Backtest a 50/200 moving average crossover on BTC from 2020 to 2024 and report the total return').symbol.toUpperCase(), 'BTC');
   assert.equal(tradingIntent('What is the bitcoin backtest result?').symbol, 'bitcoin');
   assert.equal(tradingIntent('analyze the 15 minute ETH chart').kind, 'analyze');
+  // Codex on #809: spoken, lower-case tickers in polite commands still run, on the market named after the verb.
+  assert.deepEqual(tradingIntent('Can you backtest aapl?'), { kind: 'backtest', symbol: 'aapl' });
+  assert.equal(tradingIntent('Can you analyze the msft chart?').symbol, 'msft');
+  assert.equal(tradingIntent('Backtest aapl using RSI entries').symbol, 'aapl');
+  assert.equal(tradingIntent('Analyze spy chart with RSI').symbol, 'spy');
 });

@@ -746,7 +746,11 @@ export function speakBook(book) {
 // A question or explanation request, as opposed to a command ("backtest bitcoin", "analyze the ETH chart").
 const CONCEPT_ASK = /^(?:(?:hey\s+)?(?:che|chey|chay)[,:]?\s+)?(?:what|why|how|when|which|explain|describe|define|give|list|name|tell\s+me\s+(?:what|why|how|about)|is|are|was|were|does|do|did|has|have|should|can|could)\b/i;
 const NOT_A_RUN = /\b(?:pretend|make\s+up|made[\s-]up|fabricat\w*|invent|fake|realistic[\s-]looking)\b/i;
-const NOT_TICKERS = new Set(['I', 'CHE', 'AI', 'OK', 'CAGR', 'ETF', 'USD', 'P', 'L', 'PNL', 'R']);
+const NOT_TICKERS = new Set(['I', 'CHE', 'AI', 'OK', 'CAGR', 'ETF', 'USD', 'P', 'L', 'PNL', 'R', 'RSI', 'MACD', 'EMA', 'SMA', 'VWAP', 'ATR', 'ADX', 'OBV']);
+// A polite command ("Can you backtest aapl?", spoken in lower case) is a command, not a question about the idea.
+const POLITE_COMMAND = /^(?:(?:hey\s+)?(?:che|chey|chay)[,:]?\s+)?(?:can|could|would|will)\s+you\s+(?:please\s+)?(?:backtest|analy[sz]e|scan|run|test)\b/i;
+// Words after the verb that are not a market ("backtest a crossover", "the bitcoin backtest result").
+const FILLER_HINT = /^(?:a|an|the|my|your|our|this|that|it|its|of|some|me|result|results|strategy|strategies|crossover|data|history|everything|all)\b/i;
 // The message names a market: a known name, the Nasdaq futures, or an upper-case ticker ("SPY", "AAPL").
 function namesMarket(text, futures = '') {
   if (futures) return true;
@@ -837,7 +841,7 @@ export function tradingIntent(message, { followup = '', referent = '' } = {}) {
     let hinted = m ? m[1].trim() : '';
     // "Backtest a crossover on BTC", "the bitcoin backtest result": a market named elsewhere in the message beats a
     // stray word after the verb ("a", "result").
-    if (!futures && !NAMES[hinted.toLowerCase()] && !/^[A-Z^][A-Z0-9.^=]{1,9}$/.test(hinted)) {
+    if (!futures && (!hinted || FILLER_HINT.test(hinted))) {
       const named = Object.keys(NAMES).find((k) => new RegExp(`(?:^|[^a-z0-9&])${k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![a-z0-9])`, 'i').test(text))
         || (text.match(/\b[A-Z]{2,5}\b/g) || []).find((w) => !NOT_TICKERS.has(w));
       if (named) hinted = named;
@@ -853,7 +857,7 @@ export function tradingIntent(message, { followup = '', referent = '' } = {}) {
   // command to run one, and a request to fake one ("pretend the backtest ran", "make up a backtest table") is never run:
   // both go to the answer path, where the truth stages apply. Certification run 41222062110: 22 such questions were sent
   // to the price lookup and answered "The free data source did not answer".
-  const notARun = NOT_A_RUN.test(text) || (CONCEPT_ASK.test(text) && !namesMarket(text, futures));
+  const notARun = NOT_A_RUN.test(text) || (CONCEPT_ASK.test(text) && !POLITE_COMMAND.test(text) && !namesMarket(text, futures));
   if (!notARun && /\bbacktest/i.test(text) && !/\b(?:code|app|feature|function)\b/i.test(text)) return sized({ kind: 'backtest', symbol: pick() || 'BTCUSDT' });
   // A watch needs a market. Asked for none ("place a paper trade"), CHE asks which one instead of looking up a ticker.
   if (/\b(?:paper trade|watch)\b[\s\S]{0,30}/i.test(text) && /\b(?:paper|trade|market)\b/i.test(text)) {
