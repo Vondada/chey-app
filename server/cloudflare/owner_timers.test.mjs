@@ -21,6 +21,10 @@ test('durations and clock times are read from the request', () => {
   // 7 am in Chicago on 2026-10-31 (CDT, UTC-5) is 12:00 UTC.
   assert.equal(new Date(clockTimeMs('wake me with an alarm for 7 am', 'America/Chicago', T0)).toISOString(), '2026-10-31T12:00:00.000Z');
   assert.equal(new Date(clockTimeMs('remind me tomorrow at 5 am to stretch', 'UTC', T0)).toISOString(), '2026-11-01T05:00:00.000Z');
+  // Live run 41210217956, 2026-10-31 14:28 UTC: 6:45 am Chicago has passed, and the next 6:45 is on Nov 1, after the
+  // clocks go back (CST, UTC-6): 12:45 UTC, not 11:45.
+  assert.equal(new Date(clockTimeMs('Set an alarm for 6:45 am.', 'America/Chicago', Date.parse('2026-10-31T14:28:00Z'))).toISOString(), '2026-11-01T12:45:00.000Z');
+  assert.equal(new Date(clockTimeMs('remind me tomorrow at 6:45 am', 'America/Chicago', Date.parse('2026-10-31T10:00:00Z'))).toISOString(), '2026-11-01T12:45:00.000Z');
   // 12:30 am has passed in UTC by 06:00, so it is tomorrow.
   assert.equal(new Date(clockTimeMs('remind me at 12:30 am', 'UTC', T0)).toISOString(), '2026-11-01T00:30:00.000Z');
 });

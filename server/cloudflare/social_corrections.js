@@ -67,6 +67,23 @@ export function cleanLanguageReply(text) {
 // Stock assistant phrasing the owner does not want from CHE (soul.js SOUL_VOICE).
 const GENERIC = /\b(?:as an ai\b|i'?m (?:just )?an ai\b|great question|i'?d be (?:happy|glad) to help|certainly!|i hope this helps|let me know if (?:you need|there'?s) anything else|how (?:can|may) i (?:help|assist) you today)/i;
 export const soundsGeneric = (text) => GENERIC.test(String(text || ''));
+// The owner's voice rule, kept in code (soul.js asks the model, and an 8B model still says "I'd be happy to help"; live
+// social probe, PRs #735, #774 and #800): a sentence carrying a stock assistant phrase is dropped, the rest of the reply
+// stays. A reply made only of such sentences is kept as it is, so the owner never gets an empty answer.
+// A leading interjection ("Great question, the answer is...") is cut alone, so the facts after it stay.
+const LEAD_IN = /^(?:great question|certainly)\s*[,!.:-]*\s*/i;
+export function ownVoiceReply(text) {
+  const reply = String(text ?? '');
+  if (!GENERIC.test(reply)) return reply;
+  // A sentence ends at . ! or ? followed by a space and a capital or a quote: a decimal (98.6), a domain (che.ai) or an
+  // abbreviation before a lower-case word (e.g. this) never splits a sentence (Codex review on #803).
+  const sentences = reply.trim().split(/(?<=[.!?]["')\]]*)\s+(?=["'(]?[A-Z])/);
+  const kept = sentences.map((sentence) => {
+    const cut = sentence.replace(LEAD_IN, '');
+    return cut !== sentence && cut.trim() ? cut.charAt(0).toUpperCase() + cut.slice(1) : sentence;
+  }).filter((sentence) => !GENERIC.test(sentence));
+  return kept.length ? kept.join(' ') : reply;
+}
 // The reply repeats a run of eight or more of the owner's words.
 export function copiesWording(reply, message) {
   const words = String(message || '').toLowerCase().match(/[a-z']+/g) || [];
