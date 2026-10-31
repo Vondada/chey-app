@@ -62,6 +62,10 @@ test('a stock assistant sentence is dropped and the rest of the reply stays (liv
   assert.equal(soundsGeneric(out), false);
   assert.equal(out, "Sir, it sounds like you're looking for some ideas on what to do this weekend. What type of things are you and the kids into?");
   assert.equal(ownVoiceReply('Great question!'), 'Great question!', 'a reply made only of stock phrasing is kept, never emptied');
+  // Codex review on #803: a decimal, a domain or an abbreviation never splits a sentence, and a lead-in keeps its facts.
+  assert.equal(ownVoiceReply('Great question, the temperature is 98.6 degrees Fahrenheit. That is normal.'), 'The temperature is 98.6 degrees Fahrenheit. That is normal.');
+  assert.equal(ownVoiceReply("Check status.che.ai for the version. I'd be happy to help with anything else."), 'Check status.che.ai for the version.');
+  assert.equal(ownVoiceReply("Bring snacks, e.g. fruit. I hope this helps."), 'Bring snacks, e.g. fruit.');
   const plain = 'Sushi again? Bold move, sir.';
   assert.equal(ownVoiceReply(plain), plain);
 });
