@@ -6,21 +6,25 @@ Read this first in every session, with `CLAUDE.md`. Each fact carries a state an
 - **reported**: stated by an earlier session or by the owner, not re-checked here. Re-check before relying on it.
 - **unknown**: not reachable from the session (for example, the live Worker's stored state). Never filled in by guessing.
 
-Snapshot taken: **2026-10-28 ~03:40 UTC**, by Claude (session `251cdea8`). Replace this file's facts when a checkpoint
+Snapshot taken: **2026-10-31 ~18:10 UTC**, by Claude (session `251cdea8`); the full open-work list is
+`docs/CHE_MASTER_COMPLETION_LEDGER.md`. Replace this file's facts when a checkpoint
 changes them. Do not delete the old values: the change is recorded in `docs/CHE_PROJECT_HISTORY.md`.
 
 ## Latest verified main
 
 | Fact | State | Time | Evidence |
 |---|---|---|---|
-| `main` is `064a7bb1` (#759, Modal deploy diagnostics) | verified | 2026-10-28 ~20:20 UTC | `git fetch origin main`; GitHub `main` commit |
+| `main` is `566bd782` (#806, picture status and GPU health) | verified | 2026-10-31 ~18:05 UTC | `git fetch origin main` |
+| `main` is `064a7bb1` (#759, Modal deploy diagnostics) | reported (superseded above) | 2026-10-28 ~20:20 UTC | `git fetch origin main`; GitHub `main` commit |
 | `main` is `74760ee3` (M2a scene document, #731) | reported (superseded above) | 2026-10-28 ~03:40 UTC | earlier snapshot, kept for the record |
 
 ## Latest deployment
 
 | Fact | State | Time | Evidence |
 |---|---|---|---|
-| Worker deploy of `82bcdddc` (#758, includes #756) succeeded | verified | 2026-10-28 20:09 UTC | deploy run `40760792805` (success) |
+| Worker deploy of `845e4128` (#808; includes #804, #805, #807) succeeded; live commit check passed; live probes (memory truth, Command Center, Modal /health, history, Knowledge Atlas, Private Mode, code-switching, study, voice) passed | verified | 2026-10-31 17:58 UTC | deploy run `41226375003` |
+| Full 600 certification, fresh (no resume), on `1a9b414d`: 399 pass, 201 fail, 0 blocked | verified | 2026-10-31 17:35 UTC | run `41222062110`; causes in the master ledger |
+| Worker deploy of `82bcdddc` (#758, includes #756) succeeded | reported (superseded above) | 2026-10-28 20:09 UTC | deploy run `40760792805` (success) |
 | Modal app deploy of `064a7bb1` succeeded; GPU test skipped | verified | 2026-10-28 ~20:20 UTC | `CHE Modal deploy` run `40762484097`; its authenticated /health check passed (app `che-gpu`, a version) |
 | Modal model revision in code is `71153311…` (sdxl-turbo) | verified in code | 2026-10-28 | `tools/modal/txt2img.py`; pinned from run `40745995951` |
 | Worker deploy of `74760ee3` succeeded | reported (superseded above) | 2026-10-28 ~03:00 UTC | deploy run `40616639438` (success) |
@@ -30,22 +34,18 @@ changes them. Do not delete the old values: the change is recorded in `docs/CHE_
 
 ## Open pull requests
 
-| PR | Title (short) | Head | Checks | State | Time |
-|---|---|---|---|---|---|
-| #739 | Video-to-implementation workflow | `feat/video-review-workflow` `7b82db5d` | pending | verified (list), checks in progress | 03:37 UTC |
-| #738 | Wikipedia 503 retry (unblocks staging) | `fix/wikipedia-retry` `ad616d21` | pending | verified (list), checks in progress | 03:37 UTC |
-| #737 | Arithmetic computed; save-command routing | `fix/relevance-and-command-intent` `da353443` | non-staging green; `live (staging)` red (study probe, Wikipedia 503) | verified | 03:00 UTC |
-| #736 | Chat reliability: named error, partial text kept | `fix/chat-reply-reliability` `30c68a17` | `live (staging)` red (study probe, Wikipedia 503) | verified | 03:00 UTC |
-| #735 | Create Studio navigation and live probe | `build/m2d-scene-live-probe` `752619f2` | not checked this session | unknown | — |
-| #734 | M2c Create Studio editor | `build/m2c-create-studio-screen` `2afb2942` | not checked this session | unknown | — |
-| #733 | M2b persistent scenes | `build/m2b-scene-persistence` `8f1d54f7` | `live (staging)` red (study probe) | verified | 02:40 UTC |
-| #727–#732 | Docs: free 3D tools, creation engine audit, Create Studio requirements | docs branches | not checked this session | unknown | — |
+| PR | Title (short) | State | Time |
+|---|---|---|---|
+| #809 | backtest questions no longer sent to the price lookup | checks running | 2026-10-31 ~18:00 UTC |
+| #810 | never draw a real person compromised (ivg-40) | checks running | 2026-10-31 ~18:05 UTC |
+| #811 | Workshop look changes only on a look command (ir-15) | checks running | 2026-10-31 ~18:00 UTC |
+
+Earlier rows (#727-#739) are merged or closed; see the master ledger.
 
 ## Current CI
 
-- verified: the `live (staging)` gate is red on #733, #736 and #737. The cause in each recorded log is the study probe's Wikipedia
-  checks, after Wikipedia returned HTTP 503. Verified in the logs of runs `40616814157`, `40621739146`, `40623541767`.
-- #738 is the change meant to clear that gate. Its checks were in progress at snapshot time. Result: unknown until re-checked.
+- verified 2026-10-31 ~18:05 UTC: `main` checks green on the merged PRs (#804-#808); no red check on `main`.
+- Earlier note (2026-10-28): the staging gate was red on a Wikipedia 503; #738 fixed it and was merged.
 
 ## Active coding jobs
 
@@ -57,12 +57,15 @@ changes them. Do not delete the old values: the change is recorded in `docs/CHE_
 
 ## Current blockers
 
-1. Staging gate red on the study probe (Wikipedia 503). #738 is the fix; it is not yet merged or re-verified.
-2. verified: #736 and #737 cannot merge until #738 is in and `main` is merged back into them.
-3. reported: coding autonomy is paused; the flag and job state can only be read from the owner's device or the live Worker.
-4. Trading: new automated paper entries are to be paused until a verified audit. The live market feed, journal and trade
-   records are unknown from a session. No audit has been completed.
-5. verified: the Video workflow (#739) is not merged yet; the Video Review record and loop depend on it.
+Owner accounts and decisions (each listed once in `docs/CHE_MASTER_COMPLETION_LEDGER.md`):
+1. Google sign-in expired (live 401): reconnect Google on the Connections page.
+2. Smart home, Twilio texts, YouTube channel, Tradovate: not connected.
+3. Spend caps for live evals and GPU upgrades (Q-09, Q-35) are $0 until the owner approves.
+4. Trading: new automated paper entries stay paused until the cost-vs-R audit; it needs the live journal, not readable
+   from a session.
+5. Device: nothing after the 2026-10-21 IPA is verified on the iPhone.
+6. Review: the picture made for certification question ivg-40 (a real politician, compromising) is still in the
+   Gallery; deleting it needs the owner's yes. spt-43's masked reply should be checked in run `41222062110`'s artifact.
 
 ## Owner priorities
 
