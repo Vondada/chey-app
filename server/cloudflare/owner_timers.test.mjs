@@ -133,3 +133,18 @@ test('"yesterday" is not "today" for a day-scoped timer question', async () => {
   const out = await timerChatTurn(storage, 'What reminders did I have yesterday?', { now, timeZone: 'UTC' });
   assert.match(out.text, /tea/, 'no day filter applied for "yesterday"');
 });
+
+// Codex on #820: across the New York daylight-saving change, "tomorrow" and "Monday" must still find a reminder set
+// for 9 AM on 2 November.
+test('a day-scoped timer question survives a daylight-saving change', async () => {
+  const { timerChatTurn } = await import('./owner_timers.js');
+  const saved = new Map();
+  const storage = { get: async (k) => structuredClone(saved.get(k)), put: async (k, v) => { saved.set(k, structuredClone(v)); } };
+  const now = Date.parse('2026-11-01T04:30:00Z'); // 00:30 on Sunday 1 November in New York
+  const set = await timerChatTurn(storage, 'Remind me tomorrow at 9 am to call Sam', { now, timeZone: 'America/New_York' });
+  assert.equal(set.meta.ok, true, set.text);
+  for (const ask of ['What reminders do I have tomorrow?', 'What reminder did I set for Monday?']) {
+    const out = await timerChatTurn(storage, ask, { now, timeZone: 'America/New_York' });
+    assert.match(out.text, /call Sam/i, ask);
+  }
+});

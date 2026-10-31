@@ -182,15 +182,23 @@ function dayKey(ms, zone) {
 }
 // The day a list question names, as a local date key: "for Thursday" (the next Thursday, today included), "today",
 // "tomorrow". Null when no day is named.
+// Local calendar days are stepped as dates, never as 24-hour blocks, so a daylight-saving change cannot shift the
+// day (Codex review on PR #820).
+function addDays(key, n) {
+  const [y, m, d] = key.split('-').map(Number);
+  return new Date(Date.UTC(y, m - 1, d + n)).toISOString().slice(0, 10);
+}
 function askedDay(message, zone, now) {
   const text = String(message || '').toLowerCase();
-  if (/\btoday\b|\btonight\b/.test(text)) return { key: dayKey(now, zone), name: 'today' };
-  if (/\btomorrow\b/.test(text)) return { key: dayKey(now + 86400000, zone), name: 'tomorrow' };
+  const today = dayKey(now, zone);
+  if (/\btoday\b|\btonight\b/.test(text)) return { key: today, name: 'today' };
+  if (/\btomorrow\b/.test(text)) return { key: addDays(today, 1), name: 'tomorrow' };
   const named = WEEKDAYS.find((d) => new RegExp(`\\b${d}\\b`).test(text));
   if (!named) return null;
-  const todayName = new Intl.DateTimeFormat('en-US', { timeZone: zone, weekday: 'long' }).format(new Date(now)).toLowerCase();
-  const ahead = (WEEKDAYS.indexOf(named) - WEEKDAYS.indexOf(todayName) + 7) % 7;
-  return { key: dayKey(now + ahead * 86400000, zone), name: named[0].toUpperCase() + named.slice(1) };
+  const [y, m, d] = today.split('-').map(Number);
+  const todayIndex = new Date(Date.UTC(y, m - 1, d)).getUTCDay();
+  const ahead = (WEEKDAYS.indexOf(named) - todayIndex + 7) % 7;
+  return { key: addDays(today, ahead), name: named[0].toUpperCase() + named.slice(1) };
 }
 
 export async function timerChatTurn(storage, message, { timeZone = 'UTC', now = Date.now(), wake = null, key = TIMERS_KEY } = {}) {
