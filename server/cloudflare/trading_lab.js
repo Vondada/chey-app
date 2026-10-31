@@ -125,8 +125,11 @@ export function parseYahooDaily(json) {
   const r = json?.chart?.result?.[0];
   const q = r?.indicators?.quote?.[0];
   if (!r || !Array.isArray(r.timestamp) || !q) return [];
-  return r.timestamp.map((ts, i) => ({ t: new Date(ts * 1000).toISOString().slice(0, 10), o: +q.open?.[i], h: +q.high?.[i], l: +q.low?.[i], c: +q.close?.[i], v: +(q.volume?.[i] || 0) }))
-    .filter((k) => [k.o, k.h, k.l, k.c].every((x) => Number.isFinite(x) && x > 0));
+  // Yahoo leaves a gap as null. A real price can be zero or negative (oil futures, April 2020), so only a missing or
+  // non-numeric value drops the session (Codex review on PR #814).
+  const num = (v) => (v === null || v === undefined || v === '' ? NaN : Number(v));
+  return r.timestamp.map((ts, i) => ({ t: new Date(ts * 1000).toISOString().slice(0, 10), o: num(q.open?.[i]), h: num(q.high?.[i]), l: num(q.low?.[i]), c: num(q.close?.[i]), v: Number(q.volume?.[i] || 0) }))
+    .filter((k) => [k.o, k.h, k.l, k.c].every(Number.isFinite));
 }
 
 async function yahooDaily(sym, fetcher) {

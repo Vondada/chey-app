@@ -316,6 +316,12 @@ test('candles come from Coinbase (crypto) and Yahoo (stocks) first; the old sour
   assert.equal(yahooSymbol('^spx'), '^GSPC');
   assert.equal(yahooSymbol('nq.f'), 'NQ=F');
   assert.equal(yahooSymbol('brk.b.us'), 'BRK-B');
+  // Codex on #814: a negative futures price is real (oil, April 2020); only a null gap is dropped.
+  const { parseYahooDaily } = await import('./trading_lab.js');
+  const oil = parseYahooDaily({ chart: { result: [{ timestamp: [1587340800, 1587427200, 1587513600], indicators: { quote: [{ open: [18, null, 11], high: [18.5, null, 14], low: [-40.32, null, 6.5], close: [-37.63, null, 13.78], volume: [1, null, 1] }] } }] } });
+  assert.equal(oil.length, 2);
+  assert.equal(oil[0].c, -37.63);
+  assert.equal(oil[0].l, -40.32);
   // Every source down: the reply says which ones and why.
   const down = await loadCandles('QQQZUSDT', { fetcher: async () => new Response('x', { status: 503 }) });
   assert.match(down.error, /^The free data source did not answer \(Coinbase HTTP 503; Binance HTTP 503\)/);
