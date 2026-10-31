@@ -103,7 +103,7 @@ test('paper trading closes, learns and journals without real orders', async () =
   const c = series(1200);
   const rows = c.map((k) => [Date.parse(k.t), k.o, k.h, k.l, k.c, 1]);
   const fetcher = async (url) => {
-    assert.match(String(url), /api\.binance\.com|stooq\.com/);
+    assert.match(String(url), /api\.exchange\.coinbase\.com|query1\.finance\.yahoo\.com|api\.binance\.com|stooq\.com/);
     if (String(url).includes('binance')) return new Response(JSON.stringify(rows), { status: 200 });
     return new Response('Date,Open,High,Low,Close,Volume\n' + c.map((k) => [k.t, k.o, k.h, k.l, k.c, 1].join(',')).join('\n'), { status: 200 });
   };
@@ -286,4 +286,43 @@ test('a question about backtests, or a request to fake one, is not a backtest co
   assert.equal(tradingIntent('Can you analyze the msft chart?').symbol, 'msft');
   assert.equal(tradingIntent('Backtest aapl using RSI entries').symbol, 'aapl');
   assert.equal(tradingIntent('Analyze spy chart with RSI').symbol, 'spy');
+});
+
+// Certification runs 41222062110 and 41233462389: every backtest answered "The free data source did not answer";
+// Binance refuses US-hosted servers (HTTP 451). Crypto now reads Coinbase Exchange and stocks Yahoo Finance first.
+test('candles come from Coinbase (crypto) and Yahoo (stocks) first; the old sources are fallbacks', async () => {
+  const { loadCandles, yahooSymbol } = await import('./trading_lab.js');
+  const seen = [];
+  const day = 86400;
+  const now = Math.floor(Date.now() / 1000);
+  const coinbaseRows = Array.from({ length: 5 }, (_, i) => [(Math.floor(now / day) - 10 + i) * day, 90, 110, 95, 100 + i, 3]);
+  const yahooJson = { chart: { result: [{ timestamp: [1700000000, 1700086400], indicators: { quote: [{ open: [1, 2], high: [2, 3], low: [0.5, 1], close: [1.5, 2.5], volume: [10, 10] }] } }] } };
+  const fetcher = async (url) => {
+    seen.push(String(url));
+    if (/binance/.test(url)) return new Response('restricted', { status: 451 });
+    if (/coinbase/.test(url)) return new Response(JSON.stringify(seen.filter((u) => /coinbase/.test(u)).length === 1 ? coinbaseRows : []));
+    if (/yahoo/.test(url)) return new Response(JSON.stringify(yahooJson));
+    return new Response('nope', { status: 404 });
+  };
+  const btc = await loadCandles('dogecoin', { fetcher });
+  assert.equal(btc.data, 'Coinbase Exchange public candles (live)');
+  assert.ok(seen[0].includes('/products/DOGE-USD/candles?granularity=86400'));
+  assert.equal(btc.candles.length, 5);
+  assert.equal(btc.candles[0].c, 100);
+  assert.ok(!seen.some((u) => /binance/.test(u)), 'Binance is not asked when Coinbase answers');
+  const aapl = await loadCandles('msft', { fetcher });
+  assert.equal(aapl.data, 'Yahoo Finance daily history (delayed)');
+  assert.equal(aapl.candles.length, 2);
+  assert.equal(yahooSymbol('^spx'), '^GSPC');
+  assert.equal(yahooSymbol('nq.f'), 'NQ=F');
+  assert.equal(yahooSymbol('brk.b.us'), 'BRK-B');
+  // Codex on #814: a negative futures price is real (oil, April 2020); only a null gap is dropped.
+  const { parseYahooDaily } = await import('./trading_lab.js');
+  const oil = parseYahooDaily({ chart: { result: [{ timestamp: [1587340800, 1587427200, 1587513600], indicators: { quote: [{ open: [18, null, 11], high: [18.5, null, 14], low: [-40.32, null, 6.5], close: [-37.63, null, 13.78], volume: [1, null, 1] }] } }] } });
+  assert.equal(oil.length, 2);
+  assert.equal(oil[0].c, -37.63);
+  assert.equal(oil[0].l, -40.32);
+  // Every source down: the reply says which ones and why.
+  const down = await loadCandles('QQQZUSDT', { fetcher: async () => new Response('x', { status: 503 }) });
+  assert.match(down.error, /^The free data source did not answer \(Coinbase HTTP 503; Binance HTTP 503\)/);
 });

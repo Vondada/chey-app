@@ -139,7 +139,8 @@ test('loader: one failed source is reported and the others still load', async ()
   assert.match(errors['1m'], /503/);
   assert.equal(bars['5m'].length, 5);
   assert.equal(bars['1h'].length, 5);
-  assert.equal(bars['1d'].length, 2);
+  // Daily NQ comes from Yahoo Finance first (trading_lab.js loadCandles); Stooq is the fallback.
+  assert.equal(bars['1d'].length, 5);
   assert.ok(seen.every((u) => !/15s/.test(u)), 'no request is made for 15-second bars');
 });
 

@@ -85,24 +85,80 @@ export function parseBinance(rows) {
   })).filter((k) => [k.o, k.h, k.l, k.c].every(Number.isFinite));
 }
 
+// The free sources this Worker can reach. Binance's public API refuses US-hosted servers (HTTP 451) and Stooq's CSV
+// download stopped answering: certification runs 41222062110 and 41233462389 got "The free data source did not
+// answer" for every backtest, while the crypto desk (Coinbase Exchange) and the MNQ feed and historical studies (Yahoo
+// Finance chart) answered from the same Worker. Those two are tried first; the old sources stay as fallbacks.
+const COINBASE_GRANULARITY = { '1d': 86400, '1h': 3600, '15m': 900 };
+const COINBASE_PAGES = 4; // 300 candles a page: about three years of daily candles
+
+async function coinbaseCandles(sym, interval, fetcher, now = Date.now()) {
+  const g = COINBASE_GRANULARITY[interval];
+  if (!g) throw new Error(`Coinbase has no ${interval} candles`);
+  const product = `${sym.symbol.replace(/USDT$/, '')}-USD`;
+  const byTime = new Map();
+  let end = Math.floor(now / 1000);
+  for (let page = 0; page < COINBASE_PAGES; page += 1) {
+    const start = end - 300 * g;
+    const rows = JSON.parse(await getText(`https://api.exchange.coinbase.com/products/${product}/candles?granularity=${g}&start=${new Date(start * 1000).toISOString()}&end=${new Date(end * 1000).toISOString()}`, fetcher));
+    if (!Array.isArray(rows) || !rows.length) break;
+    for (const r of rows) if (Array.isArray(r) && r.length >= 6) byTime.set(Number(r[0]), { t: new Date(Number(r[0]) * 1000).toISOString(), o: +r[3], h: +r[2], l: +r[1], c: +r[4], v: +r[5] });
+    end = start;
+  }
+  // Closed candles only, oldest first.
+  return [...byTime.entries()].filter(([t]) => (t + g) * 1000 <= now).sort((a, b) => a[0] - b[0]).map(([, k]) => k)
+    .filter((k) => [k.o, k.h, k.l, k.c].every(Number.isFinite));
+}
+
+// Stooq-style symbols to Yahoo Finance chart symbols.
+const YAHOO_INDEX = { '^spx': '^GSPC', '^ndq': '^IXIC', '^dji': '^DJI', xauusd: 'GC=F', xagusd: 'SI=F' };
+export function yahooSymbol(symbol) {
+  const s = String(symbol || '').toLowerCase();
+  if (YAHOO_INDEX[s]) return YAHOO_INDEX[s];
+  if (/\.us$/.test(s)) return s.replace(/\.us$/, '').toUpperCase().replace(/\./g, '-');
+  if (/\.f$/.test(s)) return `${s.replace(/\.f$/, '').toUpperCase()}=F`;
+  if (/^[a-z]{6}$/.test(s)) return `${s.toUpperCase()}=X`;
+  return s.toUpperCase();
+}
+
+export function parseYahooDaily(json) {
+  const r = json?.chart?.result?.[0];
+  const q = r?.indicators?.quote?.[0];
+  if (!r || !Array.isArray(r.timestamp) || !q) return [];
+  // Yahoo leaves a gap as null. A real price can be zero or negative (oil futures, April 2020), so only a missing or
+  // non-numeric value drops the session (Codex review on PR #814).
+  const num = (v) => (v === null || v === undefined || v === '' ? NaN : Number(v));
+  return r.timestamp.map((ts, i) => ({ t: new Date(ts * 1000).toISOString().slice(0, 10), o: num(q.open?.[i]), h: num(q.high?.[i]), l: num(q.low?.[i]), c: num(q.close?.[i]), v: Number(q.volume?.[i] || 0) }))
+    .filter((k) => [k.o, k.h, k.l, k.c].every(Number.isFinite));
+}
+
+async function yahooDaily(sym, fetcher) {
+  return parseYahooDaily(JSON.parse(await getText(`https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(yahooSymbol(sym.symbol))}?interval=1d&range=max`, fetcher)));
+}
+
 /// Candles for a symbol. interval: '1d' (default), '4h', '1h', '15m' (crypto only for intraday).
 export async function loadCandles(input, { interval = '1d', fetcher = fetch } = {}) {
   const sym = typeof input === 'string' ? resolveSymbol(input) : input;
   if (!sym) return { error: 'I did not recognize that symbol.' };
   const ttl = interval === '1d' ? 30 * 60_000 : 60_000;
   return cached(`${sym.source}:${sym.symbol}:${interval}`, ttl, async () => {
-    try {
-      if (sym.source === 'binance') {
-        const text = await getText(`https://api.binance.com/api/v3/klines?symbol=${sym.symbol}&interval=${interval}&limit=1000`, fetcher);
-        const candles = parseBinance(JSON.parse(text));
-        return candles.length ? { ...sym, interval, candles, live: true, data: 'Binance public candles (live)' } : { ...sym, error: 'No candles returned.' };
-      }
+    const failures = [];
+    const attempt = async (name, load) => {
+      try { return await load(); } catch (e) { failures.push(`${name} ${String(e?.message || e).slice(0, 40)}`); return []; }
+    };
+    if (sym.source === 'binance') {
+      let candles = await attempt('Coinbase', () => coinbaseCandles(sym, interval, fetcher));
+      if (candles.length) return { ...sym, interval, candles, live: true, data: 'Coinbase Exchange public candles (live)' };
+      candles = await attempt('Binance', async () => parseBinance(JSON.parse(await getText(`https://api.binance.com/api/v3/klines?symbol=${sym.symbol}&interval=${interval}&limit=1000`, fetcher))));
+      if (candles.length) return { ...sym, interval, candles, live: true, data: 'Binance public candles (live)' };
+    } else {
       if (interval !== '1d') return { ...sym, error: 'Intraday stock data needs a market data key; daily history is free.' };
-      const candles = parseStooq(await getText(`https://stooq.com/q/d/l/?s=${encodeURIComponent(sym.symbol)}&i=d`, fetcher));
-      return candles.length ? { ...sym, interval, candles, live: false, data: 'Stooq daily history (delayed)' } : { ...sym, error: 'No history returned for that symbol.' };
-    } catch (_) {
-      return { ...sym, error: 'The free data source did not answer. Try again in a minute.' };
+      let candles = await attempt('Yahoo', () => yahooDaily(sym, fetcher));
+      if (candles.length) return { ...sym, interval, candles, live: false, data: 'Yahoo Finance daily history (delayed)' };
+      candles = await attempt('Stooq', async () => parseStooq(await getText(`https://stooq.com/q/d/l/?s=${encodeURIComponent(sym.symbol)}&i=d`, fetcher)));
+      if (candles.length) return { ...sym, interval, candles, live: false, data: 'Stooq daily history (delayed)' };
     }
+    return { ...sym, error: `The free data source did not answer${failures.length ? ` (${failures.join('; ')})` : ''}. Try again in a minute.` };
   });
 }
 
