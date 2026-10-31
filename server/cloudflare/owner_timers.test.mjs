@@ -107,3 +107,29 @@ test('probe timers live under their own key: the owner\'s list and receipt log a
   assert.equal(await takeTimerAnnouncement(storage, 'UTC'), '', 'the owner hears nothing');
   assert.match(await takeTimerAnnouncement(storage, 'UTC', PROBE_TIMERS_KEY), /went off/);
 });
+
+// Certification run 41233462389 (mr-15): "What reminder did I ask you to set for Thursday?" listed an unrelated timer.
+test('a list question that names a day answers for that day only', async () => {
+  const { timerChatTurn, setTimer } = await import('./owner_timers.js');
+  const saved = new Map();
+  const storage = { get: async (k) => structuredClone(saved.get(k)), put: async (k, v) => { saved.set(k, structuredClone(v)); } };
+  const now = Date.parse('2026-10-31T12:00:00Z'); // a Saturday
+  await setTimer(storage, { ms: 20 * 60_000, label: 'tea', now });
+  const thursday = await timerChatTurn(storage, 'What reminder did I ask you to set for Thursday?', { now, timeZone: 'UTC' });
+  assert.match(thursday.text, /^I have no timer or reminder recorded for Thursday, sir\. One other is on record/);
+  assert.doesNotMatch(thursday.text, /tea/);
+  const today = await timerChatTurn(storage, 'What timers do I have today?', { now, timeZone: 'UTC' });
+  assert.match(today.text, /^Running, sir: .*tea/i);
+  const all = await timerChatTurn(storage, 'What timers do I have?', { now, timeZone: 'UTC' });
+  assert.match(all.text, /tea/);
+});
+
+test('"yesterday" is not "today" for a day-scoped timer question', async () => {
+  const { timerChatTurn, setTimer } = await import('./owner_timers.js');
+  const saved = new Map();
+  const storage = { get: async (k) => structuredClone(saved.get(k)), put: async (k, v) => { saved.set(k, structuredClone(v)); } };
+  const now = Date.parse('2026-10-31T12:00:00Z');
+  await setTimer(storage, { ms: 20 * 60_000, label: 'tea', now });
+  const out = await timerChatTurn(storage, 'What reminders did I have yesterday?', { now, timeZone: 'UTC' });
+  assert.match(out.text, /tea/, 'no day filter applied for "yesterday"');
+});
