@@ -19,7 +19,10 @@ test('the stage order is exactly the order worker.js ran before the pipeline exi
     'device_actions',
     'citations', 'grounding', 'asset_truth', 'capability_gap',
     'attribution', 'agent_task', 'answer_receipt', 'wake_text', 'pretend_tool_call', 'execution_claims', 'auditor',
-    'engine_claims', 'vision_note',
+    'engine_claims',
+    // added 2026-10-31: the owner's voice rule in code, after the claim checks (social_corrections.js ownVoiceReply)
+    'own_voice',
+    'vision_note',
     // added after the historical order: numeric arithmetic on the final text (numeric_truth.js), so nothing strips it
     'numeric_check',
   ]);
