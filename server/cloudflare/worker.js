@@ -53,6 +53,7 @@ import { mediaHoldAnswer, mediaHoldIntent, mediaKeepFor, mediaLatestReply, media
 import { capabilityGap, capabilityReply } from './capability_gap.js';
 import { INTERNAL_SOURCE, LAST_RENDER_KEY, internalSceneIntent, internalSceneTurn } from './internal_studio.js';
 import { CHAT_IMAGE_SOURCE, chatImageInline, chatImageMedia, chatImageReply, makeChatImages, pretendToolCall, requestedImageCount } from './chat_images.js';
+import { realPersonHarmIntent, REAL_PERSON_REFUSAL } from './real_person_images.js';
 import { memorySearchFollowup, memorySearchIntent, memorySearchReply, memorySearchTerms } from './memory_search.js';
 import { probeVideoEngine, videoEngineStatus, videoStatusSpeech } from './video_engine.js';
 import { githubVideoDiagnosis, mp4Facts, startGithubVideo } from './github_video_renderer.js';
@@ -13644,6 +13645,10 @@ export class CheState extends DurableObject {
         // Internal-only mode (owner policy): a picture the internal renderer cannot make is not sent to an external engine.
         if (requestedCapabilities.includes('image_generation') && ownerDevice && !body.attachment && data.capability_policy?.internal_only === true) {
           return ndjsonReply('Internal-only mode is on, sir, so I did not send this to an image engine. My own renderer can make beach scenes (day, sunset, night or stormy) right now; it cannot make this subject yet. Nothing was made.', { source: INTERNAL_SOURCE, ok: false, model_calls: 0, execution: 'internal', blocked_external: true });
+        }
+        // A real person shown compromised or incriminated is never drawn or filmed (real_person_images.js).
+        if ((requestedCapabilities.includes('image_generation') || requestedCapabilities.includes('video_generation')) && realPersonHarmIntent(message)) {
+          return ndjsonReply(REAL_PERSON_REFUSAL, { source: CHAT_IMAGE_SOURCE, ok: false, model_calls: 0, refused: 'real_person_harm' });
         }
         // Pictures asked for (Test 5, 2026-10-21): the real pictures are made by the media engine, each one saved, and the
         // reply is built from those results. The model is not asked here, so it cannot describe a picture that was not made.
