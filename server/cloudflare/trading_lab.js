@@ -92,7 +92,16 @@ export function parseBinance(rows) {
 const COINBASE_GRANULARITY = { '1d': 86400, '1h': 3600, '15m': 900 };
 const COINBASE_PAGES = 4; // 300 candles a page: about three years of daily candles
 
-async function coinbaseCandles(sym, interval, fetcher, now = Date.now()) {
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+async function getTextRetry429(url, fetcher, pause) {
+  try { return await getText(url, fetcher); } catch (error) {
+    if (!/HTTP 429/.test(String(error?.message))) throw error;
+    await pause(1200);
+    return getText(url, fetcher);
+  }
+}
+
+async function coinbaseCandles(sym, interval, fetcher, now = Date.now(), pause = wait) {
   const g = COINBASE_GRANULARITY[interval];
   if (!g) throw new Error(`Coinbase has no ${interval} candles`);
   const product = `${sym.symbol.replace(/USDT$/, '')}-USD`;
@@ -100,7 +109,16 @@ async function coinbaseCandles(sym, interval, fetcher, now = Date.now()) {
   let end = Math.floor(now / 1000);
   for (let page = 0; page < COINBASE_PAGES; page += 1) {
     const start = end - 300 * g;
-    const rows = JSON.parse(await getText(`https://api.exchange.coinbase.com/products/${product}/candles?granularity=${g}&start=${new Date(start * 1000).toISOString()}&end=${new Date(end * 1000).toISOString()}`, fetcher));
+    const url = `https://api.exchange.coinbase.com/products/${product}/candles?granularity=${g}&start=${new Date(start * 1000).toISOString()}&end=${new Date(end * 1000).toISOString()}`;
+    // Coinbase limits public requests per second (certification run 41242161747: HTTP 429 on the paged history). One
+    // short pause and retry per page; a later page that still fails keeps the pages already read.
+    let rows;
+    try {
+      rows = JSON.parse(await getTextRetry429(url, fetcher, pause));
+    } catch (error) {
+      if (byTime.size) break;
+      throw error;
+    }
     if (!Array.isArray(rows) || !rows.length) break;
     for (const r of rows) if (Array.isArray(r) && r.length >= 6) byTime.set(Number(r[0]), { t: new Date(Number(r[0]) * 1000).toISOString(), o: +r[3], h: +r[2], l: +r[1], c: +r[4], v: +r[5] });
     end = start;
