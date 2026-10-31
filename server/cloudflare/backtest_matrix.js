@@ -7,7 +7,7 @@
 //   1m          Yahoo NQ=F 1-minute bars, about the last 7 days
 //   5m          Yahoo NQ=F 5-minute bars, about the last 60 days; 15m and 30m are built from them
 //   1h          Yahoo NQ=F 1-hour bars, about the last 730 days; 4h is built from them
-//   1d          Stooq nq.f daily history, back to the start of Stooq's series
+//   1d          NQ daily history (Yahoo Finance, else Stooq), back to the start of the series
 //   1w, 1M      built from the daily bars
 //   15s         no source: CHE has no sub-minute NQ history, so it is reported, never estimated
 // A deeper intraday history needs a paid data vendor or the owner's broker data feed.
@@ -39,9 +39,9 @@ export const TIMEFRAMES = Object.freeze([
   { id: '30m', label: '30 minutes', from: '5m', ms: 30 * MIN, depth: 'about 60 days' },
   { id: '1h', label: '1 hour', source: { interval: '1h', range: '730d', barMs: HOUR }, depth: 'about 2 years' },
   { id: '4h', label: '4 hours', from: '1h', ms: 4 * HOUR, depth: 'about 2 years' },
-  { id: '1d', label: '1 day', source: { stooq: 'nq.f' }, depth: 'Stooq daily history' },
-  { id: '1w', label: '1 week', from: '1d', calendar: 'week', depth: 'Stooq daily history' },
-  { id: '1M', label: '1 month', from: '1d', calendar: 'month', depth: 'Stooq daily history' },
+  { id: '1d', label: '1 day', source: { stooq: 'nq.f' }, depth: 'daily history (Yahoo Finance, else Stooq)' },
+  { id: '1w', label: '1 week', from: '1d', calendar: 'week', depth: 'daily history (Yahoo Finance, else Stooq)' },
+  { id: '1M', label: '1 month', from: '1d', calendar: 'month', depth: 'daily history (Yahoo Finance, else Stooq)' },
 ]);
 
 // New York session rules and the longest bar each can be tested on. The opening range is the first
