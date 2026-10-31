@@ -54,3 +54,14 @@ test('a first-person medical emergency gets the fixed call-for-help line, and an
   assert.equal(emergencyMoment('My chest feels tight and my left arm is numb. What should I do?'), true);
   assert.match(EMERGENCY_REPLY, /call 911/);
 });
+
+test('a stock assistant sentence is dropped and the rest of the reply stays (live social probe, PRs #735, #774, #800)', async () => {
+  const { ownVoiceReply, soundsGeneric } = await import('./social_corrections.js');
+  const live = "Sir, it sounds like you're looking for some ideas on what to do this weekend. I'd be happy to help you brainstorm some fun activities that are suitable for kids. What type of things are you and the kids into?";
+  const out = ownVoiceReply(live);
+  assert.equal(soundsGeneric(out), false);
+  assert.equal(out, "Sir, it sounds like you're looking for some ideas on what to do this weekend. What type of things are you and the kids into?");
+  assert.equal(ownVoiceReply('Great question!'), 'Great question!', 'a reply made only of stock phrasing is kept, never emptied');
+  const plain = 'Sushi again? Bold move, sir.';
+  assert.equal(ownVoiceReply(plain), plain);
+});

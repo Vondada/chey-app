@@ -9,6 +9,7 @@
 // the stage's name (hallucination_auditor.js keeps labels only, never the sentence). `earlyResponse` ends the
 // pipeline with a finished Response (the pretend-tool picture path).
 
+import { ownVoiceReply } from './social_corrections.js';
 import { adRequest, adStatusLines, assetTruthReply } from './asset_truth.js';
 import { guardClaimedDeviceActions, guardModelOnlyCompletions, guardPretendedOrOverclaimed } from './device_action_claims.js';
 import { replyRepeatsAgentTask } from './agent_task_guard.js';
@@ -205,6 +206,10 @@ export const TRUTH_STAGES = Object.freeze([
   // A model cannot see its own routing: "the engine was CHE itself" becomes this reply's real engine (soul.js).
   { name: 'engine_claims', run(reply, ctx) {
     return { text: ctx.answer?.served_by ? guardSoulClaims(guardEngineClaims(reply, ctx.answer.served_by).text, ctx.soulProfile).text : reply, removed: [] };
+  } },
+  // CHE's own voice: a sentence built on a stock assistant phrase is dropped (social_corrections.js ownVoiceReply).
+  { name: 'own_voice', run(reply) {
+    return { text: ownVoiceReply(reply), removed: [] };
   } },
   // The owner hears which vision engine saw the attachment, or that none did (owner, 2026-10-20).
   { name: 'vision_note', run(reply, ctx) {
