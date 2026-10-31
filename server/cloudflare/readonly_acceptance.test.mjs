@@ -169,7 +169,8 @@ test('MNQ: the analysis is read from the stored feed and journal; nothing is ord
     assert.equal(out.meta.source, 'che_trading_live', message);
     assert.equal(out.modelCalls, 0);
     assert.match(out.reply, /^I placed no order, sir\./);
-    assert.match(out.reply, /Data: DELAYED MNQ=F \(MNQZ6\) from Yahoo Finance chart \(public\), last bar about 10 minutes old/);
+    // The newest stored bar is from 2026-10-16: the stored 600 s latency is not its age now (PR #805 review).
+    assert.match(out.reply, /Last recorded data status: DELAYED MNQ=F \(MNQZ6\) from Yahoo Finance chart \(public\), but the newest bar closed at Oct 16, 9:20 AM Central, about \d+ (?:hours|days) ago, so it is not current now/);
     assert.match(out.reply, /Last 5-minute bar: close 102\.00/);
     assert.match(out.reply, /Structure over the last 4 bars: rising, with higher highs and higher lows, between 98\.00 and 103\.00/);
     assert.match(out.reply, /VWAP since this session's first stored bar at .*: 100\.60, from 4 bars/);

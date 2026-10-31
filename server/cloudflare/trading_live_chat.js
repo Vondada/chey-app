@@ -122,11 +122,19 @@ const when = (iso) => {
   return new Intl.DateTimeFormat('en-US', { timeZone: 'America/Chicago', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }).format(new Date(iso)) + ' Central';
 };
 
-function feedLine(d) {
+// The feed answer is read against the clock now: a stored status is only the last recorded one. The stored
+// latency_s is how late a bar was when it was read, not how old it is now (Codex, PR #805).
+const ago = (ms) => (ms < 90 * 60000 ? `${Math.round(ms / 60000)} minutes` : ms < 48 * 3600000 ? `${Math.round(ms / 3600000)} hours` : `${Math.round(ms / 86400000)} days`);
+export function feedLine(d, now = Date.now()) {
   const f = d.feed;
   if (!f) return `No market data has been read yet. ${d.feed_blocker}`;
-  const lag = f.latency_s == null ? '' : `, last bar about ${Math.max(0, Math.round(f.latency_s / 60))} minutes old`;
-  return `Data: ${f.status} ${f.provider_symbol} (${f.contract || 'front month'}) from ${f.provider}${lag}. ${f.status === 'LIVE' ? '' : 'Delayed data is research only, not execution evidence. '}Market: ${d.session.state}.`;
+  const src = `${f.provider_symbol} (${f.contract || 'front month'}) from ${f.provider}`;
+  const research = f.status === 'LIVE' ? '' : 'Delayed data is research only, not execution evidence. ';
+  const barStart = Date.parse(f.last_bar_time || d.bars?.[d.bars.length - 1]?.t || '');
+  if (!Number.isFinite(barStart)) return `Last recorded data status: ${f.status} ${src}; the newest bar time was not recorded, so I can't say it is current. ${research}Market: ${d.session.state}.`;
+  const age = Math.max(0, now - barStart - 300000); // a 5-minute bar is complete five minutes after it starts
+  if (age <= 10 * 60000) return `Data: ${f.status} ${src}, last bar closed about ${Math.round(age / 60000)} minutes ago. ${research}Market: ${d.session.state}.`;
+  return `Last recorded data status: ${f.status} ${src}, but the newest bar closed at ${when(new Date(barStart + 300000).toISOString())}, about ${ago(age)} ago, so it is not current now. ${research}Market: ${d.session.state}.`;
 }
 
 export function tradeLine(t) {
