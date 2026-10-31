@@ -43,7 +43,11 @@ import { identityQuestionIntent, speakIdentity } from './che_maturity.js';
 import { testBudgetReport } from './gpu_test_budget.js';
 import { modalCubeProbe, modalCubeResult } from './modal_cube_probe.js';
 import { deleteMedia, finishModalImage, generateImage, modalImageCheckTimes, pendingModalImages, reconcileModalImages, generateVideo, listMedia, readBlob, saveOwnerFile, upscaleImage, verifyMediaFile } from './media.js';
-import { withCheNote, guardEngineClaims, guardSoulClaims, lastReplyRecord, loadSoul, replyProvenanceAnswer, replyProvenanceQuestion, restoreSoul, saveSoul, soulPromptBlock, soulProvenance, soulView, stripPhoneSoul } from './soul.js';
+import { mediaVerifyProbe } from './media_verify_probe.js';
+import { parseProbeChatBody } from './probe_reply.js';
+import { withCheNote, guardEngineClaims, guardSoulClaims, lastReplyRecord, loadSoul, replyProvenanceAnswer, replyProvenanceQuestion, restoreSoul, saveSoul, soulPromptBlock, soulProvenance, soulView, stripPhoneSoul, stripSoulLabels } from './soul.js';
+import { classifyFailure as classifyEngineFailure, decideFallback, requestClassFor } from './refusal_fallback.js';
+import { isStoryTurn, storyMode, storyModeBlock } from './story_mode.js';
 import { mediaHoldAnswer, mediaHoldIntent, mediaKeepFor, mediaLatestReply, mediaLibraryIntent, mediaLibraryReply, mediaLibraryReport, mediaLatestOpenRow, mediaOpenIntent, mediaOpenMissingReply, mediaOpenReply, mediaOpenRow, mediaRows, mediaSaveIntent, mediaSaveReply, mediaShowLatestIntent, mediaShowReply, verifyMediaRows, wantsLatestVideo } from './media_library.js';
 import { capabilityGap, capabilityReply } from './capability_gap.js';
 import { INTERNAL_SOURCE, LAST_RENDER_KEY, internalSceneIntent, internalSceneTurn } from './internal_studio.js';
@@ -76,7 +80,7 @@ import { answerEvidenceReceipt, cachedResearch, evidenceReferenceFollowup, factK
 import { claimMatcher, disprovenContext, downgradeDisproven, externalCorrection, guardCitations, loadDisproven, newsQuestion, newsResearch, reopenArticles, recheckExternalClaim, recordDisproven, verifiedSourcesContext } from './source_verification.js';
 import { recordReliability, reliabilityIntent, reliabilitySummary, speakReliability } from './reliability_ledger.js';
 import { reliabilityApi, reliabilityTurn } from './reliability_registry.js';
-import { answerOwnerMemoryQuestion, auditMemoryProvenance, evidenceQuestion, evidenceReferent, evidenceRequestSplit, explainEvidenceFor, findAnswerEvidence, brainRecordForProvenance, guardOwnerAttributions, guardRememberBlock, guardSpeakerAttributions, latestAnswerEvidence, loadRetractions, RECALL_OUTCOMES, readOutcome, memoryPromptContext, ownerFactCorrection, ownerMemoryQuestion, ownerWords, recordAnswerEvidence, recordRetractions, storedSpeaker, storyRequested } from './memory_provenance.js';
+import { answerOwnerMemoryQuestion, auditMemoryProvenance, evidenceQuestion, evidenceReferent, evidenceRequestSplit, explainEvidenceFor, findAnswerEvidence, brainRecordForProvenance, guardOwnerAttributions, guardRememberBlock, guardSpeakerAttributions, latestAnswerEvidence, loadRetractions, RECALL_OUTCOMES, readOutcome, memoryPromptContext, ownerFactCorrection, ownerMemoryQuestion, ownerWords, recordAnswerEvidence, recordRetractions, storedSpeaker, storyRequested, requestNamesAction } from './memory_provenance.js';
 import { condenseHistory, ownerNotificationPolicy } from './workflow_governor.js';
 import { analyze as tradeAnalyze, backtestAll, candleSpan, loadCandles, paperTick, readBook, speakAnalysis, speakBacktest, speakBook, speakLearning, nextTradingTickAt, tradingIntent, watchSymbol, STRATEGIES } from './trading_lab.js';
 import { intelligenceIntent, intelligenceReport, intelligenceView, speakIntelligence, startStudy, studyAlarm, studyStep } from './historical_intelligence.js';
@@ -157,7 +161,7 @@ import { intentFrame, understoodAs } from './intent_frame.js';
 import { replyHijacksOwnerRequest, usageIntent, usageReport, speakUsage } from './usage_tracker.js';
 import { newestStarredIntent, speakNewestStarred, autoImproveScan, analyticalRepositoryQuestion, chatOnlyResponseIntent, currentTurnActionPolicy, codeScoutIntent, fetchRepoFile, inspectReferenceRepo, inspirationUpgradeContext, listOwnerStarredRepos, readRepoSource, referenceSourceBlock, codingFollowupKind, codingHistoryIntent, codingTimingNote, hypotheticalChange, repositoryImplementationIntent, repositoryInspectionIntent, scoutCode, selectStudyRepos, speakScout, speakStarredRepos, starredRepoIntent, starredStudyList, studySelectionIntent } from './code_scout.js';
 import { agentReportTurn, codingHistoryReceipt, completedWorkProof, namedJobAnswer, otherAgentWorkAsk, otherAgentWorkReply, proofAsked } from './coding_history.js';
-import { EMERGENCY_REPLY, emergencyMoment, languageLine, readRegister, readSocial, socialProbe, socialTurn } from './social_corrections.js';
+import { EMERGENCY_REPLY, cleanLanguageReply, emergencyMoment, languageLine, readRegister, readSocial, socialProbe, socialTurn } from './social_corrections.js';
 import { codingAuditApi, codingAuditProbe, codingAuditTurn, noStoredJobReceipt } from './coding_audit.js';
 import { inventionFollowUpAllowed, inventionIntent, inventionReply, planInvention, refusalReply } from './invention_studio.js';
 import { continuingInvention, inventionVisualIntent, inventionVisualRoute, makeConcept, visualTurn } from './invention_visuals.js';
@@ -382,6 +386,9 @@ const EVIDENCE_SPLIT_REQUESTS = new WeakSet();
 // created, and they can reach /api/chat and nothing else.
 const COMMAND_REQUESTS = new WeakSet();
 const WORKFLOW_STEP_REQUESTS = new WeakSet();
+// The certification probe's chat turn (POST /api/probe/chat): created only by the owner's Durable Object after the probe
+// token is checked. It runs as the owner through this same /api/chat path, and its turn does not grow the owner's brain.
+const PROBE_CHAT_REQUESTS = new WeakSet();
 // Wrong pairing codes allowed per 15 minutes across every address.
 const PAIR_FAILURES_GLOBAL_LIMIT = 30;
 // A command's own reply saying it could not do the work: the step failed.
@@ -626,6 +633,7 @@ export function emptyReplyStream(requestId, removals = []) {
     category: 'empty_after_checks',
     retryable: true,
     request_id: requestId,
+    rules,
     message: 'I wrote a reply, sir, but my checks removed all of it, so nothing was sent. Ask me again, or ask in smaller parts.',
   }) + '\n', {
     headers: { 'Content-Type': 'application/x-ndjson; charset=utf-8', 'Cache-Control': 'no-store' },
@@ -3342,7 +3350,7 @@ function servedBy(answer, requestedModel, route, fallback) {
 // Runs the chat model. Route/model selection may change on failure;
 // original rules, requirements and history remain intact on every attempt.
 // cheProvider (e.g. native Grok chat) pins the engine when set.
-async function runChatModel(env, { model, systemPrompt, compactPrompt, turns, message, maxTokens, cheContext = null, cheProvider = '', preferFast = false }) {
+export async function runChatModel(env, { model, systemPrompt, compactPrompt, turns, message, maxTokens, cheContext = null, cheProvider = '', preferFast = false }) {
   const provider = String(cheProvider || '').trim().toLowerCase().slice(0, 40);
   const attempts = chatModelAttempts({
     preferFast,
@@ -3353,7 +3361,10 @@ async function runChatModel(env, { model, systemPrompt, compactPrompt, turns, me
     turns,
   });
   let lastError;
-  for (const attempt of attempts) {
+  // Refusal-aware fallback (refusal_fallback.js): a hard-stop request never moves to another engine, and the attempt limit holds.
+  const requestClass = requestClassFor(message);
+  const sideEffect = requestNamesAction(message);
+  for (const [attemptIndex, attempt] of attempts.entries()) {
     try {
       const baseMessages = [
         { role: 'system', content: attempt.system },
@@ -3404,7 +3415,7 @@ async function runChatModel(env, { model, systemPrompt, compactPrompt, turns, me
       }
       // Which engine actually answered, and whether it was a fallback past the first choice (Soul provenance).
       // provider/model are what the router actually used (ai_router.js sets engine/model), not only what was asked for.
-      return { ...answer, response: reply, served_by: { ...servedBy({ engine: parts[0].provider, model: parts[0].model }, attempt.model, attempt.route, attempt !== attempts[0]), parts } };
+      return { ...answer, response: stripSoulLabels(reply), served_by: { ...servedBy({ engine: parts[0].provider, model: parts[0].model }, attempt.model, attempt.route, attempt !== attempts[0]), parts } };
     } catch (error) {
       // A busy or failing engine on an earlier attempt is the truer reason than a later "too long"
       // from engines that were left (review of #349).
@@ -3412,6 +3423,11 @@ async function runChatModel(env, { model, systemPrompt, compactPrompt, turns, me
       console.error('CHE chat model attempt failed', attempt.model, attempt.system.length, error?.message);
       // Every engine is out of quota: retrying only burns more allowance.
       if (error?.quota) break;
+      const decision = decideFallback({ requestClass, failure: classifyEngineFailure({ error }), attemptsMade: attemptIndex + 1, sideEffect });
+      if (!decision.next) {
+        console.error('CHE chat fallback stopped', decision.reason);
+        break;
+      }
     }
   }
   throw lastError;
@@ -4083,6 +4099,28 @@ export class CheState extends DurableObject {
   async modalProbe() { return modalProbe(this.keyEnv || this.env, this.ctx.storage); }
 
   async modalBudgetReport() { return testBudgetReport(this.ctx.storage); }
+
+  // Read-only Gallery check for the owner probe (media_verify_probe.js).
+  async mediaVerify(body = {}) { return mediaVerifyProbe(this.keyEnv || this.env, this.ctx.storage, body); }
+
+  // One owner chat turn for the certification harness (tools/certification). Only the probe-token route calls this.
+  // The turn goes through this object's fetch, so it is the owner's own /api/chat path; nothing is re-implemented.
+  async probeChat(body = {}) {
+    const message = typeof body?.message === 'string' ? body.message : '';
+    const history = Array.isArray(body?.history) ? body.history : [];
+    const request = new Request('https://che.internal/api/chat', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message, history, client: { platform: 'web' } }),
+    });
+    PROBE_CHAT_REQUESTS.add(request);
+    const response = await this.fetch(request);
+    // The stream's delta frames are the owner's reply; a single JSON body (a queued or refused turn) is read as its
+    // reply or detail, so the probe grades what the owner sees (probe_reply.js). An error frame (for example
+    // empty_after_checks) names its category and rules.
+    const raw = await response.text().catch(() => '');
+    const { reply, done, receipts, error } = parseProbeChatBody(raw);
+    return { ok: response.ok, status: response.status, reply, done, execution_receipts: receipts, error };
+  }
 
   async modalCubeProbe(body) { return modalCubeProbe(this.keyEnv || this.env, this.ctx.storage, body); }
 
@@ -5431,7 +5469,7 @@ export class CheState extends DurableObject {
     const isChat = request.method === 'POST' && new URL(request.url).pathname === '/api/chat';
     // The deploy's memory-truth check talks to its own isolated CHE; its test
     // conversation never grows the owner's shared vector memory.
-    const probeRun = isChat && isMemoryProbeRequest(request, this.env);
+    const probeRun = isChat && (isMemoryProbeRequest(request, this.env) || PROBE_CHAT_REQUESTS.has(request));
     const sent = isChat ? request.clone().json().catch(() => null) : null;
     const startedAt = Date.now();
     let response = await this.handleRequest(request);
@@ -6954,16 +6992,19 @@ export class CheState extends DurableObject {
       const authorization = request.headers.get('Authorization') || '';
       const match = /^Bearer ([A-Za-z0-9_-]{40,160})$/.exec(authorization);
       const workflowStep = WORKFLOW_STEP_REQUESTS.has(request) && path === '/api/chat';
-      const tokenHash = match && !workflowStep ? await digest(match[1]) : '';
-      if (!workflowStep && !Object.hasOwn(data.devices, tokenHash)) {
+      // The certification probe's turn is the owner's, with no device token of its own (see probeChat).
+      const probeChat = PROBE_CHAT_REQUESTS.has(request) && path === '/api/chat';
+      const ownerInternal = workflowStep || probeChat;
+      const tokenHash = match && !ownerInternal ? await digest(match[1]) : '';
+      if (!ownerInternal && !Object.hasOwn(data.devices, tokenHash)) {
         // Security Intelligence telemetry: refused tokens are counted (never stored), revoked devices separately.
         const revokedTry = Boolean(tokenHash && ensurePlatform(data).devices[tokenHash]?.revoked_at);
         await this.securityCount(revokedTry ? 'revoked_device' : 'unknown_token');
         return json({ detail: 'Pair your phone to CHE.' }, 401);
       }
-      const platformDevice = workflowStep ? null : touchDevice(data, tokenHash);
+      const platformDevice = ownerInternal ? null : touchDevice(data, tokenHash);
       if (platformDevice?.revoked_at) return json({ detail: 'This CHE device was revoked.' }, 401);
-      const activeTenant = workflowStep ? ensurePlatform(data).tenants[OWNER_TENANT_ID] : tenantForDevice(data, tokenHash);
+      const activeTenant = ownerInternal ? ensurePlatform(data).tenants[OWNER_TENANT_ID] : tenantForDevice(data, tokenHash);
       // Repository writes, merges, deploys and rollbacks are the owner's
       // consequential actions. Family/guest tenants (and anything they relay)
       // can never authorize them.
@@ -14003,7 +14044,10 @@ export class CheState extends DurableObject {
           ? (this.env.CHE_STRONG_MODEL || STRONG_MODEL)
           : (this.env.CHE_FAST_MODEL || FAST_MODEL);
         const explainLevel = ['simple', 'normal', 'deeper'].includes(body.explain_level) ? body.explain_level : 'simple';
-        const madeAcrossRooms = creations(data, await listMedia(this.ctx.storage)).slice(0, 12)
+        // A story or drama turn is a scene, not a report: no "made across rooms" list, atlas card or next-step offer.
+        const turnMode = storyMode(rawMessage);
+        const storyTurn = isStoryTurn(turnMode);
+        const madeAcrossRooms = storyTurn ? '' : creations(data, await listMedia(this.ctx.storage)).slice(0, 12)
           .map((item) => `${item.maker}: ${item.kind.replace('_', ' ')} \u201c${item.title}\u201d`).join('; ');
         const capabilityRegistry = runtimeCapabilityRegistry(this.env, data);
         // Claims CHE checked and found unsupported, and whether this is a news
@@ -14012,19 +14056,20 @@ export class CheState extends DurableObject {
         const newsAsk = newsQuestion(rawMessage);
         // At most two Knowledge Atlas cards a coding or trading question names (≤ 600 characters), never for
         // a question about the owner's own memories: a card is curated teaching text, not his words.
-        const atlasNote = ownerDevice && !memoryRoute ? atlasPromptContext(message) : '';
+        const atlasNote = ownerDevice && !memoryRoute && !storyTurn ? atlasPromptContext(message) : '';
         const soulProfile = await loadSoul(this.ctx.storage);
         const systemPrompt = [
               'You are CHE, Cognitive Horizon Engine. Your name is spoken and referred to as "CHE" in conversation. "Chay" is only the owner\'s spoken wake word to start a hands-free conversation with you, not how you refer to yourself. Address the owner as sir naturally.',
               'This chat turn is already active. Never ask the owner to say “Hey [assistant name]”, “Ok [assistant name]”, or any generic wake phrase. If the owner says CHE/Chay, answer as CHE instead of teaching a wake phrase.',
               soulPromptBlock(soulProfile) + (ownerDevice ? await humorTurn(this.ctx.storage, rawMessage, body.history) : ''),
+              storyModeBlock(turnMode),
               'No filler, no disclaimers, no preamble. Evidence, tool results, permissions and numbers always outrank the Soul.',
               explainLevel === 'deeper'
                 ? 'EXPLANATION LEVEL: go deeper. Give the reasoning, the details and the trade-offs, clearly organized.'
                 : explainLevel === 'normal'
                   ? 'EXPLANATION LEVEL: normal. Clear and complete, no jargon without a quick explanation.'
                   : 'EXPLANATION LEVEL: simple. Explain like the owner is five: short sentences, everyday words, one idea at a time. He can say \u201cgo deeper\u201d for more.',
-              'NEXT STEP: when you finish real work and a useful next step exists, end with ONE short offer of it. Skip it in casual chat or when nothing useful follows, never repeat the offer from your last reply, and never list several options unless asked.',
+              storyTurn ? '' : 'NEXT STEP: when you finish real work and a useful next step exists, end with ONE short offer of it. Skip it in casual chat or when nothing useful follows, never repeat the offer from your last reply, and never list several options unless asked.',
               madeAcrossRooms
                 ? `ONE CONNECTED WORLD: things made across CHE\u2019s rooms (newest first): ${madeAcrossRooms}. When the owner refers to something made in any room (\u201cthe song Mira made\u201d), use this list; if it is not here, say so honestly.`
                 : '',
@@ -14422,6 +14467,10 @@ export class CheState extends DurableObject {
         });
         if (verified.earlyResponse) return verified.earlyResponse;
         reply = verified.text;
+        // A clean-language turn never carries a swear word, even one the model repeated from earlier turns (social_corrections.js).
+        const beforeClean = reply;
+        if (social?.clean) reply = cleanLanguageReply(reply);
+        const cleanSwapped = reply !== beforeClean;
         if (!String(reply || '').trim()) return emptyReplyStream(executionRequestId, verified.removals);
         const { steps, answerReceipt, sourced } = verified;
         // This answer's own receipt, keyed to its text, for "how do you know that?".
@@ -14437,6 +14486,8 @@ export class CheState extends DurableObject {
             engine: model,
             request_id: executionRequestId,
             execution_receipts: skillResults.map((r) => r.execution_receipt),
+            // The model repeated a swear word on a clean turn; the swap above replaced it. The social probe fails on this.
+            clean_swapped: cleanSwapped,
             // What the source check did: articles opened by research, pages
             // backing the reply, sentences removed as unverifiable.
             news_articles: Array.isArray(research?.articles) ? research.articles.filter((a) => a.ok).length : 0,
@@ -16252,6 +16303,13 @@ async function routeRequest(request, env, ctx) {
   // prints what the records hold (paper only). Exists only for the per-deploy random token.
   // The deploy's Modal check: the authenticated /health with the owner's real MODAL_TOKEN (modal_gpu.js modalProbe).
   if (path === '/api/probe/modal' && request.method === 'POST') return voiceProbeAuthorized(request, env) ? json(await env.CHE_STATE.getByName('owner').modalProbe()) : json({ detail: 'Not found.' }, 404);
+  // The certification harness's owner chat turn (tools/certification): one /api/chat turn as the owner, returning the
+  // reply, the done frame's fields and the execution receipts. Behind the probe token; never in guestRouteAllowed.
+  if (path === '/api/probe/chat' && request.method === 'POST') {
+    if (!voiceProbeAuthorized(request, env)) return json({ detail: 'Not found.' }, 404);
+    const body = await request.json().catch(() => ({}));
+    return json(await env.CHE_STATE.getByName('owner').probeChat(body));
+  }
   // The GPU test budget ledger (read-only) and the one authorised blue cube render, both behind the deploy's probe token.
   // The render is refused unless it carries the exact confirm phrase and the ledger allows it (modal_cube_probe.js).
   if (path === '/api/probe/modal/budget' && request.method === 'GET') return voiceProbeAuthorized(request, env) ? json(await env.CHE_STATE.getByName('owner').modalBudgetReport()) : json({ detail: 'Not found.' }, 404);
@@ -16260,6 +16318,12 @@ async function routeRequest(request, env, ctx) {
     const body = await request.json().catch(() => ({}));
     const out = await env.CHE_STATE.getByName('owner').modalCubeProbe(body);
     return json(out, out.sent === false ? 409 : 200);
+  }
+  if (path === '/api/probe/media/verify' && request.method === 'POST') {
+    if (!voiceProbeAuthorized(request, env)) return json({ detail: 'Not found.' }, 404);
+    const body = await request.json().catch(() => ({}));
+    const { status, ...rest } = await env.CHE_STATE.getByName('owner').mediaVerify(body);
+    return json(rest, status);
   }
   if (path === '/api/probe/modal/cube/result' && request.method === 'POST') {
     if (!voiceProbeAuthorized(request, env)) return json({ detail: 'Not found.' }, 404);

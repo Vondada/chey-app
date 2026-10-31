@@ -323,3 +323,14 @@ test('a lesson check that depends on Wikipedia is pending during an outage, and 
   const reply = [{ name: 'status', pass: false, route: 'che_study' }];
   assert.equal(judgeStudySteps(reply, lastError)[0].status, 'fail', 'a CHE reply without the external tag stays a fault');
 });
+
+test('lessons are read from every Workers AI reply shape, and a cut-off reply keeps its complete lessons', async () => {
+  const { parseLessons } = await import('./comedy_study.js');
+  const one = { technique: 'Callbacks', principle: 'Bring back an earlier moment.', use_when: 'shared history', stop_when: 'it is stale', seen_in: ['Pilot'] };
+  assert.equal(parseLessons({ response: JSON.stringify({ lessons: [one] }) }).length, 1);
+  assert.equal(parseLessons({ response: { lessons: [one] } }).length, 1);
+  assert.equal(parseLessons({ choices: [{ message: { content: '```json\n' + JSON.stringify({ lessons: [one] }) + '\n```' } }] }).length, 1);
+  const cut = `{"lessons":[${JSON.stringify(one)},${JSON.stringify({ ...one, technique: 'Timing' })},{"technique":"Sarcasm","principle":"Say the opp`;
+  assert.deepEqual(parseLessons({ response: cut }).map((l) => l.technique), ['Callbacks', 'Timing']);
+  assert.deepEqual(parseLessons({ response: 'I cannot help with that.' }), []);
+});

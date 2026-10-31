@@ -113,6 +113,13 @@ class Behaviour(unittest.TestCase):
         src = open(os.path.join(HERE, "modal", "che_modal_app.py"), encoding="utf8").read()
         self.assertRegex(src, r"txt2img_image, gpu=GPU, timeout=600, scaledown_window=TXT2IMG_SCALEDOWN_S")
 
+    def test_request_annotations_are_not_postponed(self):
+        # With `from __future__ import annotations`, FastAPI cannot find `Request` (imported inside api()) and every
+        # endpoint answers 422 "query.request: Field required". Blue cube run 40936630004 showed exactly that.
+        src = open(os.path.join(HERE, "modal", "che_modal_app.py"), encoding="utf8").read()
+        self.assertNotIn("from __future__ import annotations", src)
+        self.assertIn("async def txt2img_start(request: Request):", src)
+
 
 class Auth(unittest.TestCase):
     def test_bearer_must_match_a_real_token(self):

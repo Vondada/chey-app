@@ -1,0 +1,140 @@
+# CHE 600-question certification, LIVE against the deployed Worker's real chat runtime.
+#
+# Every question goes through POST /api/probe/chat on the deployed Worker (the owner's own chat path: real model
+# rotation, personality, memory and tools). No substitute model, no mock. Every real response is saved as an
+# artifact with its engine, route, latency and fallback, and graded by tools/certification/run_certification.mjs.
+#
+# Read-only for the owner's data: probe turns do not write brain-growth or perf-watch records (see worker.js).
+# Spending: chat turns use CHE's existing model rotation. Each run records the Worker's own AI usage before and after.
+#
+# Manual only (workflow_dispatch). Set `category` or `limit` to run part of the set.
+name: CHE certification (live)
+
+on:
+  workflow_dispatch:
+    inputs:
+      category:
+        description: Only this category (blank = all 600)
+        type: string
+        default: ""
+      limit:
+        description: First N questions only (blank = all)
+        type: string
+        default: ""
+      resume_run_id:
+        description: Earlier certification run to resume from (its graded answers are kept; only the rest run)
+        type: string
+        default: ""
+      rerun_classes:
+        description: With resume_run_id, ask again these classes too (comma list, for example incorrect,unverified,no_answer)
+        type: string
+        default: ""
+      questions_file:
+        description: Another question set in the repo (blank = the 600-question baseline). For unseen regression sets, for example tools/certification/unseen_tool_questions.json
+        type: string
+        default: ""
+
+# Same group as the Worker deploy (che-worker-deploy.yml). Both set CHE_VOICE_PROBE_TOKEN, so a deploy that starts while a
+# certification runs rotates the token mid-run: the probe then answers 404 and the rows are blocked (run 41112199301:
+# 18 blocked, 15 infrastructure, 550 not run). One group makes them run one at a time.
+concurrency:
+  group: che-worker-deploy
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  certify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 340
+    env:
+      CHE_WORKER: https://chey-app.henryjavoni.workers.dev
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: c49b395e8f1138b5fae36ab88222542c
+      CATEGORY: ${{ inputs.category }}
+      QUESTIONS_FILE: ${{ inputs.questions_file }}
+      LIMIT: ${{ inputs.limit }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: "1. The probe route is closed without a token (must answer 404)"
+        run: |
+          code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 60 -X POST "$CHE_WORKER/api/probe/chat" -H 'Content-Type: application/json' -d '{"message":"ping"}')
+          echo "Public probe route without a token: HTTP $code"
+          [ "$code" = "404" ] || { echo "::error::probe route is not closed without a token (HTTP $code)"; exit 1; }
+
+      - name: Probe token for the Worker's probe routes (masked, never printed)
+        working-directory: server/cloudflare
+        run: |
+          token="$(openssl rand -hex 32)"
+          echo "::add-mask::$token"
+          printf '%s' "$token" | npx --yes wrangler@4 secret put CHE_VOICE_PROBE_TOKEN
+          echo "CHE_PROBE_TOKEN=$token" >> "$GITHUB_ENV"
+          sleep 20
+
+      - name: Blue cube asset in the Gallery (read-only check, no render)
+        env:
+          ASSET_ID: "32034371-0221-44f2-8db7-9955b7f9c9c6"
+        run: |
+          code=$(curl -s -o asset.json -w '%{http_code}' --max-time 90 -X POST "$CHE_WORKER/api/probe/media/verify" -H "Authorization: Bearer $CHE_PROBE_TOKEN" -H 'Content-Type: application/json' -d "{\"id\":\"$ASSET_ID\"}")
+          echo "Gallery verify for the blue cube: HTTP $code"
+          cat asset.json; echo
+          [ "$code" = "200" ] || echo "::warning::blue cube asset did not verify (HTTP $code)"
+
+      - name: Earlier results to resume from (only when resume_run_id is given)
+        if: inputs.resume_run_id != ''
+        uses: actions/download-artifact@v4
+        with:
+          name: certification-results
+          run-id: ${{ inputs.resume_run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: earlier
+
+      - name: 2. Run the 600 questions against the live chat route
+        env:
+          CHE_CHAT_URL: https://chey-app.henryjavoni.workers.dev/api/probe/chat
+          RESUME_RUN_ID: ${{ inputs.resume_run_id }}
+          RERUN_CLASSES: ${{ inputs.rerun_classes }}
+        run: |
+          args=(certification-results.json)
+          [ -n "$CATEGORY" ] && args+=("--category=$CATEGORY")
+          [ -n "$LIMIT" ] && args+=("--limit=$LIMIT")
+          [ -n "$RESUME_RUN_ID" ] && args+=("--resume=earlier/certification-results.json")
+          [ -n "$RERUN_CLASSES" ] && args+=("--rerun=$RERUN_CLASSES")
+          [ -n "$QUESTIONS_FILE" ] && args+=("--questions=$QUESTIONS_FILE")
+          node tools/certification/run_certification.mjs "${args[@]}" | tee certification-run.log
+
+      - name: 3. Summary
+        if: always()
+        run: |
+          python3 - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import json, os
+          try:
+              r = json.load(open("certification-results.json"))
+          except Exception as e:
+              print(f"### 3. Certification did not produce a report: {e}")
+              raise SystemExit(0)
+          s = r.get("summary", {})
+          print("### 3. Certification (live CHE)")
+          for k in ("total", "pass", "fail", "blocked", "not_run"):
+              if k in s:
+                  print(f"- {k}: {s[k]}")
+          print("")
+          print("Every real response is in the `certification-results` artifact.")
+          PY
+
+      - name: Save the results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: certification-results
+          path: |
+            certification-results.json
+            certification-run.log
+          if-no-files-found: warn
+          retention-days: 30
