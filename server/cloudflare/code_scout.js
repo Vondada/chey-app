@@ -136,7 +136,17 @@ function compoundImplementationAuthorization(text) {
   const value = String(text || '').trim();
   const compound = /\b(?:inspect|investigate|diagnos(?:e|tic)|check|trace|review|audit|find)\b[\s\S]{0,220}\b(?:then\s+|and\s+|if\s+(?:it|anything|something)\s+(?:is|looks?)\s+)?(?:fix|repair|implement|patch|change|update|apply)\b/i.test(value);
   const direct = /^(?:(?:che|chay|chey|shay)[,:]?\s*)?(?:(?:please|now)\s+|go\s+ahead\s+(?:and\s+)?|i\s+(?:want|need)\s+you\s+to\s+|(?:can|could|would)\s+you\s+)?(?:fix|repair|implement|build|update|patch|refactor|change|modify|add)\b[\s\S]{0,120}\b(?:router|routing|worker|app|code|repo(?:sitory)?|system|workflow|feature|screen|ui|bug|defect|pipeline|test|file|function|class|agent|opencode)\b/i.test(value);
+  // "Refactor a function with eight nested ifs into guard clauses and show the pattern" is a programming exercise, not a
+  // change to CHE (certification run 41233462389, csd-39, queued a coding job). An indefinite target ("a function",
+  // "an example", "some class") builds only when the message also points at CHE's own code.
+  if (direct && !compound && genericExercise(value)) return false;
   return compound || direct;
+}
+
+const GENERIC_TARGET = /\b(?:a|an|some)\s+(?:[\w-]+\s+){0,3}?(?:function|method|class|file|test|bug|component|script|loop|module)s?\b/i;
+const CHE_CODE_REF = /\b(?:your|che(?:['’]s)?|my|our)\s+(?:own\s+)?(?:[\w-]+\s+){0,2}?(?:code|codebase|repo(?:sitory)?|app|worker|router|routing|system|pipeline|ui|interface|flutter|screen|page|feature|agent|backend|server)\b|\bthe\s+(?:current\s+)?(?:repo(?:sitory)?|codebase|worker|app)\b|\bthe\s+[\w-]+(?:\s+[\w-]+)?\s+(?:screen|page|button|feature|route|router|endpoint|api|module|tab|view|workflow)\b|\b[\w/-]+\.(?:js|mjs|ts|dart|py|yml|yaml|json)\b/i;
+function genericExercise(text) {
+  return GENERIC_TARGET.test(text) && !CHE_CODE_REF.test(text);
 }
 
 // "What would you change in your own code if you could?" asks for an opinion, not a change (comprehension audit).
