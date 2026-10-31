@@ -478,7 +478,33 @@ export function guardRememberBlock(reply, { ownerTurns = [], retracted = [] } = 
     });
     return keep.length ? `\`\`\`che-remember\n${keep.join('\n')}\n\`\`\`` : '';
   }).replace(/\n{3,}/g, '\n\n').trim();
-  return { text: dropped.length ? out : text, dropped };
+  const leak = stripRememberLeak(dropped.length ? out : text);
+  return { text: leak.text, dropped, leaked: leak.removed };
+}
+
+// The model sometimes writes the remember instruction itself into the answer instead of a fenced block: "Che-remember
+// block, one fact per line, tagged [Mathematics]." or a bare row of the tag names ("[People] [Projects] [Decisions]").
+// Certification run 41222062110 (ir-40, csd-25, spt-12, oac-12). That text is the prompt's, never the answer: it is
+// removed, and a real ```che-remember fence is left alone.
+// Only CHE's own memory categories: an ordinary list of bracketed words is an answer, not the template (Codex, #816).
+const TAG = String.raw`\[(?:People|Projects|Decisions|Companies|Meetings|Daily|Knowledge)\]`;
+const LEAK_INSTRUCTION = /(^|[\n.!?]\s*)\**(?<!`)che[\s-]?remember\**(?:\s+block)?(?:[^.\n]{0,80}?\b(?:one\s+(?:tagged\s+)?fact\s+per\s+line|tagged\s+\[[^\]]{1,30}\])[^.\n]{0,40})?[.:]?[ \t]*/gi;
+const TAG_RUN = new RegExp(String.raw`(?:[ \t]*${TAG}){3,}`, 'g');
+export function stripRememberLeak(reply) {
+  const text = String(reply || '');
+  const fences = [];
+  // Keep every fenced block (a real che-remember block, code) out of the way while the loose text is cleaned.
+  const masked = text.replace(/```[\s\S]*?```/g, (m) => { fences.push(m); return `\u0000${fences.length - 1}\u0000`; });
+  const removed = [];
+  let out = masked.replace(LEAK_INSTRUCTION, (m, lead) => { removed.push(m.trim()); return lead; });
+  out = out.replace(TAG_RUN, (m) => { removed.push(m.trim()); return ''; });
+  if (!removed.length) return { text, removed };
+  // Once the template leaked, a lone category tag left in the prose is part of it too.
+  out = out.replace(/[ \t]*\[(?:People|Projects|Decisions|Companies|Meetings|Daily|Knowledge)\][ \t]*/g, ' ');
+  // Spacing is tidied in the loose text only; the fences go back unchanged.
+  out = out.replace(/(\S)[ \t]{2,}(?=\S)/g, '$1 ').replace(/[ \t]+$/gm, '').replace(/\n{3,}/g, '\n\n').trim()
+    .replace(/\u0000(\d+)\u0000/g, (_m, i) => fences[Number(i)]);
+  return { text: out, removed };
 }
 
 // ─── 3. Evidence for one specific answer ───────────────────────────────────
