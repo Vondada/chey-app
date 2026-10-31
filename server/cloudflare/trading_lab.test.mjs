@@ -346,3 +346,9 @@ test('a Coinbase rate limit is retried once, and a later failing page keeps the 
   assert.equal(d.candles.length, 3, 'the first page is kept when a later page stays rate-limited');
   assert.ok(calls >= 3);
 });
+
+// Certification run 41233462389 (ti-21): "What is the purpose of a trading journal?" read out CHE's own paper book.
+test('a question about what a trading journal is, is not a request for CHE\'s own book', () => {
+  for (const ask of ['What is the purpose of a trading journal?', 'What does a trading report usually contain?']) assert.equal(tradingIntent(ask), null, ask);
+  for (const ask of ['Show my trading journal', 'What is in your trading journal?', 'How is paper trading going?', 'trading report']) assert.deepEqual(tradingIntent(ask), { kind: 'book' }, ask);
+});

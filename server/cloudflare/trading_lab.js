@@ -906,7 +906,10 @@ export function tradingIntent(message, { followup = '', referent = '' } = {}) {
     return { kind: base.kind, symbol: symbol || base.symbol, ...(interval || base.interval ? { interval: interval || base.interval } : {}) };
   }
   const text = String(message || '').trim().replace(/[’']/g, "'");
-  if (/\bhow(?:'s| is| are)\b[\s\S]{0,20}\b(?:trades?|trading|paper)\b|\b(?:trading|paper) (?:report|summary|journal)\b/i.test(text)) return { kind: 'book' };
+  // "What is the purpose of a trading journal?" asks about the idea, not CHE's own book (certification run 41233462389,
+  // ti-21): a book request names it as CHE's or the owner's ("my/your/the paper trading journal") or is a command.
+  const ideaOfJournal = CONCEPT_ASK.test(text) && /\b(?:a|an|any|one's)\s+(?:trading|paper)\s+(?:report|summary|journal)\b/i.test(text) && !/\b(?:my|your|our|che's)\b/i.test(text);
+  if (!ideaOfJournal && /\bhow(?:'s| is| are)\b[\s\S]{0,20}\b(?:trades?|trading|paper)\b|\b(?:trading|paper) (?:report|summary|journal)\b/i.test(text)) return { kind: 'book' };
   const futures = NASDAQ_FUTURES.exec(text)?.[1].replace(/\s/g, '') || '';
   const pick = () => {
     // "Analyze the 15 minute ETH chart": the bar size is not the market.
