@@ -143,3 +143,39 @@ test('the routes map GET and POST for the list and GET and PUT for one scene', a
 test('templateObjects returns nothing for a blank canvas', () => {
   assert.deepEqual(templateObjects('blank'), []);
 });
+
+test('the live scene probe runs create, save, stale-refusal and reopen through the owner routes', async () => {
+  const st = fakeStorage();
+  // Stands in for the test CHE: pairs, then serves the same scene routes the Worker's object serves.
+  const testChe = {
+    fetch: async (req) => {
+      const url = new URL(req.url);
+      if (url.pathname === '/api/pair') return new Response(JSON.stringify({ device_token: 'device-test' }), { status: 200 });
+      const body = req.method === 'GET' ? undefined : await req.json();
+      const out = await sceneRoute({ storage: st, now: () => NOW }, url.pathname, req.method, body);
+      return new Response(JSON.stringify(out.body), { status: out.status });
+    },
+  };
+  const env = { CHE_STATE: { getByName: () => testChe }, CHE_PAIR_CODE: '123456' };
+  const req = new Request('https://worker.example/api/scenes/probe', { method: 'POST', headers: { Authorization: 'Bearer probe-token' } });
+  const { sceneProbe } = await import('./scene_store.js');
+  const report = await sceneProbe(env, req, 'probe-object');
+  assert.equal(report.ok, true, JSON.stringify(report.steps));
+  assert.equal(report.steps.length, 4);
+  assert.deepEqual(report.steps.map((s) => s.ok), [true, true, true, true]);
+});
+
+// Codex review of #735 (scene_store.js): a create that reuses a saved scene's id replaced it with a fresh version 1.
+test('a create that reuses a saved scene id is refused, and the saved version is kept', async () => {
+  const storage = fakeStorage();
+  const made = await createScene(storage, { name: 'Kept', template: 'person', id: 'scene_keep01' });
+  assert.equal(made.ok, true);
+  const saved = await getScene(storage, 'scene_keep01');
+  const again = await createScene(storage, { name: 'Replaced', template: 'blank', id: 'scene_keep01' });
+  assert.equal(again.ok, false);
+  assert.equal(again.status, 409);
+  const after = await getScene(storage, 'scene_keep01');
+  assert.equal(after.version, saved.version);
+  assert.equal(after.scene.name, 'Kept');
+  assert.deepEqual(after.scene.objects, saved.scene.objects);
+});

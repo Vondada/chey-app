@@ -327,9 +327,19 @@ extension _CheHomeSend on _CHEHomeState {
     }
     // Creation by voice from any screen, all inside CHE (owner, 2026-10-24: never a website in ordinary use).
     final wake = r'^\W*(?:(?:che|chey|chay)[,:]?\s+)?';
-    if (RegExp('$wake(?:create|make|build)(?: me)? (?:a |an )?(?:new )?(?:person|character|human|avatar)\\W*\$').hasMatch(lower)) {
-      _openCreativeStudio(say: 'create a person');
-      return true;
+    // Create Studio by voice: the project list, the newest saved project, and a new character in the editor.
+    switch (sceneVoiceRoute(lower)) {
+      case SceneVoiceRoute.projects:
+        _openSceneProjects();
+        return true;
+      case SceneVoiceRoute.lastProject:
+        unawaited(_openLastSceneProject());
+        return true;
+      case SceneVoiceRoute.newCharacter:
+        _openNewCharacter();
+        return true;
+      case null:
+        break;
     }
     if (RegExp('$wake(?:continue|resume|keep) (?:creating|building|my creation|the creation)\\W*\$').hasMatch(lower)) {
       final said = await _continueCreating();

@@ -1,5 +1,5 @@
 {
-  "_doc": "CHE performance budgets, checked in CI by server/cloudflare/perf_budget.test.mjs. Measured 2026-10-23 on the benchmark brain (3000 memories): see docs/CHE_PERFORMANCE.md. Raise a number only on purpose, in the same PR as the feature that needs it, with the reason in that PR. worker_js_bytes 1109475 -> 1109703: the central receipt gate (action_connectors.js) import and its one call in the chat turn (288 bytes, measured on origin/main 1109415). worker_js_bytes 1109703 -> 1110842 and chat_turn.storage_gets 60 -> 61: the timer connector (owner_timers.js) wiring in worker.js (fire due timers on the alarm, include the next timer in the wake time, answer timer requests, announce a fired timer in the next reply; probe timers kept apart from the owner's; 1139 bytes) and that announcement's one read of the timer list per owner chat turn, so a timer that went off is never missed.",
+  "_doc": "CHE performance budgets, checked in CI by server/cloudflare/perf_budget.test.mjs. Measured 2026-10-23 on the benchmark brain (3000 memories): see docs/CHE_PERFORMANCE.md. Raise a number only on purpose, in the same PR as the feature that needs it, with the reason in that PR. worker_js_bytes 1109475 -> 1109703: the central receipt gate (action_connectors.js) import and its one call in the chat turn (288 bytes, measured on origin/main 1109415). worker_js_bytes 1109703 -> 1110842 and chat_turn.storage_gets 60 -> 61: the timer connector (owner_timers.js) wiring in worker.js (fire due timers on the alarm, include the next timer in the wake time, answer timer requests, announce a fired timer in the next reply; probe timers kept apart from the owner's; 1139 bytes) and that announcement's one read of the timer list per owner chat turn, so a timer that went off is never missed. worker_js_bytes 1110842 -> 1111103: the Create Studio scene probe route (/api/scenes/probe, #735) and its import (261 bytes over origin/main 1110842); the probe logic lives in scene_store.js.",
   "memories": 3000,
   "chat_turn": {
     "che_reads": 2,
@@ -14,7 +14,7 @@
     "storage_gets": 12,
     "median_ms": 200
   },
-  "worker_js_bytes": 1110842,
+  "worker_js_bytes": 1111103,
   "cold_import_ms": 4000,
   "runtime": {
     "_doc": "Live watch (perf_watch.js): p95 of the last samples per route, deterministic replies only for chat.",

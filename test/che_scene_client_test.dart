@@ -14,7 +14,7 @@ void main() {
     late http.Request seen;
     final client = CheSceneClient(
       baseUrl: 'https://worker.example',
-      headers: const {'X-Owner': 'token'},
+      headers: () => const {'X-Owner': 'token'},
       client: MockClient((req) async {
         seen = req;
         return http.Response(jsonEncode({'ok': true, 'version': 1, 'scene': _empty}), 201);
@@ -33,7 +33,7 @@ void main() {
     late http.Request seen;
     final client = CheSceneClient(
       baseUrl: 'https://worker.example',
-      headers: const {},
+      headers: () => const {},
       client: MockClient((req) async {
         seen = req;
         return http.Response(jsonEncode({'ok': true, 'version': 2, 'scene': _empty}), 200);
@@ -49,7 +49,7 @@ void main() {
   test('a stale save comes back as a conflict carrying the stored scene, not an error that loses it', () async {
     final client = CheSceneClient(
       baseUrl: 'https://worker.example',
-      headers: const {},
+      headers: () => const {},
       client: MockClient((req) async => http.Response(jsonEncode({'ok': false, 'version': 4, 'scene': _empty}), 409)),
     );
     expect(
@@ -61,7 +61,7 @@ void main() {
   test('a refused save shows the Worker reason', () async {
     final client = CheSceneClient(
       baseUrl: 'https://worker.example',
-      headers: const {},
+      headers: () => const {},
       client: MockClient((req) async => http.Response(jsonEncode({'ok': false, 'detail': 'Scene is broken.'}), 422)),
     );
     expect(
@@ -73,7 +73,7 @@ void main() {
   test('list reads the summaries in the order the Worker sends them', () async {
     final client = CheSceneClient(
       baseUrl: 'https://worker.example',
-      headers: const {},
+      headers: () => const {},
       client: MockClient((req) async => http.Response(
             jsonEncode({
               'ok': true,

@@ -143,12 +143,12 @@ class _CheSceneStudioPageState extends State<CheSceneStudioPage> {
           ),
           IconButton(
             tooltip: 'Redo',
-            icon: const Icon(Icons.redo),
+            icon: const Icon(Icons.replay_rounded),
             onPressed: h != null && h.canRedo && !_busy ? _redo : null,
           ),
           IconButton(
             tooltip: 'Save',
-            icon: const Icon(Icons.save),
+            icon: const Icon(Icons.save_rounded),
             onPressed: h != null && !_busy ? _save : null,
           ),
         ],
@@ -186,11 +186,12 @@ class _CheSceneStudioPageState extends State<CheSceneStudioPage> {
   }
 
   Widget _slider(SceneObject o, String name, String label) {
-    final current = (o.props[name] as num?)?.toDouble();
     final range = properties[o.kind]?[name] as List?;
-    if (current == null || range == null) return const SizedBox.shrink();
+    if (range == null) return const SizedBox.shrink();
     final min = (range[0] as num).toDouble();
     final max = (range[1] as num).toDouble();
+    // A property the saved object does not carry yet starts at the bottom of its range, so its control is reachable.
+    final current = (o.props[name] as num?)?.toDouble() ?? min;
     return Semantics(
       slider: true,
       label: label,
@@ -223,17 +224,41 @@ class CheSceneListPage extends StatefulWidget {
 class _CheSceneListPageState extends State<CheSceneListPage> {
   late Future<List<SceneSummary>> _scenes = widget.client.list();
 
+  Future<void> _newCharacter() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(builder: (_) => CheSceneStudioPage(client: widget.client, template: 'person')),
+    );
+    if (mounted) {
+      setState(() {
+        _scenes = widget.client.list();
+      });
+    }
+  }
+
   Future<void> _openScene(String id) async {
     await Navigator.of(context).push(
       MaterialPageRoute<void>(builder: (_) => CheSceneStudioPage(client: widget.client, sceneId: id)),
     );
-    if (mounted) setState(() => _scenes = widget.client.list());
+    if (mounted) {
+      setState(() {
+        _scenes = widget.client.list();
+      });
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text('Create Studio projects')),
+      floatingActionButton: Semantics(
+        button: true,
+        label: 'New character',
+        child: FloatingActionButton.extended(
+          onPressed: _newCharacter,
+          icon: const Icon(Icons.person_add_alt_1_rounded),
+          label: const Text('New character'),
+        ),
+      ),
       body: FutureBuilder<List<SceneSummary>>(
         future: _scenes,
         builder: (context, snap) {

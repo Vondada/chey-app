@@ -76,6 +76,8 @@ export async function createScene(storage, { name, template = 'blank', id, now }
   if (!TEMPLATES[template]) return { ok: false, status: 422, detail: `Template must be one of: ${Object.keys(TEMPLATES).join(', ')}.` };
   const map = await loadAll(storage);
   if (Object.keys(map).length >= MAX_SCENES) return { ok: false, status: 409, detail: `CHE keeps at most ${MAX_SCENES} scenes.` };
+  // A create never replaces a saved scene: an existing id is refused, and the saved version is kept.
+  if (id && map[id]) return { ok: false, status: 409, detail: 'A scene with that id already exists, so nothing was replaced. Open it to edit.' };
   const sceneId = id || `scene_${crypto.randomUUID().replace(/-/g, '').slice(0, 12)}`;
   let scene;
   try {
@@ -131,4 +133,43 @@ export async function sceneRoute({ storage, now }, path, method, body = {}) {
   if (method === 'GET') return json(await getScene(storage, m[1]));
   if (method === 'PUT') return json(await saveScene(storage, m[1], { ...(body || {}), now }));
   return { status: 405, body: { detail: 'Use GET or PUT.' } };
+}
+
+/**
+ * The live backend check (deploy probe). It pairs with the isolated test CHE, then calls the real owner routes with the
+ * paired device token, the same way the phone does: create a character from a template, save an edit, refuse a stale
+ * save, and reopen to read back the saved value. Only the probe's own test object is written, never the owner's scenes.
+ */
+export async function sceneProbe(env, request, objectName) {
+  const token = /^Bearer (\S+)$/.exec(request.headers.get('Authorization') || '')?.[1] || '';
+  const probe = env.CHE_STATE.getByName(objectName);
+  const call = (path, body, device = '', method = 'POST') => probe.fetch(new Request(`https://che.internal${path}`, {
+    method,
+    headers: { 'Content-Type': 'application/json', 'X-CHE-Memory-Probe': token, ...(device ? { Authorization: `Bearer ${device}` } : {}) },
+    ...(method === 'GET' ? {} : { body: JSON.stringify(body) }),
+  }));
+  const paired = await (await call('/api/pair', { code: String(env.CHE_PAIR_CODE || ''), device_name: 'CHE scene check' })).json().catch(() => ({}));
+  const device = paired.device_token;
+  if (!device) return { ok: false, error: 'The check could not pair with its test CHE.', steps: [] };
+  const steps = [];
+  const step = (name, ok, detail = '') => steps.push({ name, ok: Boolean(ok), detail });
+  const read = async (r) => ({ status: r.status, body: await r.json().catch(() => ({})) });
+
+  const made = await read(await call('/api/scenes', { name: `Probe ${crypto.randomUUID().slice(0, 8)}`, template: 'person' }, device));
+  const sceneId = made.body.scene?.id;
+  const height = (scene) => scene?.objects?.[0]?.properties?.height_m;
+  step('create a character from the person template', made.status === 201 && made.body.version === 1 && height(made.body.scene) === 1.7, `status ${made.status}`);
+
+  const edited = structuredClone(made.body.scene || {});
+  if (edited.objects?.[0]) edited.objects[0].properties.height_m = 1.9;
+  const saved = await read(await call(`/api/scenes/${sceneId}`, { scene: edited, expected_version: 1 }, device, 'PUT'));
+  step('save an edit at the loaded version', saved.status === 200 && saved.body.version === 2, `status ${saved.status}`);
+
+  const stale = await read(await call(`/api/scenes/${sceneId}`, { scene: edited, expected_version: 1 }, device, 'PUT'));
+  step('refuse a save from an older copy', stale.status === 409 && stale.body.version === 2, `status ${stale.status}`);
+
+  const reopened = await read(await call(`/api/scenes/${sceneId}`, undefined, device, 'GET'));
+  step('reopen and read back the saved height', reopened.status === 200 && reopened.body.version === 2 && height(reopened.body.scene) === 1.9, `status ${reopened.status}`);
+
+  return { ok: steps.every((s) => s.ok), steps };
 }
