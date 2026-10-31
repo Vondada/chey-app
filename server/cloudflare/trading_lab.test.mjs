@@ -326,3 +326,23 @@ test('candles come from Coinbase (crypto) and Yahoo (stocks) first; the old sour
   const down = await loadCandles('QQQZUSDT', { fetcher: async () => new Response('x', { status: 503 }) });
   assert.match(down.error, /^The free data source did not answer \(Coinbase HTTP 503; Binance HTTP 503\)/);
 });
+
+// Certification run 41242161747: Coinbase answered HTTP 429 to the paged history. One retry, then keep what was read.
+test('a Coinbase rate limit is retried once, and a later failing page keeps the pages already read', async () => {
+  const { loadCandles } = await import('./trading_lab.js');
+  const day = 86400;
+  const base = Math.floor(Date.now() / 1000 / day) - 400;
+  const page = (n) => Array.from({ length: 3 }, (_, i) => [(base + n * 10 + i) * day, 1, 2, 0.5, 1.5, 1]);
+  let calls = 0;
+  const flaky = async (url) => {
+    if (!/coinbase/.test(url)) return new Response('x', { status: 503 });
+    calls += 1;
+    if (calls === 1) return new Response('slow down', { status: 429 });
+    if (calls === 2) return new Response(JSON.stringify(page(3)));
+    return new Response('slow down', { status: 429 });
+  };
+  const d = await loadCandles('LTCUSDT', { fetcher: flaky });
+  assert.equal(d.data, 'Coinbase Exchange public candles (live)');
+  assert.equal(d.candles.length, 3, 'the first page is kept when a later page stays rate-limited');
+  assert.ok(calls >= 3);
+});
