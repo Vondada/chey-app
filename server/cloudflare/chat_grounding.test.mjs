@@ -77,6 +77,16 @@ test('1a: "What is my favorite food" with only a stored drink never names the dr
   assert.doesNotMatch(out.reply, /Sprite|April|2024/);
 });
 
+// Recovered from closed PR #585: on main the wake-word question is already answered from the stored record by the memory
+// route (date, source and record id), so only the British-spelling case is added here.
+test('1d: British spelling in the stored statement ("favourite") still answers "favorite food"', async () => {
+  const che = await owner();
+  await che.say('Remember that my favourite food is pizza');
+  const out = await che.say('What is my favorite food?');
+  assert.equal(out.meta.source, 'che_personal_recall');
+  assert.match(out.reply, /pizza/);
+});
+
 test('1b: a stored food is quoted with the date it was stored, and where it came from', async () => {
   const che = await owner({ model: () => 'Your favorite food is pasta, recorded on April 12, 2024.' });
   await che.say('Remember that my favorite food is pizza');
