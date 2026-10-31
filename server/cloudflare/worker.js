@@ -13647,7 +13647,7 @@ export class CheState extends DurableObject {
           return ndjsonReply('Internal-only mode is on, sir, so I did not send this to an image engine. My own renderer can make beach scenes (day, sunset, night or stormy) right now; it cannot make this subject yet. Nothing was made.', { source: INTERNAL_SOURCE, ok: false, model_calls: 0, execution: 'internal', blocked_external: true });
         }
         // A real person shown compromised or incriminated is never drawn or filmed (real_person_images.js).
-        if ((requestedCapabilities.includes('image_generation') || requestedCapabilities.includes('video_generation')) && !body.attachment && realPersonHarmIntent(message)) {
+        if ((requestedCapabilities.includes('image_generation') || requestedCapabilities.includes('video_generation')) && realPersonHarmIntent(message)) {
           return ndjsonReply(REAL_PERSON_REFUSAL, { source: CHAT_IMAGE_SOURCE, ok: false, model_calls: 0, refused: 'real_person_harm' });
         }
         // Pictures asked for (Test 5, 2026-10-21): the real pictures are made by the media engine, each one saved, and the

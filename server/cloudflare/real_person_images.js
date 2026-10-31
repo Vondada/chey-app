@@ -13,11 +13,28 @@ const REAL_PERSON = new RegExp([
 // What: a depiction that could harm them or pass as evidence.
 const HARMFUL = /\b(?:compromising|embarrassing|humiliat\w*|scandal\w*|disgrac\w*|incriminat\w*|drunk|high\s+on|naked|nude|undress\w*|sexual\w*|explicit|in\s+bed\s+with|arrest\w*|mugshot|in\s+handcuffs|committing\s+a\s+crime|taking\s+a\s+bribe|bribe|cheating\s+on|fake\s+(?:evidence|photo|proof|news)|deep[\s-]?fake|as\s+if\s+(?:it\s+)?(?:really|actually)\s+happened|looks?\s+real\s+enough\s+to)\b/i;
 
+// A person named by name alone ("Taylor Swift"): two or three capitalised words in a row. Names cannot be listed, so
+// any such name beside a harmful depiction is treated as a real person unless the message says the subject is invented.
+const PERSON_NAME = /\b[A-Z][a-z'’-]+(?:\s+(?:[A-Z]\.\s*)?[A-Z][a-z'’-]+){1,2}\b/g;
+const NOT_NAMES = /^(?:Creation Room|Create Studio|Workers AI|New York|Los Angeles|San Francisco|United States|White House|Times Square)$/;
+// "A fictional politician", "an invented senator", "my original character": an invented subject, unless also called real.
+const INVENTED = /\b(?:fictional|fictitious|invented|made[\s-]up|imaginary|original\s+character|made[\s-]up\s+character|cartoon|anime|game\s+character|my\s+(?:oc|character))\b/i;
+const EXPLICITLY_REAL = /\b(?:real|actual|named|existing|living)\s+(?:[\w-]+\s+){0,2}?(?:person|people|man|woman|politician|celebrit(?:y|ies)|public\s+figure|president|senator)\b/i;
+
+function namesSomeone(text) {
+  // The first word of a sentence is capitalised anyway ("Generate a ...", "Make Taylor ..."): skip it.
+  const body = text.replace(/(^|[.!?]\s+)[A-Z][a-z]+/g, '$1x');
+  return (body.match(PERSON_NAME) || []).some((n) => !NOT_NAMES.test(n));
+}
+
 /** True when the message asks to depict a real person in a way that could defame, sexualise or falsely incriminate them. */
 export function realPersonHarmIntent(message) {
   const text = String(message || '');
-  if (/\bdeep[\s-]?fake\b/i.test(text) && REAL_PERSON.test(text)) return true;
-  return REAL_PERSON.test(text) && HARMFUL.test(text);
+  const invented = INVENTED.test(text) && !EXPLICITLY_REAL.test(text);
+  if (invented) return false;
+  const real = REAL_PERSON.test(text) || namesSomeone(text);
+  if (/\bdeep[\s-]?fake\b/i.test(text) && real) return true;
+  return real && HARMFUL.test(text);
 }
 
 export const REAL_PERSON_REFUSAL = 'I won\'t make that picture, sir: a realistic image of a real person in a compromising, intimate or incriminating situation can defame or hurt them, even as a joke. Nothing was made or saved. I can make an invented character in that scene, or the real person in an ordinary or flattering one.';
