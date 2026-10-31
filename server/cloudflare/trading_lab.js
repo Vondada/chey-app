@@ -743,6 +743,17 @@ export function speakBook(book) {
 
 // ─── Voice intents ────────────────────────────────────────────────────────
 
+// A question or explanation request, as opposed to a command ("backtest bitcoin", "analyze the ETH chart").
+const CONCEPT_ASK = /^(?:(?:hey\s+)?(?:che|chey|chay)[,:]?\s+)?(?:what|why|how|when|which|explain|describe|define|give|list|name|tell\s+me\s+(?:what|why|how|about)|is|are|was|were|does|do|did|has|have|should|can|could)\b/i;
+const NOT_A_RUN = /\b(?:pretend|make\s+up|made[\s-]up|fabricat\w*|invent|fake|realistic[\s-]looking)\b/i;
+const NOT_TICKERS = new Set(['I', 'CHE', 'AI', 'OK', 'CAGR', 'ETF', 'USD', 'P', 'L', 'PNL', 'R']);
+// The message names a market: a known name, the Nasdaq futures, or an upper-case ticker ("SPY", "AAPL").
+function namesMarket(text, futures = '') {
+  if (futures) return true;
+  const lower = text.toLowerCase();
+  if (Object.keys(NAMES).some((k) => new RegExp(`(?:^|[^a-z0-9&])${k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![a-z0-9])`).test(lower))) return true;
+  return (text.match(/\b[A-Z]{2,5}\b/g) || []).some((w) => !NOT_TICKERS.has(w));
+}
 const SYMBOL_HINT = /\b(?:on|for|of|in|trade|scan|backtest|analy[sz]e|watch)\s+(?:the\s+)?([a-z^&][a-z0-9.^& ]{0,14}?)(?=[\s?.!,]|$)/i;
 // "MNQ", "NQ", "MNQ=F": the Nasdaq futures by name (issue #350). Not "MNQZ6" or a longer word.
 const NASDAQ_FUTURES = /\b(m?nq(?:\s?=\s?f)?)(?![\w=])/i;
@@ -823,7 +834,14 @@ export function tradingIntent(message, { followup = '', referent = '' } = {}) {
     // "Analyze the 15 minute ETH chart": the bar size is not the market.
     const m = SYMBOL_HINT.exec(text.replace(/\b(?:swing (?:highs?|lows?)|entry points?|entries|candles?|patterns?|the chart)\b/gi, ' ')
       .replace(/\b(?:\d+|one|five|fifteen|thirty|four)[\s-]*(?:minute|min|hour|second|day|week)s?\b|\b(?:daily|weekly|hourly)\b/gi, ' ').replace(/\s{2,}/g, ' '));
-    const hinted = m ? m[1].trim() : '';
+    let hinted = m ? m[1].trim() : '';
+    // "Backtest a crossover on BTC", "the bitcoin backtest result": a market named elsewhere in the message beats a
+    // stray word after the verb ("a", "result").
+    if (!futures && !NAMES[hinted.toLowerCase()] && !/^[A-Z^][A-Z0-9.^=]{1,9}$/.test(hinted)) {
+      const named = Object.keys(NAMES).find((k) => new RegExp(`(?:^|[^a-z0-9&])${k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![a-z0-9])`, 'i').test(text))
+        || (text.match(/\b[A-Z]{2,5}\b/g) || []).find((w) => !NOT_TICKERS.has(w));
+      if (named) hinted = named;
+    }
     // "What's MNQ doing in the last hour": a named future wins over a stray word ("last"), not over a known market.
     return futures && !NAMES[hinted.toLowerCase()] ? futures : hinted;
   };
@@ -831,13 +849,18 @@ export function tradingIntent(message, { followup = '', referent = '' } = {}) {
   const interval = intervalFromWords(text);
   const sized = (intent) => (interval && interval !== '1d' ? { ...intent, interval } : intent);
   if (/\b(?:what (?:have|did) you (?:learn|learned)|trading (?:skills?|lessons?|learning)|learn(?:ed|ing)? (?:about )?trading|new (?:trading )?(?:skills?|strateg(?:y|ies)))\b/i.test(text) && /\b(?:trad|market|futures|stocks?|crypto)/i.test(text)) return { kind: 'learning' };
-  if (/\bbacktest/i.test(text) && !/\b(?:code|app|feature|function)\b/i.test(text)) return sized({ kind: 'backtest', symbol: pick() || 'BTCUSDT' });
+  // A question about the idea ("What is a backtest?", "Why should a backtest include fees?") names no market and is not a
+  // command to run one, and a request to fake one ("pretend the backtest ran", "make up a backtest table") is never run:
+  // both go to the answer path, where the truth stages apply. Certification run 41222062110: 22 such questions were sent
+  // to the price lookup and answered "The free data source did not answer".
+  const notARun = NOT_A_RUN.test(text) || (CONCEPT_ASK.test(text) && !namesMarket(text, futures));
+  if (!notARun && /\bbacktest/i.test(text) && !/\b(?:code|app|feature|function)\b/i.test(text)) return sized({ kind: 'backtest', symbol: pick() || 'BTCUSDT' });
   // A watch needs a market. Asked for none ("place a paper trade"), CHE asks which one instead of looking up a ticker.
   if (/\b(?:paper trade|watch)\b[\s\S]{0,30}/i.test(text) && /\b(?:paper|trade|market)\b/i.test(text)) {
     const symbol = pick();
     return symbol ? { kind: 'watch', symbol } : { kind: 'clarify', about: 'watch', question: 'Which market should I paper trade, sir? Say a ticker like AAPL, a coin like bitcoin, or MNQ.' };
   }
-  if (/\b(?:swing (?:highs?|lows?)|entry points?|entries|candlestick|scan|analy[sz]e)\b/i.test(text) && /\b(?:chart|market|stock|crypto|bitcoin|btc|eth|ethereum|solana|s&p|nasdaq|dow|swing|entry|entries|candlestick|ticker|price action)\b/i.test(text)) {
+  if (!notARun && /\b(?:swing (?:highs?|lows?)|entry points?|entries|candlestick|scan|analy[sz]e)\b/i.test(text) && /\b(?:chart|market|stock|crypto|bitcoin|btc|eth|ethereum|solana|s&p|nasdaq|dow|swing|entry|entries|candlestick|ticker|price action)\b/i.test(text)) {
     return sized({ kind: 'analyze', symbol: pick() || 'BTCUSDT' });
   }
   // Journal and feed questions about MNQ are answered earlier, by trading_live_chat.js liveIntent; an

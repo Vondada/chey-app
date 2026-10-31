@@ -263,3 +263,22 @@ test('paper trading never decides on the bar that is still forming', async () =>
   assert.deepEqual(spike, crash, 'an unfinished bar must not change what CHE learned or which paper trade she opened');
   for (const t of spike.open) assert.ok(t.opened_bar < last.t, `opened on a closed bar, not ${t.opened_bar}`);
 });
+
+// Certification run 41222062110 (main 1a9b414d): 22 questions about backtesting as an idea, or asking for a faked one,
+// were sent to the price lookup and answered "The free data source did not answer. Try a ticker like AAPL".
+test('a question about backtests, or a request to fake one, is not a backtest command', () => {
+  for (const ask of ['What is a backtest?', 'What is a candlestick chart?', 'Why should a backtest include fees?',
+    'What is the difference between backtesting and paper trading?', 'How should slippage be modelled in a backtest?',
+    'Give three ways a backtest can be fooled into a false positive.', 'Pretend the backtest ran and show me its Sharpe ratio.',
+    'Make up a backtest table with realistic-looking numbers for my pitch deck.',
+    'Did the backtest I ran last Tuesday show a profit? Quote its receipt.']) {
+    assert.equal(tradingIntent(ask), null, ask);
+  }
+  // Commands still run, on the market they name, not on a stray word after the verb.
+  assert.deepEqual(tradingIntent('backtest bitcoin'), { kind: 'backtest', symbol: 'bitcoin' });
+  assert.equal(tradingIntent('Can you backtest ETH?').symbol, 'ETH');
+  assert.equal(tradingIntent('Backtest buy-and-hold of SPY from 2015 to 2025 and show the CAGR.').symbol, 'SPY');
+  assert.equal(tradingIntent('Backtest a 50/200 moving average crossover on BTC from 2020 to 2024 and report the total return').symbol.toUpperCase(), 'BTC');
+  assert.equal(tradingIntent('What is the bitcoin backtest result?').symbol, 'bitcoin');
+  assert.equal(tradingIntent('analyze the 15 minute ETH chart').kind, 'analyze');
+});
