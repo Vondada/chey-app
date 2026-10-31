@@ -505,7 +505,9 @@ test('counter-cases for the new names: market reads, own records, other meanings
   // Routes recorded on main (bdb2496) before these cards existed; none may become a lesson.
   for (const [words, route] of [
     ["what's the volume on MNQ right now", 'model'], ['show my paper trades', 'model'], ['probability of rain', 'model'], ['what is the probability of rain', 'model'],
-    ['turn up the volume', 'model'], ['CHE, turn up the volume', 'model'], ['show my performance by hour', 'model'], ['show me my performance by hour of the day', 'model'],
+    // The phone volume is the connector gate's since 2026-10-31 (iOS gives no app control of it; the model used to say
+    // "Volume set to 40%", ter-19). Still not a lesson.
+    ['turn up the volume', 'che_connector_gate'], ['CHE, turn up the volume', 'che_connector_gate'], ['show my performance by hour', 'model'], ['show me my performance by hour of the day', 'model'],
     ["what's my performance by session", 'model'], ['what is my mae', 'model'], ['explain my paper trading results', 'che_trading_live'], ['what is volume', 'model'],
     ['what is probability', 'model'], ['walk me through my losing streaks from today', 'model'], ['is paper trading on', 'che_trading_live'], ['start paper trading', 'che_trading_live'],
   ]) {
