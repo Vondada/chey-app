@@ -478,7 +478,30 @@ export function guardRememberBlock(reply, { ownerTurns = [], retracted = [] } = 
     });
     return keep.length ? `\`\`\`che-remember\n${keep.join('\n')}\n\`\`\`` : '';
   }).replace(/\n{3,}/g, '\n\n').trim();
-  return { text: dropped.length ? out : text, dropped };
+  const leak = stripRememberLeak(dropped.length ? out : text);
+  return { text: leak.text, dropped, leaked: leak.removed };
+}
+
+// The model sometimes writes the remember instruction itself into the answer instead of a fenced block: "Che-remember
+// block, one fact per line, tagged [Mathematics]." or a bare row of the tag names ("[People] [Projects] [Decisions]").
+// Certification run 41222062110 (ir-40, csd-25, spt-12, oac-12). That text is the prompt's, never the answer: it is
+// removed, and a real ```che-remember fence is left alone.
+const TAG = String.raw`\[(?:People|Projects|Decisions|Companies|Meetings|Daily|Knowledge|[A-Z][A-Za-z]{2,20})\]`;
+const LEAK_INSTRUCTION = /(^|[\n.!?]\s*)\**(?<!`)che[\s-]?remember\**(?:\s+block)?(?:[^.\n]{0,80}?\b(?:one\s+(?:tagged\s+)?fact\s+per\s+line|tagged\s+\[[^\]]{1,30}\])[^.\n]{0,40})?[.:]?[ \t]*/gi;
+const TAG_RUN = new RegExp(String.raw`(?:\s*${TAG}){3,}`, 'g');
+export function stripRememberLeak(reply) {
+  const text = String(reply || '');
+  const fences = [];
+  // Keep real fences out of the way while the loose text is cleaned.
+  const masked = text.replace(/```che-remember[\s\S]*?```/gi, (m) => { fences.push(m); return `\u0000${fences.length - 1}\u0000`; });
+  const removed = [];
+  let out = masked.replace(LEAK_INSTRUCTION, (m, lead) => { removed.push(m.trim()); return lead; });
+  out = out.replace(TAG_RUN, (m) => { removed.push(m.trim()); return ''; });
+  if (!removed.length) return { text, removed };
+  // Once the template leaked, a lone category tag left in the prose is part of it too.
+  out = out.replace(/\s*\[(?:People|Projects|Decisions|Companies|Meetings|Daily|Knowledge)\]\s*/g, ' ');
+  out = out.replace(/\u0000(\d+)\u0000/g, (_m, i) => fences[Number(i)]).replace(/[ \t]{2,}/g, ' ').replace(/\n{3,}/g, '\n\n').trim();
+  return { text: out, removed };
 }
 
 // ─── 3. Evidence for one specific answer ───────────────────────────────────
