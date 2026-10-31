@@ -5,6 +5,7 @@ import { githubVideoConfigured, startGithubVideo, githubVideoStatus, githubVideo
 import { mediaStore } from './che_media_store.js';
 import { imagePayload, payloadReceipt } from './image_payload.js';
 import { modalCall, modalCredential } from './modal_gpu.js';
+import { TXT2IMG_WORST_CASE_USD, COLD_START_S, IDLE_SCALEDOWN_S, T4_USD_PER_S, reserveTestBudget, settleTestBudget, releaseTestBudget } from './gpu_test_budget.js';
 //   - Owner image connector (CHE_IMAGE_GEN_URL) wins when configured.
 //   - Otherwise Workers AI FLUX.1 [schnell] generates the image on the CHE
 //     server itself (highest step count unless the owner picks draft).
@@ -352,6 +353,20 @@ export const MODAL_IMAGE_TIMEOUT_MS = 15 * 60 * 1000;
 
 const hexOf = (buffer) => Array.from(new Uint8Array(buffer)).map((b) => b.toString(16).padStart(2, '0')).join('');
 
+/**
+ * Modal's reason for a refusal, short and printable. The handler says it in `error`; a framework's own 422 says it in
+ * `detail` (a list of { msg } or a string); anything else is the body's own words. Empty when none of them is there.
+ */
+export function modalReasonOf(started) {
+  const d = started?.data;
+  // A framework item names the field it refused (loc, e.g. body.steps) and why (msg), so both are kept.
+  const detail = Array.isArray(d?.detail)
+    ? d.detail.map((x) => (x?.msg ? `${Array.isArray(x.loc) && x.loc.length ? `${x.loc.join('.')}: ` : ''}${x.msg}` : JSON.stringify(x))).join('; ')
+    : d?.detail;
+  const raw = d?.error || detail || started?.refusal_text || '';
+  return String(raw).replace(/[^\x20-\x7E]/g, '').slice(0, 160);
+}
+
 /** Starts one Modal GPU picture and answers with its call id. Nothing is saved until the result is read and checked. */
 export async function startModalImage(env, storage, body, fetcher = fetch) {
   const refuse = (status, detail) => ({ status, detail, provider_requested: 'modal', provider_used: null, nothing_generated: true });
@@ -369,11 +384,22 @@ export async function startModalImage(env, storage, body, fetcher = fetch) {
   if (!prompt) return refuse(400, 'Describe the picture.');
   // Square pictures only, 256 or 512 px (512 is the default). The Modal app refuses any other size too.
   const size = [256, 512].includes(Number(body?.width)) ? Number(body.width) : 512;
+  // The $5 GPU test budget: reserve this job's worst case before it is sent. A refused reservation sends nothing.
+  const hold = await reserveTestBudget(storage, { label: `picture: ${prompt.slice(0, 60)}`, max_usd: TXT2IMG_WORST_CASE_USD });
+  if (!hold.ok) return refuse(402, hold.reason);
   const started = await modalCall(cred.cred, 'POST', '/txt2img', { prompt, width: size, height: size, steps: 4, seed: Math.floor(Math.random() * 2 ** 31) }, fetcher, 30000);
   if (!started.ok || !started.data?.call_id) {
-    return refuse(502, `Modal refused to start the picture (${started.status || started.error || 'no answer'}). Nothing was generated; no other engine was used.`);
+    // A 4xx answer means Modal did not start the call (no cost). A network failure might have started it, so the reservation stays.
+    if (started.status >= 400 && started.status < 500) await releaseTestBudget(storage, hold.id, `Modal answered ${started.status}: the call did not start`);
+    // Modal's own reason for the refusal (its validation message, never a secret), so the owner sees the cause, not just the code.
+    const modalReason = modalReasonOf(started);
+    // The facts behind the detail, kept apart so the chat reply can word them without parsing the text: the HTTP status,
+    // Modal's reason (or null), and whether the reservation was released (nothing charged) or kept (outcome unknown).
+    const http_status = Number(started.status) || null;
+    const budget_state = http_status >= 400 && http_status < 500 ? 'released' : 'reserved';
+    return { ...refuse(502, `Modal refused to start the picture (${started.status || started.error || 'no answer'}${modalReason ? `: ${modalReason}` : ''}). Nothing was generated; no other engine was used.`), http_status, modal_reason: modalReason || null, budget_state };
   }
-  const record = { call_id: started.data.call_id, prompt, title: String(body?.title || prompt).slice(0, 80), state: 'started', created_at: now() };
+  const record = { call_id: started.data.call_id, prompt, title: String(body?.title || prompt).slice(0, 80), state: 'started', created_at: now(), budget_hold_id: hold.id };
   await storage.put(MODAL_IMAGE_KEY, [...records, record].slice(-20));
   // Wake the alarm for the check, unless an earlier wake-up is already set (an earlier wake only runs the scheduler again).
   if (storage.getAlarm && storage.setAlarm) {
@@ -395,7 +421,12 @@ export async function finishModalImage(env, storage, callId, fetcher = fetch) {
     const latest = (await storage.get(MODAL_IMAGE_KEY)) || [];
     await storage.put(MODAL_IMAGE_KEY, latest.map((r) => (r.call_id === callId ? { ...r, ...patch } : r)));
   };
-  const failed = async (error) => { await update({ state: 'failed', error }); return { status: 502, detail: error }; };
+  // The call started, so its reservation is settled at the reserved maximum (the conservative figure), never left open.
+  const failed = async (error) => {
+    await update({ state: 'failed', error });
+    if (record.budget_hold_id) await settleTestBudget(storage, record.budget_hold_id, { actual_usd: null, provenance: 'RESERVED_MAXIMUM' });
+    return { status: 502, detail: error };
+  };
   const cred = await modalCredential(env, storage);
   if (!cred.exists || !cred.cred) return { status: 503, detail: 'Modal is not connected, so the result cannot be read.' };
   const res = await modalCall(cred.cred, 'POST', '/txt2img/result', { call_id: callId }, fetcher, 30000);
@@ -429,6 +460,11 @@ export async function finishModalImage(env, storage, callId, fetcher = fetch) {
   };
   Object.assign(item, await storeBlob(env, storage, id, d.png_base64, 'image/png', 'image'));
   await saveIndex(storage, [item, ...(await listMedia(storage))]);
+  // Settle the $5 test budget: measured GPU seconds plus the cold start and idle time Modal bills, or the reserved maximum.
+  if (record.budget_hold_id) {
+    const measured = Number.isFinite(d.gpu_seconds) ? (d.gpu_seconds + COLD_START_S + IDLE_SCALEDOWN_S) * T4_USD_PER_S : null;
+    await settleTestBudget(storage, record.budget_hold_id, { actual_usd: measured, provenance: measured == null ? 'RESERVED_MAXIMUM' : 'MEASURED_SECONDS_PLUS_OVERHEAD' });
+  }
   await update({ state: 'saved', item: { id, title: item.title, mime_type: item.mime_type, receipt: item.receipt } });
   return { status: 200, item };
 }
@@ -448,6 +484,8 @@ export async function reconcileModalImages(env, storage, fetcher = fetch) {
       const error = 'The Modal GPU picture did not finish in time. Nothing was saved; no other engine was used.';
       const records = (await storage.get(MODAL_IMAGE_KEY)) || [];
       await storage.put(MODAL_IMAGE_KEY, records.map((r) => (r.call_id === job.call_id ? { ...r, state: 'failed', error } : r)));
+      const hold = records.find((r) => r.call_id === job.call_id)?.budget_hold_id;
+      if (hold) await settleTestBudget(storage, hold, { actual_usd: null, provenance: 'RESERVED_MAXIMUM' });
       continue;
     }
     await finishModalImage(env, storage, job.call_id, fetcher).catch(() => null);

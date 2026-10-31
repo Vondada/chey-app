@@ -12,11 +12,17 @@ Map<String, dynamic>? cheResponseDetails(Object? data) {
   if (data is! Map) return null;
   final soul = data['soul'];
   final servedBy = data['served_by'];
-  if (soul is! Map && servedBy is! Map) return null;
+  final handler = data['handler'];
+  if (soul is! Map && servedBy is! Map && handler == null) return null;
   return {
     if (soul is Map) 'soul': Map<String, dynamic>.from(soul),
     if (servedBy is Map) 'served_by': Map<String, dynamic>.from(servedBy),
     if (data['source'] != null) 'source': '${data['source']}',
+    if (handler != null) 'handler': '$handler',
+    if (data['responder'] != null) 'responder': '${data['responder']}',
+    if (data['modal_http_status'] != null) 'modal_http_status': data['modal_http_status'],
+    if (data['modal_reason'] != null) 'modal_reason': '${data['modal_reason']}',
+    if (data['budget_state'] != null) 'budget_state': '${data['budget_state']}',
   };
 }
 
@@ -58,7 +64,20 @@ List<String> cheResponseDetailLines(Map<String, dynamic> details) {
     lines.add('The Soul did not shape this reply${reason.isEmpty ? '.' : ': $reason'}');
   }
 
-  if (servedBy != null) {
+  final handler = details['handler']?.toString() ?? '';
+  if (handler.isNotEmpty) {
+    // A CHE tool ran: name it, say who wrote the words, and give the handler's own facts as recorded.
+    final responder = details['responder']?.toString() ?? '';
+    lines.add('Handled by the CHE tool $handler${source.isEmpty ? '' : ' ($source)'}.');
+    lines.add(responder == 'deterministic_composer'
+        ? 'CHE\'s reply layer wrote these words from the recorded facts. No model was called.'
+        : 'The words came from $responder.');
+    final modalStatus = details['modal_http_status'];
+    if (modalStatus != null) lines.add('Modal answered HTTP $modalStatus.');
+    final budget = details['budget_state']?.toString() ?? '';
+    if (budget == 'released') lines.add('Nothing was charged for it.');
+    if (budget == 'reserved') lines.add('The worst-case reserve stays on the ledger until the outcome is known.');
+  } else if (servedBy != null) {
     final model = servedBy['model']?.toString() ?? 'an unnamed model';
     lines.add('Answered by the model $model.');
     lines.add(servedBy['fallback'] == true

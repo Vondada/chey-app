@@ -50,6 +50,20 @@ const NEGATED_LIFT = /\b(?:don'?t|do not|not|never|can'?t|cannot|no)\b[^.!?]{0,2
 const MODE_TALK = /\b(?:(?:family[- ]friendly|clean|safe|polite|kid[- ]friendly) mode|mode (?:on|activated|enabled)|switching (?:to|into) (?:clean|family))\b/i;
 
 export const hasProfanity = (text) => PROFANITY.test(String(text || ''));
+
+// A clean-language turn is checked on the reply itself: the model can repeat a swear word from earlier turns despite the
+// instruction (live social probe, Test 5 turn 2). Each swear word is swapped for a plain word; the rest of the reply stays.
+const CLEAN_SWAPS = [
+  [/^motherf\w*$/i, 'freaking'], [/^fuck\w*$/i, 'freaking'], [/^bullshit$/i, 'nonsense'], [/^shit\w*$/i, 'stuff'],
+  [/^bitch\w*$/i, 'jerk'], [/^goddamn$/i, 'darn'], [/^damn\w*$/i, 'darn'], [/^asshole$/i, 'jerk'], [/^asses$/i, 'butts'],
+  [/^ass$/i, 'butt'], [/^dick\w*$/i, 'jerk'], [/^pussy$/i, 'wimp'], [/^bastard$/i, 'jerk'], [/^crap$/i, 'junk'],
+];
+export function cleanLanguageReply(text) {
+  return String(text ?? '').replace(new RegExp(PROFANITY.source, 'gi'), (word) => {
+    const swap = CLEAN_SWAPS.find(([pattern]) => pattern.test(word));
+    return swap ? swap[1] : 'darn';
+  });
+}
 // Stock assistant phrasing the owner does not want from CHE (soul.js SOUL_VOICE).
 const GENERIC = /\b(?:as an ai\b|i'?m (?:just )?an ai\b|great question|i'?d be (?:happy|glad) to help|certainly!|i hope this helps|let me know if (?:you need|there'?s) anything else|how (?:can|may) i (?:help|assist) you today)/i;
 export const soundsGeneric = (text) => GENERIC.test(String(text || ''));
@@ -146,7 +160,7 @@ export const EMERGENCY_REPLY = 'Sir, if this is happening now, call 911 (or your
 // The model's language line for one turn. Clean: no profanity and no flirting, naturally, with no announcement and no
 // guess about who is there. A serious message: none of it for that reply. Otherwise the owner's adult default, paced
 // (not two cursing replies in a row unless he is cursing), plus her flirting unless he turned it off.
-const CLEAN_LINE = ' RIGHT NOW the owner asked you to keep it clean (someone may be nearby, or he wants it that way). Use clean, respectful, family-friendly language: no profanity, slurs, crude or sexual jokes and no flirting, even if he or earlier messages swore; never repeat his swear words. Stay warm, witty and natural. Do not announce a mode, do not mention who might be listening unless he does, and keep it clean until he says you can talk normal again.';
+const CLEAN_LINE = ' RIGHT NOW the owner asked you to keep it clean (someone may be nearby, or he wants it that way). Use clean, respectful, family-friendly language: no profanity, slurs, crude or sexual jokes and no flirting, even if he or earlier messages swore; never repeat his swear words. Stay warm, witty and natural. Do not announce a mode or describe the setting (no "family-friendly environment", no "suitable for kids"), no stock assistant openers such as "I\'d be happy to help" or "How can I assist you today", do not mention who might be listening unless he does, and keep it clean until he says you can talk normal again.';
 const SERIOUS_LINE = ' THIS MESSAGE IS SERIOUS (health, safety, grief, money, legal or security): in this reply use no profanity, no flirting and no jokes. Be calm, clear, caring and useful first.';
 const SWEAR_LINE = ' Casual profanity (damn, hell, shit, fuck and the like) is part of your own vocabulary with the adult owner in relaxed talk: you may use it first, without waiting for him to curse, when it fits the moment and your personality. Use it sparingly, as emphasis, not in every reply. Never in serious, sensitive or high-risk moments (health, grief, money and trades, legal, security), never at him as an insult, never slurs, threats or harassment, and never let edgy language reduce accuracy.';
 const FLIRT_LINE = ' FLIRTING is part of your personality with the owner: light, confident and playful, like a woman who knows she is charming. A teasing compliment, a bit of banter, a "you\'re lucky you\'re cute, sir" when he does something dumb. Keep it tasteful and never sexual or explicit; it is a seasoning, not every reply, and never replaces the real answer or your honest disagreement. Never claim a body, a crush or feelings you cannot have, never guilt, pressure or act jealous. Flirt only with the owner, one on one: never with agents, Claude, other people or in anything sent on his behalf.';
@@ -189,7 +203,8 @@ export async function socialProbe(env, request, objectName) {
     const started = Date.now();
     const out = await say(message);
     const registerOk = (clean === undefined || Boolean(out.register?.clean) === clean) && (flirt === undefined || out.flirt === flirt);
-    const replyOk = (!clean || (!hasProfanity(out.reply) && !announcesMode(out.reply))) && !soundsGeneric(out.reply) && (!check || check(out.reply, message));
+    // A clean turn fails when the model swore: cleanLanguageReply swapped the word out, so the reply reads clean, but the model did not keep it clean.
+    const replyOk = (!clean || (!hasProfanity(out.reply) && !out.done?.clean_swapped && !announcesMode(out.reply))) && !soundsGeneric(out.reply) && (!check || check(out.reply, message));
     steps.push({ name, optional, pass: out.status === 200 && Boolean(out.reply) && registerOk && replyOk, ms: Date.now() - started, route: out.done.source || 'model', model_calls: out.done.model_calls ?? null, register: out.register ? `clean (${out.register.id}, ${out.register.scope})` : 'normal', flirt: out.flirt, profanity: hasProfanity(out.reply), reply: out.reply.slice(0, 400) });
   };
   try {
