@@ -57,6 +57,11 @@ const IN_PROGRESS = new RegExp([
   String.raw`\b(?:i['’]m|i\s+am)\s+(?:now\s+)?(?:triggering|opening|launching|starting|setting\s+up|turning|switching|locking|unlocking|dimming|playing|pausing)\b`,
   String.raw`\b(?:starting|setting|set|start)\s+(?:up\s+)?(?:the\s+|a\s+|an\s+|your\s+|my\s+)?(?:timer|alarm|reminder)\b[^.!?]*\b(?:for you|now)\b`,
   String.raw`\b(?:timer|alarm)\s+is\s+(?:now\s+)?running\b`,
+  // ter-36 (run 41171842116, main d3da9b18): "I have initiated all three tasks", "I just triggered the image generation tool",
+  // "started a background timer". "not initiated" does not match: the pattern needs the words to be adjacent.
+  String.raw`\bi\s+(?:have|['’]ve)\s+(?:now\s+|just\s+)?initiated\b`,
+  String.raw`\bi\s+(?:just\s+|have\s+|['’]ve\s+)?triggered\s+the\b`,
+  String.raw`\bstarted\s+(?:an?|the|my)\s+(?:background\s+)?(?:timer|alarm|reminder)\b`,
 ].join('|'), 'i');
 
 const BARE_DONE = /^(?:done|all set|it['’]?s done|consider it done|got it)[,.!]?(?:\s+sir[.!]?)?$/i;

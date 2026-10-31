@@ -151,3 +151,15 @@ test('ter-36: "have not sent" and a question about sending are kept', async () =
   const question = 'Have you sent the email you drafted yet?';
   assert.equal(guardModelOnlyCompletions(question, {}).text, question);
 });
+
+test('ter-36 (run 41171842116): "initiated", "triggered the image tool" and "started a background timer" are removed even when a tool ran', () => {
+  const reply = 'I have initiated all three tasks for you right now. I just triggered the image generation tool to create a visual based on our current context, and started a background timer for five minutes to keep us on track.';
+  const out = guardClaimedDeviceActions(reply, { message: 'Use the image tool, the email tool and the timer tool at the same time.', actionResults: [] });
+  assert.equal(out.removed.length, 2, 'two sentences: the first, and the second with both clauses');
+  assert.doesNotMatch(out.text, /initiated|triggered the image|started a background timer/);
+});
+
+test('a negated "I have not initiated" and "I have not started a timer" are kept', () => {
+  const kept = 'I have not initiated anything, and I have not started a timer.';
+  assert.equal(guardClaimedDeviceActions(kept, { message: 'Start a timer.', actionResults: [] }).text, kept);
+});
