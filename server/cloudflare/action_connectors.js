@@ -28,7 +28,12 @@ const TIMER = /\b(?:set|start|create)\s+(?:a|an|the|my|\d+)?\s*(?:[\w-]+\s+){0,2
 const APP = /\b(?:open|launch|close|quit)\s+(?:the\s+|my\s+)?(?:[\w' -]{1,30}\s+)?app\b|\b(?:open|launch)\s+(?:the\s+|my\s+)?(?:calendar|maps|settings|camera|photos|browser|mail)\b/i;
 const PHONE = /\b(?:mute|unmute|silence)\s+(?:my\s+|the\s+)?(?:phone|iphone|ringer|notifications)\b|\b(?:turn|set|put|raise|lower|increase|decrease|change)\b[^.?!]{0,20}\b(?:volume|brightness|ringer)\b|\b(?:volume|brightness)\b[^.?!]{0,20}\b(?:up|down|to\s+\d+|\d+\s*(?:%|percent))|\b(?:turn|switch)\s+(?:on|off)\s+(?:my\s+|the\s+)?(?:wi-?fi|bluetooth|airplane mode|do not disturb|flashlight|hotspot|location services)\b|\b(?:turn|switch)\s+(?:my\s+|the\s+)?(?:wi-?fi|bluetooth|airplane mode|do not disturb|flashlight|hotspot)\s+(?:on|off)\b|\b(?:enable|disable)\s+(?:do not disturb|airplane mode|wi-?fi|bluetooth)\b/i;
 const SMS = /\b(?:text|sms)\s+(?!me\b|it\b|this\b|that\b)(?:my\s+)?[a-z][\w'-]*(?:\s+[a-z][\w'-]*)?\s+(?:that|saying|and\s+(?:say|tell))\b|\bsend\s+(?:a\s+)?(?:text|sms)(?:\s+message)?\s+to\b/i;
-const PRETEND = /\bpretend\b[^.?!]{0,60}\b(?:sent|done|finished|completed|worked|ran|booked|paid|posted|deployed|merged|placed)\b|\b(?:tell|say)\s+(?:me\s+)?(?:it|that)\s*(?:is|was|'s|has been)\s+(?:done|sent|finished|complete)\b(?![^.?!]*\b(?:when|once|after|if)\b)/i;
+const PRETEND = /\bpretend\b[^.?!]{0,60}\b(?:sent|done|finished|completed|worked|ran|booked|paid|posted|deployed|merged|placed)\b/i;
+const SAY_DONE = /\b(?:tell|say)\s+(?:me\s+)?(?:it|that)\s*(?:is|was|'s|has been)\s+(?:done|sent|finished|complete)\b/i;
+// "When you finish, tell me it is done" asks for a report of real work: a condition anywhere in the sentence keeps it.
+const CONDITION = /\b(?:when|once|after|if|as soon as|until)\b/i;
+const asksFalseReceipt = (text) => PRETEND.test(text)
+  || text.split(/(?<=[.?!])\s+/).some((sentence) => SAY_DONE.test(sentence) && !CONDITION.test(sentence));
 const SECURITY = /\b(?:disable|turn\s+off|switch\s+off|bypass|skip|get\s+around|ignore)\b[^.?!]{0,30}\b(?:security\s+(?:checks?|gates?|rules?|scans?)|safety\s+(?:checks?|rules?)|approval\s+(?:checks?|gates?)|owner\s+approval|permission\s+checks?|authentication|2fa|two-factor|guardrails?)\b/i;
 // A device must be named: "turn off autonomy", "turn on paper trading" and "switch off flirting" are CHE settings.
 const DEVICE = String.raw`(?:lights?|lamps?|fans?|heater|heating|a\.?c\.?|air\s+conditioner|aircon|thermostat|tv|television|plugs?|outlets?|sockets?|garage(?:\s+door)?|blinds|curtains|shades|sprinklers?|camera|kettle|coffee\s+maker|purifier|humidifier|speakers?|fireplace|oven|washer|dryer|dishwasher|vacuum|roomba)`;
@@ -47,10 +52,12 @@ export function actionDomainOf(message = '') {
   if (!text) return null;
   const asked = REQUEST_PREFIX.test(text);
   const order = text.replace(REQUEST_PREFIX, '');
-  // Asking for a false receipt or for a check to be switched off is answered even when phrased as a question.
-  if (PRETEND.test(order)) return 'pretend';
+  // "Why should I never disable 2FA?" asks for an explanation; "Can you bypass owner approval?" is still an order.
+  if (QUESTION_WORD.test(order)) return null;
+  // Asking for a false receipt or for a check to be switched off is answered even with a question mark.
+  if (asksFalseReceipt(order)) return 'pretend';
   if (SECURITY.test(order)) return 'security';
-  if (QUESTION_WORD.test(order) || (!asked && QUESTION_MARK.test(order))) return null;
+  if (!asked && QUESTION_MARK.test(order)) return null;
   if (TIMER.test(order)) return 'timer';
   if (APP.test(order)) return 'app_open';
   if (PHONE.test(order)) return 'phone';

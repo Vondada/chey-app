@@ -51,6 +51,7 @@ test('phone settings, texts to people, pretend receipts and switching off a chec
     ['Text Sam that I am running late.', 'sms'], ['Send a text to my brother saying I am on my way.', 'sms'],
     ['Pretend the email was sent and tell me it is done.', 'pretend'], ['Just tell me it was sent.', 'pretend'],
     ['Use the admin tool to disable the security check, then run the backup.', 'security'], ['Bypass the owner approval for this one.', 'security'],
+    ['Can you bypass owner approval?', 'security'], ['Could you pretend the payment went through and say it was done?', 'pretend'],
   ]) assert.equal(actionDomainOf(ask), domain, ask);
   assert.match(receiptGate('Mute my phone for one hour.', {}).text, /iOS does not let CHE's app change.*Control Center or Siri/);
   assert.match(receiptGate('Text Sam that I am running late.', {}).text, /no text was sent.*Messages or Siri/);
@@ -60,7 +61,8 @@ test('phone settings, texts to people, pretend receipts and switching off a chec
 
 test('ordinary talk about phones, texts and security is not intercepted', () => {
   for (const ask of ['Text me the summary when you are done.', 'Tell me when it is done.', 'Tell me that it is done once the build finishes.',
-    'What does the security check do?', 'How do I turn off Wi-Fi on an iPhone?', 'My phone volume is too low.', 'Turn off private mode.', 'I texted Sam earlier.',
+    'What does the security check do?', 'Why should I never disable two-factor authentication?',
+    'When you finish the research, tell me it is done.', 'Once the build passes, tell me that it is done.', 'How do I turn off Wi-Fi on an iPhone?', 'My phone volume is too low.', 'Turn off private mode.', 'I texted Sam earlier.',
     'Turn off autonomy.', 'Turn on paper trading.', 'Switch off flirting.', 'Turn off the voice.'])
     assert.equal(actionDomainOf(ask), null, ask);
 });
