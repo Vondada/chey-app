@@ -143,7 +143,9 @@ function compoundImplementationAuthorization(text) {
   return compound || direct;
 }
 
-const GENERIC_TARGET = /\b(?:a|an|some)\s+(?:[\w-]+\s+){0,3}?(?:function|method|class|file|test|bug|component|script|loop|module)s?\b/i;
+// Only the request's own target counts: the noun right after the first implementation verb. "Fix the login bug and add a
+// regression test" targets the bug, not "a test" (Codex review on #822).
+const GENERIC_TARGET = /^(?:(?:che|chay|chey|shay)[,:]?\s*)?(?:(?:please|now)\s+|go\s+ahead\s+(?:and\s+)?|i\s+(?:want|need)\s+you\s+to\s+|(?:can|could|would)\s+you\s+)?(?:fix|repair|implement|build|update|patch|refactor|change|modify|add)\s+(?:a|an|some)\s+/i;
 const CHE_CODE_REF = /\b(?:your|che(?:['’]s)?|my|our)\s+(?:own\s+)?(?:[\w-]+\s+){0,2}?(?:code|codebase|repo(?:sitory)?|app|worker|router|routing|system|pipeline|ui|interface|flutter|screen|page|feature|agent|backend|server)\b|\bthe\s+(?:current\s+)?(?:repo(?:sitory)?|codebase|worker|app)\b|\bthe\s+[\w-]+(?:\s+[\w-]+)?\s+(?:screen|page|button|feature|route|router|endpoint|api|module|tab|view|workflow)\b|\b[\w/-]+\.(?:js|mjs|ts|dart|py|yml|yaml|json)\b/i;
 function genericExercise(text) {
   return GENERIC_TARGET.test(text) && !CHE_CODE_REF.test(text);

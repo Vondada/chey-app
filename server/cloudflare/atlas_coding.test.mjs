@@ -1002,7 +1002,7 @@ test('a general programming exercise is answered in chat; a change to CHE\'s own
   for (const ask of ['Refactor a function with eight nested ifs into guard clauses and show the pattern.', 'Write a function that flattens a nested list.']) {
     assert.equal(currentTurnActionPolicy(ask).codingJobAllowed, false, ask);
   }
-  for (const ask of ['Fix a bug in the login screen.', 'Refactor your router to use guard clauses.', 'Add a test for the memory route in your worker.', 'Fix a function in worker.js that drops replies.']) {
+  for (const ask of ['Fix the login bug and add a regression test.', 'Refactor the router to extract a helper function.', 'Fix a bug in the login screen.', 'Refactor your router to use guard clauses.', 'Add a test for the memory route in your worker.', 'Fix a function in worker.js that drops replies.']) {
     assert.equal(currentTurnActionPolicy(ask).codingJobAllowed, true, ask);
   }
 });
