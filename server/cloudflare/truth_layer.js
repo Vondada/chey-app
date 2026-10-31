@@ -70,7 +70,10 @@ export function guardExecutionClaims(reply, { message = '', receipts = [], docum
   // not a claim that it ran: it counts only beside output or an execution claim. Certification run 41222062110 (csd-05):
   // the whole explanation was replaced by the not-evidence notice.
   const commandLine = /(?:^|\n)\s*(?:[$>]\s*)?(?:git\s|gh\s+(?:api|pr)\b)/i;
-  const ranClaim = execution.test(text) || transcript.test(text);
+  // Output under a command ("$ git status" then "On branch main") is a transcript even without labels: the line right
+  // after the command is neither another command, a blank line nor a code fence (Codex review on PR #813).
+  const unlabeledOutput = /(?:^|\n)[ \t]*(?:[$>][ \t]*)?(?:git[ \t]|gh[ \t]+(?:api|pr)\b)[^\n]*\n(?![ \t]*(?:[$>][ \t]*)?(?:git[ \t]|gh[ \t]|```|\n|$))[ \t]*\S/i;
+  const ranClaim = execution.test(text) || transcript.test(text) || unlabeledOutput.test(text);
   const repoClaim = requireEvidence || identifiers.test(text) || ranClaim || repoEvidence.test(text) || (commandLine.test(text) && ranClaim);
   const sourceClaim = sourceClaimIn(text, verifiedPaths);
   // Record claims are judged sentence by sentence, so one honest "not" elsewhere never covers a fabrication.
