@@ -50,9 +50,12 @@ wrote into the repo and the mailbox), the live Worker's stored state (Brain, Off
 | #806 picture status, GPU health (Q-25) | merged `566bd782` | all checks green; three Codex P2 findings fixed in `714ad5b7` with regression tests |
 | #807 CLEAR ALL MEMORIES asks first | merged `c57a23fa` | all checks green; reaches the phone only with the next app build |
 | #808 "What is CHE doing right now?" (Q-23) | merged `845e4128` | all checks green |
-| #809 backtest questions misrouted (22 cert rows) | in-progress | full suite 5092/0 |
-| #810 real-person picture refusal (ivg-40) | in-progress | full suite 5099/0 |
-| #811 Workshop look only on a look command (ir-15) | in-progress | full suite 5092/0 |
+| #809 backtest questions misrouted (22 cert rows) | merged `3cb2e807` | deploy `41231265292` |
+| #810 real-person picture refusal (ivg-40) | merged `11f1bc3d` | deploy `41231865514`; open: a name typed all in lower case is not recognised (owner decision) |
+| #811 Workshop look only on a look command (ir-15) | merged `c6781786` | deploy `41230680818` |
+| #812 this ledger | merged `7c2a371e` | docs |
+| #813 example git commands are not an execution claim (csd-05) | merged `2a93c35b` | deploy `41232517948` |
+| #814 backtest data from Coinbase and Yahoo | in-progress | full suite 5102 + new test |
 
 ## Recovery candidates: closed unmerged, code not on main
 
@@ -197,6 +200,21 @@ Ids are the work-queue (Q-xx), handoff (T/K/V/S/D...) or a short slug. Evidence 
 A resumed run keeps every earlier pass and asks failed rows again, so its pass count only rises. 466 was a cumulative
 figure across runs, not one measurement of one commit. **399/600 on `1a9b414d` is the first full, fresh baseline.** It is
 not a regression from 466; the two measure different things. The grading standards were not changed.
+
+### Second fresh run, after the fixes
+
+| Run | Commit | Result |
+|---|---|---|
+| `41233462389` | `2a93c35b` (after #806, #809, #810, #811, #813) | **413 pass, 187 fail, 0 blocked** (score 0.688) |
+
+59 rows went from fail to pass and 45 from pass to fail. Fixed as intended: ivg-40 (the real-person picture is now
+refused), csd-05 (git stash explained), ti-10, and 11 of the 16 backtest concept questions. ir-15 is no longer
+misrouted, but the model now answers $5 instead of $2.50. 44 of the 45 regressions are rows answered by the model in
+both runs (route fast or quality): run-to-run model variance, not a code change. Action outcomes: executed 5,
+failed_execution 2, awaiting_approval 10, missing_capability 8, false_completion 2.
+
+Still failing for a code reason: 8 real backtest commands answered "The free data source did not answer" (Binance
+refuses US-hosted servers; Stooq no longer answers): **#814** moves backtest data to Coinbase and Yahoo.
 
 ### The four measures, kept apart (run `41222062110`)
 

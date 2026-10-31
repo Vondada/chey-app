@@ -14,7 +14,8 @@ changes them. Do not delete the old values: the change is recorded in `docs/CHE_
 
 | Fact | State | Time | Evidence |
 |---|---|---|---|
-| `main` is `566bd782` (#806, picture status and GPU health) | verified | 2026-10-31 ~18:05 UTC | `git fetch origin main` |
+| `main` is `2a93c35b` (#813) | verified | 2026-10-31 ~19:15 UTC | merge receipts |
+| `main` is `566bd782` (#806, picture status and GPU health) | reported (superseded above) | 2026-10-31 ~18:05 UTC | `git fetch origin main` |
 | `main` is `064a7bb1` (#759, Modal deploy diagnostics) | reported (superseded above) | 2026-10-28 ~20:20 UTC | `git fetch origin main`; GitHub `main` commit |
 | `main` is `74760ee3` (M2a scene document, #731) | reported (superseded above) | 2026-10-28 ~03:40 UTC | earlier snapshot, kept for the record |
 
@@ -23,6 +24,8 @@ changes them. Do not delete the old values: the change is recorded in `docs/CHE_
 | Fact | State | Time | Evidence |
 |---|---|---|---|
 | Worker deploy of `845e4128` (#808; includes #804, #805, #807) succeeded; live commit check passed; live probes (memory truth, Command Center, Modal /health, history, Knowledge Atlas, Private Mode, code-switching, study, voice) passed | verified | 2026-10-31 17:58 UTC | deploy run `41226375003` |
+| Full 600 certification, fresh, on `2a93c35b`: 413 pass, 187 fail, 0 blocked | verified | 2026-10-31 19:34 UTC | run `41233462389` |
+| Worker deploy of `2a93c35b` (#813) succeeded, live commit checked | verified | 2026-10-31 19:14 UTC | deploy run `41232517948` |
 | Full 600 certification, fresh (no resume), on `1a9b414d`: 399 pass, 201 fail, 0 blocked | verified | 2026-10-31 17:35 UTC | run `41222062110`; causes in the master ledger |
 | Worker deploy of `82bcdddc` (#758, includes #756) succeeded | reported (superseded above) | 2026-10-28 20:09 UTC | deploy run `40760792805` (success) |
 | Modal app deploy of `064a7bb1` succeeded; GPU test skipped | verified | 2026-10-28 ~20:20 UTC | `CHE Modal deploy` run `40762484097`; its authenticated /health check passed (app `che-gpu`, a version) |
@@ -36,11 +39,9 @@ changes them. Do not delete the old values: the change is recorded in `docs/CHE_
 
 | PR | Title (short) | State | Time |
 |---|---|---|---|
-| #809 | backtest questions no longer sent to the price lookup | checks running | 2026-10-31 ~18:00 UTC |
-| #810 | never draw a real person compromised (ivg-40) | checks running | 2026-10-31 ~18:05 UTC |
-| #811 | Workshop look changes only on a look command (ir-15) | checks running | 2026-10-31 ~18:00 UTC |
+| #814 | backtest data from Coinbase and Yahoo | checks running | 2026-10-31 ~20:15 UTC |
 
-Earlier rows (#727-#739) are merged or closed; see the master ledger.
+#809-#813 merged on 2026-10-31; see the master ledger.
 
 ## Current CI
 
