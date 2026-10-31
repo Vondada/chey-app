@@ -176,6 +176,31 @@ export async function takeTimerAnnouncement(storage, timeZone = 'UTC', key = TIM
 }
 
 /** CHE's answer for a timer request, from the timer records (no model). Null when the message is not about timers. */
+const WEEKDAYS = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+function dayKey(ms, zone) {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: zone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(ms));
+}
+// The day a list question names, as a local date key: "for Thursday" (the next Thursday, today included), "today",
+// "tomorrow". Null when no day is named.
+// Local calendar days are stepped as dates, never as 24-hour blocks, so a daylight-saving change cannot shift the
+// day (Codex review on PR #820).
+function addDays(key, n) {
+  const [y, m, d] = key.split('-').map(Number);
+  return new Date(Date.UTC(y, m - 1, d + n)).toISOString().slice(0, 10);
+}
+function askedDay(message, zone, now) {
+  const text = String(message || '').toLowerCase();
+  const today = dayKey(now, zone);
+  if (/\btoday\b|\btonight\b/.test(text)) return { key: today, name: 'today' };
+  if (/\btomorrow\b/.test(text)) return { key: addDays(today, 1), name: 'tomorrow' };
+  const named = WEEKDAYS.find((d) => new RegExp(`\\b${d}\\b`).test(text));
+  if (!named) return null;
+  const [y, m, d] = today.split('-').map(Number);
+  const todayIndex = new Date(Date.UTC(y, m - 1, d)).getUTCDay();
+  const ahead = (WEEKDAYS.indexOf(named) - todayIndex + 7) % 7;
+  return { key: addDays(today, ahead), name: named[0].toUpperCase() + named.slice(1) };
+}
+
 export async function timerChatTurn(storage, message, { timeZone = 'UTC', now = Date.now(), wake = null, key = TIMERS_KEY } = {}) {
   const intent = timerIntent(message);
   if (!intent) return null;
@@ -183,9 +208,21 @@ export async function timerChatTurn(storage, message, { timeZone = 'UTC', now = 
   const meta = (extra = {}) => ({ source: 'che_timer', model_calls: 0, ...extra });
   if (intent.action === 'list') {
     const list = await load(storage, key);
-    const live = list.filter((t) => t.status === 'scheduled');
-    const fired = list.filter((t) => t.status === 'fired').slice(-3);
+    let live = list.filter((t) => t.status === 'scheduled');
+    let fired = list.filter((t) => t.status === 'fired').slice(-3);
     if (!live.length && !fired.length) return { text: 'You have no timers or reminders, sir. Nothing is running.', meta: meta({ timers: [] }) };
+    // "What reminder did I ask you to set for Thursday?": only that day's timers answer it (certification run
+    // 41233462389, mr-15, listed an unrelated running timer).
+    const day = askedDay(message, zone, now);
+    if (day) {
+      const onDay = (iso) => iso && dayKey(Date.parse(iso), zone) === day.key;
+      const others = live.length + fired.length;
+      live = live.filter((t) => onDay(t.fire_at));
+      fired = fired.filter((t) => onDay(t.fired_at));
+      if (!live.length && !fired.length) {
+        return { text: `I have no timer or reminder recorded for ${day.name}, sir.${others ? ` ${others === 1 ? 'One other is' : `${others} others are`} on record; ask "what timers do I have?" to hear ${others === 1 ? 'it' : 'them'}.` : ''}`, meta: meta({ timers: [], day: day.name }) };
+      }
+    }
     const lines = live.map((t) => `${name(t)}: goes off at ${clock(Date.parse(t.fire_at), zone)}, ${spokenDuration(Math.max(0, Date.parse(t.fire_at) - now))} left (timer ${t.id}).`);
     const past = fired.map((t) => `${name(t)} went off at ${clock(Date.parse(t.fired_at), zone)} (timer ${t.id}).`);
     return { text: `${live.length ? `Running, sir: ${lines.join(' ')}` : 'No timer is running, sir.'}${past.length ? ` Earlier: ${past.join(' ')}` : ''}`, meta: meta({ timers: live.map((t) => t.id) }) };
