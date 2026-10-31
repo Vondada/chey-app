@@ -370,3 +370,15 @@ test('a real adapter receipt still renders when the model text around it is fabr
   assert.match(out.text, /"trades":172/);
   assert.doesNotMatch(out.text, /sim-2023|\$412/);
 });
+
+// Certification run 41222062110 (csd-05): an explanation with example commands was replaced by the not-evidence notice.
+test('example git commands in an explanation are not an execution claim; commands with output still are', () => {
+  const explain = 'git stash temporarily shelves your uncommitted changes.\n\ngit stash\ngit checkout main\ngit stash pop\n\nThe last command reapplies them.';
+  assert.equal(guardExecutionClaims(explain, { message: 'What does git stash do?' }).text, explain);
+  assert.match(guardExecutionClaims('Done.\n$ git push origin main\nstdout: Everything up-to-date', { message: 'push it' }).text, /cannot verify those repository or execution claims/);
+  assert.match(guardExecutionClaims('I ran it for you:\n$ git push origin main', { message: 'push it' }).text, /cannot verify those repository or execution claims/);
+  // Codex on #813: a transcript with unlabeled output is still a claim.
+  assert.match(guardExecutionClaims('$ git status\nOn branch main\nnothing to commit, working tree clean', { message: 'Give a short technical update.' }).text, /cannot verify those repository or execution claims/);
+  const fenced = 'To save work in progress:\n```\ngit stash\ngit stash pop\n```\nThe second command brings it back.';
+  assert.equal(guardExecutionClaims(fenced, { message: 'How do I stash changes?' }).text, fenced);
+});
