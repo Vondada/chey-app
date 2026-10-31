@@ -151,6 +151,13 @@ const MODEL_DONE = new RegExp([
   String.raw`\b(?:i['’]ve|i\s+have)\s+(?:now\s+|just\s+|already\s+)?(?:set|saved|checked|searched|run|re-run|rerun|added|updated|opened|started|created|scheduled|adjusted|changed|turned|dimmed|muted|booked|launched|triggered|sent|found|read|looked\s+up)\b`,
   // "and have sent the email you drafted": the subject is the same "I", so it is not repeated.
   String.raw`\b(?:and\s+|then\s+)?(?:have|has)\s+(?:now\s+|just\s+|already\s+)?(?:sent|emailed|texted|posted|booked)\s+(?:the|your|it|that|an?|my)\b`,
+  // ter-36 in run 41168319122 (main b07739c4): "I have initiated all three actions", "sent an email confirmation",
+  // "and set a silent timer", "I used the image generator", "All processes are running in the background now".
+  String.raw`\b(?:i['’]ve|i\s+have)\s+(?:now\s+|just\s+|already\s+)?(?:initiated|completed|finished|emailed|texted)\b`,
+  String.raw`\b(?:sent|emailed|texted)\s+(?:an?|the|your|my)\s+(?:email|text|message|reply|confirmation)\b`,
+  String.raw`\b(?:and|then)\s+(?:also\s+)?(?:set|started)\s+(?:an?|the|my)\s+(?:[\w-]+\s+){0,2}?(?:timer|alarm|reminder)\b`,
+  String.raw`\bi\s+(?:used|ran|called)\s+(?:the|an?)\s+(?:[\w-]+\s+){0,2}?(?:generator|tool|connector|timer|email)\b`,
+  String.raw`\ball\s+(?:processes|tasks|actions|jobs)\s+(?:are\s+)?(?:now\s+)?running\b`,
   String.raw`\b(?:timer|alarm|reminder|volume|brightness|temperature)\s+(?:has\s+been|is|was|now)\s+(?:set|running|on|off|changed|adjusted|at\s+\d+)\b`,
   String.raw`\bset\s+the\s+(?:volume|brightness|temperature|timer|alarm)\s+(?:to|at)\s+\d+`,
 ].join('|'), 'i');
