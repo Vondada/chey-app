@@ -42,7 +42,8 @@ import { capabilityPromptLine, inferTurnCapabilities, runtimeCapabilityRegistry 
 import { identityQuestionIntent, speakIdentity } from './che_maturity.js';
 import { testBudgetReport } from './gpu_test_budget.js';
 import { modalCubeProbe, modalCubeResult } from './modal_cube_probe.js';
-import { deleteMedia, finishModalImage, generateImage, modalImageCheckTimes, pendingModalImages, reconcileModalImages, generateVideo, listMedia, readBlob, saveOwnerFile, upscaleImage, verifyMediaFile } from './media.js';
+import { MODAL_IMAGE_KEY, deleteMedia, finishModalImage, generateImage, modalImageCheckTimes, pendingModalImages, reconcileModalImages, generateVideo, listMedia, readBlob, saveOwnerFile, upscaleImage, verifyMediaFile } from './media.js';
+import { pictureStatusIntent, pictureStatusReply } from './picture_status.js';
 import { mediaVerifyProbe } from './media_verify_probe.js';
 import { parseProbeChatBody } from './probe_reply.js';
 import { withCheNote, guardEngineClaims, guardSoulClaims, lastReplyRecord, loadSoul, replyProvenanceAnswer, replyProvenanceQuestion, restoreSoul, saveSoul, soulPromptBlock, soulProvenance, soulView, stripPhoneSoul, stripSoulLabels } from './soul.js';
@@ -10779,6 +10780,12 @@ export class CheState extends DurableObject {
           }
           // "Open this same picture in my Creation Room": the picture is the one the message names, or the one the chat
           // showed last. Read from the stored record and its bytes, so the phone opens only a file CHE can read back.
+          // "Did the blue cube picture finish?": the job and Gallery records answer; nothing starts (picture_status.js).
+          const pictureAsk = body.attachment || !ownerDevice ? null : pictureStatusIntent(rawMessage);
+          if (pictureAsk) {
+            const status = pictureStatusReply(pictureAsk, { jobs: (await this.ctx.storage.get(MODAL_IMAGE_KEY)) || [], items: await listMedia(this.ctx.storage) });
+            return ndjsonReply(status.text, { source: 'che_picture_status', model_calls: 0, picture_state: status.state, ...(status.media_id ? { media_id: status.media_id } : {}) });
+          }
           const openMedia = mediaOpenIntent(rawMessage);
           if (openMedia) {
             if (!ownerDevice) return ownerOnly();

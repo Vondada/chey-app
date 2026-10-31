@@ -51,9 +51,13 @@ const CONNECT = /\b(?:connect|hook up|link|onboard|reconnect)\b/;
  *   job_status: "check the previous GPU render", "did the render finish", "status of the last picture"
  *   new_render: "start a new test render", "run a GPU test"
  */
+const GPU_HEALTH = /\bwhy\s+(?:is(?:n'?t|\s+not)|does(?:n'?t|\s+not)|won'?t|can'?t)\s+(?:my\s+|the\s+|your\s+)?gpus?\b|\bwhy\s+(?:is|are)\s+(?:my\s+|the\s+|your\s+)?gpus?\s+not\b|\b(?:is|are)\s+(?:my\s+|the\s+|your\s+)?gpus?\s+(?:connected|working|online|up|down|broken|reachable|ok(?:ay)?)\b|\bgpus?\s+(?:health|connection)(?:\s+(?:check|status))?\b/;
 export function modalServiceIntent(message = '') {
   const t = String(message || '').toLowerCase().replace(/^(?:hey |ok |okay )?(?:che|chay)[,:]?\s+/, '').trim();
   if (!t || t.length > 600 || UI_MODAL.test(t)) return null;
+  // "Why isn't my GPU working?" / "is my GPU connected?" (work queue Q-25): the authenticated connection check answers
+  // (one short CPU call, no GPU starts, no picture). A GPU job question ("what are my GPU jobs?") stays the queue's.
+  if (GPU_HEALTH.test(t) && !PICTURE_CREATE.test(t)) return { provider: 'modal', kind: 'connection', connect: false, verify: true, render: false };
   // Only Modal, or an explicit GPU test or check, is this route. A plain GPU question ("what are my GPU jobs?") belongs to the
   // GPU job queue, and a picture is never this route.
   if (!MODAL_WORD.test(t) && !(GPU_TEST_WORDS.test(t) && START_NOUN.test(t))) return null;
