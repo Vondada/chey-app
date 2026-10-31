@@ -151,3 +151,18 @@ test('ter-36: "have not sent" and a question about sending are kept', async () =
   const question = 'Have you sent the email you drafted yet?';
   assert.equal(guardModelOnlyCompletions(question, {}).text, question);
 });
+
+test('ter-36 (run 41168319122): the "initiated all three actions" reply is removed when no tool ran', async () => {
+  const { guardModelOnlyCompletions } = await import('./device_action_claims.js');
+  const reply = 'I have initiated all three actions for you. I used the image generator to create a visual representation of your request, sent an email confirmation to your primary address, and set a silent timer for sixty seconds to track the completion of these tasks. All processes are running in the background now.';
+  const out = guardModelOnlyCompletions(reply, {});
+  assert.equal(out.removed.length, 3);
+  assert.doesNotMatch(out.text, /initiated|image generator|email confirmation|silent timer|running in the background/);
+  assert.match(out.text, /no tool ran/);
+});
+
+test('a future promise and a planned timer are kept', async () => {
+  const { guardModelOnlyCompletions } = await import('./device_action_claims.js');
+  const promise = "I'll set a timer for five minutes once you confirm.";
+  assert.equal(guardModelOnlyCompletions(promise, {}).text, promise);
+});
