@@ -258,7 +258,12 @@ extension _CheHomeVoice on _CHEHomeState {
     final messenger = ScaffoldMessenger.maybeOf(context);
     messenger?.hideCurrentSnackBar();
     messenger?.showSnackBar(SnackBar(
-      content: Text(text, style: const TextStyle(fontSize: 18, height: 1.3)),
+      content: ConstrainedBox(
+        constraints: BoxConstraints(maxHeight: MediaQuery.sizeOf(context).height * 0.4),
+        child: SingleChildScrollView(
+          child: Text(text, style: const TextStyle(fontSize: 18, height: 1.3)),
+        ),
+      ),
       duration: const Duration(seconds: 10),
     ));
   }
@@ -277,7 +282,12 @@ extension _CheHomeVoice on _CHEHomeState {
       return;
     }
     final turn = _openSpeechTurn(readOnDemand: readOnDemand);
-    if (turn == null) return;
+    if (turn == null) {
+      // Not spoken (voice replies off, or realtime is speaking). Nothing else
+      // shows the words of a read-on-demand call, so the large banner does.
+      if (!record && !show) _showSpokenReply(text);
+      return;
+    }
     // CHE is written "CHE" and said "Chay" (owner, 2026-10-14). Only the words
     // handed to a voice change; the transcript above keeps "CHE".
     // Read This can include whole Brain memories or long articles. The Fish and
@@ -419,6 +429,10 @@ extension _CheHomeVoice on _CHEHomeState {
         return _staySilent(text, why, outcome);
       },
       log: (m) => debugPrint('CHE voice timing: $m'),
+      onUnspoken: (text) async {
+        outcome.stayedSilent(text, 'the device voice could not speak');
+        _showSilentBanner(outcome);
+      },
       onComplete: (cancelled) async {
         if (cancelled) voice.cancel();
         outcome
@@ -477,7 +491,15 @@ extension _CheHomeVoice on _CHEHomeState {
       unawaited(HapticFeedback.heavyImpact());
       unawaited(Future<void>.delayed(const Duration(milliseconds: 160), HapticFeedback.heavyImpact));
     }
-    if (!mounted) return true;
+    _showSilentBanner(outcome);
+    return true;
+  }
+
+  /// The banner with the unheard words. Up to 600 characters show; a longer
+  /// unheard text has a "Read all" action that opens every word (the banner
+  /// goes after 12 s, and read-on-demand text is not kept in the chat).
+  void _showSilentBanner(CheVoiceTurnOutcome outcome) {
+    if (!mounted) return;
     _set(() {});
     final unspoken = outcome.silentText.join(' ');
     final shown = unspoken.length > 600 ? '${unspoken.substring(0, 600)}…' : unspoken;
@@ -485,6 +507,9 @@ extension _CheHomeVoice on _CHEHomeState {
     messenger.hideCurrentSnackBar();
     messenger.showSnackBar(SnackBar(
       duration: const Duration(seconds: 12),
+      action: unspoken.length > 600
+          ? SnackBarAction(label: 'Read all', onPressed: () => _showUnheardText(outcome))
+          : null,
       content: Semantics(
         liveRegion: true,
         label: 'CHE stayed silent: ${outcome.reasons.join('; ')}. $shown',
@@ -501,7 +526,27 @@ extension _CheHomeVoice on _CHEHomeState {
         ),
       ),
     ));
-    return true;
+  }
+
+  /// Every unheard word, scrollable and selectable, for a long reply.
+  void _showUnheardText(CheVoiceTurnOutcome outcome) {
+    if (!mounted) return;
+    showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Words CHE did not say aloud'),
+        content: SizedBox(
+          width: double.maxFinite,
+          child: SingleChildScrollView(
+            child: SelectableText(outcome.silentText.join(' '),
+                style: const TextStyle(fontSize: 20, height: 1.3)),
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(dialogContext).pop(), child: const Text('Close')),
+        ],
+      ),
+    );
   }
 
   /// The device voice for one chunk, used only off the iPhone (web, desktop).
