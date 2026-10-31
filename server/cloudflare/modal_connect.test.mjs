@@ -294,3 +294,10 @@ test('the dispatch: a Modal ask goes to the Modal report; a plain connect goes t
   assert.equal(plain.onboard.provider, 'modal');
   assert.equal(serviceCommandIntent('Is PR #743 merged and is the Worker deployment live?'), null);
 });
+
+test('GPU health questions read the authenticated connection check (Q-25); GPU job and picture asks keep their routes', () => {
+  for (const msg of ["Why isn't my GPU working?", 'why is my gpu not working', 'Is my GPU connected?', 'are the GPUs online', 'GPU health check'])
+    assert.deepEqual(modalServiceIntent(msg), { provider: 'modal', kind: 'connection', connect: false, verify: true, render: false }, msg);
+  for (const msg of ['what are my GPU jobs?', 'make a picture of a GPU', 'which GPU should I buy for gaming'])
+    assert.notEqual(modalServiceIntent(msg)?.kind, 'connection', msg);
+});
