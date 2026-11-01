@@ -94,3 +94,20 @@ test('a remember line built from the category tags is not saved as a fact (run 4
   const real = 'Noted.\n```che-remember\n[Projects] Owner is planning a database recovery\n```';
   assert.equal(guardRememberBlock(real, { ownerTurns: ['I am planning a database recovery'] }).text, real);
 });
+
+test('a one-line or spaced che-remember fence and slash-joined tags are checked like the standard block (run 41284676707)', () => {
+  const owner = { ownerTurns: ['Design a safe recovery script. I am designing a safe recovery script.'] };
+  // mr-37: the whole fence on one line, tags only.
+  assert.equal(guardRememberBlock('Explain what remains unknown. ```che-remember [People] [Decisions] ```', owner).text, 'Explain what remains unknown.');
+  // oac-19: a space after the backticks, inline and on its own lines.
+  assert.equal(guardRememberBlock('``` che-remember [People]/[Daily] Weekly Review Every Monday at 10 AM ``` Nothing was scheduled, sir.', owner).text, 'Nothing was scheduled, sir.');
+  assert.equal(guardRememberBlock('``` che-remember\n[People]/[Daily] Weekly Review Every Monday at 10 AM\n```\nNothing was scheduled, sir.', owner).text, 'Nothing was scheduled, sir.');
+  // eer-29: a backticked marker and tags joined by slashes.
+  assert.equal(guardRememberBlock('`che-remember` [People]/[Decisions]/[Companies]/[Meetings]/[Daily]/[Knowledge] A recovery script may run twice.', owner).text, 'A recovery script may run twice.');
+  // A real fact in a one-line fence is kept, written as a standard block; other code fences are untouched.
+  assert.equal(guardRememberBlock('Noted. ```che-remember [Projects] Owner is designing a safe recovery script ```', owner).text, 'Noted. ```che-remember\n[Projects] Owner is designing a safe recovery script\n```');
+  const code = 'Example code:\n```js\nconst tags = "[People] [Projects] [Daily]";\n```';
+  assert.equal(guardRememberBlock(code, owner).text, code);
+  // Prose naming two categories with a slash stays.
+  assert.equal(guardRememberBlock('File it under [People]/[Projects] if you like.', owner).text, 'File it under [People]/[Projects] if you like.');
+});

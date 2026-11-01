@@ -483,7 +483,12 @@ const INTERNAL_RUN = /\b(?:retriev\w*|cached|cache|searched|researched|fetched|l
 export function guardRememberBlock(reply, { ownerTurns = [], retracted = [] } = {}) {
   const text = String(reply || '');
   const dropped = [];
-  const out = text.replace(/```che-remember[^\n]*\n([\s\S]*?)```/gi, (_block, body) => {
+  let reshaped = false;
+  // The fence as the prompt asks for it, and as the model also writes it: on one line ("```che-remember [People]
+  // [Decisions] ```", certification run 41284676707, mr-37) or with a space after the backticks ("``` che-remember",
+  // oac-19). Each form is checked line by line like the standard one.
+  const out = text.replace(/```[ \t]*che-remember\b[^\S\n]*([\s\S]*?)```/gi, (block, body) => {
+    if (!/^```che-remember[^\n]*\n/i.test(block)) reshaped = true;
     const keep = body.split('\n').filter((line) => {
       const fact = line.replace(/^\s*[-*•]\s*/, '').replace(/^\[[^\]]{1,30}\]\s*/, '').trim();
       if (!fact) return false;
@@ -504,9 +509,10 @@ export function guardRememberBlock(reply, { ownerTurns = [], retracted = [] } = 
       dropped.push(clip(fact, 200));
       return false;
     });
-    return keep.length ? `\`\`\`che-remember\n${keep.join('\n')}\n\`\`\`` : '';
+    return keep.length ? `\`\`\`che-remember\n${keep.map((line) => line.trimEnd()).join('\n')}\n\`\`\`` : '';
   }).replace(/\n{3,}/g, '\n\n').trim();
-  const leak = stripRememberLeak(dropped.length ? out : text);
+  // A kept fence in another shape is written back in the standard one, which the app shows as "Saved to brain".
+  const leak = stripRememberLeak(dropped.length || reshaped ? out : text);
   return { text: leak.text, dropped, leaked: leak.removed };
 }
 
@@ -517,7 +523,7 @@ export function guardRememberBlock(reply, { ownerTurns = [], retracted = [] } = 
 // Only CHE's own memory categories: an ordinary list of bracketed words is an answer, not the template (Codex, #816).
 const TAG = String.raw`\[(?:People|Projects|Decisions|Companies|Meetings|Daily|Knowledge)\]`;
 const LEAK_INSTRUCTION = /(^|[\n.!?]\s*)\**(?<!`)che[\s-]?remember\**(?:\s+block)?(?:[^.\n]{0,80}?\b(?:one\s+(?:tagged\s+)?fact\s+per\s+line|tagged\s+\[[^\]]{1,30}\])[^.\n]{0,40})?[.:]?[ \t]*/gi;
-const TAG_SPAN = new RegExp(String.raw`[ \t]*(?:\[che[\s-]?remember\][ \t]*)?${TAG}[^\n\u0000]*${TAG}`, 'gi');
+const TAG_SPAN = new RegExp(String.raw`[ \t]*(?:(?:\[che[\s-]?remember\]|\x60che[\s-]?remember\x60)[ \t]*)?${TAG}[^\n\u0000]*${TAG}`, 'gi');
 const TAG_RUN = new RegExp(String.raw`(?:[ \t]*${TAG}){3,}`, 'g');
 // The same template written one tag per line, under a marker line or with bare tags ("`che-remember`\n[People] CHE\n
 // [Projects]\n[Decisions]\n...", certification run 41279724891, eer-30).
@@ -538,7 +544,8 @@ export function stripRememberLeak(reply) {
     // [Projects] for work and ...") has sentence text between them; the leaked template has bare labels, and it also
     // carries the [che-remember] marker or two tags side by side with nothing between them.
     if (gaps.length < 2 || gaps.some((g) => g.length > 30 || /[,.;:!?]/.test(g))) return m;
-    if (!/^\s*\[che[\s-]?remember\]/i.test(m) && !gaps.some((g) => !g.trim())) return m;
+    // Tags joined by a slash ("[People]/[Decisions]/...", run 41284676707, eer-29) sit side by side as well.
+    if (!/^\s*(?:\[che[\s-]?remember\]|\x60che[\s-]?remember\x60)/i.test(m) && !gaps.some((g) => !g.replace(/\//g, '').trim())) return m;
     removed.push(m.trim());
     return '';
   });
