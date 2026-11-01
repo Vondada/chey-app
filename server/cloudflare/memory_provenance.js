@@ -484,7 +484,7 @@ const INTERNAL_RUN = /\b(?:retriev\w*|cached|cache|searched|researched|fetched|l
 // decisions about the kitchen renovation" does not make "Kitchen renovation" a fact, nor does "Is there a number that is a
 // perfect square and a perfect cube?" make "6 is a perfect square and a perfect cube" one (certification run 41294923116,
 // mr-11, ir-27). "Remember that ..." is a statement.
-const QUESTION_SENTENCE = /\?\s*$|^(?:(?:so|and|but|ok(?:ay)?|hey|sir|che)[, ]+)*(?:what|who|whom|whose|when|where|why|how|which|is|are|was|were|am|do|does|did|can|could|would|will|should|shall|may|might|have|has|had|isn't|aren't|don't|doesn't|didn't)\b/i;
+const QUESTION_SENTENCE = /\?\s*$|^(?:(?:so|and|but|ok(?:ay)?|hey|sir|che)[, ]+)*(?:(?:what|who|whom|whose|when|where|why|how|which)\b|(?:is|are|was|were|am|do|does|did|can|could|would|will|should|shall|may|might|have|has|had|isn't|aren't|don't|doesn't|didn't|won't|can't)\s+(?:you|i|we|they|he|she|it|there|this|that|these|those|my|your|our|the|a|an|anyone|anything)\b)/i;
 const REQUEST_SENTENCE = /^(?:(?:please|now|ok(?:ay)?|sir|che)[, ]+)*(?:summari[sz]e|tell|show|list|give|explain|describe|find|fetch|run|render|draft|write|compare|check|confirm|print|export|read|open|send|say|calculate|compute|translate|look\s+up|search|repeat|verify|estimate)\b/i;
 export function ownerStatements(ownerTurns = []) {
   return ownerTurns.flatMap((turn) => String(turn || '').split(/(?<=[.!?])\s+|\n+/))
@@ -519,7 +519,7 @@ export function guardRememberBlock(reply, { ownerTurns = [], retracted = [] } = 
       // Names and numbers in a memory line come from the owner: "The owner of the two sources is Partner 13" shares two
       // words with "Two sources share a common author" but names someone he never named (run 41294923116, cre-45).
       const said = statements.join(' ').toLowerCase();
-      const specifics = [...fact.slice(1).matchAll(/\b[A-Z][\w'’-]+|\d[\d.,:/-]*/g)].map((m) => m[0].toLowerCase().replace(/['’]s$/, ''));
+      const specifics = [...fact.slice(1).matchAll(/\b[A-Z][\w'’-]+|\d+(?:[.,:/-]\d+)*/g)].map((m) => m[0].toLowerCase().replace(/['’]s$/, ''));
       if (specifics.some((w) => !said.includes(w))) {
         dropped.push(clip(fact, 200));
         return false;

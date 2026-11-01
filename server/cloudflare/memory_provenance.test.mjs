@@ -136,6 +136,10 @@ test('a memory line needs an owner statement, its names and numbers, and a tag-o
     ['Noted.\n```che-remember\n[People] Owner\'s sister Ana lives in Austin\n```', 'My sister Ana lives in Austin.'],
     ['Noted.\n```che-remember\n[Daily] Owner goes to the gym at 6 am\n```', 'Remember that I go to the gym at 6 am.'],
     ['Done.\n```che-remember\n[Decisions] Agents log every external action with a receipt\n```', 'Set a rule that agents log every external action with a receipt.'],
+    // Codex on #843: a trailing full stop is not part of a number, and "Do not ..." is a directive, not a question.
+    ['Noted.\n```che-remember\n[People] Owner was born in 1980.\n```', 'I was born in 1980'],
+    ['Noted.\n```che-remember\n[People] Do not call the owner boss\n```', 'Do not call me boss'],
+    ['Noted.\n```che-remember\n[Daily] Owner does not want texts after 10 pm\n```', "Don't text me after 10 pm."],
   ];
   for (const [reply, said] of kept) assert.equal(guardRememberBlock(reply, { ownerTurns: [said] }).text, reply);
 });
