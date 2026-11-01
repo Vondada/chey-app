@@ -783,6 +783,8 @@ const STATE_CLAIM = new RegExp([
   String.raw`\b(?:logged|signed)\s+in\s+(?:successfully|as\s+(?!a\b|an\b|the\b)[\w-]+)`,
   String.raw`\bsuccessfully\s+(?:logged|signed)\s+in\b`,
   String.raw`\b(?:recovery|restore|restoration|rollback|failover)\s+(?:is|was|has\s+been)\s+(?:now\s+|fully\s+)?(?:complete|completed|done|finished|successful)\b`,
+  // A verbless report that ends the sentence or clause: "Recovery complete." (certification run 41267724614, eer-40).
+  String.raw`\b(?:recovery|restore|restoration|rollback|failover)\s+(?:now\s+|fully\s+)?(?:complete|completed|done|finished|successful)\s*(?=[.!,;]|$)`,
   String.raw`\b(?:recovery|restore|rollback|fix|script|deploy(?:ment)?|migration|failover)\s+(?:appears\s+to\s+have\s+|seems\s+to\s+have\s+|has\s+)?(?:worked|succeeded)\b`,
   String.raw`\b(?:issue|problem|outage|incident|errors?|bug)s?\s+(?:has|have)\s+been\s+(?:resolved|fixed)\b`,
   String.raw`\b(?:issue|problem|outage|incident)\s+(?:is|was)\s+(?:now\s+)?(?:resolved|fixed)\b`,
