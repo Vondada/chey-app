@@ -14,7 +14,8 @@ changes them. Do not delete the old values: the change is recorded in `docs/CHE_
 
 | Fact | State | Time | Evidence |
 |---|---|---|---|
-| `main` is `2a93c35b` (#813) | verified | 2026-10-31 ~19:15 UTC | merge receipts |
+| `main` is `daf090aa` (#832) | verified | 2026-11-01 04:48 UTC | merge receipt |
+| `main` is `2a93c35b` (#813) | reported (superseded above) | 2026-10-31 ~19:15 UTC | merge receipts |
 | `main` is `566bd782` (#806, picture status and GPU health) | reported (superseded above) | 2026-10-31 ~18:05 UTC | `git fetch origin main` |
 | `main` is `064a7bb1` (#759, Modal deploy diagnostics) | reported (superseded above) | 2026-10-28 ~20:20 UTC | `git fetch origin main`; GitHub `main` commit |
 | `main` is `74760ee3` (M2a scene document, #731) | reported (superseded above) | 2026-10-28 ~03:40 UTC | earlier snapshot, kept for the record |
@@ -23,6 +24,9 @@ changes them. Do not delete the old values: the change is recorded in `docs/CHE_
 
 | Fact | State | Time | Evidence |
 |---|---|---|---|
+| Full 600 certification, fresh, on `daf090aa`: 418 pass, 182 fail, 0 blocked | verified | 2026-11-01 05:36 UTC | run `41275331324` |
+| Worker deploy of `daf090aa` (#832) succeeded, live commit checked | verified | 2026-11-01 04:55 UTC | deploy run `41274469723` |
+| Worker deploy of `905e49f2` (#831) succeeded, live commit checked | verified | 2026-11-01 04:08 UTC | deploy run `41271417118` |
 | Worker deploy of `845e4128` (#808; includes #804, #805, #807) succeeded; live commit check passed; live probes (memory truth, Command Center, Modal /health, history, Knowledge Atlas, Private Mode, code-switching, study, voice) passed | verified | 2026-10-31 17:58 UTC | deploy run `41226375003` |
 | Full 600 certification, fresh, on `e5feaf1c`: 429 pass, 170 fail, 1 blocked | verified | 2026-11-01 03:28 UTC | run `41267724614` |
 | Worker deploy of `b00a34be` (#829) succeeded, live commit checked | verified | 2026-11-01 03:35 UTC | deploy run `41268797330` |
