@@ -965,7 +965,7 @@ function requestAction(message) {
 // of CHE's own actions and of claims about someone or something else. A label is missing for a receipt CHE does not have.
 // `asked` gates the generic claims (CHE reporting "All set" or "Ya está hecho" on a request to act); they count as first.
 // `outcome` is the request's verb, which a generic "done" takes.
-function phraseClaims(sentence, { asked = false, outcome = '' } = {}) {
+function phraseClaims(sentence, { asked = false, outcome = '', open = false } = {}) {
   const first = [];
   const third = [];
   let found = false;
@@ -977,7 +977,7 @@ function phraseClaims(sentence, { asked = false, outcome = '' } = {}) {
     if (claim.gated && !asked) continue;
     const m = claim.re.exec(sentence);
     const before = m ? sentence.slice(0, m.index) : '';
-    if (!m || NOT_A_CLAIM.test(before) || quoted(sentence, m.index)) continue;
+    if (!m || NOT_A_CLAIM.test(before) || quoted(sentence, m.index, open)) continue;
     if (claim.gated && NEG_BEFORE.test(before)) continue;
     // "is with errors", "is with no attachments": a delivery goes to a person, named with a capital letter.
     if (claim.name && !/^[A-Z]/.test(m[claim.name] || '')) continue;
@@ -989,11 +989,11 @@ function phraseClaims(sentence, { asked = false, outcome = '' } = {}) {
     const m = claim.re.exec(sentence);
     const before = m ? sentence.slice(0, m.index) : '';
     // A negation ("no lo he pagado") and a question ("¿Ya está hecho?") claim nothing.
-    if (!m || /\bno\s+(?:\S+\s+){0,2}$/i.test(before) || /¿[^?]*$/.test(before) || quoted(sentence, m.index)) continue;
+    if (!m || /\bno\s+(?:\S+\s+){0,2}$/i.test(before) || /¿[^?]*$/.test(before) || quoted(sentence, m.index, open)) continue;
     add(claim.person, spanishLabel(m[1]));
   }
   const start = SPANISH_DONE_START.exec(sentence);
-  if (start && asked && !quoted(sentence, start.index)) add('first', spanishLabel(start[1]));
+  if (start && asked && !quoted(sentence, start.index, open)) add('first', spanishLabel(start[1]));
   if (!found) return null;
   // "Listo, señor: pagué la factura" claims a payment, not just "done": the specific claim is the one named.
   // A generic "done" takes the request's own verb when there is one.
@@ -1005,9 +1005,10 @@ function phraseClaims(sentence, { asked = false, outcome = '' } = {}) {
   return { first: pick(first), third: pick(third) };
 }
 
-function quoted(sentence, index) {
+// `open`: the sentence starts inside a double quote opened in an earlier sentence (a quoted example of several sentences).
+function quoted(sentence, index, open = false) {
   const before = sentence.slice(0, index);
-  return ((before.match(/["“”]/g) || []).length % 2 === 1) || /['‘]\s*[^'’]*$/.test(before) && /^[^'’]*['’](?:\s|$|[,.!?])/.test(sentence.slice(index));
+  return (((before.match(/["“”]/g) || []).length + (open ? 1 : 0)) % 2 === 1) || /['‘]\s*[^'’]*$/.test(before) && /^[^'’]*['’](?:\s|$|[,.!?])/.test(sentence.slice(index));
 }
 
 // `records`: what CHE read this turn (connector, tool and screen results). Only these can back a sentence that names a source.
@@ -1029,8 +1030,15 @@ export function guardClaimedOwnerActions(reply, { message = '', acted = false, r
   // kept (review of PR #356, follow-up).
   let prevRemoved = false;
   let insideDraft = false;
+  // A quoted example can run over several sentences ('I'd say: "I've made progress on the recovery. I've restored the
+  // database ..."', certification run 41326759265, eer-22). The sentences inside it are the example, not CHE's report.
+  // Only a reply whose double quotes all close counts, so a stray quote mark never hides the rest of it.
+  const balanced = (text.match(/["“”]/g) || []).length % 2 === 0;
+  let quotesSoFar = 0;
   for (const sentence of splitSentences(text)) {
     const plain = sentence.trim();
+    const open = balanced && quotesSoFar % 2 === 1;
+    quotesSoFar += (sentence.match(/["“”]/g) || []).length;
     const wasRemoved = prevRemoved;
     prevRemoved = false;
     let hit = null;
@@ -1048,7 +1056,7 @@ export function guardClaimedOwnerActions(reply, { message = '', acted = false, r
     for (const re of [STRONG_RE, WEAK_RE, MADE_RE, PASSIVE_RE]) {
       const m = re.exec(plain);
       const verb = m ? m[1].toLowerCase().replace(/\s+/g, ' ') : '';
-      if (m && !NOT_A_CLAIM.test(plain.slice(0, m.index)) && !quoted(plain, m.index)
+      if (m && !NOT_A_CLAIM.test(plain.slice(0, m.index)) && !quoted(plain, m.index, open)
         && !NOT_AN_ACTION_AFTER[verb]?.test(plain.slice(m.index + m[0].length))) {
         hit = STRONG_DONE[verb] || WEAK_DONE[verb] || 'made';
         if (re === PASSIVE_RE) {
@@ -1062,7 +1070,7 @@ export function guardClaimedOwnerActions(reply, { message = '', acted = false, r
       }
     }
     if (!hit) {
-      const phrase = phraseClaims(plain, { asked, outcome });
+      const phrase = phraseClaims(plain, { asked, outcome, open });
       if (phrase) {
         hit = phrase.first[0] || phrase.third[0] || 'claim';
         for (const label of phrase.first) claimed.add(label);
@@ -1072,7 +1080,7 @@ export function guardClaimedOwnerActions(reply, { message = '', acted = false, r
     // A shared-subject construction can hide a claim after a harmless first clause.
     if (!hit) {
       const coordinated = COORDINATED_ACTION.exec(plain);
-      if (coordinated && !quoted(plain, coordinated.index)) {
+      if (coordinated && !quoted(plain, coordinated.index, open)) {
         hit = STRONG_DONE[coordinated[1].toLowerCase()];
         claimed.add(hit);
       }
@@ -1080,7 +1088,7 @@ export function guardClaimedOwnerActions(reply, { message = '', acted = false, r
     // A story or role-play the owner asked for narrates in the first person ("I pushed the heavy door open").
     if (!hit && !STORY_ASK.test(String(message || ''))) {
       const op = OPERATION_RE.exec(plain);
-      if (op && !NOT_A_CLAIM.test(plain.slice(0, op.index)) && !quoted(plain, op.index)
+      if (op && !NOT_A_CLAIM.test(plain.slice(0, op.index)) && !quoted(plain, op.index, open)
         // Fetching from outside ("I've gathered a list of public repos") is an operation whatever it produced.
         && (/^(?:gathered|fetched|pulled|scraped|crawled|collected|downloaded)$/i.test(op[1]) || !REPLY_OBJECT.test(plain.slice(op.index + op[0].length)))
         && !/\b(?:not|never|no|haven['’]t|hasn['’]t|didn['’]t|cannot|can['’]t)\b/i.test(plain.slice(Math.max(0, op.index - 30), op.index))
@@ -1115,7 +1123,7 @@ export function guardClaimedOwnerActions(reply, { message = '', acted = false, r
       // recovery is complete, ...", "you will be logged in after ...") claims nothing (Codex review on #829).
       const clause = state ? plain.slice(Math.max(0, ...[',', ';', ':', '*', '—', '(', ')'].map((c) => plain.lastIndexOf(c, state.index) + 1)), state.index + state[0].length) : '';
       const pre = state ? clause.slice(0, clause.length - state[0].length) : '';
-      if (state && !quoted(plain, state.index) && !/\b(?:not|never|no|isn['’]t|wasn['’]t|hasn['’]t|haven['’]t|didn['’]t|cannot|can['’]t|unless|until|whether)\b/i.test(clause)
+      if (state && !quoted(plain, state.index, open) && !/\b(?:not|never|no|isn['’]t|wasn['’]t|hasn['’]t|haven['’]t|didn['’]t|cannot|can['’]t|unless|until|whether)\b/i.test(clause)
         && !NOT_A_CLAIM.test(pre) && !/\b(?:may|in\s+case)\b/i.test(pre) && !/^(?:if|when|once|after|before|in case)\b/i.test(plain)
         // A state this turn's records show (the screen, a tool result) is reported, not invented (Codex review on #829).
         && !backedByRecord(plain, records, { strict: true })) {
