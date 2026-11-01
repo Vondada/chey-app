@@ -243,6 +243,15 @@ const NEWS_ASK = /^(?:(?:hey[, ]*)?(?:che|chay|chey|shay)[,!:]?\s*)?(?:please\s+
 // "AI news today", "Latest tech headlines"; not "Good news!", "Thanks for the news." or "I have news."
 const NEWS_PHRASE = /^(?:(?:hey[, ]*)?(?:che|chay|chey|shay)[,!:]?\s*)?(?!(?:i|i'm|we|my|our|you|your|that|this|it|it's|such|no|what|thanks|thank|wow|oh|ah|aw|ooh|yay|great|nice|cool|awesome|yes|yeah|sounds|love|lol|haha|congrats|congratulations)\b)(?![^.!?]*\b(?:good|great|bad|sad|terrible|awful|wonderful|amazing|fantastic|happy|exciting|welcome|some|big|huge|old|awesome|cool|nice|fun|fake|crazy|shocking|interesting|incredible|horrible|wild|best|worst)\s+(?:news|headlines?)\b)(?:(?:today['’]s|latest|breaking|top|biggest|current|recent)\s+)?(?:[a-z0-9+#-]+\s+){0,3}(?:news|headlines?)\b(?:\s+(?:today|tonight|now|this week))?[.!]?\s*$/i;
 const FICTION = /\b(?:write|draft|compose|make up|invent|imagine|pretend|role.?play)\b[^.?!]{0,60}\b(?:news|story|article|headline|report|press release)\b/i;
+// A headline or claim the owner gives CHE to judge ("A headline says '...'.
+// What's the overreach?", "Is this headline believable: "..."?") is a request
+// for reasoning about that text, not for today's news.
+const QUOTED_TEXT = /(?:^|[\s:(])(?:"([^"]{8,240})"|“([^”]{8,240})”|'([^']{8,240})'(?![a-z])|‘([^’]{8,240})’(?![a-z]))/gi;
+const GIVEN_HEADLINE = /\b(?:a|this|that|the following|some|one) (?:news )?(?:headline|story|article|report|claim|post|tweet)\s+(?:says|said|reads|read|claims|claimed|states|stated|announces|announced|goes|went|like)\b|^\W*(?:suppose|supposing|hypothetically)\b/i;
+const EVALUATE = /\b(?:overreach\w*|over-?reach\w*|believ\w*|credib\w*|plausib\w*|trust\w*|accurate|accuracy|mislead\w*|exaggerat\w*|overstat\w*|sensational\w*|clickbait|bias\w*|spin|framing|framed|flaw\w*|wrong|problem\w*|issue|issues|true|truthful|false|fake|real|legit\w*|likely|likelihood|reasonable|valid|logic\w*|fallac\w*|evaluate|assess|critique|judge|analy[sz]e|rate|rewrite|reword|improve|mean|means|imply|implies|red flags?|missing|leave out|left out|tell from|caveats?)\b/i;
+// Command words around the topic: "search the web for", "look up", "online".
+const COMMAND_LEAD = /^\W*(?:(?:hey[, ]*)?(?:che|chay|chey|shay)[,!:]?\s*)?(?:please\s+)?(?:(?:can|could|would|will) you\s+)?(?:please\s+)?(?:(?:go\s+)?search|look up|look for|find|check|browse|google|scan|pull up|dig up)(?:\s+(?:the\s+)?(?:web|internet|net|online|google))?(?:\s+(?:for|on|about))?\b/i;
+const WEB_PLACE = /\b(?:on|across|from|via|using|in)\s+(?:the\s+)?(?:web|internet|net|google|online)\b|\bonline\b/gi;
 const TOPIC_DROP = new RegExp(`\\b(?:what|whats|what's|is|was|were|are|the|a|an|biggest|big|top|main|most|important|latest|recent|recently|breaking|news|story|stories|headline|headlines|today|tonight|yesterday|this|last|week|month|morning|night|right|now|so|far|on|in|of|for|about|tell|me|give|show|any|some|happening|happened|going|announced|announcements?|released|releases|launched|launches|unveiled|che|chay|hey|please|sir|can|you|i|my|there|been|has|have|did|do|from|around|world|day|${MONTH_RE}|\\d{1,4}(?:st|nd|rd|th)?)\\b`, 'gi');
 
 /**
@@ -253,6 +262,10 @@ const TOPIC_DROP = new RegExp(`\\b(?:what|whats|what's|is|was|were|are|the|a|an|
 export function newsQuestion(message, now = Date.now()) {
   const text = String(message || '');
   if (!NEWS_WORDS.test(text) || FICTION.test(text)) return null;
+  // A quoted or given headline to judge: the words outside the quote ask for an evaluation.
+  const outsideQuotes = text.replace(QUOTED_TEXT, ' ');
+  const quotesClaim = outsideQuotes !== text && [...text.matchAll(QUOTED_TEXT)].some((m) => (m[1] || m[2] || m[3] || m[4]).trim().split(/\s+/).length >= 3);
+  if ((quotesClaim || GIVEN_HEADLINE.test(outsideQuotes)) && EVALUATE.test(outsideQuotes)) return null;
   // Personal announcements containing "news" do not request research.
   // Short spoken questions, imperatives and news-command phrases do.
   const request = /\?\s*$/.test(text) || NEWS_ASK.test(text) || NEWS_PHRASE.test(text);
@@ -267,7 +280,7 @@ export function newsQuestion(message, now = Date.now()) {
   // US time zones: a calendar day runs from about 04:00 to 08:00 UTC the next day.
   const from = days.length ? center - 12 * 3600_000 + 4 * 3600_000 : now - (week ? 7 : 1.5) * DAY_MS;
   const to = days.length ? center + 12 * 3600_000 + 8 * 3600_000 : now;
-  const topic = text.toLowerCase().replace(/['’]s\b/g, '').replace(TOPIC_DROP, ' ').replace(/[^a-z0-9.+# -]+/g, ' ')
+  const topic = text.replace(COMMAND_LEAD, ' ').replace(WEB_PLACE, ' ').toLowerCase().replace(/['’]s\b/g, '').replace(TOPIC_DROP, ' ').replace(/[^a-z0-9.+# -]+/g, ' ')
     .replace(/\s+/g, ' ').trim().split(' ').filter((w) => w.length > 1 || w === 'ai').slice(0, 5).join(' ');
   return { topic, from, to, days: days.length ? days : [isoDay(now)], label: days.length ? spokenDay(days[0]) : week ? 'this week' : 'today' };
 }
@@ -670,6 +683,35 @@ function disprovenHit(sentence, list) {
     || (d.terms || []).some((t) => new RegExp(`\\b${t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i').test(lower)));
 }
 
+// A sentence that says what a page contains ("the page says you won"), as
+// opposed to judging the link itself ("that link looks like phishing").
+const PAGE_CONTENT = /\b(?:page|site|website|link|url|article|post|it)\b[^.!?]{0,60}\b(?:(?:say|said|show|contain|state|read|list|display|mention|announc|offer|confirm|report|promis|claim)\w*|asks you|tells you)\b|\b(?:on|at|in) (?:the|that|this) (?:page|site|website|link|article)\b[^.!?]{0,40}\b(?:you(?:'ll| will)? (?:see|find)|there(?:'s| is| are))\b/i;
+
+// A sentence that judges the link itself: is it safe, a scam, worth a click.
+const LINK_ITSELF = /\b(?:link|links|url|urls|address|domain|site|website)\b|\b(?:safe|unsafe|phishing|phish|scam\w*|suspicious|legit\w*|trust\w*|click\w*|malware|spam\w*|fraud\w*|shortener|redirect\w*|secure|insecure|dangerous|risky|harmless|sketchy|shady|lure\w*|bait\w*|tactic\w*|red flags?|warning signs?|impersonat\w*|typosquat\w*|lookalike|look-alike|https?|ssl|certificate)\b/i;
+
+/** The owner's link in this sentence is the thing being discussed, not a source for a claim. */
+function linkIsSubject(sentence, kind) {
+  const plain = String(sentence).replace(URL_RE, ' § ');
+  if (kind.reporting || kind.quoted.length || kind.outlets.length || kind.publishedOn || kind.sourceWords) return false;
+  if (SOURCE_LINE.test(plain.replace(/§/g, '[LINK]'))) return false;
+  // A figure or coined name next to the link is a claim the link would have to back.
+  return !PAGE_CONTENT.test(plain) && LINK_ITSELF.test(plain) && !claimTerms(plain).hard.length;
+}
+
+const SAYS_UNOPENED = /\b(?:could(?:n['’]?t| not)|can(?:['’]?t|not)|unable to|did(?:n['’]?t| not)|was(?:n['’]?t| not) able to)\s+(?:\w+\s+)?(?:open|load|access|reach|visit|fetch|check|retrieve)\b/i;
+
+/** "I could not open the x.com link (…)": said once when the owner's own link would not open. */
+async function subjectLinkNote(reply, urls, { fetcher, timeoutMs, now }) {
+  const open = [...new Set(urls)].filter(checkableUrl).slice(0, 2);
+  if (!open.length || SAYS_UNOPENED.test(reply)) return '';
+  const pages = await Promise.all(open.map((u) => fetchArticle(u, { fetcher, timeoutMs, now })));
+  const failed = pages.map((page, i) => ({ page, url: open[i] })).filter(({ page }) => !page.ok);
+  if (!failed.length) return '';
+  const { page, url } = failed[0];
+  return `I could not open ${linkName(url)} myself (${page.error}), so that is judged from the link itself, not from what the page says.`;
+}
+
 /**
  * The final check on a reply about the outside world. Every cited link is
  * opened (unless research already opened it); a citation counts only when
@@ -690,11 +732,22 @@ export async function guardCitations(reply, {
   // Owner and connector links are references, not proof of their content.
   // "trusted" remains compatible with callers, but never bypasses verification
   // for a checkable source. Private/action links are never fetched.
+  // A link the owner sent is the subject of the question ("Is this link
+  // safe: <link>?"), not a source CHE cites: CHE may discuss it without the
+  // page opening. A sentence that says what that page contains is still a
+  // citation and is checked like any other.
+  const ownerLinks = new Set((String(message).match(URL_RE) || []).map(normalizeUrl));
+  const subjects = [];
   const segments = pieces(text);
   const sentences = segments.map((s, i) => ({ s, i })).filter(({ s, i }) => i % 2 === 0 && s.trim());
   const marks = sentences.map(({ s }) => {
     const kind = citationKind(s);
     const hit = disprovenHit(s, disproven);
+    if (ownerLinks.size && linkIsSubject(s, kind)) {
+      const given = kind.urls.filter((u) => ownerLinks.has(normalizeUrl(u)));
+      subjects.push(...given);
+      kind.urls = kind.urls.filter((u) => !given.includes(u));
+    }
     // A link offered as a source (or any link in a news answer) is checked;
     // "the guide is at https://…" is not a claim about the world.
     // A bare URL attached to an assertion is a citation too. Do not open
@@ -764,6 +817,9 @@ export async function guardCitations(reply, {
       for (const h of headings) marks[h].carrierOf = j;
     } else if (!listed) Object.assign(m, { urls: [], unsafe: [], cites: false });
   });
+  // The owner's link is opened so a page that will not open is said plainly.
+  const subjectNote = await subjectLinkNote(text, subjects, { fetcher, timeoutMs, now });
+  if (subjectNote) none.text = `${text}\n\n${subjectNote}`;
   const needsCheck = marks.some((m) => m.cites || m.hit) || (news && sentences.length);
   if (!needsCheck) return none;
 
@@ -993,7 +1049,7 @@ export async function guardCitations(reply, {
     }
   });
 
-  if (!removed.length && !conflicts.length && !used.size && !unopened.length && !mismatched.length) return { text, removed, receipts, used: [], disproven: fresh };
+  if (!removed.length && !conflicts.length && !used.size && !unopened.length && !mismatched.length) return { text: none.text, removed, receipts, used: [], disproven: fresh };
 
   const removeAt = new Set(verdicts.map((v, k) => (v.keep ? -1 : sentences[k].i)).filter((i) => i >= 0));
   const trimmedAt = new Map(verdicts.map((v, k) => [sentences[k].i, v.trimmed]).filter(([, t]) => t != null));
@@ -1036,6 +1092,7 @@ export async function guardCitations(reply, {
     note = `${note} I did not open ${[...new Set(unopened)].slice(0, 3).join(', ')} just now, so treat ${unopened.length === 1 ? 'that reference' : 'those references'} as from memory, not checked.`.trim();
   }
   const footer = usedList.length ? sourcesFooter(usedList, news, stories.map((st) => st.outlets)) : '';
+  if (subjectNote && kept) note = `${note} ${subjectNote}`.trim();
   note = note.charAt(0).toUpperCase() + note.slice(1);
   return {
     text: [kept, note, footer].filter(Boolean).join('\n\n'),

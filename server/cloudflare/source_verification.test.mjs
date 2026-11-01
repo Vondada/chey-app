@@ -1090,3 +1090,59 @@ test('an intro that states something is checked; one about its links stays', asy
     assert.equal(out.text, reply, reply);
   }
 });
+
+// ─── 2026-11-01: the guard judges CHE's own sources, not the owner's input ───
+
+test('a quoted or given headline to judge is reasoning, not a news request', () => {
+  // Wording outside the certification bank.
+  assert.equal(newsQuestion('My aunt shared a headline: "Eating carrots lets you see in the dark". Is that exaggerated?', AT), null);
+  assert.equal(newsQuestion("Suppose a news headline said 'scientists confirm aliens built the pyramids'. What red flags should I look for?", AT), null);
+  assert.equal(newsQuestion('This article says vaccines contain trackers, is that legit?', AT), null);
+  // Still news: a quoted name with no judgment asked, and plain news questions.
+  assert.ok(newsQuestion("Any news today about the 'One Big Beautiful Bill' vote?", AT));
+  assert.ok(newsQuestion('Is the headline about Apple today true?', AT));
+  assert.ok(newsQuestion("What's the biggest AI news today?", AT));
+});
+
+test('command words are not the news topic', () => {
+  assert.equal(newsQuestion("Search the web for today's top headline.", AT).topic, '');
+  assert.equal(newsQuestion('Could you look up the latest robotics news?', AT).topic, 'robotics');
+  assert.equal(newsQuestion('Please search online for climate news today', AT).topic, 'climate');
+  assert.equal(newsQuestion('Can you search the internet for the latest SpaceX news?', AT).topic, 'spacex');
+  // A company named Google stays the topic when it is not the search command.
+  assert.match(newsQuestion("What's the latest Google news?", AT).topic, /google/);
+});
+
+test('an evaluation of a quoted headline keeps its reasoning through /api/chat', async () => {
+  const calls = useWeb({ down: true });
+  const che = await owner({ model: () => 'The leap is from one small study to a sweeping cure. Early results are usually a correlation in a lab or a small group, so the headline overstates what was shown.' });
+  const out = await che.say('Is this headline believable: "Green tea erases memory loss in seniors"?');
+  assert.match(out.reply, /correlation/);
+  assert.doesNotMatch(out.reply, /no article I retrieved|I can't verify/);
+  assert.equal(calls.filter((u) => /api\.gdeltproject|hn\.algolia/.test(u)).length, 0, 'no news search for a quoted claim');
+});
+
+test("the owner's own link is the subject: a safety judgment stays and a dead link is said plainly", async () => {
+  const link = 'https://win-a-phone-now.example/redeem?id=7';
+  const fetcher = async () => new Response('bad gateway', { status: 502 });
+  const out = await guardCitations(`I wouldn't click ${link}. A prize link from a stranger is a common phishing lure, so don't type any details there.`, {
+    message: `Got a text with ${link}, safe to open?`, fetcher, now: AT,
+  });
+  assert.deepEqual(out.removed, []);
+  assert.match(out.text, /phishing lure/);
+  assert.match(out.text, /could not open the win-a-phone-now\.example link myself \(the site answered 502\)/);
+  // Once the reply says it, the note is not repeated.
+  const said = await guardCitations(`I couldn't open ${link}, but that link looks like a scam.`, { message: `Is ${link} legit?`, fetcher, now: AT });
+  assert.doesNotMatch(said.text, /myself/);
+});
+
+test("the owner's link still cannot carry an invented page or a claim", async () => {
+  const link = 'https://win-a-phone-now.example/redeem';
+  const fetcher = async () => new Response('bad gateway', { status: 502 });
+  const invented = await guardCitations(`The page at ${link} says you have won an iPhone 17 from Apple.`, { message: `Is this link safe: ${link}`, fetcher, now: AT });
+  assert.equal(invented.removed.length, 1);
+  assert.doesNotMatch(invented.text, /won an iPhone/);
+  const claim = await guardCitations(`That site is legit: 92% of users got their prize (${link}).`, { message: `Is ${link} legit?`, fetcher, now: AT });
+  assert.equal(claim.removed.length, 1);
+  assert.doesNotMatch(claim.text, /92%/);
+});
