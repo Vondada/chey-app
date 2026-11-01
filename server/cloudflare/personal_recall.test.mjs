@@ -2,7 +2,7 @@
 // hypotheticals, guesses, quotes and fiction are never facts; the wake prefix is stripped; nothing is invented.
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { activeFactSubject, answerPersonalFact, isQuestionLike, ownerAssertion, ownerFactTurn, personalFactQuestion, stripWake } from './personal_recall.js';
+import { activeFactSubject, answerPersonalFact, isQuestionLike, ownerAssertion, ownerFactTurn, personalFactQuestion, recallStoredStatement, storedStatementQuestion, stripWake } from './personal_recall.js';
 
 const brainSaid = (id, said, extra = {}) => ({
   id, verification: 'owner_attested', source: { kind: 'owner_chat' }, created_at: '2026-10-21T18:00:00.000Z',
@@ -181,4 +181,28 @@ test('a typed "favfavorite drink" finds the stored favorite drink, same as "favo
     assert.match(out.answer, /Sprite/, asked);
     assert.doesNotMatch(out.answer, /don't have a record/, asked);
   }
+});
+
+test('a question about a kind of thing ("what does a trailing stop show") never reads stored statements', () => {
+  assert.equal(storedStatementQuestion('What does a trailing stop on a strategy trade list show?'), null);
+  assert.equal(storedStatementQuestion('How does a trailing stop work?'), null);
+  // The owner named in the question: still a records question.
+  assert.ok(storedStatementQuestion('What is a good gift for my sister Nadia?'));
+  assert.ok(storedStatementQuestion('What was a restaurant I liked in Lisbon?'));
+  assert.ok(storedStatementQuestion('What phrase opens the vault Copper Lantern?'));
+  // A subject named by name is a records question even after "an" (Codex review on #825).
+  assert.ok(storedStatementQuestion('What is an internal code word for the fictional Blue Lantern project?'));
+});
+
+test('an approval or instruction to CHE never answers a question as if it were a fact (thb-21)', () => {
+  const rec = (text) => ({ memory_records: [{ id: 'a', text, source: 'owner_chat', verification_status: 'owner_attested', created_at: '2026-10-30T10:00:00Z' }] });
+  const q = storedStatementQuestion('What does a Monte Carlo test of a strategy trade list show?');
+  assert.ok(q, 'names Monte Carlo, so it still reads the records');
+  // The same words as a statement would answer; as an approval plus instruction they never do.
+  assert.equal(recallStoredStatement(rec('The Monte Carlo test of every strategy trade list should show the spread.'), q).kind, 'one');
+  assert.equal(recallStoredStatement(rec('yes, proceed with the Monte Carlo test of every strategy trade list and show the spread.'), q).kind, 'none');
+  assert.equal(recallStoredStatement(rec('Go ahead and run the Monte Carlo test of every strategy trade list to show the spread.'), q).kind, 'none');
+  // A fact that starts with "yes" stays a fact.
+  const named = storedStatementQuestion('What code word does the Blue Lantern project use?');
+  assert.equal(recallStoredStatement(rec('Yes, the Blue Lantern project uses the code word Magnolia Seven.'), named).kind, 'one');
 });

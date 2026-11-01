@@ -560,11 +560,24 @@ function keyWords(text) {
 }
 
 /** The words of a question that could name a stored statement, or null. Only questions qualify. */
+// An approval or instruction to CHE ("yes, proceed with strategy testing. Test all ...") tells CHE what to do; it states
+// no fact, so it never answers a question (certification run 41256280478, thb-21). "Yes, my sister's name is Nadia" is a
+// fact and stays.
+const INSTRUCTION = /^(?:(?:yes|yeah|yep|ok(?:ay)?|sure|alright|all right|approved?)\b[,.!:;\s]+(?:please\s+)?(?:proceed|go ahead|do|run|test|start|continue|keep|make|build|try|use|go)\b|(?:proceed|go ahead)\b)/i;
+const GENERIC_CONCEPT = /^(?:what|how|why|when)\s+(?:is|are|was|were|does|do|did|would|can|could|should|will)\s+(?:an?|any)\s+\w/i;
+const OWNER_WORD = /\b(?:my|mine|our|ours|me|i|we|us|i'm|i've|i'd)\b/i;
+
 export function storedStatementQuestion(message) {
   const text = stripWake(message);
   if (!text || !isQuestionLike(text)) return null;
   if (/\b(?:story|pretend|imagine|hypothetical|poem|joke)\b/i.test(text)) return null;
   const first = text.split(/[?!]/)[0];
+  // "What does a Monte Carlo test of a strategy trade list show?" asks about a kind of thing, not about anything the owner
+  // said: no stored statement answers it, even one that shares its words (certification run 41256280478, thb-21, was
+  // answered with the owner's instruction to "proceed with strategy testing"). A question that also names the owner
+  // ("a gift for my sister", "a restaurant I liked") or a subject by name ("an internal code word for the Blue Lantern
+  // project", Codex review on #825) still reads the records.
+  if (GENERIC_CONCEPT.test(first.trim()) && !OWNER_WORD.test(first) && !namedWords(first).length) return null;
   const asked = keyWords(first);
   // "Do you remember Silver Falcon 27?" asks whether that exact thing is stored: a record saying just those words answers it.
   const confirm = /^(?:do|did) you (?:still )?(?:remember|have|keep|know|recall)\b|^(?:is|was) .+ (?:saved|stored|remembered)$/i.test(first.trim());
@@ -599,7 +612,7 @@ export function recallStoredStatement(data = {}, question = {}, brainRecords = [
   const scored = [];
   for (const r of records) {
     const text = statementText(r.text);
-    if (!text || HEDGED.test(text)) continue;
+    if (!text || HEDGED.test(text) || INSTRUCTION.test(text)) continue;
     const own = keyWords(text);
     // A question that names its subject is about that subject: a statement missing the name answers something else.
     if ((question.names || []).some((n) => !own.includes(n))) continue;
