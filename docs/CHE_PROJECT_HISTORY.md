@@ -36,3 +36,5 @@ for identity and voice rules, section 2 for what existed on 2026-10-03). Owner r
 - 2026-10-31 · Merged #814 `ed2bd7dd`, #815 `d7ee3bc6`, #816 `fd757ec5`, #817 `6c2ea3a4`. Third fresh full certification run `41242161747` on `fd757ec5`: 420/600 (runs on the same day: 399, 413, 420). Opened #818: Coinbase 429 retry.
 
 - 2026-11-01 · Merged #818 `fa4a13a2`, #819 `fc16d084` (ledger), #820 `3b857331`, #821 `aee1cb50`, #822 `9cd42792`; deploy run `41254400451` succeeded. Fourth fresh full certification run `41256280478` on `9cd42792`: 415/600 (fresh runs: 399, 413, 420, 415; model variance about ±45 rows). Opened #823: backtest execution receipt, scope note, coin-backtest and look-ahead routing.
+
+- 2026-11-01 · Merged #824 `25114088` (ledger), #823 `075cf2af` (backtest receipt and routing), #825 `169bcb71` (stored instruction never quoted as a fact), each after its Codex finding was fixed; deploys `41260834822` and `41261127137` verified. Fifth fresh full certification run `41262741784` on `169bcb71`: 414/600 (fresh runs: 399, 413, 420, 415, 414). Opened #826: invented owner history removed on the model route.
