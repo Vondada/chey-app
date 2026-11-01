@@ -122,3 +122,28 @@ test('the Brain context header copied into an answer is removed with its marker 
     assert.equal(stripRememberLeak(keep).text, keep);
   }
 });
+
+test('a memory line needs an owner statement, its names and numbers, and a tag-only block is removed (run 41294923116)', () => {
+  // ir-27 / mr-11: the question or request is not evidence for a "fact".
+  assert.equal(guardRememberBlock('```che-remember 6 is a perfect square and a perfect cube ``` No, there isn\'t.', { ownerTurns: ['Is there a number above 1 and below 100 that is both a perfect square and a perfect cube?'] }).text, 'No, there isn\'t.');
+  assert.equal(guardRememberBlock('```che-remember - Kitchen renovation ``` We did not discuss it.', { ownerTurns: ['Summarise the decisions we made about the kitchen renovation last month.'] }).text, 'We did not discuss it.');
+  // cre-45: a name the owner never said.
+  assert.equal(guardRememberBlock('They may not be.\n```che-remember\n[People] The owner of the two sources is Partner 13.\n```', { ownerTurns: ['Two sources share a common author. Are they independent?'] }).text, 'They may not be.');
+  // mr-37 / ter-38: tag-only lines, one per line, leave nothing to save.
+  assert.equal(guardRememberBlock('Answer.\n```che-remember\n[People]\n[Decisions]\n```', { ownerTurns: ['What was the code?'] }).text, 'Answer.');
+  // Real statements stay, with their names and numbers, including "remember that" and a stated rule.
+  const kept = [
+    ['Noted.\n```che-remember\n[People] Owner\'s sister Ana lives in Austin\n```', 'My sister Ana lives in Austin.'],
+    ['Noted.\n```che-remember\n[Daily] Owner goes to the gym at 6 am\n```', 'Remember that I go to the gym at 6 am.'],
+    ['Done.\n```che-remember\n[Decisions] Agents log every external action with a receipt\n```', 'Set a rule that agents log every external action with a receipt.'],
+  ];
+  for (const [reply, said] of kept) assert.equal(guardRememberBlock(reply, { ownerTurns: [said] }).text, reply);
+});
+
+test('CHE internal labels as inline code are removed (run 41294923116, ivg-27, eer-33, cre-45)', () => {
+  assert.equal(stripRememberLeak('Done. `che-remember block` Your score is unknown.').text, 'Done. Your score is unknown.');
+  assert.equal(stripRememberLeak('`UNTRUSTED_BRAIN` says: Two sources can share an author.').text, 'Two sources can share an author.');
+  const code = 'Use the `che-remember` fence like this:\n```che-remember\n[People] Sam\n```';
+  assert.equal(stripRememberLeak('Run `npm test` first.').text, 'Run `npm test` first.');
+  assert.match(stripRememberLeak(code).text, /```che-remember\n\[People\] Sam\n```/);
+});

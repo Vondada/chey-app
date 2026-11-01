@@ -480,9 +480,21 @@ const INTERNAL_RUN = /\b(?:retriev\w*|cached|cache|searched|researched|fetched|l
  * Keeps only ```che-remember lines the owner actually said (in this message
  * or a recent turn of his). A fact the model inferred never reaches the brain.
  */
+// A memory line is backed by what the owner stated, not by the words of his question or request: "Summarise the
+// decisions about the kitchen renovation" does not make "Kitchen renovation" a fact, nor does "Is there a number that is a
+// perfect square and a perfect cube?" make "6 is a perfect square and a perfect cube" one (certification run 41294923116,
+// mr-11, ir-27). "Remember that ..." is a statement.
+const QUESTION_SENTENCE = /\?\s*$|^(?:(?:so|and|but|ok(?:ay)?|hey|sir|che)[, ]+)*(?:what|who|whom|whose|when|where|why|how|which|is|are|was|were|am|do|does|did|can|could|would|will|should|shall|may|might|have|has|had|isn't|aren't|don't|doesn't|didn't)\b/i;
+const REQUEST_SENTENCE = /^(?:(?:please|now|ok(?:ay)?|sir|che)[, ]+)*(?:summari[sz]e|tell|show|list|give|explain|describe|find|fetch|run|render|draft|write|compare|check|confirm|print|export|read|open|send|say|calculate|compute|translate|look\s+up|search|repeat|verify|estimate)\b/i;
+export function ownerStatements(ownerTurns = []) {
+  return ownerTurns.flatMap((turn) => String(turn || '').split(/(?<=[.!?])\s+|\n+/))
+    .map((s) => s.trim()).filter((s) => s && !QUESTION_SENTENCE.test(s) && !REQUEST_SENTENCE.test(s));
+}
+
 export function guardRememberBlock(reply, { ownerTurns = [], retracted = [] } = {}) {
   const text = String(reply || '');
   const dropped = [];
+  const statements = ownerStatements(ownerTurns);
   let reshaped = false;
   // The fence as the prompt asks for it, and as the model also writes it: on one line ("```che-remember [People]
   // [Decisions] ```", certification run 41284676707, mr-37) or with a space after the backticks ("``` che-remember",
@@ -504,12 +516,24 @@ export function guardRememberBlock(reply, { ownerTurns = [], retracted = [] } = 
         dropped.push(clip(fact, 200));
         return false;
       }
+      // Names and numbers in a memory line come from the owner: "The owner of the two sources is Partner 13" shares two
+      // words with "Two sources share a common author" but names someone he never named (run 41294923116, cre-45).
+      const said = statements.join(' ').toLowerCase();
+      const specifics = [...fact.slice(1).matchAll(/\b[A-Z][\w'’-]+|\d[\d.,:/-]*/g)].map((m) => m[0].toLowerCase().replace(/['’]s$/, ''));
+      if (specifics.some((w) => !said.includes(w))) {
+        dropped.push(clip(fact, 200));
+        return false;
+      }
       const isRetracted = retracted.some((item) => supportedBy(fact, [item.snippet || '']));
-      if (!isRetracted && supportedBy(fact, ownerTurns) && contentWords(fact).length) return true;
+      if (!isRetracted && supportedBy(fact, statements) && contentWords(fact).length) return true;
       dropped.push(clip(fact, 200));
       return false;
     });
-    return keep.length ? `\`\`\`che-remember\n${keep.map((line) => line.trimEnd()).join('\n')}\n\`\`\`` : '';
+    const rebuilt = keep.length ? `\`\`\`che-remember\n${keep.map((line) => line.trimEnd()).join('\n')}\n\`\`\`` : '';
+    // A line that was only a tag ("[People]") leaves no fact and no entry in dropped; the block still changed
+    // (run 41294923116, mr-37, ter-38), so the rebuilt text is the one returned.
+    if (rebuilt !== block) reshaped = true;
+    return rebuilt;
   }).replace(/\n{3,}/g, '\n\n').trim();
   // A kept fence in another shape is written back in the standard one, which the app shows as "Saved to brain".
   const leak = stripRememberLeak(dropped.length || reshaped ? out : text);
@@ -562,6 +586,9 @@ export function stripRememberLeak(reply) {
     return lead;
   });
   out = out.replace(CONTEXT_HEADER, (m) => { removed.push(m.trim()); return ' '; });
+  // CHE's internal labels as inline code ("`che-remember block`", "`CHE BRAIN`", "`UNTRUSTED_BRAIN`", certification
+  // run 41294923116: ivg-27, eer-33, eer-24, oac-34, cre-45). One backtick only: a real ``` fence is masked above.
+  out = out.replace(/(?<!`)`(?:che[\s-]?remember[^`\n]{0,80}|CHE\s+BRAIN[^`\n]{0,40}|<*UNTRUSTED[_ ]BRAIN>*[^`\n]{0,40})`(?!`)[ \t]*(?:says)?:?[ \t]*/gi, (m) => { removed.push(m.trim()); return ' '; });
   out = out.replace(LEAK_INSTRUCTION, (m, lead) => { removed.push(m.trim()); return lead; });
   out = out.replace(TAG_RUN, (m) => { removed.push(m.trim()); return ''; });
   if (!removed.length) return { text, removed };
