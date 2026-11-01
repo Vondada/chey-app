@@ -522,9 +522,11 @@ export function stripRememberLeak(reply) {
   // first tag to the last tag on that line, when it holds three tags or more.
   let out = masked.replace(TAG_SPAN, (m) => {
     const gaps = m.split(new RegExp(TAG)).slice(1, -1);
-    // Prose that explains the categories ("Use [People] for names, [Projects] for work, ...") has sentence text between
-    // them; the leaked template has bare labels.
+    // Prose that explains the categories ("Use [People] for names, [Projects] for work, ..." or "... for names and
+    // [Projects] for work and ...") has sentence text between them; the leaked template has bare labels, and it also
+    // carries the [che-remember] marker or two tags side by side with nothing between them.
     if (gaps.length < 2 || gaps.some((g) => g.length > 30 || /[,.;:!?]/.test(g))) return m;
+    if (!/^\s*\[che[\s-]?remember\]/i.test(m) && !gaps.some((g) => !g.trim())) return m;
     removed.push(m.trim());
     return '';
   });
