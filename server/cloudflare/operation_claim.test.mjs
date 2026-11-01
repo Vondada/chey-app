@@ -57,3 +57,17 @@ test('a receipt this turn (acted) keeps a real operation', () => {
   const reply = "I've restarted the worker; the new process ID is 4242.";
   assert.equal(guardClaimedOwnerActions(reply, { message: 'Restart the worker.', acted: true, records: [] }).text, reply);
 });
+
+// Certification run 41326759265 (eer-22): a quoted example over several sentences lost its middle sentence and gained the
+// denial, because each sentence was checked on its own and only the first carried the opening quote mark.
+test('a quoted example that runs over several sentences is the example, not a report', () => {
+  const message = 'What do you tell the owner when a recovery is only partly complete?';
+  const example = 'I\'d say something like: "Hey, sir, I\'ve made progress on the recovery, but it\'s not fully complete yet. I\'ve restored the database, but the file uploads still need to be rebuilt. I\'ll let you know when it\'s done."';
+  assert.equal(guard(example, message).text, example);
+  const curly = 'I would tell him: “The recovery is partly done. I\'ve restored the database. The uploads are next.”';
+  assert.equal(guard(curly, message).text, curly);
+  // After the quote closes, CHE's own report is checked again.
+  assert.match(guard('I\'d say: "It is partly done. The rest is next." I\'ve restored the database for you, sir.', message).text, /Nothing was done/);
+  // A quote mark that never closes does not hide the rest of the reply.
+  assert.match(guard('Sure, sir. "Here goes. I\'ve restored the database.', message).text, /Nothing was done/);
+});
