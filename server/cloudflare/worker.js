@@ -134,7 +134,7 @@ import { liveAnswer, liveIntent } from './trading_live_chat.js';
 import { ANALYSIS_SOURCE, LEDGER_SOURCE, analyzeStrategy, ledgerIntent, readLedgers, speakLedgers, strategyAnalysisIntent } from './trading_ledgers.js';
 import { TRADING_STATUS_SOURCE, newTradesIntent, tradingStatus } from './trading_status.js';
 import { meetingCommand, meetingScene, planScene, simScene } from './world_scene.js';
-import { SIM_SOURCE, listRuns, loadRun, loadSimMemory, runLab, saveRun, simLabIntent } from './sim_lab.js';
+import { SIM_SOURCE, labId, listRuns, loadRun, loadSimMemory, runLab, saveRun, simLabIntent } from './sim_lab.js';
 import { manifestChat, manifestRoute } from './manifest_api.js';
 import { pcm16ToWav } from './audio_wav.js';
 import { PLAN_SOURCE, answerPlanFollowUp, buildPlan, classifyProject, listPlans, loadPlan, planFollowUpIntent, planSubject, projectPlanIntent, researchSource, savePlan } from './project_plan.js';
@@ -11250,11 +11250,11 @@ export class CheState extends DurableObject {
             }
             const { type } = classifyProject(subject);
             const background = await researchSource(type.id);
-            plan = buildPlan(subject, { id: `plan-${crypto.randomUUID().slice(0, 12)}`, sources: background ? [background] : [] });
+            plan = buildPlan(subject, { id: labId('plan'), sources: background ? [background] : [] });
             if (!plan.refused) await savePlan(this.ctx.storage, new CheBrainStore(this.ctx.storage), plan);
           }
           const memory = plan.refused ? {} : await loadSimMemory(this.ctx.storage, plan);
-          const run = runLab(plan, { id: `sim-${crypto.randomUUID().slice(0, 12)}`, budget: simAsk.budget || undefined, memory });
+          const run = runLab(plan, { id: labId('sim'), budget: simAsk.budget || undefined, memory });
           if (!run.refused) await saveRun(this.ctx.storage, new CheBrainStore(this.ctx.storage), run);
           return ndjsonReply(run.spoken, { source: SIM_SOURCE, ok: !run.refused, model_calls: 0, sim_id: run.refused ? '' : run.id, plan_id: plan.refused ? '' : plan.id, project_type: plan.type, safety: run.safety.level });
         }
@@ -11324,7 +11324,7 @@ export class CheState extends DurableObject {
           const subject = planSubject(planAsk.idea, body.history);
           const { type } = classifyProject(subject);
           const background = await researchSource(type.id);
-          const plan = buildPlan(subject, { id: `plan-${crypto.randomUUID().slice(0, 12)}`, sources: background ? [background] : [] });
+          const plan = buildPlan(subject, { id: labId('plan'), sources: background ? [background] : [] });
           if (!plan.refused) await savePlan(this.ctx.storage, new CheBrainStore(this.ctx.storage), plan);
           return ndjsonReply(plan.spoken, { source: PLAN_SOURCE, ok: !plan.refused, model_calls: 0, plan_id: plan.refused ? '' : plan.id, project_type: plan.type, safety: plan.safety.level });
         }
