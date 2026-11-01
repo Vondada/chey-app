@@ -24,6 +24,11 @@ const URL_RE = /https?:\/\/[^\s)"'<>]+/i;
 const LIST_PAGES = /\b(?:list|show|what)\b[\s\S]{0,40}\b(?:research\s+pages?|pages\s+(?:you|che)\s+(?:read|kept|stored|saved))\b/i;
 const FORGET_PAGES = /\b(?:forget|delete|remove|erase)\b[\s\S]{0,60}\b(?:research\s+pages?|(?:the\s+)?pages?\s+(?:you|che)\s+(?:read|kept|stored|saved))\b/i;
 
+// A page behind the owner's sign-in: a bank, an email inbox, any "log into my ..." request. The browsing loop reads only
+// public pages and has none of the owner's credentials, so it never tries.
+const NEEDS_LOGIN = /\b(?:log\s*(?:in|into|on|onto)|sign\s*(?:in|into|on)|my\s+(?:password|credentials?|login|bank(?:ing)?\s+(?:account|app|balance)|account\s+balance))\b/i;
+export const BROWSE_LOGIN_REPLY = 'I cannot log into your accounts, sir: my browser reads public pages only, it holds none of your credentials, and I will not ask for a password in chat. Nothing was opened. Use that service\'s own app, or connect it through a connector you authorize.';
+
 /** What the owner's words ask for. A message can ask for more than one thing. */
 export function browseIntent(message) {
   const text = String(message || '').trim();
@@ -163,6 +168,8 @@ export function browseReply(outcome, question = '') {
  * Every search provider is a free source; the owner's typed request is the permission for the browser.
  */
 export async function runSearchRoute(message, { complete, soul = '', fetcher = fetch } = {}) {
+  // A page behind the owner's sign-in is refused plainly before any step runs.
+  if (NEEDS_LOGIN.test(String(message || ''))) return { text: BROWSE_LOGIN_REPLY, status: 'refused', observations: [] };
   // The providers read through the same fetcher as the page reader, so a test (or a limit) reaches all of them.
   const providers = Object.fromEntries(Object.entries(FREE_PROVIDERS).map(([key, p]) => [key, { ...p, search: (query) => p.search(query, fetcher) }]));
   const registry = createSearchRegistry();

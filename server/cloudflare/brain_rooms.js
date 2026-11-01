@@ -702,6 +702,30 @@ export function imageReference(message) {
     || /\b(?:the|my)\s+screen\s*shot\b/i.test(text);
 }
 
+// "Remove the watermark from this image", "crop that photo": an order to change a picture, not a question about one.
+const IMAGE_EDIT = /^(?:(?:hey\s+)?(?:che|chay|chey|shay)[,:]?\s+)?(?:(?:please|just|now|can\s+you|could\s+you|would\s+you|will\s+you|i\s+(?:want|need)\s+you\s+to|help\s+me)\s+)*(?:remove|erase|delete|strip|crop|edit|retouch|clean\s+up|blur|sharpen|resize|recolou?r|brighten|darken|fix|change|replace|cut\s+out|unblur|upscale|enhance)\b/i;
+const WATERMARK = /\b(?:watermarks?|logos?|copyright\s+(?:marks?|notices?)|credit\s+lines?|signatures?|stamps?)\b/i;
+/** What an image request with no image asks for: 'remove_mark' (take a watermark or logo off), 'edit', or ''. */
+export function imageEditKind(message) {
+  const text = String(message || '');
+  if (!IMAGE_EDIT.test(text.trim())) return '';
+  return WATERMARK.test(text) && /\b(?:remove|erase|delete|strip|crop|clean\s+up|cut\s+out|get\s+rid\s+of)\b/i.test(text) ? 'remove_mark' : 'edit';
+}
+
+/** The reply to an image edit asked with no image: nothing was edited, and a watermark is the owner's to remove only with the right. */
+export function imageEditNoImageReply(kind) {
+  const lead = 'I cannot edit that image, sir: no image came with this message, and I never keep earlier images. Nothing was changed.';
+  if (kind !== 'remove_mark') return `${lead} Send the picture with your request.`;
+  return `${lead} A watermark or logo usually marks copyright, so I remove one only from a picture you own or have permission to change. If that is the case, send the picture and say so.`;
+}
+
+/** The reply to an image request that came with no image: an edit order is answered as that order. */
+export function noImageReply(message) {
+  const kind = imageEditKind(message);
+  if (kind) return imageEditNoImageReply(kind);
+  return 'I have no image from earlier in this conversation, sir: either it was not read, or its summary has expired, and I never keep the image itself. Send the screenshot again and ask your question with it.';
+}
+
 /** A narrow visual phrase: the only follow-ups that get "I can't see your screen" when no screen is shared. */
 export function screenFollowUp(message) {
   const text = String(message || '').replace(/[’']/g, "'").replace(WAKE, '').trim();

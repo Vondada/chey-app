@@ -4,6 +4,7 @@
 
 import { idempotencyKey } from './recovery_policy.js';
 import { normalizePeerName } from './truth_layer.js';
+import { namesOtherSubject, phraseAfter, subjectSet } from './route_subject.js';
 
 const PEER_WORDS = '(claude|chat\\s?gpt|codex|gemini|grok|copilot|cursor)';
 
@@ -26,13 +27,22 @@ export function parallelPreference(message) {
   return /\b(?:batch\s+(?:this|it|the work|them)|do (?:it|this) fast|work(?:ing)? in parallel|in parallel|parallel lanes?|split (?:it|the work|this) up|all at once)\b/i.test(String(message || ''));
 }
 
+// "What is the status of X" is this route's question only when X is CHE's own work: a job, a change, the app, a peer.
+// "The status of the last security scan" names something the job records cannot answer, so it goes on to the model.
+const STATUS_ASK = /\bwhat(?:'s| is)\s+(?:the\s+)?(?:status|progress)\b/i;
+const STATUS_SUBJECT = subjectSet(['job', 'jobs', 'work', 'coding', 'code', 'build', 'task', 'change', 'fix', 'feature', 'app',
+  'pr', 'pull', 'request', 'repo', 'repository', 'study', 'claude', 'chatgpt', 'gpt', 'codex', 'gemini', 'grok', 'copilot', 'cursor',
+  'peer', 'peers', 'ai', 'ais', 'everything', 'thing', 'things', 'lane', 'collaboration', 'project', 'implementation', 'review',
+  'deploy', 'deployment', 'merge', 'update', 'upgrade', 'status', 'progress', 'going', 'we', 'yours']);
+
 // Status questions answered from receipts, never from model guesses.
 export function statusIntent(message) {
   const text = String(message || '').trim().replace(/^(?:che|chay|chey|shay)[,:]?\s+/i, '');
   if (/^(?:ok(?:ay)?|k|alright|all right|cool|got it)[.!]?$/i.test(text)) return { kind: 'ack' };
   if (/\b(?:tell|let)\s+me\s+(?:know\s+)?when\s+(?:you(?:'re| are)|it(?:'s| is)|everything is)\s+(?:ready|done|finished)\b/i.test(text)) return { kind: 'status' };
   if (/^(?:status|update|progress)\??$/i.test(text)
-    || /\b(?:what(?:'s| is)\s+(?:the\s+)?(?:status|progress)|where\s+are\s+(?:we|you)(?:\s+at)?|are\s+you\s+(?:done|ready|finished)|how(?:'s| is)\s+(?:it|the (?:job|work|coding)) going)\b/i.test(text)
+    || (STATUS_ASK.test(text) && !namesOtherSubject(phraseAfter(text, STATUS_ASK), STATUS_SUBJECT))
+    || /\b(?:where\s+are\s+(?:we|you)(?:\s+at)?|are\s+you\s+(?:done|ready|finished)|how(?:'s| is)\s+(?:it|the (?:job|work|coding)) going)\b/i.test(text)
     || new RegExp(`\\b(?:did|has|have|is|are)\\s+${PEER_WORDS}\\b[^.?!]{0,25}\\b(?:repl\\w*|answer\\w*|respond\\w*|working|done|finished|help\\w*|said)\\b`, 'i').test(text)
     || new RegExp(`\\bwhat\\s+(?:did|is)\\s+${PEER_WORDS}\\s+(?:say|doing)\\b`, 'i').test(text)) {
     return { kind: 'status' };

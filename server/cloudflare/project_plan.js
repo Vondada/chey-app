@@ -303,6 +303,14 @@ const ASK = /\b(?:prototype|break\s+(?:it\s+|this\s+|that\s+)?down|bill\s+of\s+m
 const STRONG = /\b(?:prototype|break\s+(?:it\s+|this\s+|that\s+)?down|bill\s+of\s+materials|boms?\b|parts?\s+list|cost\s+breakdown|from\s+concept\s+to\s+production|project\s+plan|visual\s+(?:project\s+)?plan|turn\s+(?:this|my|the|an?)\s+(?:idea|concept)|architecture\s+(?:for|of)|production\s+roadmap|game\s+(?:production\s+)?roadmap|major\s+systems|subsystems|render\s+the\s+(?:parts|pieces)|work\s+breakdown)\b/i;
 const NOT_PLAN = /\b(?:my\s+(?:day|week|month|morning|evening|weekend|schedule|calendar|trip|workout|meals?|diet)|meeting|this\s+screen|che'?s?\s+own|in\s+che\b|your\s+(?:code|app)|the\s+office\s+screen|pull\s+request|\bpr\s*#?\d|trade|trading|mnq|youtube\s+video|ai\s+(?:assistant|agent|receptionist|employee|worker)s?|prompts?|logo|funnels?|workflows?|automations?|routines?|checklists?|workout|lesson\s+plan|meal\s+plan)\b/i;
 
+// "Design a cross-reference protocol for ...", "design an experiment to ...": the thing designed is a method, which is
+// answered in words, not a costed build. The head noun is the last word before "for", "to", "that" or a comma.
+const METHOD_NOUN = /^(?:protocols?|process(?:es)?|procedures?|methods?|methodolog(?:y|ies)|experiments?|stud(?:y|ies)|tests?|surveys?|questionnaires?|rubrics?|frameworks?|polic(?:y|ies)|algorithms?|curricul(?:um|a)|syllabus|exercises?|drills?|quiz(?:zes)?|interviews?|strateg(?:y|ies)|approach(?:es)?|checklists?|criteria|guidelines?|standards?)$/i;
+function designedHead(body) {
+  const m = /^design\s+(.+?)(?=\s+(?:for|to|that|which|who|with|in|on|so|where|when|using|across|between)\b|[,.;:?!]|$)/i.exec(body);
+  return m ? m[1].trim().split(/\s+/).pop() : '';
+}
+
 /** A planning request, or null. `idea` is the request without the wake words. */
 export function projectPlanIntent(message) {
   const raw = String(message || '').trim();
@@ -314,7 +322,7 @@ export function projectPlanIntent(message) {
   // cheapest car insurance" stays a question. A general project needs a strong cue too.
   const known = classifyProject(body).type.id !== 'project';
   const strong = STRONG.test(body);
-  if (/^design\b/i.test(body) && known) return { idea: body.replace(/[.?!]+$/, '') };
+  if (/^design\b/i.test(body) && known && !METHOD_NOUN.test(designedHead(body))) return { idea: body.replace(/[.?!]+$/, '') };
   if (!ASK.test(body)) return null;
   // A weapon or harm asked for with a planning cue always reaches the safety layer, which refuses it.
   if (WEAPON.test(body) || HARM.test(body)) return { idea: body.replace(/[.?!]+$/, '') };
