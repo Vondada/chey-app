@@ -966,7 +966,12 @@ export function backtestScopeNote(message, candles) {
   if (customRule.test(t)) {
     notes.push(`I can't run a rule you describe yet, sir, so these are my own built-in rules (${Object.values(STRATEGIES).map((s) => s.name.toLowerCase()).join(', ')}), not the one you asked for.`);
   }
-  const years = (t.match(/\b(?:19|20)\d\d\b/g) || []).map(Number);
+  // Years from date expressions only ("from 2020 to 2024", "since 2021", "over 2008", "2020-2024"); an amount such as
+  // "$2000 initial account" or "2000 dollars" is never a requested year (Codex review on #823).
+  const NOT_MONEY = '(?!\\d|[,.]\\d|\\s*(?:dollars?|usd\\w*|eur\\w*|bucks|k\\b|initial|account|balance|capital|shares|contracts|units))';
+  const dated = new RegExp(`(?:\\b(?:from|since|to|until|till|through|thru|in|over|during|between|after|before|and|starting|year)\\s+(?:the\\s+)?(?:year\\s+)?)((?:19|20)\\d\\d)\\b${NOT_MONEY}`, 'gi');
+  const range = new RegExp(`(?<![$€£\\d])\\b((?:19|20)\\d\\d)\\s*[-–]\\s*((?:19|20)\\d\\d)\\b${NOT_MONEY}`, 'g');
+  const years = [...[...t.matchAll(dated)].map((m) => m[1]), ...[...t.matchAll(range)].flatMap((m) => [m[1], m[2]])].map(Number);
   if (years.length && Array.isArray(candles) && candles.length) {
     const from = Math.min(...years);
     const to = Math.max(...years);

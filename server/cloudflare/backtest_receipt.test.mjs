@@ -120,3 +120,14 @@ test('the scope note is empty when the request asks only for what the run does',
   assert.equal(backtestScopeNote('Backtest bitcoin since 2024', candles), '');
   assert.match(backtestScopeNote('Backtest bitcoin over 2008', candles), /You asked for 2008; the free data I have runs from 2024-01-01 to 2026-10-31/);
 });
+
+test('an amount is never read as a requested year (Codex review on #823)', () => {
+  const candles = [{ t: '2024-01-01T00:00:00Z' }, { t: '2026-10-31T00:00:00Z' }];
+  assert.doesNotMatch(backtestScopeNote('Backtest BTC with a $2000 initial account', candles), /You asked for/);
+  assert.doesNotMatch(backtestScopeNote('Backtest BTC starting with 2000 dollars', candles), /You asked for/);
+  assert.match(backtestScopeNote('Backtest BTC from 2020 to 2024 with a $2050 account', candles), /You asked for 2020 to 2024;/);
+  assert.match(backtestScopeNote('Backtest BTC 2020-2024', candles), /You asked for 2020 to 2024;/);
+  assert.match(backtestScopeNote('Backtest SPY over 2008.', candles), /You asked for 2008;/);
+  assert.match(backtestScopeNote('Backtest BTC from 2020 to 2024, and report the drawdown.', candles), /You asked for 2020 to 2024;/);
+  assert.equal(backtestScopeNote('Backtest bitcoin since 2024', candles), '');
+});
