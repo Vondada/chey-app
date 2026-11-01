@@ -43,6 +43,8 @@ concurrency:
 
 permissions:
   contents: read
+  # Reads the previous full run's results artifact as the regression baseline.
+  actions: read
 
 jobs:
   certify:
@@ -57,6 +59,9 @@ jobs:
       LIMIT: ${{ inputs.limit }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Full history, to find the last commit that changed the Worker (the one that must be live).
+          fetch-depth: 0
 
       - uses: actions/setup-node@v4
         with:
@@ -67,6 +72,14 @@ jobs:
           code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 60 -X POST "$CHE_WORKER/api/probe/chat" -H 'Content-Type: application/json' -d '{"message":"ping"}')
           echo "Public probe route without a token: HTTP $code"
           [ "$code" = "404" ] || { echo "::error::probe route is not closed without a token (HTTP $code)"; exit 1; }
+
+      - name: The live Worker runs the latest Worker code (certify only what is deployed)
+        run: |
+          # A docs-only merge does not deploy, so the commit that must be live is the last one that changed the Worker.
+          expected=$(git log -1 --format=%H -- server/cloudflare .github/workflows/che-worker-deploy.yml .github/scripts/che_live_probes.mjs)
+          echo "Expected live commit: $expected"
+          EXPECTED_TAG="$expected" CHE_LIVE_BASE="$CHE_WORKER" node .github/scripts/che_live_probes.mjs health
+          echo "CHE_DEPLOYED_COMMIT=$expected" >> "$GITHUB_ENV"
 
       - name: Probe token for the Worker's probe routes (masked, never printed)
         working-directory: server/cloudflare
@@ -95,6 +108,21 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           path: earlier
 
+      - name: Baseline for regression (the last successful full 600 run)
+        if: inputs.category == '' && inputs.limit == '' && inputs.questions_file == '' && inputs.resume_run_id == ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          id=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow che-certification.yml --status success --limit 20 \
+            --json databaseId,event --jq '[.[] | select(.event == "workflow_dispatch")][0].databaseId // empty')
+          if [ -z "$id" ]; then echo "No earlier successful run to compare with."; exit 0; fi
+          if gh run download "$id" --repo "$GITHUB_REPOSITORY" -n certification-results -D baseline; then
+            total=$(python3 -c "import json;print(json.load(open('baseline/certification-results.json'))['summary']['total'])" 2>/dev/null || echo 0)
+            if [ "$total" = "600" ]; then echo "CHE_BASELINE=baseline/certification-results.json" >> "$GITHUB_ENV"; echo "Baseline: run $id"; else echo "Run $id was not a full 600 run; no baseline."; fi
+          else
+            echo "::warning::could not download the results of run $id; no baseline."
+          fi
+
       - name: 2. Run the 600 questions against the live chat route
         env:
           CHE_CHAT_URL: https://chey-app.henryjavoni.workers.dev/api/probe/chat
@@ -107,6 +135,7 @@ jobs:
           [ -n "$RESUME_RUN_ID" ] && args+=("--resume=earlier/certification-results.json")
           [ -n "$RERUN_CLASSES" ] && args+=("--rerun=$RERUN_CLASSES")
           [ -n "$QUESTIONS_FILE" ] && args+=("--questions=$QUESTIONS_FILE")
+          [ -n "${CHE_BASELINE:-}" ] && args+=("--baseline=$CHE_BASELINE")
           node tools/certification/run_certification.mjs "${args[@]}" | tee certification-run.log
 
       - name: 3. Summary
@@ -124,6 +153,20 @@ jobs:
           for k in ("total", "pass", "fail", "blocked", "not_run"):
               if k in s:
                   print(f"- {k}: {s[k]}")
+          print(f"- deployed commit: {os.environ.get('CHE_DEPLOYED_COMMIT', 'not checked')}")
+          lat = s.get("latency_ms") or {}
+          if lat:
+              print(f"- latency ms: p50 {lat.get('p50')}, p95 {lat.get('p95')}, max {lat.get('max')}")
+          cmp = r.get("comparison")
+          if cmp:
+              print(f"- against the baseline run: {cmp['pass_before']} -> {cmp['pass_now']} ({cmp['delta']:+d}); lost {len(cmp['lost'])}, gained {len(cmp['gained'])}")
+          eng = s.get("by_engine") or {}
+          if eng:
+              print("")
+              print("| engine | pass | fail | blocked |")
+              print("|---|---|---|---|")
+              for k, v in sorted(eng.items(), key=lambda kv: -(kv[1].get('pass', 0) + kv[1].get('fail', 0))):
+                  print(f"| {k} | {v.get('pass', 0)} | {v.get('fail', 0)} | {v.get('blocked', 0)} |")
           print("")
           print("Every real response is in the `certification-results` artifact.")
           PY
