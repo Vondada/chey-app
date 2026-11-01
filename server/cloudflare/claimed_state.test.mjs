@@ -50,4 +50,9 @@ test('a verbless "Recovery complete." is a claim; the same words inside an expla
   assert.match(out.text, /cannot confirm/);
   const explain = 'A full recovery complete with checks takes ten minutes.';
   assert.equal(guardClaimedOwnerActions(explain, { message: 'How long does recovery take?' }).text, explain);
+  // Advice that names the state is not a report of it (Codex review on #831).
+  for (const advice of ['Avoid declaring recovery complete; two jobs are still failing.', 'To mark recovery complete, check every job.']) {
+    assert.equal(guardClaimedOwnerActions(advice, { message: 'What should I do after restarting the failed jobs?' }).text, advice);
+  }
+  assert.match(guardClaimedOwnerActions('Sir, recovery complete.', { message: 'Recover it' }).text, /cannot confirm/);
 });
