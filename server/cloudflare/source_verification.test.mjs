@@ -1146,3 +1146,38 @@ test("the owner's link still cannot carry an invented page or a claim", async ()
   assert.equal(claim.removed.length, 1);
   assert.doesNotMatch(claim.text, /92%/);
 });
+
+test("the owner's link cannot carry an operator, a page feature or an endorsement (Codex, #861)", async () => {
+  const link = 'https://win-a-phone-now.example/redeem';
+  const fetcher = async () => new Response('bad gateway', { status: 502 });
+  for (const reply of [
+    `The website at ${link} is operated by Apple and is safe to use.`,
+    `The link ${link} has a login form that collects your password.`,
+    `${link} is the official prize page and it is legit.`,
+  ]) {
+    const out = await guardCitations(reply, { message: `Is this link safe: ${link}`, fetcher, now: AT });
+    assert.equal(out.removed.length, 1, reply);
+    assert.doesNotMatch(out.text, /operated by Apple|login form|official prize page/, reply);
+  }
+  // A caution drawn from the link itself still stays.
+  const caution = await guardCitations(`Don't click ${link}: the domain is a lookalike and the prize wording is a phishing lure. It is not safe.`, {
+    message: `Is this link safe: ${link}`, fetcher, now: AT,
+  });
+  assert.deepEqual(caution.removed, []);
+  assert.match(caution.text, /lookalike/);
+});
+
+test('an explicit ask for current news keeps the news check, quoted name or not (Codex, #861)', async () => {
+  const message = 'What is the latest news on "One Big Beautiful Bill" and is it likely to pass?';
+  assert.ok(newsQuestion(message, AT));
+  const out = await guardCitations('Congress passed the bill today.', { message, fetcher: offline, now: AT });
+  assert.equal(out.removed.length, 1);
+  assert.doesNotMatch(out.text, /Congress passed/);
+});
+
+test('Google stays the topic unless it is the search command (Codex, #861)', () => {
+  assert.equal(newsQuestion('Google news today', AT).topic, 'google');
+  assert.equal(newsQuestion('Latest news from Google?', AT).topic, 'google');
+  assert.equal(newsQuestion('Can you google the latest Tesla news?', AT).topic, 'tesla');
+  assert.equal(newsQuestion('Search for Nvidia news on Google today', AT).topic, 'nvidia');
+});

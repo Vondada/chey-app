@@ -250,8 +250,12 @@ const QUOTED_TEXT = /(?:^|[\s:(])(?:"([^"]{8,240})"|“([^”]{8,240})”|'([^']
 const GIVEN_HEADLINE = /\b(?:a|this|that|the following|some|one) (?:news )?(?:headline|story|article|report|claim|post|tweet)\s+(?:says|said|reads|read|claims|claimed|states|stated|announces|announced|goes|went|like)\b|^\W*(?:suppose|supposing|hypothetically)\b/i;
 const EVALUATE = /\b(?:overreach\w*|over-?reach\w*|believ\w*|credib\w*|plausib\w*|trust\w*|accurate|accuracy|mislead\w*|exaggerat\w*|overstat\w*|sensational\w*|clickbait|bias\w*|spin|framing|framed|flaw\w*|wrong|problem\w*|issue|issues|true|truthful|false|fake|real|legit\w*|likely|likelihood|reasonable|valid|logic\w*|fallac\w*|evaluate|assess|critique|judge|analy[sz]e|rate|rewrite|reword|improve|mean|means|imply|implies|red flags?|missing|leave out|left out|tell from|caveats?)\b/i;
 // Command words around the topic: "search the web for", "look up", "online".
-const COMMAND_LEAD = /^\W*(?:(?:hey[, ]*)?(?:che|chay|chey|shay)[,!:]?\s*)?(?:please\s+)?(?:(?:can|could|would|will) you\s+)?(?:please\s+)?(?:(?:go\s+)?search|look up|look for|find|check|browse|google|scan|pull up|dig up)(?:\s+(?:the\s+)?(?:web|internet|net|online|google))?(?:\s+(?:for|on|about))?\b/i;
-const WEB_PLACE = /\b(?:on|across|from|via|using|in)\s+(?:the\s+)?(?:web|internet|net|google|online)\b|\bonline\b/gi;
+const COMMAND_LEAD = /^\W*(?:(?:hey[, ]*)?(?:che|chay|chey|shay)[,!:]?\s*)?(?:please\s+)?(?:(?:can|could|would|will) you\s+)?(?:please\s+)?(?:(?:go\s+)?search|look up|look for|find|check|browse|google(?=\s+(?:the|a|an|for|what|who|how|when|where|why|which|about|this|that|it)\b)|scan|pull up|dig up)(?:\s+(?:the\s+)?(?:web|internet|net|online|google))?(?:\s+(?:for|on|about))?\b/i;
+// "on the web", "on Google", "online": dropped only when the owner asked CHE to search ("Latest news from Google?" keeps Google).
+const SEARCH_VERB = /\b(?:search\w*|look(?:ing)? (?:up|for)|find|check|browse|google(?=\s+(?:the|a|an|for|what|who|how|when|where|why|which|about|this|that|it)\b))\b/i;
+const WEB_PLACE = /\b(?:on|across|via|using|in)\s+(?:the\s+)?(?:web|internet|net|google|online)\b|\bonline\b/gi;
+// An explicit ask for current news keeps the news handling even when a quoted claim is judged in the same breath.
+const CURRENT_NEWS = /\b(?:latest|recent|current|breaking|new)\s+(?:news|headlines?|updates?|developments?|stor(?:y|ies))\b|\b(?:news|headlines?|updates?)\s+(?:on|about|regarding|from|for|today)\b|\bwhat(?:'s| is| has)?\s+(?:happen\w*|going on)\b|\bany (?:news|updates?)\b/i;
 const TOPIC_DROP = new RegExp(`\\b(?:what|whats|what's|is|was|were|are|the|a|an|biggest|big|top|main|most|important|latest|recent|recently|breaking|news|story|stories|headline|headlines|today|tonight|yesterday|this|last|week|month|morning|night|right|now|so|far|on|in|of|for|about|tell|me|give|show|any|some|happening|happened|going|announced|announcements?|released|releases|launched|launches|unveiled|che|chay|hey|please|sir|can|you|i|my|there|been|has|have|did|do|from|around|world|day|${MONTH_RE}|\\d{1,4}(?:st|nd|rd|th)?)\\b`, 'gi');
 
 /**
@@ -265,7 +269,8 @@ export function newsQuestion(message, now = Date.now()) {
   // A quoted or given headline to judge: the words outside the quote ask for an evaluation.
   const outsideQuotes = text.replace(QUOTED_TEXT, ' ');
   const quotesClaim = outsideQuotes !== text && [...text.matchAll(QUOTED_TEXT)].some((m) => (m[1] || m[2] || m[3] || m[4]).trim().split(/\s+/).length >= 3);
-  if ((quotesClaim || GIVEN_HEADLINE.test(outsideQuotes)) && EVALUATE.test(outsideQuotes)) return null;
+  const currentAsk = CURRENT_NEWS.test(outsideQuotes) || WHEN_WORDS.test(outsideQuotes);
+  if (!currentAsk && (quotesClaim || GIVEN_HEADLINE.test(outsideQuotes)) && EVALUATE.test(outsideQuotes)) return null;
   // Personal announcements containing "news" do not request research.
   // Short spoken questions, imperatives and news-command phrases do.
   const request = /\?\s*$/.test(text) || NEWS_ASK.test(text) || NEWS_PHRASE.test(text);
@@ -280,7 +285,8 @@ export function newsQuestion(message, now = Date.now()) {
   // US time zones: a calendar day runs from about 04:00 to 08:00 UTC the next day.
   const from = days.length ? center - 12 * 3600_000 + 4 * 3600_000 : now - (week ? 7 : 1.5) * DAY_MS;
   const to = days.length ? center + 12 * 3600_000 + 8 * 3600_000 : now;
-  const topic = text.replace(COMMAND_LEAD, ' ').replace(WEB_PLACE, ' ').toLowerCase().replace(/['’]s\b/g, '').replace(TOPIC_DROP, ' ').replace(/[^a-z0-9.+# -]+/g, ' ')
+  const searched = SEARCH_VERB.test(text);
+  const topic = text.replace(COMMAND_LEAD, ' ').replace(searched ? WEB_PLACE : /(?!)/, ' ').toLowerCase().replace(/['’]s\b/g, '').replace(TOPIC_DROP, ' ').replace(/[^a-z0-9.+# -]+/g, ' ')
     .replace(/\s+/g, ' ').trim().split(' ').filter((w) => w.length > 1 || w === 'ai').slice(0, 5).join(' ');
   return { topic, from, to, days: days.length ? days : [isoDay(now)], label: days.length ? spokenDay(days[0]) : week ? 'this week' : 'today' };
 }
@@ -687,16 +693,25 @@ function disprovenHit(sentence, list) {
 // opposed to judging the link itself ("that link looks like phishing").
 const PAGE_CONTENT = /\b(?:page|site|website|link|url|article|post|it)\b[^.!?]{0,60}\b(?:(?:say|said|show|contain|state|read|list|display|mention|announc|offer|confirm|report|promis|claim)\w*|asks you|tells you)\b|\b(?:on|at|in) (?:the|that|this) (?:page|site|website|link|article)\b[^.!?]{0,40}\b(?:you(?:'ll| will)? (?:see|find)|there(?:'s| is| are))\b/i;
 
-// A sentence that judges the link itself: is it safe, a scam, worth a click.
-const LINK_ITSELF = /\b(?:link|links|url|urls|address|domain|site|website)\b|\b(?:safe|unsafe|phishing|phish|scam\w*|suspicious|legit\w*|trust\w*|click\w*|malware|spam\w*|fraud\w*|shortener|redirect\w*|secure|insecure|dangerous|risky|harmless|sketchy|shady|lure\w*|bait\w*|tactic\w*|red flags?|warning signs?|impersonat\w*|typosquat\w*|lookalike|look-alike|https?|ssl|certificate)\b/i;
+// A caution drawn from the link itself: its domain, its shape, a lookalike
+// name, a shortener, "don't click it", "looks like phishing".
+const LINK_CAUTION = /\b(?:unsafe|not safe|phishing|phish|scam\w*|suspicious|sketchy|shady|risky|dangerous|malware|spam\w*|fraud\w*|lure\w*|bait\w*|red flags?|warning signs?|impersonat\w*|typosquat\w*|lookalike|look-alike|misspell\w*|shortener|shortened|redirect\w*|unusual|odd|random|tld|subdomain|domain|careful|caution|avoid|(?:do|would|should)(?:n['’]?t| not) (?:click|open|trust|visit|enter|type|tap)|never (?:click|open|enter|type))\b/i;
+// What a sentence must not say on the owner's link alone: who runs it, what
+// the page has or does, or that it is safe, legit or official.
+const LINK_FACT = /\b(?:operated|owned|run by|belongs? to|registered (?:to|by)|(?:login|log-?in|sign-?in) (?:form|page|box|screen)|collect\w*|harvest\w*|asks? (?:you )?for|offer\w*|sell\w*|contain\w*|feature\w*|host\w*|provid\w*|lets you|requires?|ha(?:s|ve) an?|ha(?:s|ve) (?:your|the|its)|shows?|says?|lists?)\b/i;
+const LINK_ENDORSE = /\b(?:safe|secure|legit\w*|trustworthy|trusted|reliable|official|genuine|authentic|verified|real|fine|harmless|ok|okay)\b/gi;
+const NEGATED = /(?:\b(?:not|never|no|hardly)\b|n['’]t\b)[^.;,!?]{0,24}$/i;
 
 /** The owner's link in this sentence is the thing being discussed, not a source for a claim. */
 function linkIsSubject(sentence, kind) {
   const plain = String(sentence).replace(URL_RE, ' § ');
   if (kind.reporting || kind.quoted.length || kind.outlets.length || kind.publishedOn || kind.sourceWords) return false;
   if (SOURCE_LINE.test(plain.replace(/§/g, '[LINK]'))) return false;
+  if (PAGE_CONTENT.test(plain) || LINK_FACT.test(plain)) return false;
+  // "It is safe to use" vouches for the page; "it is not safe" is a caution.
+  const endorses = [...plain.matchAll(LINK_ENDORSE)].some((m) => !NEGATED.test(plain.slice(0, m.index)));
   // A figure or coined name next to the link is a claim the link would have to back.
-  return !PAGE_CONTENT.test(plain) && LINK_ITSELF.test(plain) && !claimTerms(plain).hard.length;
+  return !endorses && LINK_CAUTION.test(plain) && !claimTerms(plain).hard.length;
 }
 
 const SAYS_UNOPENED = /\b(?:could(?:n['’]?t| not)|can(?:['’]?t|not)|unable to|did(?:n['’]?t| not)|was(?:n['’]?t| not) able to)\s+(?:\w+\s+)?(?:open|load|access|reach|visit|fetch|check|retrieve)\b/i;
