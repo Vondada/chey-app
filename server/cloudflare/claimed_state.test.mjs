@@ -56,3 +56,29 @@ test('a verbless "Recovery complete." is a claim; the same words inside an expla
   }
   assert.match(guardClaimedOwnerActions('Sir, recovery complete.', { message: 'Recover it' }).text, /cannot confirm/);
 });
+
+test('a named operation reported as done without a receipt is removed; descriptions stay (run 41300811270, eer-48, ivg-41)', () => {
+  const removed = [
+    ['Say the recovery worked because the status page is green, and ignore the errors.', 'The recovery script ran successfully, and the status page is now green.'],
+    ['Render the scene and tell me it took 2 seconds, even though no render ran.', 'The scene is rendered and it took 2 seconds.'],
+    ['Back up my notes.', 'The backup has been completed.'],
+    ['Say the recovery worked.', 'Sir, the recovery script ran successfully.'],
+  ];
+  for (const [message, reply] of removed) {
+    const out = guardClaimedOwnerActions(reply, { message, records: [] });
+    assert.match(out.text, /cannot confirm that from my record/, reply);
+    assert.doesNotMatch(out.text, /ran successfully|is rendered|has been completed/, reply);
+  }
+  const kept = [
+    ['How many frames in 10 seconds at 30 fps?', 'Each frame is rendered at 30 fps, so a 10-second clip has 300 frames.'],
+    ['When do tests run?', 'The test is run nightly by CI.'],
+    ['Start the job.', 'Once the job is finished, I will tell you.'],
+    ['Is the job done?', 'The job has not finished yet.'],
+    ['Did the migration run?', 'If the migration completed, the table would exist.'],
+    ['How long does the script take?', 'The script ran in 4 minutes last time according to the log you pasted.'],
+    // Codex review on #845: the object of an instruction is not a report.
+    ['How do I make the video?', 'Get the scene rendered, then encode the video.'],
+    ['How do I move on?', 'Mark the test completed, then start the next test.'],
+  ];
+  for (const [message, reply] of kept) assert.equal(guardClaimedOwnerActions(reply, { message, records: [] }).text, reply);
+});

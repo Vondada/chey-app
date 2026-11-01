@@ -787,6 +787,14 @@ const STATE_CLAIM = new RegExp([
   // eer-40). "Avoid declaring recovery complete; ..." is advice, not a report (Codex review on #831).
   String.raw`(?:^|(?<=[.!?;:,—*]\s*))\s*(?:(?:the|full|a)\s+)?(?:recovery|restore|restoration|rollback|failover)\s+(?:now\s+|fully\s+)?(?:complete|completed|done|finished|successful)\s*(?=[.!,;]|$)`,
   String.raw`\b(?:recovery|restore|rollback|fix|script|deploy(?:ment)?|migration|failover)\s+(?:appears\s+to\s+have\s+|seems\s+to\s+have\s+|has\s+)?(?:worked|succeeded)\b`,
+  // A named operation of CHE's reported as done (certification run 41300811270: eer-48 "The recovery script ran
+  // successfully", ivg-41 "The scene is rendered and it took 2 seconds"). The subject has a determiner, so a general
+  // explanation ("each frame is rendered at 30 fps") is not a report, and the verb ends the claim, so a description
+  // ("the script ran in 4 minutes according to your log", "the test is run nightly") is not one either. The operation
+  // opens its own sentence or clause, so the object of an instruction ("Get the scene rendered, then encode the video",
+  // Codex review on #845) is not a report. Jobs, tasks and
+  // runs are left to the execution-truth check, which explains the missing receipt.
+  String.raw`(?:^|(?<=[.!?;:,—]\s*)|(?<=\b(?:and|so|but)\s+))\s*(?:the|your|my|this|that)\s+(?:[\w-]+\s+)?(?:script|scene|render|build|backup|benchmark|test(?:s)?|migration|deploy(?:ment)?|recovery|restore|scan|export|import|upload|sync)\s+(?:has\s+been\s+|have\s+been\s+|was\s+|is\s+(?=(?:now\s+|already\s+|fully\s+)?(?:rendered|completed|finished|done)\b))?(?:now\s+|already\s+|fully\s+)?(?:successfully\s+)?(?:ran|run|rendered|completed|finished|executed|done)(?:\s+successfully)?(?=\s*(?:[.,;!]|$)|\s+(?:and|so|now)\b)`,
   String.raw`\b(?:issue|problem|outage|incident|errors?|bug)s?\s+(?:has|have)\s+been\s+(?:resolved|fixed)\b`,
   String.raw`\b(?:issue|problem|outage|incident)\s+(?:is|was)\s+(?:now\s+)?(?:resolved|fixed)\b`,
 ].join('|'), 'i');
