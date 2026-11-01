@@ -313,7 +313,9 @@ function summarise(results) {
   const summary = {
     total: results.length, pass: 0, fail: 0, blocked: 0, not_run: 0,
     valid_answers: 0, score: null, by_classification: {}, by_category: {}, by_action_outcome: {},
+    by_engine: {}, latency_ms: null,
   };
+  const latencies = [];
   for (const r of results) {
     summary[r.verdict] += 1;
     const cls = classificationOf(r);
@@ -322,13 +324,62 @@ function summarise(results) {
     if (r.action_outcome) summary.by_action_outcome[r.action_outcome] = (summary.by_action_outcome[r.action_outcome] || 0) + 1;
     const c = (summary.by_category[r.category] ??= { pass: 0, fail: 0, blocked: 0, not_run: 0 });
     c[r.verdict] += 1;
+    // Which engine answered (provider/model, or the deterministic handler), so a score change can be traced to a model.
+    const e = (summary.by_engine[engineLabel(r)] ??= { pass: 0, fail: 0, blocked: 0, not_run: 0 });
+    e[r.verdict] += 1;
+    if (Number.isFinite(r.latency_ms) && r.verdict !== 'not_run') latencies.push(r.latency_ms);
+  }
+  if (latencies.length) {
+    latencies.sort((a, b) => a - b);
+    const at = (q) => latencies[Math.min(latencies.length - 1, Math.floor(q * latencies.length))];
+    summary.latency_ms = { p50: at(0.5), p95: at(0.95), max: latencies[latencies.length - 1] };
   }
   if (summary.valid_answers > 0) summary.score = Math.round((summary.pass / summary.valid_answers) * 10000) / 10000;
   return summary;
 }
 
+// "provider/model" for a model reply (with "+fallback" when a later engine answered), else "handler:<source>".
+export function engineLabel(row) {
+  const s = row?.served_by;
+  if (s && (s.provider || s.model)) return `${s.provider || '?'}/${s.model || '?'}${s.fallback ? '+fallback' : ''}`;
+  return row?.source ? `handler:${row.source}` : 'none';
+}
+
+// Compares this run with an earlier one (same question ids): the score change, and which questions flipped.
+// A drop of `threshold` passes or more is a regression worth stopping on; smaller swings are model sampling
+// (five fresh runs on 2026-11-01 ranged 409-435).
+export function compareRuns(current, baseline, { threshold = 20 } = {}) {
+  const before = new Map((baseline?.results || []).map((r) => [r.id, r.verdict]));
+  const now = new Map((current?.results || []).map((r) => [r.id, r.verdict]));
+  const lost = [];
+  const gained = [];
+  for (const [id, v] of now) {
+    if (!before.has(id)) continue;
+    if (before.get(id) === 'pass' && v === 'fail') lost.push(id);
+    if (before.get(id) === 'fail' && v === 'pass') gained.push(id);
+  }
+  const passNow = [...now.values()].filter((v) => v === 'pass').length;
+  const passBefore = [...before.values()].filter((v) => v === 'pass').length;
+  const delta = passNow - passBefore;
+  return { pass_now: passNow, pass_before: passBefore, delta, lost, gained, regression: delta <= -threshold };
+}
+
 // The earlier rows a resumed run keeps: real CHE answers only. Infrastructure, auth and empty-reply rows are asked again.
 // --rerun=CLASS,... asks again the earlier rows of those classes (for example after a fix), and keeps the rest.
+// Whether an earlier report can stand as the regression baseline: every question of the current bank was asked in that
+// run (no not_run row, nothing reused from a resumed run), and its question ids are exactly the current bank's ids.
+// Returns null when it qualifies, else the reason.
+export function baselineProblem(report, questions) {
+  const rows = Array.isArray(report?.results) ? report.results : [];
+  if (!rows.length) return 'no results';
+  if (rows.some((r) => r.verdict === 'not_run')) return 'a partial run (some questions were not asked)';
+  if (rows.some((r) => r.reused_from_earlier_run)) return 'a resumed run (some answers came from an earlier run)';
+  const want = new Set(questions.map((q) => q.id));
+  const have = new Set(rows.map((r) => r.id));
+  if (have.size !== want.size || [...want].some((id) => !have.has(id))) return 'a different question set';
+  return null;
+}
+
 export function reuseFrom(rows, rerun = new Set()) {
   const kept = new Map();
   for (const row of rows) {
@@ -406,6 +457,11 @@ export async function runCertification({
     // Which path produced the answer (the done frame's source and route), so an empty or odd reply can be traced.
     const source = parsed.done?.source ?? null;
     const route = parsed.done?.route ?? null;
+    // The engine that wrote a model reply (provider, model, route, fallback), from the Worker's done frame.
+    const sb = parsed.done?.served_by;
+    const servedBy = sb && typeof sb === 'object'
+      ? { provider: String(sb.provider || ''), model: String(sb.model || ''), route: sb.route ?? null, fallback: Boolean(sb.fallback) } : null;
+    const modelCalls = parsed.done?.model_calls ?? null;
     const action = VALID_ANSWER_CLASSES.has(verdict.classification)
       ? actionOutcome({ classification: verdict.classification, reason: verdict.reason, receipts, done: parsed.done, held: parsed.held }) : null;
     // An unseen question may name the outcome it needs (expected_action: "executed"): a passing reply with any other
@@ -413,7 +469,7 @@ export async function runCertification({
     if (verdict.verdict === 'pass' && item.expected_action && action !== item.expected_action) {
       Object.assign(verdict, outcome('incorrect', `action outcome ${action}, expected ${item.expected_action}`));
     }
-    const row = { ...base, verdict: verdict.verdict, classification: verdict.classification, reason: verdict.reason, http_status: status, latency_ms: latency, reply, receipts, error, source, route, action_outcome: action };
+    const row = { ...base, verdict: verdict.verdict, classification: verdict.classification, reason: verdict.reason, http_status: status, latency_ms: latency, reply, receipts, error, source, route, served_by: servedBy, model_calls: modelCalls, action_outcome: action };
     results.push(row);
     onProgress(row);
   }
@@ -432,11 +488,12 @@ export async function runCertification({
 // ---- command line ---------------------------------------------------------------------------------------------------
 
 function parseArgs(argv) {
-  const opts = { out: null, category: null, limit: null, resume: null, rerun: new Set(), questions: null };
+  const opts = { out: null, category: null, limit: null, resume: null, rerun: new Set(), questions: null, baseline: null };
   for (const arg of argv) {
     if (arg.startsWith('--questions=')) opts.questions = arg.slice('--questions='.length);
     else if (arg.startsWith('--category=')) opts.category = arg.slice('--category='.length);
     else if (arg.startsWith('--resume=')) opts.resume = arg.slice('--resume='.length);
+    else if (arg.startsWith('--baseline=')) opts.baseline = arg.slice('--baseline='.length);
     else if (arg.startsWith('--rerun=')) opts.rerun = new Set(arg.slice('--rerun='.length).split(',').map((c) => c.trim()).filter(Boolean));
     else if (arg.startsWith('--limit=')) opts.limit = Number(arg.slice('--limit='.length));
     else if (!arg.startsWith('--') && !opts.out) opts.out = arg;
@@ -449,6 +506,15 @@ function parseArgs(argv) {
 }
 
 async function main(argv) {
+  // --check-baseline=report.json: exit 0 when that report qualifies as a full, fresh run of the current 600 questions.
+  if (argv.length === 1 && argv[0].startsWith('--check-baseline=')) {
+    const path = argv[0].slice('--check-baseline='.length);
+    let report = null;
+    try { report = JSON.parse(await readFile(path, 'utf8')); } catch { /* unreadable: reported below */ }
+    const problem = report ? baselineProblem(report, await loadQuestions()) : 'unreadable report';
+    console.log(problem ? `not a baseline: ${problem}` : 'qualifies as a baseline');
+    return problem ? 1 : 0;
+  }
   const opts = parseArgs(argv);
   if (opts.error) {
     console.error(opts.error);
@@ -482,8 +548,8 @@ async function main(argv) {
     url, token, questions, select, reuse, questionsFile: opts.questions || QUESTIONS_PATH,
     // Every non-pass prints its class, its reason and the start of CHE's reply, so the failures can be audited from the log.
     onProgress: (row) => console.log(row.verdict === 'pass'
-      ? `${row.id} pass action=${row.action_outcome ?? "none"} source=${row.source ?? "none"}`
-      : `${row.id} ${row.verdict} [${row.classification}] action=${row.action_outcome ?? "none"} (${row.reason}) source=${row.source ?? 'none'} route=${row.route ?? 'none'} :: ${String(row.reply || '').replace(/\s+/g, ' ').slice(0, 600)}`),
+      ? `${row.id} pass action=${row.action_outcome ?? "none"} source=${row.source ?? "none"} engine=${engineLabel(row)} ms=${row.latency_ms}`
+      : `${row.id} ${row.verdict} [${row.classification}] action=${row.action_outcome ?? "none"} (${row.reason}) source=${row.source ?? 'none'} route=${row.route ?? 'none'} engine=${engineLabel(row)} ms=${row.latency_ms} :: ${String(row.reply || '').replace(/\s+/g, ' ').slice(0, 600)}`),
   });
   const out = opts.out;
   await mkdir(dirname(out), { recursive: true });
@@ -492,6 +558,18 @@ async function main(argv) {
   console.log(`pass ${s.pass}  fail ${s.fail}  blocked ${s.blocked}  not_run ${s.not_run}  of ${s.total}`);
   console.log(`valid CHE answers ${s.valid_answers}  score ${s.score ?? 'n/a'}  by class ${JSON.stringify(s.by_classification)}`);
   console.log(`action outcomes ${JSON.stringify(s.by_action_outcome)}`);
+  console.log(`engines ${JSON.stringify(s.by_engine)}`);
+  if (s.latency_ms) console.log(`latency ms p50 ${s.latency_ms.p50}  p95 ${s.latency_ms.p95}  max ${s.latency_ms.max}`);
+  // --baseline=earlier.json: the change against an earlier run, and a GitHub error annotation on a real regression.
+  if (opts.baseline) {
+    const baseline = JSON.parse(await readFile(opts.baseline, 'utf8'));
+    const cmp = compareRuns(report, baseline);
+    report.comparison = { baseline: opts.baseline, ...cmp };
+    await writeFile(out, JSON.stringify(report, null, 2) + '\n');
+    console.log(`against baseline: ${cmp.pass_before} -> ${cmp.pass_now} (${cmp.delta >= 0 ? '+' : ''}${cmp.delta}); lost ${cmp.lost.length}, gained ${cmp.gained.length}`);
+    if (cmp.lost.length) console.log(`lost: ${cmp.lost.join(' ')}`);
+    if (cmp.regression) console.log(`::error title=Certification regression::${cmp.pass_before} -> ${cmp.pass_now} passes (${cmp.delta}) against the baseline run`);
+  }
   console.log(`wrote ${out}`);
   if (s.fail > 0) return 1;
   if (s.blocked > 0) return 3;
