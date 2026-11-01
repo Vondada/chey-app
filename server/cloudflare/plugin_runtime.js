@@ -9,7 +9,7 @@
 //   - with a short timeout and a size-capped response that CHE treats as
 //     untrusted data, never instructions.
 
-import { executeWithReceipt } from './truth_layer.js';
+import { executeWithReceipt, recordReceipt } from './truth_layer.js';
 
 // Built-in catalog entries. Keyless public APIs only, so they work on day one.
 export const BUILTIN_PLUGIN_MANIFESTS = [
@@ -146,6 +146,72 @@ export function pluginManifests(env) {
   }
   const ids = new Set(extra.map((item) => String(item.id)));
   return [...BUILTIN_PLUGIN_MANIFESTS.filter((item) => !ids.has(item.id)), ...extra];
+}
+
+/**
+ * The tools a chat turn may use when the client sent no plugin_tools at all (the certification probe, a client that
+ * has no plugin registry). The phone always sends its own list, an empty one when the owner turned every plugin off,
+ * and private mode sends an empty one; those are kept as sent. Only catalog plugins whose every tool is a read-only GET
+ * to a host the manifest declares are offered, in the same shape the phone sends (lib/che_ui/che_plugins.dart tools()).
+ * The Worker runs them itself through runPluginTool, so each call has its own execution receipt.
+ * With a message, only plugins the message names by their own id or name ("weather", "crypto", "Wikipedia") are
+ * offered, so an ordinary question spends no tool-planning call.
+ */
+export function serverPluginTools(env, message = null) {
+  const said = message == null ? null : new Set(String(message).toLowerCase().split(/[^a-z0-9]+/));
+  return pluginManifests(env)
+    .filter((manifest) => !said || `${manifest.id} ${manifest.name || ''}`.toLowerCase().split(/[^a-z0-9]+/).some((w) => w.length > 3 && said.has(w)))
+    .filter((manifest) => Array.isArray(manifest.tools) && manifest.tools.length
+      && manifest.tools.every((tool) => String(tool?.request?.method || 'GET').toUpperCase() === 'GET'
+        && typeof tool?.request?.url === 'string' && allowedHosts(manifest.permissions).has(hostOf(tool.request.url))))
+    .flatMap((manifest) => manifest.tools.map((tool) => ({
+      ...tool, plugin: manifest.id, plugin_name: manifest.name, permissions: manifest.permissions,
+    })));
+}
+
+/**
+ * SKILL PLUGINS for one chat turn: at most two chained read-only tool calls, chosen by the fast model from the tools
+ * the phone sent (the owner's installed and enabled plugins), or from serverPluginTools when no list was sent. Each
+ * call is recorded as an execution receipt. Returns { skillResults, executionRequestId }.
+ */
+export async function runChatPlugins(env, storage, body, message, model) {
+  const pluginTools = Array.isArray(body.plugin_tools)
+    ? body.plugin_tools.filter((item) => item && typeof item === 'object').slice(0, 30)
+    : serverPluginTools(env, message).slice(0, 30);
+  const skillResults = [];
+  const executionRequestId = crypto.randomUUID();
+  // Only spend an AI call on tool planning when the message plausibly
+  // needs one of the installed tools (saves ~1-2s on ordinary chat).
+  const toolWords = new Set(pluginTools.flatMap((tool) => `${tool.plugin || ''} ${tool.plugin_name || ''} ${tool.name || ''} ${tool.description || ''}`
+    .toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length > 3 && !['from', 'with', 'that', 'this', 'your', 'name', 'current', 'short', 'summary'].includes(w))));
+  const messageWords = message.toLowerCase().split(/[^a-z0-9]+/);
+  const toolsLikelyNeeded = messageWords.some((w) => toolWords.has(w)) ||
+    /\b(weather|forecast|temperature|rain|price|btc|eth|sol|crypto|bitcoin|who (is|was)|what is|tell me about|look up|lookup|search|wiki)\b/i.test(message);
+  for (let round = 0; round < 2 && pluginTools.length && toolsLikelyNeeded; round++) {
+    const choice = await planPluginCall(env, model, message, pluginTools, skillResults);
+    if (!choice) break;
+    const outcome = await runPluginTool(choice.tool, choice.params, choice.tool.permissions, fetch, executionRequestId);
+    skillResults.push({
+      plugin: String(choice.tool.plugin_name || choice.tool.plugin || ''),
+      tool: String(choice.tool.name || ''),
+      params: choice.params,
+      ok: Boolean(outcome.ok),
+      data: outcome.data ?? null,
+      error: outcome.error || '',
+      execution_receipt: outcome.execution_receipt,
+    });
+    await recordReceipt(storage, { ...outcome.execution_receipt, key: `execution:${outcome.execution_receipt.invocation_id}` });
+    if (!outcome.ok) break;
+  }
+  return { skillResults, executionRequestId };
+}
+
+function hostOf(url) {
+  try {
+    return new URL(String(url).replace(/\{\{[^}]*\}\}/g, 'x')).hostname.toLowerCase();
+  } catch (_) {
+    return '';
+  }
 }
 
 function allowedHosts(permissions) {

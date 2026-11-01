@@ -30,6 +30,43 @@ export const LA_AGENCIA_ROLES = {
     department: { id: 'qa', title: 'Quality Assurance Director' } },
 };
 
+// Words the owner uses for a desk instead of its name ("the writing agent", "the coding desk"). Most come from the
+// roster itself: the department id, the role and the department title. ROLE_WORDS adds only everyday words the role
+// text does not use, such as "writing" for creative production or "coding" for engineering.
+const ROLE_WORDS = {
+  Nova: ['ops', 'coordinator', 'products'],
+  Atlas: ['coding', 'code', 'coder', 'developer', 'dev', 'engineer', 'programming'],
+  Mira: ['researcher', 'teacher', 'tutor', 'translation', 'translator', 'support'],
+  Knox: ['protection'],
+  Sage: ['analyst', 'analysis', 'finance'],
+  Lyra: ['writing', 'writer', 'copywriting', 'copywriter', 'copy', 'content', 'marketing'],
+  Orion: ['trader', 'market'],
+  Iris: ['ux', 'design', 'designer'],
+  Vale: ['qa', 'testing', 'tester', 'test', 'verifier'],
+};
+const TITLE_FILLER = new Set(['and', 'chief', 'officer', 'director', 'office', 'head', 'jobs', 'research']);
+const words = (text) => String(text || '').toLowerCase().split(/[^a-z]+/).filter((w) => w.length > 1);
+
+/**
+ * The roster name for a role word or phrase ("writing", "research", "quality assurance"), or ''. The department id
+ * wins first, then the words above, then the role and title words; a word that fits two desks names neither.
+ */
+export function officeAgentForRole(phrase) {
+  const want = words(phrase).join(' ');
+  if (!want) return '';
+  const tiers = [
+    (name, spec) => [spec.department?.id || ''],
+    (name) => ROLE_WORDS[name] || [],
+    (name, spec) => [...spec.role.split('/').map((part) => words(part).join(' ')), ...words(spec.role), ...words(spec.department?.title).filter((w) => !TITLE_FILLER.has(w))],
+  ];
+  for (const tier of tiers) {
+    const hits = Object.entries(LA_AGENCIA_ROLES).filter(([name, spec]) => tier(name, spec).includes(want)).map(([name]) => name);
+    if (hits.length === 1) return hits[0];
+    if (hits.length > 1) return '';
+  }
+  return '';
+}
+
 export function ensureLaAgenciaRoster(data) {
   const at = new Date().toISOString();
   for (const agent of data.team || []) {

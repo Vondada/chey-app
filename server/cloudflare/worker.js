@@ -26,7 +26,7 @@ import {
   steerAgentTask,
   handoffAgentTask,
 } from './agent_runtime.js';
-import { planPluginCall, pluginManifests, runPluginTool } from './plugin_runtime.js';
+import { pluginManifests, runChatPlugins, runPluginTool } from './plugin_runtime.js';
 import { contextItemsFrom, routingForAgent } from './agent_runtime.js';
 import {
   aiOverview, evaluateOne, handleAiVoiceIntent, privacyPermissionsMap, syncRoutingSnapshot, watchModels,
@@ -151,6 +151,7 @@ import { jsRegexFlagProblems } from './flagstaff_code_check.js';
 import { atlasProbe } from './atlas_probe.js';
 import { ownToolPermissionProblems } from './flagstaff_reply_check.js';
 import { cachedCodeIndex } from './code_index.js';
+import { officeRoleTurn, repoSearchChat } from './capability_routes.js';
 import { CHE_SELF_BRIEF, starredFocus, studyLesson } from './che_self_knowledge.js';
 import { connectServiceIntent, onboardingChatReply, onboardingIntent, onboardingRoute } from './service_onboarding.js';
 import { modalServiceReply, serviceCommandIntent } from './modal_connect.js';
@@ -11351,6 +11352,9 @@ export class CheState extends DurableObject {
           return ndjsonReply(answer.text, { source: BRAIN_ROOMS_SOURCE, ok: answer.ok, model_calls: 0, rooms: answer.rooms, hits: answer.hits, kind: relation.kind });
         }
 
+        const repoTurn = !body.attachment && await repoSearchChat(this.env, this.ctx.storage, message, ownerDevice);
+        if (repoTurn) return ndjsonReply(...repoTurn);
+
         // Existing GitHub and mailbox readers supply facts; the model never
         // interprets release state. Read-only questions authorize no mutation.
         const readQuestion = /^(?:(?:che|please)[,:]?\s+)*(?:(?:can|could|would|will)\s+you\s+(?:please\s+)?)?(?:was|is|has|did|what|show|check|verify|look up|read|tell)\b/i.test(message);
@@ -11913,6 +11917,8 @@ export class CheState extends DurableObject {
           await this.staffOffice(data);
           return ndjsonReply(speakOfficeOrg(officeOrg(data, this.keyEnv || this.env)), { office: 'org' });
         }
+        const roleTurn = await officeRoleTurn(this, data, officePhrase);
+        if (roleTurn) return ndjsonReply(...roleTurn);
         if (officePhrase?.type === 'officeJob') {
           const result = await this.officeCoordinate(data, { request: officePhrase.request });
           return ndjsonReply(result.error ? `CHE here. ${result.error}` : result.reply, { office: 'job', job_id: result.job?.id || null });
@@ -13921,36 +13927,7 @@ export class CheState extends DurableObject {
           fresh.action_approvals = [...(fresh.action_approvals || []).filter(a => a.status === 'pending'), ...awaitingApproval];
           await this.ctx.storage.put('che', fresh);
         }
-        // SKILL PLUGINS: at most two chained read-only tool calls, chosen by
-        // the fast model from the owner's installed + enabled plugins.
-        const pluginTools = Array.isArray(body.plugin_tools)
-          ? body.plugin_tools.filter((item) => item && typeof item === 'object').slice(0, 30)
-          : [];
-        const skillResults = [];
-        const executionRequestId = crypto.randomUUID();
-        // Only spend an AI call on tool planning when the message plausibly
-        // needs one of the installed tools (saves ~1-2s on ordinary chat).
-        const toolWords = new Set(pluginTools.flatMap((tool) => `${tool.plugin || ''} ${tool.plugin_name || ''} ${tool.name || ''} ${tool.description || ''}`
-          .toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length > 3 && !['from', 'with', 'that', 'this', 'your', 'name', 'current', 'short', 'summary'].includes(w))));
-        const messageWords = message.toLowerCase().split(/[^a-z0-9]+/);
-        const toolsLikelyNeeded = messageWords.some((w) => toolWords.has(w)) ||
-          /\b(weather|forecast|temperature|rain|price|btc|eth|sol|crypto|bitcoin|who (is|was)|what is|tell me about|look up|lookup|search|wiki)\b/i.test(message);
-        for (let round = 0; round < 2 && pluginTools.length && toolsLikelyNeeded; round++) {
-          const choice = await planPluginCall(this.env, this.env.CHE_FAST_MODEL || FAST_MODEL, message, pluginTools, skillResults);
-          if (!choice) break;
-          const outcome = await runPluginTool(choice.tool, choice.params, choice.tool.permissions, fetch, executionRequestId);
-          skillResults.push({
-            plugin: String(choice.tool.plugin_name || choice.tool.plugin || ''),
-            tool: String(choice.tool.name || ''),
-            params: choice.params,
-            ok: Boolean(outcome.ok),
-            data: outcome.data ?? null,
-            error: outcome.error || '',
-            execution_receipt: outcome.execution_receipt,
-          });
-          await recordReceipt(this.ctx.storage, { ...outcome.execution_receipt, key: `execution:${outcome.execution_receipt.invocation_id}` });
-          if (!outcome.ok) break;
-        }
+        const { skillResults, executionRequestId } = await runChatPlugins(this.env, this.ctx.storage, body, message, this.env.CHE_FAST_MODEL || FAST_MODEL);
         const pluginInstructions = Array.isArray(body.plugin_instructions)
           ? body.plugin_instructions.map((item) => String(item)).join('\n\n').slice(0, 12000)
           : '';
