@@ -6,8 +6,10 @@ import { readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import test from 'node:test';
 import { gzipSync } from 'node:zlib';
 
+import { normalizeAgent, queueAgentTask, reassignAgentQueue } from './agent_runtime.js';
 import { _clearCodeIndexCache } from './code_index.js';
-import { LA_AGENCIA_ROLES, officeAgentForRole } from './office_company.js';
+import { ensureLaAgenciaRoster, LA_AGENCIA_ROLES, officeAgentForRole } from './office_company.js';
+import { acceptanceChecks, advanceOfficeJobs, planOfficeJob } from './office_jobs.js';
 import { matchOfficePhrase } from './office_phrases.js';
 import { serverPluginTools } from './plugin_runtime.js';
 import { repoSearchIntent, runRepoSearch } from './repo_search.js';
@@ -233,4 +235,48 @@ test('by chat, "how many X in the code" answers from the search with a receipt; 
   } finally {
     globalThis.fetch = realFetch;
   }
+});
+
+test('a reassignment leaves coordinated-job stages with their desk, so the job\'s verifier and its checks do not change', () => {
+  const data = { team: [], team_tasks: [], office_goals: [] };
+  ensureLaAgenciaRoster(data);
+  data.team.forEach(normalizeAgent);
+  const hooks = { queueStep: (agent, text, options) => queueAgentTask(data, agent, text, 'office_job', options), blocker: () => '' };
+  const { job } = planOfficeJob(data, { request: 'Write a launch post for the new chart and test it' });
+  assert.deepEqual(job.stages.map((s) => [s.discipline, s.agent]), [['creative', 'Lyra'], ['qa', 'Vale']]);
+  advanceOfficeJobs(data, hooks);
+  Object.assign(data.team_tasks.find((t) => t.id === job.stages[0].task_id), { status: 'complete', result: 'Post drafted.', updated_at: new Date().toISOString() });
+  advanceOfficeJobs(data, hooks);
+  const qa = job.stages[1];
+  const stageTask = data.team_tasks.find((t) => t.id === qa.task_id);
+  assert.equal(stageTask.partner_name, 'Vale');
+  assert.equal(stageTask.status, 'queued');
+  const vale = data.team.find((a) => a.name === 'Vale');
+  const standalone = queueAgentTask(data, vale, 'Write a regression checklist for the login screen', 'owner_goal');
+  const checksBefore = JSON.stringify(acceptanceChecks(data, job, qa).checks);
+
+  const { moved, in_job: inJob } = reassignAgentQueue(data, 'Vale', 'Lyra');
+  assert.deepEqual(moved.map((t) => t.id), [standalone.id], 'only the standalone task moves');
+  assert.deepEqual(inJob.map((t) => t.id), [stageTask.id]);
+  assert.equal(stageTask.partner_name, 'Vale', 'the QA stage stays with Vale');
+  assert.equal(data.team_tasks.find((t) => t.id === standalone.id).partner_name, 'Lyra');
+  assert.equal(qa.agent, 'Vale');
+  assert.equal(JSON.stringify(acceptanceChecks(data, job, qa).checks), checksBefore);
+  assert.ok(acceptanceChecks(data, job, qa).checks.find((c) => c.check === 'not verifying its own work').ok);
+});
+
+test('a negated or conditional reassign or delegate moves and creates nothing', async () => {
+  const sentences = ["Don't reassign Lyra's queue to Mira", "Move Lyra's tasks to Mira after I approve it",
+    "Don't ask the writing agent to draft it", 'Have the writing agent draft it once I send the brief',
+    'Never hand off the research backlog to the trading desk', 'If Vale is busy, transfer her queued tasks to the security agent'];
+  for (const text of sentences) assert.ok(!['reassignQueue', 'delegateAgent'].includes(matchOfficePhrase(text)?.type), text);
+  const o = await che();
+  await o.say('Have the marketing agent write three taglines for the spring sale.');
+  const before = JSON.stringify(o.tasks().map((t) => [t.id, t.partner_name, t.status]));
+  assert.equal(o.tasks().length, 1);
+  for (const text of sentences) {
+    const turn = await o.say(text);
+    assert.ok(!['reassignQueue', 'delegateAgent'].includes(turn.done.office), text);
+  }
+  assert.equal(JSON.stringify(o.tasks().filter((t) => t.source !== 'advisory' && t.status !== 'advisory').map((t) => [t.id, t.partner_name, t.status])), before, 'no task was created or moved');
 });

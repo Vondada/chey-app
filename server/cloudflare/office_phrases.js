@@ -19,6 +19,14 @@ function roleAgent(words) {
   return officeAgentForRole(parts.join(' ')) || (parts.length > 1 ? officeAgentForRole(parts[parts.length - 1]) : '');
 }
 
+// Delegating and reassigning change the Office at once, so they run only on a plain order for now. A negated one
+// ("don't reassign …") or one that waits on something ("… after I approve it", "once I send the brief") is not one.
+const NEGATED = /\b(?:don'?t|do not|never|no need to|stop|not yet)\b/;
+const CONDITIONAL = /\b(?:if|unless|once|when|whenever|after|until|before|later|tomorrow|tonight|next (?:week|month|time))\b/;
+function notAnOrderNow(t) {
+  return NEGATED.test(t) || CONDITIONAL.test(t);
+}
+
 /** Every Office desk the text names, by role or by name, in order: [{ name, at }]. */
 function agentRefs(t) {
   const refs = [];
@@ -55,7 +63,7 @@ export function matchOfficePhrase(raw) {
     if (name || !again[1]) return { type: 'reviewAgentTask', agentId: name || '' };
   }
   // "The writing agent is at capacity. Reassign its queue to the research agent": queued work moves desks.
-  if (/\b(?:reassign|re assign|move|hand (?:off|over)|transfer|shift)\b/.test(t) && /\b(?:queue|backlog|tasks|jobs|work)\b/.test(t)) {
+  if (/\b(?:reassign|re assign|move|hand (?:off|over)|transfer|shift)\b/.test(t) && /\b(?:queue|backlog|tasks|jobs|work)\b/.test(t) && !notAnOrderNow(t)) {
     const to = t.lastIndexOf(' to ');
     const refs = agentRefs(t);
     const target = refs.find((ref) => ref.at > to);
@@ -129,6 +137,7 @@ export function matchOfficePhrase(raw) {
   if (delegateTo) {
     const task = delegate[2].replace(/[.!?]+$/, '').trim();
     if (/^(?:stop|cancel|halt|abort|stand down)\b/i.test(task)) return { type: 'stopAgentTask', agentId: delegateTo.toLowerCase() };
+    if (notAnOrderNow(t)) return null;
     return { type: 'delegateAgent', agent: delegateTo, role: delegate[1].toLowerCase(), task };
   }
 

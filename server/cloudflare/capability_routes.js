@@ -18,16 +18,18 @@ function readQueue(data) {
 }
 
 async function reassign(che, data, phrase) {
-  const { from, to, moved, kept } = reassignAgentQueue(data, phrase.from, phrase.to);
+  const { from, to, moved, kept, in_job: inJob = [] } = reassignAgentQueue(data, phrase.from, phrase.to);
   if (moved.length) await che.ctx.storage.put('che', data);
-  const list = moved.slice(0, 8).map((t) => `"${String(t.task || '').slice(0, 70)}" (task ${t.id.slice(0, 8)})`).join(', ');
-  const keptNote = kept.length ? ` ${kept.length === 1 ? 'One task' : `${kept.length} tasks`} already started or in review stayed with ${from.name}.` : '';
+  const named = (tasks) => tasks.slice(0, 8).map((t) => `"${String(t.task || '').slice(0, 70)}" (task ${t.id.slice(0, 8)})`).join(', ');
+  const list = named(moved);
+  const keptNote = (kept.length ? ` ${kept.length === 1 ? 'One task' : `${kept.length} tasks`} already started or in review stayed with ${from.name}.` : '')
+    + (inJob.length ? ` Left in place: ${named(inJob)}. ${inJob.length === 1 ? 'It belongs' : 'They belong'} to a coordinated Office job, so ${inJob.length === 1 ? 'it stays' : 'they stay'} with ${from.name}'s desk.` : '');
   const reply = !from || !to
     ? `CHE here. ${phrase.from} or ${phrase.to} is not on the Office roster, so nothing was reassigned.`
     : moved.length
       ? `CHE here. I reassigned ${from.name}'s queue to ${to.name}: ${moved.length === 1 ? 'one task' : `${moved.length} tasks`} moved, ${list}.${keptNote}`
       : `CHE here. ${from.name} has no queued task, so nothing was reassigned to ${to.name}.${keptNote}`;
-  return { reply, record: { ok: Boolean(from && to), moved: moved.map((t) => t.id), kept: kept.map((t) => t.id), from: from?.name || '', to: to?.name || '' } };
+  return { reply, record: { ok: Boolean(from && to), moved: moved.map((t) => t.id), kept: kept.map((t) => t.id), in_job: inJob.map((t) => t.id), from: from?.name || '', to: to?.name || '' } };
 }
 
 async function delegate(che, data, phrase) {
