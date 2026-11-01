@@ -374,6 +374,8 @@ const ATTRIBUTION = new RegExp([
   // (certification run 41256280478: "The last song you asked me to play was Fast Car" (mr-03), "Your sister said the
   // venue is too far" (mr-30), "Your most recent question about insulin was ..." (mr-32), all with nothing stored).
   '\\byou (?:have |had )?(?:asked me (?:to|for|about)|passed (?:on|along)|forwarded|relayed|requested)\\b',
+  // "The most recent time you asked about insulin was on October 14th" (certification run 41267724614, mr-32).
+  '\\b(?:most recent|last|latest|previous|first) time you (?:asked|told|mentioned|said|wanted)\\b',
   '\\byour (?:most recent|last|latest|previous|earlier|past|first) (?:question|request|message|ask)s?\\b',
   '\\byour (?:sister|brother|mom|mother|dad|father|wife|husband|partner|girlfriend|boyfriend|son|daughter|kids?|children|friend|boss|cousin|aunt|uncle|grandma|grandmother|grandpa|grandfather|family|doctor|neighbou?r|coworker|colleague|roommate|landlord|teacher) (?:has |had )?(?:said|told|mentioned|thinks|thought|wants|wanted|suggested|asked|is worried|was worried|feels|felt|prefers|preferred|agreed|decided)\\b',
   // "I have that noted in your history", "saved in your memory": a record claim about the owner needs the record.

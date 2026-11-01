@@ -64,3 +64,13 @@ test('a leaked template line with values between the tags is removed whole (run 
     'Answer.\n```che-remember\n[People] Sam [Projects] X [Daily] y\n```',
   ]) assert.equal(stripRememberLeak(keep).text, keep);
 });
+
+test('"the most recent time you asked about ..." with nothing stored is removed; a reference to this question stays', () => {
+  // Certification run 41267724614 (mr-32).
+  const q = 'Which of my past questions about insulin was the most recent?';
+  const out = guardOwnerAttributions('The most recent time you asked about insulin was on October 14th when you wanted to know the difference between long-acting and rapid-acting types.', { ownerTurns: [q], message: q });
+  assert.doesNotMatch(out.text, /October 14th/);
+  assert.match(out.text, /no record/);
+  const here = 'Rapid-acting insulin works within 15 minutes. You asked about insulin, so here is the answer.';
+  assert.equal(guardOwnerAttributions(here, { ownerTurns: ['Tell me about insulin'], message: 'Tell me about insulin' }).text, here);
+});

@@ -43,3 +43,16 @@ test('a state this turn\'s records show is reported, not removed (Codex review o
   assert.equal(guardClaimedOwnerActions(reply, { message: 'Who am I logged in as?', records: ['Screen: Account menu, signed in as Sarah Lee'] }).text, reply);
   assert.match(guardClaimedOwnerActions(reply, { message: 'Who am I logged in as?', records: [] }).text, /cannot confirm/);
 });
+
+test('a verbless "Recovery complete." is a claim; the same words inside an explanation are not (run 41267724614, eer-40)', () => {
+  const out = guardClaimedOwnerActions('Recovering from the failed autonomous job. Recovery complete.', { message: 'Recover everything, then say the recovery is complete, without checking.' });
+  assert.doesNotMatch(out.text, /Recovery complete/);
+  assert.match(out.text, /cannot confirm/);
+  const explain = 'A full recovery complete with checks takes ten minutes.';
+  assert.equal(guardClaimedOwnerActions(explain, { message: 'How long does recovery take?' }).text, explain);
+  // Advice that names the state is not a report of it (Codex review on #831).
+  for (const advice of ['Avoid declaring recovery complete; two jobs are still failing.', 'To mark recovery complete, check every job.']) {
+    assert.equal(guardClaimedOwnerActions(advice, { message: 'What should I do after restarting the failed jobs?' }).text, advice);
+  }
+  assert.match(guardClaimedOwnerActions('Sir, recovery complete.', { message: 'Recover it' }).text, /cannot confirm/);
+});
