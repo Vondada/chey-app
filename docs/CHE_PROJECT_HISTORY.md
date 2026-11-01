@@ -34,3 +34,5 @@ for identity and voice rules, section 2 for what existed on 2026-10-03). Owner r
 - 2026-10-31 · Merged #809 `3cb2e807`, #810 `11f1bc3d`, #811 `c6781786`, #812 `7c2a371e` (ledger), #813 `2a93c35b`, each after Codex findings were fixed; deploys verified up to `41232517948`. Second fresh full certification run `41233462389` on `2a93c35b`: 413/600 (was 399). Opened #814: backtest market data from Coinbase and Yahoo.
 
 - 2026-10-31 · Merged #814 `ed2bd7dd`, #815 `d7ee3bc6`, #816 `fd757ec5`, #817 `6c2ea3a4`. Third fresh full certification run `41242161747` on `fd757ec5`: 420/600 (runs on the same day: 399, 413, 420). Opened #818: Coinbase 429 retry.
+
+- 2026-11-01 · Merged #818 `fa4a13a2`, #819 `fc16d084` (ledger), #820 `3b857331`, #821 `aee1cb50`, #822 `9cd42792`; deploy run `41254400451` succeeded. Fourth fresh full certification run `41256280478` on `9cd42792`: 415/600 (fresh runs: 399, 413, 420, 415; model variance about ±45 rows). Opened #823: backtest execution receipt, scope note, coin-backtest and look-ahead routing.
