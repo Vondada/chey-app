@@ -35,9 +35,14 @@ export function videoRequestTopic(message) {
 }
 
 /** The length a request asks for, 5 to 90 seconds; "the 90s" is a decade, not a length. */
+// A length written as a word ("a five-second video", "thirty seconds") counts the same as one written in digits.
+const LENGTH_WORDS = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12,
+  fifteen: 15, twenty: 20, thirty: 30, forty: 40, fifty: 50, sixty: 60, ninety: 90 };
+const LENGTH = new RegExp(`\\b(\\d{1,2}|${Object.keys(LENGTH_WORDS).join('|')})[- ]?(seconds?|secs?|minutes?|mins?)\\b`, 'i');
 export function videoRequestSeconds(message) {
-  const length = /\b(\d{1,2})[- ]?(seconds?|secs?|minutes?|mins?)\b/i.exec(String(message || ''));
-  return Math.min(90, Math.max(5, length ? Number(length[1]) * (/^m/i.test(length[2]) ? 60 : 1) : 15));
+  const length = LENGTH.exec(String(message || ''));
+  const count = length ? (/^\d+$/.test(length[1]) ? Number(length[1]) : LENGTH_WORDS[length[1].toLowerCase()]) : 0;
+  return Math.min(90, Math.max(5, length ? count * (/^m/i.test(length[2]) ? 60 : 1) : 15));
 }
 
 function statusFor(result) {

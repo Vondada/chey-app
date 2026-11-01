@@ -32,7 +32,7 @@ export async function makeChatImages(env, storage, { message, count = 1, fetcher
     const made = await generateImage(env, storage, { prompt: `${prompt}${ANGLES[i] || ''}`, title }, fetcher)
       .catch((error) => ({ status: 500, detail: String(error?.message || error) }));
     if (made.item) {
-      results.push({ number: i + 1, ok: true, id: made.item.id, mime_type: made.item.mime_type, title: made.item.title, status: 200 });
+      results.push({ number: i + 1, ok: true, id: made.item.id, mime_type: made.item.mime_type, title: made.item.title, status: 200, ...(made.item.engine ? { engine: made.item.engine } : {}) });
     } else {
       results.push({ number: i + 1, ok: false, reason: String(made.detail || 'the image engine did not return a picture').slice(0, 200), status: made.status || 500 });
     }
