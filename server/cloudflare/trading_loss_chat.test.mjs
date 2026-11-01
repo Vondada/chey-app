@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import { readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import test from 'node:test';
 
-const generated = new URL('./.trading_performance_chat.test.generated.mjs', import.meta.url);
+const generated = new URL('./.trading_loss_chat.test.generated.mjs', import.meta.url);
 writeFileSync(generated, readFileSync(new URL('./worker.js', import.meta.url), 'utf8').replace(
   "import { DurableObject } from 'cloudflare:workers';",
   'class DurableObject { constructor(ctx, env) { this.ctx = ctx; this.env = env; } }',

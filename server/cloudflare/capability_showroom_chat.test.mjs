@@ -9,7 +9,7 @@ import test from 'node:test';
 // A real 1x1 PNG.
 const PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==';
 
-const generated = new URL('./.media_retrieval.test.generated.mjs', import.meta.url);
+const generated = new URL('./.capability_showroom_chat.test.generated.mjs', import.meta.url);
 writeFileSync(generated, readFileSync(new URL('./worker.js', import.meta.url), 'utf8').replace(
   "import { DurableObject } from 'cloudflare:workers';",
   'class DurableObject { constructor(ctx, env) { this.ctx = ctx; this.env = env; } }',
