@@ -780,6 +780,14 @@ function backedByRecord(sentence, records) {
   return facts.length > 0 && facts.every((fact) => text.includes(fact.toLowerCase()));
 }
 // "Done, sir." / "All done." / "Consider it done." / "Sent." opening a sentence.
+const STATE_CLAIM = new RegExp([
+  String.raw`\b(?:logged|signed)\s+in\s+(?:successfully|as\s+(?!a\b|an\b|the\b)[\w-]+)`,
+  String.raw`\bsuccessfully\s+(?:logged|signed)\s+in\b`,
+  String.raw`\b(?:recovery|restore|restoration|rollback|failover)\s+(?:is|was|has\s+been)\s+(?:now\s+|fully\s+)?(?:complete|completed|done|finished|successful)\b`,
+  String.raw`\b(?:recovery|restore|rollback|fix|script|deploy(?:ment)?|migration|failover)\s+(?:appears\s+to\s+have\s+|seems\s+to\s+have\s+|has\s+)?(?:worked|succeeded)\b`,
+  String.raw`\b(?:issue|problem|outage|incident|errors?|bug)s?\s+(?:has|have)\s+been\s+(?:resolved|fixed)\b`,
+  String.raw`\b(?:issue|problem|outage|incident)\s+(?:is|was)\s+(?:now\s+)?(?:resolved|fixed)\b`,
+].join('|'), 'i');
 const DONE_RE = /^\s*(?:(?:all|it['’]?s|it\s+is)\s+)?done\b(?!\s+(?:with|by|in|for|on|at|before|after)\b)|\bconsider\s+it\s+done\b|^\s*(?:sent|ordered|bought|booked|scheduled|deleted|uploaded|published|posted|placed)\s*(?:[,.!]|$)/i;
 // A condition, a plan or a question about the action does not claim it: "once I've sent it", "if I had paid".
 const NOT_A_CLAIM = /\b(?:if|once|when|whenever|after|until|unless|whether|before|would|could|should|might|can|will|shall|going\s+to)\b/i;
@@ -1036,6 +1044,17 @@ export function guardClaimedOwnerActions(reply, { message = '', acted = false, r
         hit = STRONG_DONE[bare[1].toLowerCase()];
         claimed.add(hit);
       } else if (!backedByRecord(plain, records)) {
+        hit = 'unconfirmed';
+        unconfirmed = true;
+      }
+    }
+    // A system state CHE has not checked: "Logged in successfully", "Recovery is complete", "the recovery script appears to
+    // have worked", "the issue has been resolved" (certification run 41262741784: spt-21, eer-40, eer-48). Without a receipt
+    // this turn it is unconfirmed, whoever did it; a negated or conditional sentence claims nothing.
+    if (!hit && plain) {
+      const state = STATE_CLAIM.exec(plain);
+      if (state && !quoted(plain, state.index) && !/\b(?:not|never|no|isn['’]t|wasn['’]t|hasn['’]t|haven['’]t|didn['’]t|cannot|can['’]t|unless|until|whether)\b/i.test(plain.slice(Math.max(0, ...[',', ';', ':', '*', '—', '(', ')'].map((c) => plain.lastIndexOf(c, state.index) + 1)), state.index + state[0].length))
+        && !/^(?:if|when|once|after|before|in case)\b/i.test(plain)) {
         hit = 'unconfirmed';
         unconfirmed = true;
       }
