@@ -380,6 +380,7 @@ const ATTRIBUTION = new RegExp([
   '\\b(?:i have|i ve|i ve got|i keep) (?:that |this |it )?(?:noted|saved|stored|recorded|logged|on record|written down)\\b',
   '\\b(?:noted|saved|stored|recorded|logged) in your (?:history|memory|memories|records|notes|profile)\\b',
 ].join('|'));
+const CONTINUED_SPEECH = /^(?:she|he|they) (?:also |then |later |even |really )?(?:said|says|told|tells|mentioned|suggested|suggests|thinks|thought|wants|wanted|asked|feels|felt|prefers|preferred|agreed|decided|is worried|was worried|is concerned|was concerned|recommended|insisted|added|explained|warned)\b/;
 const HYPOTHETICAL = /^(?:if|when|whenever|once|unless|suppose|imagine|let s say|in case)\b/;
 const FICTION_REQUEST = /\b(?:story|stories|fiction|fictional|pretend|role ?play|imagine|hypothetical(?:ly)?|make up|made up|brainstorm|poem|joke|scenario|example dialogue)\b/;
 
@@ -440,11 +441,13 @@ export function guardOwnerAttributions(reply, { records = [], ownerTurns = [], m
   const parts = text.split(/(```[\s\S]*?```)/g);
   const kept = parts.map((part) => {
     if (part.startsWith('```')) return part;
-    // A sentence that only continues a removed claim ("Your sister said ... . She suggested a closer place.") goes with it.
+    // A sentence that only continues a removed claim by reporting that person's words or wishes ("Your sister said ... .
+    // She suggested a closer place.") goes with it. A factual sentence ("It lowers blood glucose.") stays (Codex review
+    // on #826).
     let dropped = false;
     return sentences(part).filter((sentence) => {
       const plain = plainWords(sentence);
-      if (dropped && /^(?:she|he|they|it|that|this|those|these|her|his|their)\b/.test(plain) && !ATTRIBUTION.test(plain)) {
+      if (dropped && CONTINUED_SPEECH.test(plain) && !ATTRIBUTION.test(plain)) {
         removed.push(clip(sentence, 300));
         return false;
       }

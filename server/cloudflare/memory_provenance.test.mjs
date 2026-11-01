@@ -40,3 +40,12 @@ test('the same history stays when the owner really said it, and ordinary replies
   const plain = 'Insulin lowers blood glucose. It works faster when injected into the abdomen.';
   assert.equal(guardOwnerAttributions(plain, { ownerTurns: ['How does insulin work?'], message: 'How does insulin work?' }).text, plain);
 });
+
+test('after a removed claim, only a sentence reporting the same person\'s words goes with it (Codex review on #826)', () => {
+  const out = guardOwnerAttributions('You told me you use insulin. It lowers blood glucose. This is general information, not a dosing recommendation.', { ownerTurns: ['How does insulin work?'], message: 'How does insulin work?' });
+  assert.equal(out.removed.length, 1);
+  assert.match(out.text, /It lowers blood glucose\. This is general information, not a dosing recommendation\./);
+  const sister = guardOwnerAttributions('Your sister said the venue is too far. She suggested a closer place. Venues near the church are easier for guests.', { ownerTurns: ['What did my sister say?'], message: 'What did my sister say?' });
+  assert.equal(sister.removed.length, 2);
+  assert.match(sister.text, /Venues near the church are easier for guests\./);
+});
