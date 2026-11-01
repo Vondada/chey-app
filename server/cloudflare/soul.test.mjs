@@ -97,3 +97,11 @@ test('a Soul sent by the phone inside brain context is removed: the Worker Soul 
   assert.match(stripped, /\[Facts\]/);
   assert.equal(stripPhoneSoul(''), '');
 });
+
+test('high warmth acknowledges only a feeling the owner expressed; it never asks for a guessed mood', async () => {
+  // Certification run 41275331324: 33 failed replies opened with a guessed mood ("I sense you're feeling frustrated").
+  const block = soulPromptBlock(await loadSoul(memoryStorage()));
+  assert.match(block, /- Warmth 7\/10: Be warm and personal\. When the owner has said or plainly shown how he feels/);
+  assert.match(block, /never guess or name a feeling he has not expressed/);
+  assert.doesNotMatch(block, /acknowledge how the owner feels in one short sentence before the answer/);
+});
