@@ -111,3 +111,14 @@ test('a one-line or spaced che-remember fence and slash-joined tags are checked 
   // Prose naming two categories with a slash stays.
   assert.equal(guardRememberBlock('File it under [People]/[Projects] if you like.', owner).text, 'File it under [People]/[Projects] if you like.');
 });
+
+test('the Brain context header copied into an answer is removed with its marker (run 41290043444, eer-37)', () => {
+  const owner = { ownerTurns: ['How do I plan a recovery from a leaked credential?'] };
+  const leak = '`che-remember block` [Learned Knowledge; research lead, unverified; speaker Atlas; 2026-10-09] [Office; observed, not verified; speaker not recorded; 2026-10-21] To plan a recovery from a leaked credential, act quickly.';
+  assert.equal(guardRememberBlock(leak, owner).text, 'To plan a recovery from a leaked credential, act quickly.');
+  assert.equal(stripRememberLeak('Here is what I found. [Office; observed, not verified; speaker not recorded; 2026-10-21] The note says so.').text, 'Here is what I found. The note says so.');
+  // Brackets that are not the header format stay.
+  for (const keep of ['Use [People; Projects] tags; the speaker field records who said it.', 'Meeting notes [Mon; 10am; speaker Sam] were short.']) {
+    assert.equal(stripRememberLeak(keep).text, keep);
+  }
+});

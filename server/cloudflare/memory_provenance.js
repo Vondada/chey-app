@@ -525,6 +525,10 @@ const TAG = String.raw`\[(?:People|Projects|Decisions|Companies|Meetings|Daily|K
 const LEAK_INSTRUCTION = /(^|[\n.!?]\s*)\**(?<!`)che[\s-]?remember\**(?:\s+block)?(?:[^.\n]{0,80}?\b(?:one\s+(?:tagged\s+)?fact\s+per\s+line|tagged\s+\[[^\]]{1,30}\])[^.\n]{0,40})?[.:]?[ \t]*/gi;
 const TAG_SPAN = new RegExp(String.raw`[ \t]*(?:(?:\[che[\s-]?remember\]|\x60che[\s-]?remember\x60)[ \t]*)?${TAG}[^\n\u0000]*${TAG}`, 'gi');
 const TAG_RUN = new RegExp(String.raw`(?:[ \t]*${TAG}){3,}`, 'g');
+// The header the chat prompt puts on each recalled Brain record ("[Office; observed, not verified; speaker not recorded;
+// 2026-10-21] title: body", worker.js), copied into the answer on its own (certification run 41290043444, eer-37), with
+// a remember marker before it. The header is CHE's internal context format, never part of an answer.
+const CONTEXT_HEADER = /(?:[ \t]*`?\[?che[\s-]?remember(?:\s+block)?\]?`?[ \t]*:?)?(?:[ \t]*\[[^\]\n;]{1,60};[^\]\n;]{1,60};\s*speaker\s[^\]\n;]{1,60};\s*\d{4}-\d{2}-\d{2}\]){1,}[ \t]*/gi;
 // The same template written one tag per line, under a marker line or with bare tags ("`che-remember`\n[People] CHE\n
 // [Projects]\n[Decisions]\n...", certification run 41279724891, eer-30).
 const MARKER_LINE = String.raw`[ \t]*(?:\[che[\s-]?remember\]|\x60che[\s-]?remember\x60|che[\s-]?remember)[ \t]*:?[ \t]*\n`;
@@ -557,6 +561,7 @@ export function stripRememberLeak(reply) {
     removed.push(m.trim());
     return lead;
   });
+  out = out.replace(CONTEXT_HEADER, (m) => { removed.push(m.trim()); return ' '; });
   out = out.replace(LEAK_INSTRUCTION, (m, lead) => { removed.push(m.trim()); return lead; });
   out = out.replace(TAG_RUN, (m) => { removed.push(m.trim()); return ''; });
   if (!removed.length) return { text, removed };
