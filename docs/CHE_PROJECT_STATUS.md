@@ -14,7 +14,8 @@ changes them. Do not delete the old values: the change is recorded in `docs/CHE_
 
 | Fact | State | Time | Evidence |
 |---|---|---|---|
-| `main` is `daf090aa` (#832) | verified | 2026-11-01 04:48 UTC | merge receipt |
+| `main` is `a00d223e` (#834; code at `a5fd91b3`, #833) | verified | 2026-11-01 06:02 UTC | merge receipts |
+| `main` is `daf090aa` (#832) | reported (superseded above) | 2026-11-01 04:48 UTC | merge receipt |
 | `main` is `2a93c35b` (#813) | reported (superseded above) | 2026-10-31 ~19:15 UTC | merge receipts |
 | `main` is `566bd782` (#806, picture status and GPU health) | reported (superseded above) | 2026-10-31 ~18:05 UTC | `git fetch origin main` |
 | `main` is `064a7bb1` (#759, Modal deploy diagnostics) | reported (superseded above) | 2026-10-28 ~20:20 UTC | `git fetch origin main`; GitHub `main` commit |
@@ -24,6 +25,8 @@ changes them. Do not delete the old values: the change is recorded in `docs/CHE_
 
 | Fact | State | Time | Evidence |
 |---|---|---|---|
+| Full 600 certification, fresh, on `a00d223e`: 420 pass, 180 fail, 0 blocked | verified | 2026-11-01 06:44 UTC | run `41279724891` |
+| Worker deploy of `a5fd91b3` (#833) succeeded, live commit checked | verified | 2026-11-01 06:05 UTC | deploy run `41278940638` |
 | Full 600 certification, fresh, on `daf090aa`: 418 pass, 182 fail, 0 blocked | verified | 2026-11-01 05:36 UTC | run `41275331324` |
 | Worker deploy of `daf090aa` (#832) succeeded, live commit checked | verified | 2026-11-01 04:55 UTC | deploy run `41274469723` |
 | Worker deploy of `905e49f2` (#831) succeeded, live commit checked | verified | 2026-11-01 04:08 UTC | deploy run `41271417118` |

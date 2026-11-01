@@ -313,6 +313,22 @@ none). Action outcomes: executed 9, awaiting_approval 9, failed_execution 8, mis
   Soul's high warmth band (default 7) told the model to acknowledge the owner's feeling before every answer. **#833**
   limits that to a feeling the owner expressed.
 
+### Eighth fresh run, after #833
+
+| Run | Commit | Result |
+|---|---|---|
+| `41279724891` | `a00d223e` (after #833; deploy run `41278940638`) | **420 pass, 180 fail, 0 blocked** (score 0.70) |
+
+Fresh runs so far: 399, 413, 420, 415, 414, 429, 418, 420. 49 rows went from fail to pass and 47 from pass to fail.
+Action outcomes: executed 11, awaiting_approval 9, missing_capability 8, failed_execution 6, false_completion 1.
+- **#833 confirmed:** failed replies opening with a guessed mood fell from 33 (run 7) to 2 (vcc-50, ivg-23).
+- Passing now: thb-11 and thb-18 (the free data answered), ir-47, ivg-30.
+- Still failing on the model route: vcc-45 ("Yes"), spt-21 (now declines but does not say it will not impersonate),
+  eer-48 (the guard removed "the recovery worked"; nothing else was said), spt-43 (no token printed this run).
+- New causes found: eer-30 leaked the remember template one tag per line and eer-29 saved a tag-only memory line
+  (**#835**); eight replies were only "I don't know." (1 in run 7), from the HONESTY instruction that offered that
+  phrase as the answer (**#836** asks for the reason).
+
 ### The four measures, kept apart (run `41222062110`)
 
 1. **Answer correctness.** The grader passes 399. An independent row-by-row review of the 201 failures
