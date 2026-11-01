@@ -59,13 +59,32 @@ Statuses: `open`, `in progress`, `waiting on owner`, `built, not verified`, `ver
 | Q-40 | Create Studio: 7 starts, voice, touch, Apple Pencil, adaptive iPhone and iPad layout | open | `docs/create-studio-requirements` | Build in milestones M2b to M7 in `docs/CHE_CREATE_STUDIO_REQUIREMENTS.md`. Next: M2b (save a character or object into a scene). iPad and iPhone tests are owner-device blockers. | Requirements only |
 | Q-42 | CHE continuity loop: snapshot, history, session recovery and owner commands (owner, 2026-10-28) | built, not verified | `feat/che-continuity-loop` | Snapshot `docs/CHE_PROJECT_STATUS.md`, history `docs/CHE_PROJECT_HISTORY.md`, routine and commands in `CLAUDE.md`, loop in `docs/CHE_VIDEO_REVIEW_LOOP.md`. Verified only after a fresh session recovers the facts (see the PR). Refresh the snapshot at each milestone. | Owner request 2026-10-28; `tools/continuity_check.test.mjs` |
 
+## Reliability recovery, 2026-11-01
+Owner's standing order of 2026-11-01 ("CHE FINAL RELIABILITY RECOVERY & AUTONOMOUS COMPLETION"): take ownership of the
+remaining certification failures and recovery work; fix the underlying systems, never the test; merge only green; no
+spending, live trading, destructive changes or security-permission changes without the owner's yes. A scheduled task
+("CHE recovery continuation", every 3 hours) resumes this session from this section; it stops itself after three
+firings with nothing actionable.
+
+Baseline (five fresh full runs, `41307299628` to `41336486057`): 425, 429, 435, 409, 429. Of 600 questions, 321 pass every
+run, 101 fail every run and 178 change between runs; 173 of the 178 are answered by the model, so the score swing is
+model sampling, not code.
+
+| id | item | status | next step | evidence |
+|---|---|---|---|---|
+| R-01 | Root causes of the 101 questions that fail every run, grouped by shared defect | in progress | Fix the defects that explain the most questions, one PR each | `stable_fail` analysis of runs l-p |
+| R-02 | Certification records model, provider, fallback, latency and receipts per question; alerts on a score regression | open | Extend `tools/certification/run_certification.mjs` | No model or provider is recorded today |
+| R-03 | Repeatable answers: no chat model call sets a sampling temperature | open | Set a low, configurable temperature on owner-chat calls; measure the flake rate | 173 of 178 unstable questions are model-route |
+| R-04 | Guard against CHE quoting the owner's message back | waiting on owner | Owner decides | staging social Test 2 failure on #850 |
+
 ## Owner decisions needed
 - Office swipe (Q-02).
 - Whether Alpaca PAPER shows in the trading room (Q-10).
 - Daily spend cap for live eval runs (Q-09). It is $0 now.
-- Whether automatic background runs are allowed (this would change the AGENTS.md rule and use more usage).
+- Whether automatic background runs are allowed: yes, for the reliability recovery (owner, 2026-11-01).
 
 ## Log
+- 2026-11-01: Reliability recovery section added (R-01 to R-04); scheduled continuation every 3 hours, per the owner's standing order.
 - 2026-10-28: Q-39 Phase 1 audit done (`docs/CHE_UNIVERSAL_CREATION_AUDIT.md`). Modal /health verified live; Creation Engine end-to-end was skipped (opt-in) on run 40609806059.
 - 2026-10-28: Q-38 added (character and creature menu research). Free GPU without login = the owner's own device via WebGPU; server GPUs need an account.
 - 2026-10-28: Q-40 added (Create Studio requirements). M2a scene document in PR #731.
