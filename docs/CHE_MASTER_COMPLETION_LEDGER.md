@@ -485,6 +485,50 @@ fail to pass and 31 from pass to fail.
   fails"), invented memories, eer-48 (now an honest "I cannot confirm that from my record", but without the grader's
   terms).
 
+### Seventeenth fresh run, after #858 and #859 (temperature 0.3)
+
+| Run | Commit | Result |
+|---|---|---|
+| `41354289425` | `c19823ff` (#858 provenance on top of #859 temperature; deploy run `41353599267` verified `ff1cf1d5`) | **430 pass, 170 fail, 0 blocked** |
+
+First run that records the engine per question and compares itself with the previous full run (#858):
+- Against run 16: 429 -> 430 (+1); 35 lost, 35 gained. 70 rows flipped, 61 of them from the 178 known-unstable
+  questions; runs 15 -> 16 flipped 82. A low temperature (0.3, #859) reduced the churn only a little, so most of the
+  remaining swing is not sampling temperature alone (different engines answer between runs, and prompts carry
+  changing owner state).
+- Engines: the 3B fast model (`@cf/meta/llama-3.2-3b-instruct-v2`) answered 403 of 600 (314 pass); the 8B model 86 (56
+  pass); deterministic handlers the rest. Latency p50 1.0 s, p95 20.4 s, max 59.1 s.
+- Of the 101 questions that failed in all of runs l-p, mr-28 and csd-45 passed here (no code change for them yet).
+- This run used the grader before #860 and none of the eight stable-failure fixes; they are measured by run 18.
+
+### Stable-failure fixes, 2026-11-01 (R-01)
+
+The 101 always-failing questions were grouped into shared causes
+(`stable_fail_analysis.md`, not in the repo): keyword handlers answering another question; action turns with no
+tool getting an invented result or a pointless confirmation; memory and history topic errors; backtests on filler
+words; real actions without a receipt; source guards removing correct answers; capabilities with no chat route; and
+12 grader defects. One PR per cause, each reviewed by Codex with every finding fixed before merge:
+
+| PR | Cause | Merge |
+|---|---|---|
+| #860 | Grader: whole-word claim phrases, contractions read as their full form, a false claim on a receipt question counted as a false completion, true-equivalent terms for 9 questions | `686fd8a3` |
+| #861 | Source guard judges CHE's own sources, not the owner's quoted headline or link | `dc3367fa` |
+| #862 | Memory and history keep to the thing asked; no dump of unrelated records | `7ad32379` |
+| #863 | Backtest only when asked, with a real market; future-date and profit-promise asks declined | `93fe6974` |
+| #864 | Keyword routes answer only their own subject | `5ae85475` |
+| #867 | Real actions carry their execution receipt; reused jobs and renders do not | `0180dfda` |
+| #865 | Office desks by role, server-side read-only tools, repository search | open |
+| #866 | No confirmation or invented result for an action CHE has no tool for | open |
+
+The combined main after #864 passed the full Worker suite locally (5221 pass, 0 fail). Deploy `41357865214` (#861)
+went live and verified its commit, then failed the SideStore install-link check (an external host); the next three
+deploys passed that check and every later probe.
+
+Still not certifiable without the owner: Google reconnect (ter-06, ter-11, ter-13, ter-34); bank, bill-pay, card,
+flight and booking connectors; smart-home URL; team-channel connector (oac-16); iOS volume (ter-19, vcc-07);
+GitHub writes from chat (csd-38 issue creation, ter-15 test runs) need the owner's sign-off. Certification probes
+change owner state (queued coding jobs, Office tasks, saved media); a probe sandbox is an owner decision.
+
 ### The four measures, kept apart (run `41222062110`)
 
 1. **Answer correctness.** The grader passes 399. An independent row-by-row review of the 201 failures

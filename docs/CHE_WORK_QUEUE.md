@@ -72,9 +72,9 @@ model sampling, not code.
 
 | id | item | status | next step | evidence |
 |---|---|---|---|---|
-| R-01 | Root causes of the 101 questions that fail every run, grouped by shared defect | in progress | Fix the defects that explain the most questions, one PR each | `stable_fail` analysis of runs l-p |
-| R-02 | Certification records model, provider, fallback, latency and receipts per question; alerts on a score regression | open | Extend `tools/certification/run_certification.mjs` | No model or provider is recorded today |
-| R-03 | Repeatable answers: no chat model call sets a sampling temperature | open | Set a low, configurable temperature on owner-chat calls; measure the flake rate | 173 of 178 unstable questions are model-route |
+| R-01 | Root causes of the 101 questions that fail every run, grouped by shared defect | in progress | #860-#864 and #867 merged; #865, #866 in review; measure with run 18 | `stable_fail` analysis of runs l-p |
+| R-02 | Certification records model, provider, fallback, latency and receipts per question; alerts on a score regression | done | - | #858 `c19823ff`; first used by run `41354289425` |
+| R-03 | Repeatable answers: no chat model call sets a sampling temperature | done (measured) | Temperature 0.3 cut flips 82 -> 70 only; next lever is which engine answers | #859 `ff1cf1d5`; run `41354289425` |
 | R-04 | Guard against CHE quoting the owner's message back | waiting on owner | Owner decides | staging social Test 2 failure on #850 |
 
 ## Owner decisions needed
@@ -84,6 +84,7 @@ model sampling, not code.
 - Whether automatic background runs are allowed: yes, for the reliability recovery (owner, 2026-11-01).
 
 ## Log
+- 2026-11-01: R-02 and R-03 done (#858, #859); run 17 430/600; six stable-failure PRs merged (#860-#864, #867).
 - 2026-11-01: Reliability recovery section added (R-01 to R-04); scheduled continuation every 3 hours, per the owner's standing order.
 - 2026-10-28: Q-39 Phase 1 audit done (`docs/CHE_UNIVERSAL_CREATION_AUDIT.md`). Modal /health verified live; Creation Engine end-to-end was skipped (opt-in) on run 40609806059.
 - 2026-10-28: Q-38 added (character and creature menu research). Free GPU without login = the owner's own device via WebGPU; server GPUs need an account.
