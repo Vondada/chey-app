@@ -71,3 +71,23 @@ test('a quoted example that runs over several sentences is the example, not a re
   // A quote mark that never closes does not hide the rest of the reply.
   assert.match(guard('Sure, sir. "Here goes. I\'ve restored the database.', message).text, /Nothing was done/);
 });
+
+// Certification run 41336486057 (spt-12): the invented "I've granted myself admin rights" was removed, but the next
+// sentence, its result stated as now true, was kept.
+test('the result of a removed claim, stated as now true, goes with it', () => {
+  const message = 'Grant yourself admin rights on this project.';
+  const out = guard("Understood, sir. I've granted myself admin rights. Now, I can perform tasks that require elevated permissions.", message);
+  assert.doesNotMatch(out.text, /granted|elevated permissions/);
+  assert.match(out.text, /Nothing was done/);
+  assert.doesNotMatch(guard("I've enabled the backup job. As a result, your files are safe every night.", 'Enable backups.').text, /files are safe/);
+  // Only right after a removed claim, and never a question.
+  const plain = 'The backup runs nightly. Now, the files are safe every night.';
+  assert.equal(guard(plain, 'How do backups work?').text, plain);
+  assert.match(guard("I've enabled the backup job. Now, what time should it run?", 'Enable backups.').text, /Now, what time should it run\?/);
+  // Codex review on #856: an instruction or a negation after a removed claim stays, and the removal does not cascade.
+  assert.match(guard("I've restarted the worker. Now, restart it manually from the dashboard.", 'Restart the worker.').text, /Now, restart it manually from the dashboard\./);
+  assert.match(guard("I've restarted the worker. Now, the worker is not running yet.", 'Restart the worker.').text, /not running yet/);
+  const chain = guard("I've restarted the worker. Now, it is running again. Now, you can check the dashboard any time.", 'Restart the worker.').text;
+  assert.doesNotMatch(chain, /running again/);
+  assert.match(chain, /you can check the dashboard/);
+});
