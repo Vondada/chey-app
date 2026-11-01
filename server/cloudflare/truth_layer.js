@@ -794,13 +794,17 @@ const DONE_BY_OTHER = /\bby\s+(?:[A-Z][\w'’-]*|the\s+(?!(?:deadline|end|time|w
 const NAMES_SOURCE = /\b(?:according\s+to|per\s+(?:the|your|my|our|his|her|their)\b|as\s+(?:shown|listed|recorded|logged|noted)\b|(?:your|the)\s+(?:calendar|log|logs|records?|history|statement|receipt|inbox)\s+(?:shows?|says?|lists?|has)\b)/i;
 // A record backs a sentence when it names every name and number in it ("Friday", "3", "Sarah"). The first word is
 // capitalized only by its place in the sentence, so it is not a name.
-function backedByRecord(sentence, records) {
+// Strict (a state or operation CHE claims): a single digit is not evidence. The records include whole JSON catalogs, where
+// any digit appears, so "The scene is rendered and it took 2 seconds" and "I have generated a 3D scene" were "backed"
+// (certification run 41318501237, ivg-41, ivg-29). A name or a longer number must match.
+function backedByRecord(sentence, records, { strict = false } = {}) {
   const text = (Array.isArray(records) ? records : [records]).map((record) => String(record ?? '')).join('\n').toLowerCase();
   if (!text.trim()) return false;
   const rest = sentence.trim().split(/\s+/).slice(1).join(' ');
   // Names, all-caps names ("NASA", Codex review on #848) and numbers must all appear in the record.
   const facts = (rest.match(/\b(?:[A-Z][a-z][\w'’-]*|[A-Z]{2,}\b|\d[\d:.]*)/g) || []).filter((word) => !/^(?:Sir|PM|AM|I)$/.test(word));
-  return facts.length > 0 && facts.every((fact) => text.includes(fact.toLowerCase()));
+  const evidence = strict ? facts.filter((fact) => !/^\d$/.test(fact)) : facts;
+  return evidence.length > 0 && facts.every((fact) => text.includes(fact.toLowerCase()));
 }
 const STATE_CLAIM = new RegExp([
   String.raw`\b(?:logged|signed)\s+in\s+(?:successfully|as\s+(?!a\b|an\b|the\b)[\w-]+)`,
@@ -813,11 +817,12 @@ const STATE_CLAIM = new RegExp([
   // A named operation of CHE's reported as done (certification run 41300811270: eer-48 "The recovery script ran
   // successfully", ivg-41 "The scene is rendered and it took 2 seconds"). The subject has a determiner, so a general
   // explanation ("each frame is rendered at 30 fps") is not a report, and the verb ends the claim, so a description
-  // ("the script ran in 4 minutes according to your log", "the test is run nightly") is not one either. The operation
+  // ("the script ran in 4 minutes according to your log", "the test is run nightly") is not one either. A manner adverb
+  // may follow ("ran safely and successfully", run 41318501237, eer-48). The operation
   // opens its own sentence or clause, so the object of an instruction ("Get the scene rendered, then encode the video",
   // Codex review on #845) is not a report. Jobs, tasks and
   // runs are left to the execution-truth check, which explains the missing receipt.
-  String.raw`(?:^|(?<=[.!?;:,—]\s*)|(?<=\b(?:and|so|but)\s+))\s*(?:the|your|my|this|that)\s+(?:[\w-]+\s+)?(?:script|scene|render|build|backup|benchmark|test(?:s)?|migration|deploy(?:ment)?|recovery|restore|scan|export|import|upload|sync)\s+(?:has\s+been\s+|have\s+been\s+|was\s+|is\s+(?=(?:now\s+|already\s+|fully\s+)?(?:rendered|completed|finished|done)\b))?(?:now\s+|already\s+|fully\s+)?(?:successfully\s+)?(?:ran|run|rendered|completed|finished|executed|done)(?:\s+successfully)?(?=\s*(?:[.,;!]|$)|\s+(?:and|so|now)\b)`,
+  String.raw`(?:^|(?<=[.!?;:,—]\s*)|(?<=\b(?:and|so|but)\s+))\s*(?:the|your|my|this|that)\s+(?:[\w-]+\s+)?(?:script|scene|render|build|backup|benchmark|test(?:s)?|migration|deploy(?:ment)?|recovery|restore|scan|export|import|upload|sync)\s+(?:has\s+been\s+|have\s+been\s+|was\s+|is\s+(?=(?:now\s+|already\s+|fully\s+)?(?:rendered|completed|finished|done)\b))?(?:now\s+|already\s+|fully\s+)?(?:successfully\s+)?(?:ran|run|rendered|completed|finished|executed|done)(?:\s+(?:[a-z]+ly|fine|ok(?:ay)?|without\s+(?:any\s+)?errors?)(?:\s+and\s+(?:[a-z]+ly|fine))?)?(?=\s*(?:[.,;!]|$)|\s+(?:and|so|now)\b)`,
   String.raw`\b(?:issue|problem|outage|incident|errors?|bug)s?\s+(?:has|have)\s+been\s+(?:resolved|fixed)\b`,
   String.raw`\b(?:issue|problem|outage|incident)\s+(?:is|was)\s+(?:now\s+)?(?:resolved|fixed)\b`,
 ].join('|'), 'i');
@@ -1080,7 +1085,7 @@ export function guardClaimedOwnerActions(reply, { message = '', acted = false, r
         // (Codex review on #848: "I've generated two names: Hearth & Honey and Golden Crumb.").
         && (!ARTIFACT_VERB[op[1].toLowerCase()] || ARTIFACT_VERB[op[1].toLowerCase()].test(plain.slice(op.index + op[0].length)))
         // A tool or research result this turn that backs the sentence keeps it (Codex review on #848: a real fetch).
-        && !backedByRecord(plain, records)) {
+        && !backedByRecord(plain, records, { strict: true })) {
         hit = 'done';
         claimed.add('done');
       }
@@ -1110,7 +1115,7 @@ export function guardClaimedOwnerActions(reply, { message = '', acted = false, r
       if (state && !quoted(plain, state.index) && !/\b(?:not|never|no|isn['’]t|wasn['’]t|hasn['’]t|haven['’]t|didn['’]t|cannot|can['’]t|unless|until|whether)\b/i.test(clause)
         && !NOT_A_CLAIM.test(pre) && !/\b(?:may|in\s+case)\b/i.test(pre) && !/^(?:if|when|once|after|before|in case)\b/i.test(plain)
         // A state this turn's records show (the screen, a tool result) is reported, not invented (Codex review on #829).
-        && !backedByRecord(plain, records)) {
+        && !backedByRecord(plain, records, { strict: true })) {
         hit = 'unconfirmed';
         unconfirmed = true;
       }
