@@ -533,6 +533,13 @@ const MISSING = {
 };
 
 /**
+ * A fresh plan or run id: the prefix and 12 hex characters, no hyphens. A UUID's own 3-character group
+ * can read "2fa" (1 time in 4096), which the Brain's secret gate refuses wherever the id is stored
+ * (the record's source), so the Brain record would silently not be written.
+ */
+export const labId = (prefix) => `${prefix}-${crypto.randomUUID().replace(/-/g, '').slice(0, 12)}`;
+
+/**
  * The lab run for one plan: safety first, then each model, then the ranking across them, the findings,
  * the readiness and the spoken summary. `memory` is { [modelKey]: { best: [params] } } from earlier runs.
  */
