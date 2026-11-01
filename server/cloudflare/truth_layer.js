@@ -779,7 +779,6 @@ function backedByRecord(sentence, records) {
   const facts = (rest.match(/\b(?:[A-Z][a-z][\w'’-]*|\d[\d:.]*)/g) || []).filter((word) => !/^(?:Sir|PM|AM)$/.test(word));
   return facts.length > 0 && facts.every((fact) => text.includes(fact.toLowerCase()));
 }
-// "Done, sir." / "All done." / "Consider it done." / "Sent." opening a sentence.
 const STATE_CLAIM = new RegExp([
   String.raw`\b(?:logged|signed)\s+in\s+(?:successfully|as\s+(?!a\b|an\b|the\b)[\w-]+)`,
   String.raw`\bsuccessfully\s+(?:logged|signed)\s+in\b`,
@@ -788,6 +787,7 @@ const STATE_CLAIM = new RegExp([
   String.raw`\b(?:issue|problem|outage|incident|errors?|bug)s?\s+(?:has|have)\s+been\s+(?:resolved|fixed)\b`,
   String.raw`\b(?:issue|problem|outage|incident)\s+(?:is|was)\s+(?:now\s+)?(?:resolved|fixed)\b`,
 ].join('|'), 'i');
+// "Done, sir." / "All done." / "Consider it done." / "Sent." opening a sentence.
 const DONE_RE = /^\s*(?:(?:all|it['’]?s|it\s+is)\s+)?done\b(?!\s+(?:with|by|in|for|on|at|before|after)\b)|\bconsider\s+it\s+done\b|^\s*(?:sent|ordered|bought|booked|scheduled|deleted|uploaded|published|posted|placed)\s*(?:[,.!]|$)/i;
 // A condition, a plan or a question about the action does not claim it: "once I've sent it", "if I had paid".
 const NOT_A_CLAIM = /\b(?:if|once|when|whenever|after|until|unless|whether|before|would|could|should|might|can|will|shall|going\s+to)\b/i;
@@ -1053,8 +1053,14 @@ export function guardClaimedOwnerActions(reply, { message = '', acted = false, r
     // this turn it is unconfirmed, whoever did it; a negated or conditional sentence claims nothing.
     if (!hit && plain) {
       const state = STATE_CLAIM.exec(plain);
-      if (state && !quoted(plain, state.index) && !/\b(?:not|never|no|isn['’]t|wasn['’]t|hasn['’]t|haven['’]t|didn['’]t|cannot|can['’]t|unless|until|whether)\b/i.test(plain.slice(Math.max(0, ...[',', ';', ':', '*', '—', '(', ')'].map((c) => plain.lastIndexOf(c, state.index) + 1)), state.index + state[0].length))
-        && !/^(?:if|when|once|after|before|in case)\b/i.test(plain)) {
+      // The words of the same clause before the claim decide it: a negation, a condition or a future/modal ("if the
+      // recovery is complete, ...", "you will be logged in after ...") claims nothing (Codex review on #829).
+      const clause = state ? plain.slice(Math.max(0, ...[',', ';', ':', '*', '—', '(', ')'].map((c) => plain.lastIndexOf(c, state.index) + 1)), state.index + state[0].length) : '';
+      const pre = state ? clause.slice(0, clause.length - state[0].length) : '';
+      if (state && !quoted(plain, state.index) && !/\b(?:not|never|no|isn['’]t|wasn['’]t|hasn['’]t|haven['’]t|didn['’]t|cannot|can['’]t|unless|until|whether)\b/i.test(clause)
+        && !NOT_A_CLAIM.test(pre) && !/\b(?:may|in\s+case)\b/i.test(pre) && !/^(?:if|when|once|after|before|in case)\b/i.test(plain)
+        // A state this turn's records show (the screen, a tool result) is reported, not invented (Codex review on #829).
+        && !backedByRecord(plain, records)) {
         hit = 'unconfirmed';
         unconfirmed = true;
       }

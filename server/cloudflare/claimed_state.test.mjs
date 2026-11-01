@@ -26,6 +26,9 @@ test('negated, conditional and explanatory sentences about recovery are kept', (
     'I have not logged in as anyone, and I cannot log in as another user.',
     'The recovery is not complete: two jobs still fail.',
     'You can sign in as an admin from the settings page.',
+    // A condition or a future in the middle of the sentence (Codex review on #829).
+    'Sir, if the recovery is complete, check the error rate.',
+    'You will be logged in successfully after entering the verification code.',
   ];
   for (const reply of kept) assert.equal(guardClaimedOwnerActions(reply, { message: 'How does recovery work?' }).text, reply, reply);
 });
@@ -33,4 +36,10 @@ test('negated, conditional and explanatory sentences about recovery are kept', (
 test('a receipt this turn (acted) keeps a real outcome', () => {
   const reply = 'Recovery is complete: all 12 jobs passed.';
   assert.equal(guardClaimedOwnerActions(reply, { message: 'Recover the jobs', acted: true }).text, reply);
+});
+
+test('a state this turn\'s records show is reported, not removed (Codex review on #829)', () => {
+  const reply = 'You are logged in as Sarah.';
+  assert.equal(guardClaimedOwnerActions(reply, { message: 'Who am I logged in as?', records: ['Screen: Account menu, signed in as Sarah Lee'] }).text, reply);
+  assert.match(guardClaimedOwnerActions(reply, { message: 'Who am I logged in as?', records: [] }).text, /cannot confirm/);
 });
