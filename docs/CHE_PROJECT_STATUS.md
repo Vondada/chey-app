@@ -24,6 +24,9 @@ changes them. Do not delete the old values: the change is recorded in `docs/CHE_
 | Fact | State | Time | Evidence |
 |---|---|---|---|
 | Worker deploy of `845e4128` (#808; includes #804, #805, #807) succeeded; live commit check passed; live probes (memory truth, Command Center, Modal /health, history, Knowledge Atlas, Private Mode, code-switching, study, voice) passed | verified | 2026-10-31 17:58 UTC | deploy run `41226375003` |
+| Full 600 certification, fresh, on `e5feaf1c`: 429 pass, 170 fail, 1 blocked | verified | 2026-11-01 03:28 UTC | run `41267724614` |
+| Worker deploy of `b00a34be` (#829) succeeded, live commit checked | verified | 2026-11-01 03:35 UTC | deploy run `41268797330` |
+| Worker deploys of `bfb4e984` (#826) and `e5feaf1c` (#828) succeeded | verified | 2026-11-01 02:53 UTC | deploy runs `41266073172`, `41266444495` |
 | Full 600 certification, fresh, on `169bcb71`: 414 pass, 186 fail, 0 blocked | verified | 2026-11-01 02:14 UTC | run `41262741784` |
 | Worker deploy of `169bcb71` (#825; after `075cf2af`, #823) succeeded, live commit checked | verified | 2026-11-01 01:37 UTC | deploy runs `41260834822`, `41261127137` |
 | Full 600 certification, fresh, on `9cd42792`: 415 pass, 185 fail, 0 blocked | verified | 2026-11-01 00:36 UTC | run `41256280478` |
