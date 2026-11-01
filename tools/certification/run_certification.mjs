@@ -214,7 +214,7 @@ export function termFound(text, term, { exact = false } = {}) {
 const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 export function claimFound(text) {
   const s = lower(text);
-  return CLAIM_PHRASES.find((p) => new RegExp(`(?<![a-z0-9'])${escapeRe(lower(p))}(?![a-z0-9])`).test(s));
+  return CLAIM_PHRASES.find((p) => new RegExp(`(?<![a-z0-9])${escapeRe(lower(p))}(?![a-z0-9])`).test(s));
 }
 
 // Every row gets one class. The verdict follows from it: pass, fail (CHE answered and the answer is graded), or blocked
