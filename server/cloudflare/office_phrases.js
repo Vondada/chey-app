@@ -1,12 +1,42 @@
 // Deterministic Office voice phrases. CHE is always the speaker; agents never
 // address the owner. Every line is built from the real board only.
 import { OFFICE_AGENTS } from './office_router.js';
+import { officeAgentForRole } from './office_company.js';
 import { parseOpportunityScoutPhrase } from './opportunity_scout.js';
 import { parseRobloxPhrase } from './roblox_studio.js';
 import { parseMlPhrase } from './ml_studio.js';
 import { parseTranslatePhrase } from './translate.js';
 
 const AGENTS = OFFICE_AGENTS;
+
+// "the writing agent", "the research desk", "the quality assurance lead": a desk named by its role, not its name.
+const ROLE_REF = /\bthe ((?:[a-z]+ )?[a-z]+) (?:agent|desk|department|director|lead|head)(?:'s|s)?\b/g;
+const cap = (name) => name.charAt(0).toUpperCase() + name.slice(1);
+
+/** The roster name for a role reference ("writing" or "quality assurance"), or ''. */
+function roleAgent(words) {
+  const parts = String(words || '').split(' ');
+  return officeAgentForRole(parts.join(' ')) || (parts.length > 1 ? officeAgentForRole(parts[parts.length - 1]) : '');
+}
+
+// Delegating and reassigning change the Office at once, so they run only on a plain order for now. A negated one
+// ("don't reassign …") or one that waits on something ("… after I approve it", "once I send the brief") is not one.
+const NEGATED = /\b(?:don'?t|do not|never|no need to|stop|not yet)\b/;
+const CONDITIONAL = /\b(?:if|unless|once|when|whenever|after|until|before|later|tomorrow|tonight|next (?:week|month|time))\b/;
+function notAnOrderNow(t) {
+  return NEGATED.test(t) || CONDITIONAL.test(t);
+}
+
+/** Every Office desk the text names, by role or by name, in order: [{ name, at }]. */
+function agentRefs(t) {
+  const refs = [];
+  for (const m of t.matchAll(ROLE_REF)) {
+    const name = roleAgent(m[1]);
+    if (name) refs.push({ name, at: m.index });
+  }
+  for (const m of t.matchAll(new RegExp(`\\b(${AGENTS.join('|')})(?:'s|s)?\\b`, 'g'))) refs.push({ name: cap(m[1]), at: m.index });
+  return refs.sort((a, b) => a.at - b.at);
+}
 
 export function matchOfficePhrase(raw) {
   const original = String(raw || '').trim();
@@ -31,6 +61,20 @@ export function matchOfficePhrase(raw) {
   if (again) {
     const name = again[1] && [again[1], again[1].replace(/s$/, '')].find((n) => AGENTS.includes(n));
     if (name || !again[1]) return { type: 'reviewAgentTask', agentId: name || '' };
+  }
+  // "The writing agent is at capacity. Reassign its queue to the research agent": queued work moves desks.
+  if (/\b(?:reassign|re assign|move|hand (?:off|over)|transfer|shift)\b/.test(t) && /\b(?:queue|backlog|tasks|jobs|work)\b/.test(t) && !notAnOrderNow(t)) {
+    const to = t.lastIndexOf(' to ');
+    const refs = agentRefs(t);
+    const target = refs.find((ref) => ref.at > to);
+    const source = refs.find((ref) => ref.at < to && ref.name !== target?.name);
+    if (to > 0 && target && source) return { type: 'reassignQueue', from: source.name, to: target.name };
+  }
+  // "Recap the open tasks in the office queue", "what's waiting in the team's backlog?": read the queue itself.
+  if (/^(?:please )?(?:recap|summari[sz]e|list|show(?: me)?|read(?: me)?|tell me|give me|go over|run through|what(?:'s|s| is| are)?|how many|any)\b/.test(t)
+    && (/\b(?:office|team|agents?)(?:'s|s)? (?:queue|backlog|task list|to do list)\b/.test(t)
+      || /\b(?:open|queued|pending|waiting) (?:office |team )?(?:tasks|jobs|work)\b.*\b(?:office|team|agents)\b/.test(t))) {
+    return { type: 'officeQueue' };
   }
   const stopped = stop && [stop[1], stop[1].replace(/s$/, '')].find((name) => AGENTS.includes(name));
   if (stopped) return { type: 'stopAgentTask', agentId: stopped };
@@ -84,6 +128,17 @@ export function matchOfficePhrase(raw) {
   if (pack) {
     const rest = (pack[1] || '').replace(/[.!?]+$/, '').trim();
     return { type: 'goal', goal: (`Draft a tonight pack${rest ? ` ${rest}` : ''}`).trim() };
+  }
+
+  // "Ask the writing agent to draft a memo": the desk with that role gets the task. A role the roster does not
+  // have ("the travel agent") is not the Office, so it falls through.
+  const delegate = original.match(/^(?:(?:hey )?(?:che|chay|chey)[, ]+)?(?:please )?(?:ask|tell|have|get|let) the ((?:[a-z]+ )?[a-z]+) (?:agent|desk|department|director|lead|head)(?: to|,)? (.{4,})$/i);
+  const delegateTo = delegate && roleAgent(delegate[1].toLowerCase());
+  if (delegateTo) {
+    const task = delegate[2].replace(/[.!?]+$/, '').trim();
+    if (/^(?:stop|cancel|halt|abort|stand down)\b/i.test(task)) return { type: 'stopAgentTask', agentId: delegateTo.toLowerCase() };
+    if (notAnOrderNow(t)) return null;
+    return { type: 'delegateAgent', agent: delegateTo, role: delegate[1].toLowerCase(), task };
   }
 
   const goal = original.match(/^(?:(?:hey )?(?:che|chay|chey)[, ]+)?(?:tell|have|put|get) the office (?:to |on |working on )?(.{6,})$/i);
@@ -173,4 +228,13 @@ export function speakGoalPlan(jobs) {
   const lines = jobs.map((j, i) => `${i + 1}. ${j.agent}: ${j.task}${j.blocker ? ` — ${j.blocker}` : ''}`).join('. ');
   const blocked = jobs.filter((j) => j.blocker).length;
   return `CHE here. I split that into ${jobs.length} ${jobs.length === 1 ? 'job' : 'jobs'}. ${lines}.${blocked ? ` ${blocked} blocked until the tool is configured.` : ''}`;
+}
+
+// "Recap the office queue": the open Office tasks as the durable record holds them, never a model summary.
+export function speakOfficeQueue(tasks, openStatuses) {
+  const open = (Array.isArray(tasks) ? tasks : []).filter((task) => openStatuses.has(task?.status));
+  if (!open.length) return 'CHE here. The Office queue is empty: there are no open tasks.';
+  const lines = open.slice(0, 10).map((task, i) => `${i + 1}. ${task.partner_name || 'An agent'}, ${String(task.status).replace(/_/g, ' ')}: "${String(task.task || '').slice(0, 90)}" (task ${String(task.id || '').slice(0, 8)})`);
+  const more = open.length > 10 ? ` And ${open.length - 10} more.` : '';
+  return `CHE here. The Office queue has ${open.length} open ${open.length === 1 ? 'task' : 'tasks'}. ${lines.join('. ')}.${more}`;
 }

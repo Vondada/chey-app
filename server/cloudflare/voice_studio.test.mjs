@@ -131,9 +131,9 @@ async function owner(provider) {
     data: () => saved.get('che') || {},
     modelCalls: () => inputs.length,
     lastInput: () => JSON.stringify(inputs[inputs.length - 1] ?? null),
-    async say(message) {
+    async say(message, extra = {}) {
       const before = inputs.length;
-      const res = await send('/api/chat', { message, history: [] }, token);
+      const res = await send('/api/chat', { message, history: [], ...extra }, token);
       const raw = await res.text();
       await settle();
       const events = raw.split('\n').filter(Boolean).map((l) => { try { return JSON.parse(l); } catch (_) { return null; } }).filter(Boolean);
@@ -239,7 +239,9 @@ test('unknown names and out-of-range numbers change nothing and say so', async (
 test('ordinary conversation still reaches the model; voice words in a sentence do not hijack it', async () => {
   const provider = fakeProvider();
   const me = await owner(provider);
-  const weather = await me.say('what is the weather like');
+  // Sent as the phone sends it with no plugins on: with no list at all, the Worker's own weather tool may spend one
+  // planning call first (serverPluginTools), which is not what this test counts.
+  const weather = await me.say('what is the weather like', { plugin_tools: [] });
   assert.equal(weather.done.source === 'che_voice_studio', false);
   assert.equal(weather.modelCalls, 1);
   const music = await me.say('play some music');

@@ -813,6 +813,36 @@ export function cancelAgentTasks(data, agentName, reason = 'Owner stopped it.') 
   return { agent, cancelled, kept };
 }
 
+/**
+ * "Reassign Lyra's queue to Mira": every queued task of one Office agent moves to another through handoffAgentTask,
+ * so each keeps its history. Work already running or in review stays where it is, and so do coding-job mirrors.
+ * A stage of a coordinated Office job stays with its desk too: the job's stage record names that agent, and its
+ * acceptance checks (department ownership, independent QA) were made for that agent, not for whoever takes the queue.
+ * `in_job` lists those stage tasks so the reply can say why they stayed.
+ */
+export function reassignAgentQueue(data, fromName, toName, note = 'Owner reassigned the queue.') {
+  const find = (name) => (data.team || []).find((a) => String(a.name || '').toLowerCase() === String(name || '').toLowerCase() && !a.retired);
+  const from = find(fromName);
+  const to = find(toName);
+  if (!from || !to || from.id === to.id) return { from, to, moved: [], kept: [], in_job: [] };
+  const coordinated = new Set((data.office_goals || []).filter((g) => g?.coordinated).map((g) => g.id));
+  const isStage = (t) => Boolean(t.office_job_id || t.office_stage || t.kind === 'office_stage' || (t.job_id && coordinated.has(t.job_id)));
+  const all = (data.team_tasks || []).filter((t) => t.partner_id === from.id && TASK_OPEN.has(t.status));
+  const in_job = all.filter(isStage);
+  const open = all.filter((t) => !isStage(t));
+  const moved = [];
+  const kept = [];
+  // handoffAgentTask marks the giving agent idle; one still running a task keeps showing it.
+  const desk = { runtime_status: from.runtime_status, runtime_task: from.runtime_task, runtime_updated_at: from.runtime_updated_at };
+  for (const task of open) {
+    if (task.status !== 'queued' || isCodingMirror(task)) { kept.push(task); continue; }
+    if (!handoffAgentTask(data, task.id, to.id, note).error) moved.push(task);
+  }
+  if ([...kept, ...in_job].some((t) => t.status === 'running')) Object.assign(from, desk);
+  else if (moved.length) settleAgent(data, from.id);
+  return { from, to, moved, kept, in_job };
+}
+
 // "Review it again": a result CHE could not review goes back to CHE's review as is; the agent's
 // work, and any computer action, is not repeated.
 export function requeueAgentReview(data, taskId) {
