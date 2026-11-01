@@ -49,3 +49,14 @@ test('after a removed claim, only a sentence reporting the same person\'s words 
   assert.equal(sister.removed.length, 2);
   assert.match(sister.text, /Venues near the church are easier for guests\./);
 });
+
+test('a leaked template line with values between the tags is removed whole (run 41267724614, cre-37)', () => {
+  const leak = "I'll cite the calendar's answer. [che-remember] [People] CHE [Projects] [Decisions] [Companies] [Meetings] Meeting - Calendar [Daily] [Knowledge]";
+  assert.equal(stripRememberLeak(leak).text, "I'll cite the calendar's answer.");
+  // Prose about the categories, two tags, and a real fenced block stay.
+  for (const keep of [
+    'Use [People] for names, [Projects] for work, and [Daily] for logs.',
+    'Tag it [People] or [Projects] as you like.',
+    'Answer.\n```che-remember\n[People] Sam [Projects] X [Daily] y\n```',
+  ]) assert.equal(stripRememberLeak(keep).text, keep);
+});

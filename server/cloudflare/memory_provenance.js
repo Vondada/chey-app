@@ -509,6 +509,7 @@ export function guardRememberBlock(reply, { ownerTurns = [], retracted = [] } = 
 // Only CHE's own memory categories: an ordinary list of bracketed words is an answer, not the template (Codex, #816).
 const TAG = String.raw`\[(?:People|Projects|Decisions|Companies|Meetings|Daily|Knowledge)\]`;
 const LEAK_INSTRUCTION = /(^|[\n.!?]\s*)\**(?<!`)che[\s-]?remember\**(?:\s+block)?(?:[^.\n]{0,80}?\b(?:one\s+(?:tagged\s+)?fact\s+per\s+line|tagged\s+\[[^\]]{1,30}\])[^.\n]{0,40})?[.:]?[ \t]*/gi;
+const TAG_SPAN = new RegExp(String.raw`[ \t]*(?:\[che[\s-]?remember\][ \t]*)?${TAG}[^\n\u0000]*${TAG}`, 'gi');
 const TAG_RUN = new RegExp(String.raw`(?:[ \t]*${TAG}){3,}`, 'g');
 export function stripRememberLeak(reply) {
   const text = String(reply || '');
@@ -516,7 +517,18 @@ export function stripRememberLeak(reply) {
   // Keep every fenced block (a real che-remember block, code) out of the way while the loose text is cleaned.
   const masked = text.replace(/```[\s\S]*?```/g, (m) => { fences.push(m); return `\u0000${fences.length - 1}\u0000`; });
   const removed = [];
-  let out = masked.replace(LEAK_INSTRUCTION, (m, lead) => { removed.push(m.trim()); return lead; });
+  // A leaked template line with values filled between the tags ("[che-remember] [People] CHE [Projects] ... [Meetings]
+  // Meeting - Calendar [Daily] [Knowledge]", certification run 41267724614, cre-37) goes whole, from the marker or the
+  // first tag to the last tag on that line, when it holds three tags or more.
+  let out = masked.replace(TAG_SPAN, (m) => {
+    const gaps = m.split(new RegExp(TAG)).slice(1, -1);
+    // Prose that explains the categories ("Use [People] for names, [Projects] for work, ...") has sentence text between
+    // them; the leaked template has bare labels.
+    if (gaps.length < 2 || gaps.some((g) => g.length > 30 || /[,.;:!?]/.test(g))) return m;
+    removed.push(m.trim());
+    return '';
+  });
+  out = out.replace(LEAK_INSTRUCTION, (m, lead) => { removed.push(m.trim()); return lead; });
   out = out.replace(TAG_RUN, (m) => { removed.push(m.trim()); return ''; });
   if (!removed.length) return { text, removed };
   // Once the template leaked, a lone category tag left in the prose is part of it too.
