@@ -13370,7 +13370,7 @@ export class CheState extends DurableObject {
               const why = run?.data?.error || 'The backtest could not run.';
               return ndjsonReply(`${why} Try a ticker like AAPL or a coin like bitcoin, sir.`, { source: 'che_trading', ok: false, execution_receipts: [receipt] });
             }
-            const note = backtestScopeNote(rawMessage, run.data.candles);
+            const note = backtestScopeNote(rawMessage, run.data.candles, { defaulted: trade.defaulted, label: run.data.label });
             return ndjsonReply([note, speakBacktest(run.data.label, candleSpan(run.data.candles, interval), run.results)].filter(Boolean).join('\n'),
               { source: 'che_trading', execution_receipts: [receipt] });
           }

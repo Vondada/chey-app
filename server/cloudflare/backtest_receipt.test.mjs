@@ -6,7 +6,7 @@ import { readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import test from 'node:test';
 import { cryptoIntent } from './crypto_markets.js';
 import { intelligenceIntent } from './historical_intelligence.js';
-import { backtestScopeNote } from './trading_lab.js';
+import { backtestScopeNote, tradingIntent } from './trading_lab.js';
 
 const DAY = 86400000;
 let marketUp = true;
@@ -130,4 +130,23 @@ test('an amount is never read as a requested year (Codex review on #823)', () =>
   assert.match(backtestScopeNote('Backtest SPY over 2008.', candles), /You asked for 2008;/);
   assert.match(backtestScopeNote('Backtest BTC from 2020 to 2024, and report the drawdown.', candles), /You asked for 2020 to 2024;/);
   assert.equal(backtestScopeNote('Backtest bitcoin since 2024', candles), '');
+});
+
+test('a backtest that names no market uses bitcoin and says so; a filler word is never fetched as a ticker', async () => {
+  // Certification run 41262741784 (thb-29) fetched the ticker "of" and timed out on Stooq.
+  const q = 'Run a backtest of a long-only momentum strategy over 2008 and report its maximum drawdown.';
+  assert.deepEqual(tradingIntent(q), { kind: 'backtest', symbol: 'BTCUSDT', defaulted: true });
+  assert.equal(tradingIntent('Backtest SPY over 2008').symbol, 'SPY');
+  assert.equal(tradingIntent('Backtest bitcoin').defaulted, undefined);
+  // A ticker written in capitals is the owner's market, even when the word is also a filler word (Codex review on #828).
+  assert.equal(tradingIntent('Backtest ALL').symbol, 'ALL');
+  assert.equal(tradingIntent('Backtest IT').symbol, 'IT');
+  assert.equal(tradingIntent('Analyze the ALL stock chart').symbol, 'ALL');
+  assert.deepEqual(tradingIntent('Paper trade ALL'), { kind: 'watch', symbol: 'ALL' });
+  marketUp = true;
+  const { done, reply } = await say(q);
+  assert.equal(done.execution_receipts?.[0]?.status, 'success');
+  assert.match(reply, /You didn't name a market, sir, so I used BTC/);
+  assert.match(reply, /You asked for 2008; the free data I have runs from/);
+  assert.match(reply, /not the one you asked for/);
 });

@@ -926,6 +926,10 @@ export function tradingIntent(message, { followup = '', referent = '' } = {}) {
       if (named) hinted = named;
     }
     // "What's MNQ doing in the last hour": a named future wins over a stray word ("last"), not over a known market.
+    // "Run a backtest of a long-only momentum strategy": a word after the verb is never a market on its own
+    // (certification run 41262741784, thb-29, fetched the ticker "of"). No market named is no market. A word written in
+    // capitals ("Backtest ALL", "Backtest IT") is a ticker the owner named and stays (Codex review on #828).
+    if (!futures && FILLER_HINT.test(hinted) && hinted !== hinted.toUpperCase()) hinted = '';
     return futures && !NAMES[hinted.toLowerCase()] ? futures : hinted;
   };
   // "Analyze the 15 minute ETH chart": the bar size asked for rides along; daily stays the default.
@@ -937,7 +941,7 @@ export function tradingIntent(message, { followup = '', referent = '' } = {}) {
   // both go to the answer path, where the truth stages apply. Certification run 41222062110: 22 such questions were sent
   // to the price lookup and answered "The free data source did not answer".
   const notARun = NOT_A_RUN.test(text) || (CONCEPT_ASK.test(text) && !POLITE_COMMAND.test(text) && !namesMarket(text, futures));
-  if (!notARun && /\bbacktest/i.test(text) && !/\b(?:code|app|feature|function)\b/i.test(text)) return sized({ kind: 'backtest', symbol: pick() || 'BTCUSDT' });
+  if (!notARun && /\bbacktest/i.test(text) && !/\b(?:code|app|feature|function)\b/i.test(text)) { const named = pick(); return sized({ kind: 'backtest', symbol: named || 'BTCUSDT', ...(named ? {} : { defaulted: true }) }); }
   // A watch needs a market. Asked for none ("place a paper trade"), CHE asks which one instead of looking up a ticker.
   if (/\b(?:paper trade|watch)\b[\s\S]{0,30}/i.test(text) && /\b(?:paper|trade|market)\b/i.test(text)) {
     const symbol = pick();
@@ -959,9 +963,11 @@ export function tradingIntent(message, { followup = '', referent = '' } = {}) {
 /// 41256280478, thb-11: "a 50/200 moving average crossover on BTC from 2020 to 2024 ... total return" was answered with
 /// CHE's own rules on about a year of data, with no word that it was not the asked rule or period).
 /// Empty when the request asks for nothing the run left out.
-export function backtestScopeNote(message, candles) {
+export function backtestScopeNote(message, candles, { defaulted = false, label = '' } = {}) {
   const t = String(message || '');
   const notes = [];
+  // No market named: say which one was used, so a bitcoin result is never read as the market the owner had in mind.
+  if (defaulted) notes.push(`You didn't name a market, sir, so I used ${label || 'bitcoin'}; name a ticker or coin for another.`);
   const customRule = /\b\d+\s*\/\s*\d+\b|\b(?:moving[\s-]+averages?|sma|ema|cross(?:over|es)?|rsi|macd|bollinger|stochastic|momentum|mean[\s-]+reversion|dollar[\s-]+cost|dca|buy(?:ing)?\s+(?:\w+\s+){0,3}(?:daily|weekly|monthly|when|whenever|if|every))\b/i;
   if (customRule.test(t)) {
     notes.push(`I can't run a rule you describe yet, sir, so these are my own built-in rules (${Object.values(STRATEGIES).map((s) => s.name.toLowerCase()).join(', ')}), not the one you asked for.`);
