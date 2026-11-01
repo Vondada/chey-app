@@ -8,7 +8,7 @@ import assert from 'node:assert/strict';
 import { readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import test from 'node:test';
 import { replyFromNdjson } from './brain_memory.js';
-import { historyIntent, speakDay } from './conversation_history.js';
+import { historyIntent, historyTurn, speakDay } from './conversation_history.js';
 import { agentAuthor, answerOwnerMemoryQuestion, isOwnerAttested, ownerMemoryQuestion } from './memory_provenance.js';
 import { voiceStudioTurn } from './voice_studio_chat.js';
 import { VOICE_PREF_KEY } from './voice_choices.js';
@@ -112,6 +112,44 @@ test('an instruction about CHE that names mistakes is not a past-mistakes report
   assert.equal(historyIntent('What mistakes have you made so far?', now).mode, 'mistakes');
   assert.equal(historyIntent('Were you wrong about the Eiffel Tower?', now).mode, 'mistakes');
   assert.equal(historyIntent('What mistakes did you make yesterday?', now).mode, 'mistakes');
+});
+
+// A Brain store over plain rows that honours the query's ORDER BY and LIMIT, as SQLite does. No logs.
+function brainOf(records) {
+  return {
+    init: () => true,
+    rows: (sql, from, to, limit) => {
+      const asc = /ORDER BY created_at ASC/.test(sql);
+      return records.filter((r) => r.created_at >= from && r.created_at < to)
+        .sort((a, b) => (asc ? 1 : -1) * a.created_at.localeCompare(b.created_at)).slice(0, limit).map((r) => ({ id: r.id }));
+    },
+    get: (id) => records.find((r) => r.id === id) || null,
+  };
+}
+const noLogs = { get: async () => null, put: async () => {} };
+const turnRecord = (i, iso) => ({ id: `conv-${i}`, kind: 'conversation', created_at: iso, body: `You said: note number ${i}\nCHE answered: Noted.`, source: {} });
+const asked = (message, now, store) => historyTurn({ env: {}, storage: noLogs, store, data: {}, message, now, owner: true, fetcher: async () => { throw new Error('offline'); } });
+
+test('an ordering phrase ("the most recent thing") picks the turn and is never a topic', async () => {
+  const now = RealDate.UTC(2026, 10, 4, 20);
+  for (const phrase of ['What was the most recent thing I said today?', 'Tell me the very latest message I told you today', 'What was the very first thing I said to you today?']) {
+    assert.deepEqual(historyIntent(phrase, now).topic, [], phrase);
+  }
+  const store = brainOf([turnRecord(1, '2026-11-04T10:00:00.000Z')]);
+  const out = await asked('What was the most recent thing I said today?', now, store);
+  assert.match(out.text, /^The latest thing I have recorded from you today[^]*note number 1/);
+  assert.doesNotMatch(out.text, /none of them mention/);
+});
+
+test('"the first thing" is the oldest turn even past the read limit (401 Brain turns, no logs)', async () => {
+  const now = RealDate.UTC(2026, 10, 4, 23);
+  const base = RealDate.UTC(2026, 10, 4, 1);
+  const records = Array.from({ length: 401 }, (_, i) => turnRecord(i + 1, new RealDate(base + i * 60_000).toISOString()));
+  const first = await asked('What was the earliest thing I told you today?', now, brainOf(records));
+  assert.match(first.text, /you said "note number 1"/);
+  assert.deepEqual(first.meta.record_ids, ['conv-1']);
+  const last = await asked('What was the last thing I told you today?', now, brainOf(records));
+  assert.deepEqual(last.meta.record_ids, ['conv-401']);
 });
 
 test('speakDay: the first or last turn, and a dropped-rule request is not a topic', () => {

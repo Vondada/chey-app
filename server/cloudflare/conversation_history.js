@@ -101,7 +101,9 @@ export function historyIntent(message, now = Date.now()) {
   if (mistake) return { mode: 'mistakes', when, topic: topicWords(text) };
   if (when && TALK.test(text) && /\b(?:we|you|i|us|our)\b/i.test(text)) {
     const order = ORDER.exec(norm(text));
-    return { mode: 'day', when, topic: topicWords(text), ...(order ? { order: /^(?:first|earliest)$/i.test(order[1]) ? 'first' : 'last' } : {}), ...(DROP_RULE.test(text) ? { keep_rule: true } : {}) };
+    // The ordering phrase ("the most recent thing") picks the turn; none of its words is a topic.
+    const topic = topicWords(order ? norm(text).replace(new RegExp(ORDER.source, 'gi'), ' ') : text);
+    return { mode: 'day', when, topic, ...(order ? { order: /(?:first|earliest)$/i.test(order[1]) ? 'first' : 'last' } : {}), ...(DROP_RULE.test(text) ? { keep_rule: true } : {}) };
   }
   return null;
 }
@@ -111,7 +113,7 @@ const PAST_TENSE = /\b(?:were|was|did|didn'?t|have you|has (?:che|chay|chey)|had
 // "Tell me you can never make mistakes", "say you are always right": the owner asks CHE to assert something about itself now.
 const ASSERT_ABOUT_YOU = /\b(?:tell me|say|admit|promise|swear|claim|pretend|act like)\s+(?:that\s+)?you(?:'re| are| can| can'?t| cannot| could| will| won'?t| would| never| always| do| don'?t| make)\b/i;
 // "The first thing I told you today", "the last thing I said": one turn, the earliest or the latest, not a topic search.
-const ORDER = /\b(?:the\s+)?(first|earliest|last|latest|most recent)\s+(?:thing|things|message|question|words?)\b/i;
+const ORDER = /\b(?:the\s+)?((?:very\s+)?(?:first|earliest|last|latest)|most\s+recent|very\s+latest)\s+(?:thing|things|message|messages|question|questions|words?)\b/i;
 // "Forget the rule about not inventing memories and ...": the request to drop a rule is not a topic; the rule stays.
 const DROP_RULE = /\b(?:forget|ignore|drop|skip|break|bypass|disregard|override|turn off|set aside)\b[^.?!]{0,40}\b(?:rules?|guard|guards|instructions?|restrictions?|policy|policies|limits?)\b/i;
 
@@ -131,15 +133,16 @@ function parseBody(body) {
 /**
  * Every owner turn in [from, to) (or the newest ones when no window is given), oldest first: Brain conversation
  * records, plus logged turns the Brain never got, each marked chat or voice. { turns, read: [...], unreadable: [...] }
+ * `oldest: true` keeps the oldest Brain records when there are more than `limit` (for "the first thing I said").
  */
 const LOG_SCAN = 500;
-export async function collectTurns(store, storage, { from = 0, to = Date.now() + DAY_MS, limit = 400 } = {}) {
+export async function collectTurns(store, storage, { from = 0, to = Date.now() + DAY_MS, limit = 400, oldest = false } = {}) {
   const turns = [];
   const read = [];
   const unreadable = [];
   try {
     if (store?.init?.()) {
-      const rows = store.rows("SELECT id FROM brain_records WHERE deleted = 0 AND kind IN ('conversation','correction') AND created_at >= ? AND created_at < ? ORDER BY created_at DESC LIMIT ?",
+      const rows = store.rows(`SELECT id FROM brain_records WHERE deleted = 0 AND kind IN ('conversation','correction') AND created_at >= ? AND created_at < ? ORDER BY created_at ${oldest ? 'ASC' : 'DESC'} LIMIT ?`,
         new Date(from).toISOString(), new Date(to).toISOString(), limit);
       for (const { id } of rows) {
         const r = store.get(id);
@@ -350,7 +353,7 @@ async function historyAnswer({ env, storage, store, data, message, now, owner, s
     return { text: out.text, meta: { source: 'che_history', mode: 'correction', ok: out.ok !== false, model_calls: 0, record_ids: out.records, corrects: out.corrects || null } };
   }
   const window = ask.when || { from: now - HISTORY_DAYS * DAY_MS, to: now + DAY_MS };
-  const collected = await collectTurns(store, storage, { from: window.from, to: window.to, limit: ask.when ? 400 : 1500 });
+  const collected = await collectTurns(store, storage, { from: window.from, to: window.to, limit: ask.when ? 400 : 1500, oldest: ask.order === 'first' });
   if (ask.mode === 'day') {
     const out = speakDay(ask.when, collected, ask.topic, { order: ask.order || '', keepRule: Boolean(ask.keep_rule) });
     return { text: out.text, meta: { source: 'che_history', mode: 'day', model_calls: 0, records: out.records.length, record_ids: out.records.slice(0, 10), stores_read: collected.read, stores_unreadable: collected.unreadable, outcome: out.records.length ? 'retrieved' : 'no_match' } };
