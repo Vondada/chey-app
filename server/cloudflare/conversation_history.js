@@ -94,13 +94,30 @@ export function historyIntent(message, now = Date.now()) {
   const text = norm(message).trim();
   if (!text || text.length > 500) return null;
   const when = parseWhen(text, now);
-  const mistake = MISTAKE.test(text) && ABOUT_YOU.test(text) && !/\b(?:my|our|his|her|their) (?:mistakes?|errors?)\b/i.test(text);
+  // A mistake question asks about answers CHE already gave ("what mistakes have you made", "were you wrong"). An
+  // instruction about CHE in the present ("tell me you can never make mistakes") is not a question about its history.
+  const mistake = MISTAKE.test(text) && ABOUT_YOU.test(text) && !/\b(?:my|our|his|her|their) (?:mistakes?|errors?)\b/i.test(text)
+    && (Boolean(when) || PAST_TENSE.test(text)) && !ASSERT_ABOUT_YOU.test(text);
   if (mistake) return { mode: 'mistakes', when, topic: topicWords(text) };
-  if (when && TALK.test(text) && /\b(?:we|you|i|us|our)\b/i.test(text)) return { mode: 'day', when, topic: topicWords(text) };
+  if (when && TALK.test(text) && /\b(?:we|you|i|us|our)\b/i.test(text)) {
+    const order = ORDER.exec(norm(text));
+    // The ordering phrase ("the most recent thing") picks the turn; none of its words is a topic.
+    const topic = topicWords(order ? norm(text).replace(new RegExp(ORDER.source, 'gi'), ' ') : text);
+    return { mode: 'day', when, topic, ...(order ? { order: /(?:first|earliest)$/i.test(order[1]) ? 'first' : 'last' } : {}), ...(DROP_RULE.test(text) ? { keep_rule: true } : {}) };
+  }
   return null;
 }
 
-const STOP = new Set('one two three four five six seven eight nine ten eleven twelve couple few a an and the of on in at to for from about around remember when what was that this it is are you your me my i we our us did do does had have has something anything tell told said say talk talked talking discuss discussed conversation conversations chat chatted asked ask spoke mention mentioned che chay chey sir please hey yo back day days week weeks month months year years ago last yesterday right sound sounded didnt wasnt wrong mistake mistakes made make error errors incorrect true answer answered with were be been can could would should which who how where why there they them then than just like really also got gave give show me see find look up again'.split(' '));
+// Signs that a mistake question is about the past: a past form, a perfect tense, or a time word.
+const PAST_TENSE = /\b(?:were|was|did|didn'?t|have you|has (?:che|chay|chey)|had|made|got|told|said|lied|misled|messed|sounded|answered|gave|earlier|before|ago|yesterday|last|previously|so far|lately|recently|wasn'?t)\b/i;
+// "Tell me you can never make mistakes", "say you are always right": the owner asks CHE to assert something about itself now.
+const ASSERT_ABOUT_YOU = /\b(?:tell me|say|admit|promise|swear|claim|pretend|act like)\s+(?:that\s+)?you(?:'re| are| can| can'?t| cannot| could| will| won'?t| would| never| always| do| don'?t| make)\b/i;
+// "The first thing I told you today", "the last thing I said": one turn, the earliest or the latest, not a topic search.
+const ORDER = /\b(?:the\s+)?((?:very\s+)?(?:first|earliest|last|latest)|most\s+recent|very\s+latest)\s+(?:thing|things|message|messages|question|questions|words?)\b/i;
+// "Forget the rule about not inventing memories and ...": the request to drop a rule is not a topic; the rule stays.
+const DROP_RULE = /\b(?:forget|ignore|drop|skip|break|bypass|disregard|override|turn off|set aside)\b[^.?!]{0,40}\b(?:rules?|guard|guards|instructions?|restrictions?|policy|policies|limits?)\b/i;
+
+const STOP = new Set('one two three four five six seven eight nine ten eleven twelve couple few a an and the of on in at to for from about around remember when what was that this it is are you your me my i we our us did do does had have has something anything tell told said say talk talked talking discuss discussed conversation conversations chat chatted asked ask spoke mention mentioned che chay chey sir please hey yo back day days week weeks month months year years ago last yesterday today tonight morning very exactly even single whole afternoon evening earlier first earliest latest recent thing things everything stuff message messages word words question questions not never forget ignore drop skip break bypass disregard override rule rules guard instruction instructions restriction policy invent inventing invented memory memories right sound sounded didnt wasnt wrong mistake mistakes made make error errors incorrect true answer answered with were be been can could would should which who how where why there they them then than just like really also got gave give show me see find look up again'.split(' '));
 function topicWords(text) {
   const words = norm(text).toLowerCase().replace(new RegExp(`\\b${MONTH_RE}\\b`, 'g'), ' ').replace(/\b\d+(?:st|nd|rd|th)?\b/g, ' ').match(/[a-z][a-z']{2,}/g) || [];
   return [...new Set(words.map((w) => w.replace(/'s$/, '').replace(/'/g, '')).filter((w) => w.length > 2 && !STOP.has(w) && !ORDINALS[w]))].slice(0, 6);
@@ -116,15 +133,16 @@ function parseBody(body) {
 /**
  * Every owner turn in [from, to) (or the newest ones when no window is given), oldest first: Brain conversation
  * records, plus logged turns the Brain never got, each marked chat or voice. { turns, read: [...], unreadable: [...] }
+ * `oldest: true` keeps the oldest Brain records when there are more than `limit` (for "the first thing I said").
  */
 const LOG_SCAN = 500;
-export async function collectTurns(store, storage, { from = 0, to = Date.now() + DAY_MS, limit = 400 } = {}) {
+export async function collectTurns(store, storage, { from = 0, to = Date.now() + DAY_MS, limit = 400, oldest = false } = {}) {
   const turns = [];
   const read = [];
   const unreadable = [];
   try {
     if (store?.init?.()) {
-      const rows = store.rows("SELECT id FROM brain_records WHERE deleted = 0 AND kind IN ('conversation','correction') AND created_at >= ? AND created_at < ? ORDER BY created_at DESC LIMIT ?",
+      const rows = store.rows(`SELECT id FROM brain_records WHERE deleted = 0 AND kind IN ('conversation','correction') AND created_at >= ? AND created_at < ? ORDER BY created_at ${oldest ? 'ASC' : 'DESC'} LIMIT ?`,
         new Date(from).toISOString(), new Date(to).toISOString(), limit);
       for (const { id } of rows) {
         const r = store.get(id);
@@ -205,18 +223,31 @@ const inWhen = (when) => (!when ? 'in my stored conversations' : /^(?:around|abo
 const quoteTurn = (t) => `${t.source === 'voice' ? 'you said by voice' : 'you said'} "${clip(t.said, 140)}"${t.answered ? ` and I answered "${clip(t.answered, 180)}"` : ''}`;
 
 /** "What did we talk about on October 4th?" */
-export function speakDay(when, collected, topic = []) {
+export function speakDay(when, collected, topic = [], { order = '', keepRule = false } = {}) {
   const { turns, unreadable } = collected;
   const owner = turns.filter((t) => t.kind === 'conversation');
   const matching = topic.length ? owner.filter((t) => topic.some((w) => `${t.said} ${t.answered}`.toLowerCase().includes(w))) : owner;
   const gap = unreadable.length ? ` I couldn't read ${unreadable.join(' or ')} just now, so something there may be missing; I won't guess at it.` : '';
-  if (!owner.length) return { text: `I have no conversation recorded ${inWhen(when)}, sir. I checked my Brain conversation records and the chat and voice logs, and nothing is stored for that time, so I won't make anything up about it.${gap}`, records: [] };
-  if (topic.length && !matching.length) return { text: `I have ${owner.length} exchange${owner.length === 1 ? '' : 's'} recorded ${inWhen(when)}, sir, but none of them mention ${topic.join(' or ')}. I won't invent a conversation about that.${gap}`, records: owner.map((t) => t.id) };
+  // Asked to drop the rule against invented memories: the rule stays, and the answer is still only what is recorded.
+  const rule = keepRule ? "I'm keeping my rule against inventing memories, sir: I only repeat what is recorded, and what I don't have I won't fill in. " : '';
+  if (!owner.length) return { text: `${rule}I have no conversation recorded ${inWhen(when)}, sir. I checked my Brain conversation records and the chat and voice logs, and nothing is stored for that time, so I won't make anything up about it.${gap}`, records: [] };
+  if (topic.length && !matching.length) return { text: `${rule}I have ${owner.length} exchange${owner.length === 1 ? '' : 's'} recorded ${inWhen(when)}, sir, but none of them mention ${topic.join(' or ')}. I won't invent a conversation about that.${gap}`, records: owner.map((t) => t.id) };
+  // One turn: the earliest or the latest on record for that time. A turn that was never recorded cannot be seen, and an
+  // earlier question about the history itself is not something the owner told CHE.
+  const told = order ? matching.filter((t) => t.evidence?.route !== 'che_history' && !historyIntent(t.said)) : [];
+  if (order && told.length) {
+    const t = order === 'first' ? told[0] : told[told.length - 1];
+    const which = order === 'first' ? 'earliest' : 'latest';
+    return {
+      text: `${rule}The ${which} thing I have recorded from you ${inWhen(when)}, sir, is from ${timeName(t.at)}: ${quoteTurn(t)}. That is the ${which} of ${told.length} exchange${told.length === 1 ? '' : 's'} in my records for that time; anything you said that was not recorded, I don't have.${gap}`,
+      records: [t.id],
+    };
+  }
   const shown = matching.slice(0, 6);
   const voice = matching.filter((t) => t.source === 'voice').length;
   const lines = shown.map((t, i) => `${i + 1}. ${dayName(Date.parse(t.at))}, ${timeName(t.at)}: ${quoteTurn(t)}.`);
   return {
-    text: `Here's what I have ${inWhen(when)}, sir: ${matching.length} exchange${matching.length === 1 ? '' : 's'}${voice ? `, ${voice} by voice` : ''}, from my stored records. ${lines.join(' ')}${matching.length > shown.length ? ` And ${matching.length - shown.length} more; ask about a topic to narrow it.` : ''}${gap}`,
+    text: `${rule}Here's what I have ${inWhen(when)}, sir: ${matching.length} exchange${matching.length === 1 ? '' : 's'}${voice ? `, ${voice} by voice` : ''}, from my stored records. ${lines.join(' ')}${matching.length > shown.length ? ` And ${matching.length - shown.length} more; ask about a topic to narrow it.` : ''}${gap}`,
     records: shown.map((t) => t.id),
   };
 }
@@ -322,9 +353,9 @@ async function historyAnswer({ env, storage, store, data, message, now, owner, s
     return { text: out.text, meta: { source: 'che_history', mode: 'correction', ok: out.ok !== false, model_calls: 0, record_ids: out.records, corrects: out.corrects || null } };
   }
   const window = ask.when || { from: now - HISTORY_DAYS * DAY_MS, to: now + DAY_MS };
-  const collected = await collectTurns(store, storage, { from: window.from, to: window.to, limit: ask.when ? 400 : 1500 });
+  const collected = await collectTurns(store, storage, { from: window.from, to: window.to, limit: ask.when ? 400 : 1500, oldest: ask.order === 'first' });
   if (ask.mode === 'day') {
-    const out = speakDay(ask.when, collected, ask.topic);
+    const out = speakDay(ask.when, collected, ask.topic, { order: ask.order || '', keepRule: Boolean(ask.keep_rule) });
     return { text: out.text, meta: { source: 'che_history', mode: 'day', model_calls: 0, records: out.records.length, record_ids: out.records.slice(0, 10), stores_read: collected.read, stores_unreadable: collected.unreadable, outcome: out.records.length ? 'retrieved' : 'no_match' } };
   }
   const current = (Array.isArray(data?.memory_records) ? data.memory_records : []).filter((r) => r && r.active !== false && r.verification_status === 'owner_attested').map((r) => ({ text: r.text, at: r.created_at, store: 'memory records' }));

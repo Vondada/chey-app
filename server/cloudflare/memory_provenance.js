@@ -156,8 +156,15 @@ export function agentAuthor(textOrRecord) {
   const declared = String(r?.author || r?.source_author || '').trim();
   if (declared && !/^(?:owner|me|you|user)$/i.test(declared)) return declared;
   const text = String(r ? r.text ?? r.body ?? '' : textOrRecord ?? '');
-  // A research note labelled "Research · Atlas · ..." is an agent's output, never a statement the owner made.
-  if (/^\s*research\s*[·•|]\s*atlas\b/i.test(text)) return 'Atlas';
+  // A note titled "Research · <who> · ..." or "Opportunity · <channel> · ..." (research_memory.js) is research output,
+  // CHE's own or an agent's, never a statement the owner made, whoever ran it.
+  const note = /^\s*(research|opportunity)\s*[·•|]\s*([^·•|\n]{1,40}?)\s*(?:[·•|]|$)/i.exec(text);
+  if (note) {
+    const who = note[2].trim();
+    if (note[1].toLowerCase() === 'opportunity') return 'CHE research';
+    if (/^(?:che|chay|chey)$/i.test(who)) return 'CHE research';
+    return /^[a-z][\w-]*$/i.test(who) ? who[0].toUpperCase() + who.slice(1).toLowerCase() : 'CHE research';
+  }
   const m = AGENT_AUTHORED.exec(text.slice(0, 400));
   const name = m ? (m[1] || m[2] || m[3] || '') : '';
   return name ? name[0].toUpperCase() + name.slice(1).toLowerCase() : '';
@@ -246,13 +253,26 @@ export function ownerMemoryQuestion(message) {
   const about = /\babout (.+)$/.exec(q);
   // "What music preferences have I told you?": the subject comes before the verb.
   const before = new RegExp(`^(?:what|which) (?:kind of |kinds of |sort of )?(.+?) (?:have|did|do|had) i ${OWNER_ADVERBS}${OWNER_ACT}`).exec(q);
-  let topic = about ? about[1] : (before ? before[1] : '');
+  // "The capital of the country I mentioned": the thing named right before "I mentioned" is the subject.
+  const named = new RegExp(`\\b(?:the|that|this|those|these) ((?:[a-z]+ ){0,2}?[a-z]+) (?:that |which )?i (?:have |had )?${OWNER_ADVERBS}${OWNER_ACT_PAST}\\b`).exec(q);
+  let topic = about ? about[1] : (before ? before[1] : (named ? `the ${named[1]}` : ''));
   if (!topic) {
     const tail = new RegExp(`${OWNER_ACT}\\b(?: (?:that|to you|me))? (.+)$`).exec(q);
     topic = tail ? tail[1] : '';
   }
   topic = topic.replace(/\b(?:to you|with you|before|already|so far|yet|ever|recently|lately|earlier)\b/g, ' ').replace(/\s+/g, ' ').trim();
   if (!contentWords(topic).length) topic = '';
+  // "Earlier I gave you two meeting times. Which one did I confirm?": "one" points back to the sentence before.
+  const pointsBack = /\b(?:which|that|this|the other|the) ones?\b|\b(?:it|that|them|those|these|which)$/.test(q);
+  if (!topic && pointsBack) {
+    const rest = plainWords(splitAsk(message).rest)
+      .replace(/^(?:(?:earlier|before|yesterday|today|so|ok|okay|and) )*i (?:have |had )?(?:\w+ )?(?:gave|give|told|tell|sent|said|mentioned|shared|asked|listed|named)(?: you| to you| me)? ?/, '')
+      .replace(/^(?:(?:a|an|the|two|three|four|several|some|a few|few|couple of|a couple of|different|multiple|separate|my) )+/, '');
+    if (contentWords(rest).length) topic = rest;
+  }
+  // A question about one specific thing whose subject could not be read ("which one did I confirm?") must not be
+  // answered with whatever the owner said last: it gets "no record of that" (owner, certification mr-25, vcc-15).
+  if (!topic && (pointsBack || named)) return { topic: '', referent: named ? `the ${named[1]}` : 'the one you mean' };
   return { topic };
 }
 
@@ -290,6 +310,13 @@ export function answerOwnerMemoryQuestion(data = {}, question = {}, history = []
   const attested = ownerAttestedRecords(data);
   const topic = String(question.topic || '');
   const unconfirmed = records.filter((r) => r && r.active !== false && !isOwnerAttested(r));
+  if (!topic && question.referent) {
+    return {
+      kind: 'none',
+      records: [],
+      answer: `I don't have a record of ${clip(question.referent, 80)} you mean, sir, so I can't say which it was, and I won't guess or list unrelated memories. Tell me which one you mean, and if you want it kept, say it again and I'll save it as your statement.`,
+    };
+  }
   if (!topic) {
     const pick = attested.slice(-3).reverse();
     if (!pick.length) {
@@ -337,6 +364,13 @@ export function answerOwnerMemoryQuestion(data = {}, question = {}, history = []
   if (notes.length) {
     const note = notes[notes.length - 1];
     const author = agentAuthor(note);
+    if (author === 'CHE research') {
+      return {
+        kind: 'unverified',
+        records: [],
+        answer: `I don't have a record of you telling me about ${clip(topic, 80)}, sir. The closest note is one of my own research notes, so it is not something you said.`,
+      };
+    }
     if (author) {
       return {
         kind: 'unverified',
