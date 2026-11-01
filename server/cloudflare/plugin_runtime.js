@@ -136,6 +136,22 @@ export const BUILTIN_PLUGIN_MANIFESTS = [
   },
 ];
 
+/**
+ * Whether a chat turn plausibly needs one of these plugin tools, so the plugin planner (planPluginCall) gets a turn at it:
+ * a word of a tool's plugin, name or description appears in the message, or the message asks for weather, a price or a
+ * lookup. This is the chat turn's own eligibility rule (worker.js, SKILL PLUGINS); action_connectors.js uses it so the
+ * no-tool gate defers to the planner for exactly the turns the planner would see.
+ */
+export function pluginToolsLikelyNeeded(message, tools = []) {
+  const list = Array.isArray(tools) ? tools.filter((tool) => tool && typeof tool === 'object') : [];
+  if (!list.length) return false;
+  const toolWords = new Set(list.flatMap((tool) => `${tool.plugin || ''} ${tool.plugin_name || ''} ${tool.name || ''} ${tool.description || ''}`
+    .toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length > 3 && !['from', 'with', 'that', 'this', 'your', 'name', 'current', 'short', 'summary'].includes(w))));
+  const messageWords = String(message || '').toLowerCase().split(/[^a-z0-9]+/);
+  return messageWords.some((w) => toolWords.has(w)) ||
+    /\b(weather|forecast|temperature|rain|price|btc|eth|sol|crypto|bitcoin|who (is|was)|what is|tell me about|look up|lookup|search|wiki)\b/i.test(String(message || ''));
+}
+
 export function pluginManifests(env) {
   let extra = [];
   try {

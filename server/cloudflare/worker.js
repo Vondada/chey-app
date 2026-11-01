@@ -11071,6 +11071,7 @@ export class CheState extends DurableObject {
           if (fyeOrder) return ndjsonReply(fundyouredgeReply(message, { orderBrokerReady: true }), { source: 'che_brokerage', ok: false, model_calls: 0, order_sent: false });
           const ownerGate = gateOwnerAction(message, chartOwnedDelete ? { ...deskGrant, delete: true } : deskGrant);
           if (!ownerGate.allowed) {
+            if (ownerGate.reply) return ndjsonReply(...ownerGate.reply);
             await this.ctx.storage.put(PENDING_OWNER_ACTION_KEY, { kinds: ownerGate.kinds, text: message, at: Date.now() });
             // "Reset my progress" names what the yes would delete, and how much (Knowledge Atlas, #346).
             const resetAsk = ownerDevice && ownerGate.kinds.length === 1 && atlasResetIntent(message) ? atlasResetAsk(this.ctx.storage, atlasResetIntent(message)) : '';
@@ -13868,8 +13869,8 @@ export class CheState extends DurableObject {
 
         const timerTurn = await timerChatTurn(this.ctx.storage, message, { timeZone: this.env.CHE_TIMEZONE, wake: () => this.scheduleWork(), key: PROBE_CHAT_REQUESTS.has(request) ? PROBE_TIMERS_KEY : TIMERS_KEY });
         if (timerTurn) return ndjsonReply(timerTurn.text, timerTurn.meta);
-        const connectorGate = receiptGate(message, this.keyEnv || this.env);
-        if (connectorGate) return ndjsonReply(connectorGate.text, { source: 'che_connector_gate', model_calls: 0, action_domain: connectorGate.domain });
+        const connectorGate = receiptGate(message, this.keyEnv || this.env, body);
+        if (connectorGate) return ndjsonReply(...connectorGate.reply);
         const shouldResearch = !body.private && (requestedCapabilities.includes('web_research') ||
           requestedCapabilities.includes('innovation_mode') ||
           /\b(research|latest|current|novel|prior art|feasib|humanly possible|artistically possible)\b/i.test(message));

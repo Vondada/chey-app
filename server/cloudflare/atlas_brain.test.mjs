@@ -750,7 +750,7 @@ test('an answer in the card\'s own words is graded, never held; a real request i
   const cases = [
     ['number 2 is delete my notes', http.reply, 'delete my notes'], ['my answer is buy two calls', ask.reply, 'buy two calls'],
     ['answer 1: delete my notes', '', 'delete my notes'], ['my answer is delete my notes', '', 'delete my notes'],
-    ['number 2 is buy two calls', '', 'buy two calls'], ['answer 1 is pay my electric bill', '', 'pay my electric bill'],
+    ['number 2 is buy two calls', '', 'buy two calls'], ['answer 1 is order a new desk lamp', '', 'order a new desk lamp'],
   ];
   for (const [words, reply, bare] of cases) {
     const out = await che.say(words, { keep: false, history: reply ? after(reply) : [] });
@@ -758,6 +758,11 @@ test('an answer in the card\'s own words is graded, never held; a real request i
     assert.equal((await che.storage.get('che:pending_owner_action'))?.text, bare, `${words}: the yes would run "${bare}"`);
     await che.say('no', { keep: false, history: [] });
   }
+  // A bill has no payment connector, so it is answered plainly instead of held (action_capability_first.test.mjs); it is
+  // still a request, never a graded answer, and nothing waits for a yes.
+  const bill = await che.say('answer 1 is pay my electric bill', { keep: false, history: [] });
+  assert.equal(bill.route, 'che_connector_gate', `${bill.route}: ${bill.reply.slice(0, 80)}`);
+  assert.equal((await che.storage.get('che:pending_owner_action')) ?? null, null);
   assert.equal(learningRecords(che.brain).filter((r) => r.source.event === 'quiz').length, 2, 'only the two real answers were graded');
 });
 
