@@ -3740,6 +3740,7 @@ test('Alpaca paper stock order by voice: exact read-back, a separate "yes, place
     assert.equal(placed.done.order_sent, true);
     assert.equal(placed.reply, 'Sent to Alpaca PAPER, sir: buy 10 shares of AAPL, market order, good for one trading day. Alpaca\'s receipt: order ending a0a1, buy 10 AAPL market, status accepted. No fill yet; say "check my Alpaca paper orders" to hear its status later.');
     assert.doesNotMatch(placed.reply, /\bfilled\b/i, 'no fill is claimed without one on the receipt');
+    assert.deepEqual(placed.done.execution_receipts.map((r) => [r.tool, r.status, r.id]), [['alpaca_paper', 'success', 'b1f2c3d4-0000-4000-8000-00000000a0a1']], 'the sent order carries its receipt');
     const posts = o.calls.filter((c) => c.method === 'POST');
     assert.equal(posts.length, 1);
     assert.equal(posts[0].url, 'https://paper-api.alpaca.markets/v2/orders');
@@ -3750,6 +3751,7 @@ test('Alpaca paper stock order by voice: exact read-back, a separate "yes, place
     const retried = await o.say('yes place it');
     assert.match(retried.reply, /^That order was already sent to Alpaca PAPER, sir, once\. Alpaca's receipt: order ending a0a1/);
     assert.equal(retried.done.repeated, true);
+    assert.equal(retried.done.execution_receipts, undefined, 'a retry sent nothing, so it carries no new receipt');
     assert.equal(o.calls.filter((c) => c.method === 'POST').length, 1, 'a retried yes is the same order');
     assert.ok((o.saved.get('che_receipts') || []).some((r) => r.kind === 'paper_order_placed' && r.key === 'alpaca_paper:b1f2c3d4-0000-4000-8000-00000000a0a1'), 'the receipt is recorded');
     // The fill is said once Alpaca's own order record shows it.

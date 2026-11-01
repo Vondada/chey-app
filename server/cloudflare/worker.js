@@ -178,7 +178,8 @@ import { CODING_CANCEL_SOURCE, cancelQueuedJob, codingCancelIntent, resolveCodin
 import { classifyRequest } from './intent_class.js';
 import { chatPictureTurn } from './chat_image_provider.js';
 import { PENDING_OWNER_ACTION_KEY, deskOwnedMoney, forbiddenAction, prohibitionSpans, withoutProhibitions, PENDING_OWNER_ACTION_MS, gateOwnerAction, grantForKinds, isOwnerYes, peerActionReply, APPS_GRANTED_KEY, PENDING_APP_ACTION_KEY, PENDING_APP_ACTION_MS, gateAppAccess, classifyAppNeed, classifyExplicitAppOpen, classifyAppAccesses } from './owner_action_gate.js';
-import { placedOrdersLine, recordDeviceInstall } from './action_receipts.js';
+import { placedOrdersLine, recordDeviceInstall, noCommitNote } from './action_receipts.js';
+import { ndjsonReply } from './ndjson_reply.js';
 import { receiptGate } from './action_connectors.js';
 import { PROBE_TIMERS_KEY, TIMERS_KEY, TIMER_KEYS, fireDueTimers, nextTimerAt, takeTimerAnnouncement, timerChatTurn } from './owner_timers.js';
 import { brainTruthSummary, brainTruthView, truthScreenAsk } from './brain_truth.js';
@@ -611,19 +612,6 @@ function lastAssistantSubject(history = []) {
   const first = text.split(/(?<=[.!?])\s/)[0] || '';
   const words = first.toLowerCase().replace(/[^a-z0-9 ]+/g, ' ').split(' ').filter((w) => w.length > 4 && !/^(about|which|there|their|these|those|would|could|should|sir)$/.test(w));
   return words.slice(0, 2).join(' ') || null;
-}
-
-function ndjsonReply(reply, meta = {}) {
-  return new Response(
-    JSON.stringify({ type: 'delta', delta: reply }) + '\n' +
-      JSON.stringify({ type: 'done', ...meta }) + '\n',
-    {
-      headers: {
-        'Content-Type': 'application/x-ndjson; charset=utf-8',
-        'Cache-Control': 'no-store',
-      },
-    },
-  );
 }
 
 // A reply that every truth stage removed is never sent as a blank success. The owner gets a named reason and the
@@ -3048,7 +3036,7 @@ export async function dispatchChange(env, body, memory = null, options = {}) {
           ? `Coding job ${shortId} is already ${queued.job.status}, sir. I did not start a duplicate.`
           : `I accepted coding job ${shortId}, sir. It is queued, not running yet. Ask "coding status" anytime.`;
     return json({
-      message,
+      message: message + noCommitNote(request, queued.job.status),
       background_job_id: queued.job.id,
       background_job_status: queued.job.status,
       deduplicated: queued.deduplicated === true,
@@ -13842,7 +13830,7 @@ export class CheState extends DurableObject {
             const engine = made.engine === 'github-actions-offline' ? 'The free GitHub renderer' : 'The video renderer';
             return ndjsonReply(
               `${earlierFailure}${engine} ${made.reused ? 'already has this job' : 'accepted the job'}, sir: a ${seconds}-second vertical video about ${topic}, with free narration, a thumbnail, a title and a description. Task ${made.job_id} is queued. No MP4 is ready yet, and nothing will be uploaded to YouTube.${chosen} Ask me whether your video is ready in about two minutes.${alsoNote}`,
-              { ok: true, video_status: 'queued', task_id: made.job_id, source: 'video_renderer', topic },
+              { ok: true, video_status: 'queued', task_id: made.job_id, source: 'video_renderer', topic, dispatched: !made.reused },
             );
           }
           videoGeneration = made.item?.verified
@@ -15485,8 +15473,8 @@ export class CheState extends DurableObject {
         await Promise.resolve(onAccepted?.()).catch(() => null);
         const label = started.runtime === 'builtin' ? 'coding job' : 'OpenCode coding job';
         const posture = String(started.state || 'queued') === 'queued' ? 'It is queued, not running yet.' : `It is ${String(started.state || '').replace(/_/g, ' ')}.`;
-        return ndjsonReply(`I accepted ${label} ${String(started.job_id || started.session_id).slice(0, 8)}, sir. ${posture} Ask "coding status" anytime.`, {
-          source: 'che_self_development', runtime: 'opencode', job_id: started.job_id, session_id: started.session_id, state: started.state,
+        return ndjsonReply(`I accepted ${label} ${String(started.job_id || started.session_id).slice(0, 8)}, sir. ${posture} Ask "coding status" anytime.${noCommitNote(message, started.state || 'queued')}`, {
+          source: 'che_self_development', runtime: 'opencode', job_id: started.job_id, session_id: started.session_id, state: started.state, deduplicated: started.deduplicated,
         });
       }
       await this.ctx.storage.put('che_runtime_last_fallback', { at: new Date().toISOString(), detail: String(started.detail || '').slice(0, 300) });
@@ -15510,7 +15498,7 @@ export class CheState extends DurableObject {
       owner_approval_required: payload.owner_approval_required === true,
       engineering_team: payload.engineering_team || [],
       ...(payload.failure_class ? { failure_class: payload.failure_class } : {}),
-      ...(payload.background_job_id ? { background_job_id: payload.background_job_id, background_job_status: payload.background_job_status } : {}),
+      ...(payload.background_job_id ? { background_job_id: payload.background_job_id, background_job_status: payload.background_job_status, deduplicated: payload.deduplicated } : {}),
       ...(payload.already_satisfied ? { already_satisfied: true } : {}),
       repository_research: Boolean(payload.repository_research),
       vector_memory_status: vectorRecall.status,

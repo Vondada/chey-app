@@ -5,6 +5,7 @@ import { modalCredential } from './modal_gpu.js';
 import { MODAL_IMAGE_FLAG, MODAL_IMAGE_KEY, startModalImage } from './media.js';
 import { CHAT_IMAGE_SOURCE, chatImageInline, chatImageMedia, chatImageReply, requestedImageCount } from './chat_images.js';
 import { COMPOSER, oncePerSentence, refusedPictureText, startedPictureText } from './execution_reply.js';
+import { turnReceipt } from './action_receipts.js';
 
 /** The engine for one chat picture request: { provider: 'modal' | 'workers_ai', reason }. */
 export async function chatImageProvider(env, storage, { count = 1 } = {}) {
@@ -64,7 +65,28 @@ export function pictureMeta(started) {
     provider_requested: 'modal', provider_used: ok ? 'modal' : null,
     call_id: started?.call_id || null, saved: false,
     modal_http_status: started?.http_status ?? null, modal_reason: started?.modal_reason ?? null, budget_state: started?.budget_state ?? null,
+    // A started Modal job is queued, not finished: its receipt says so. A refused one gets none.
+    ...(ok ? { execution_receipts: [turnReceipt({ tool: 'modal_gpu', operation: 'txt2img', status: 'queued', id: started.call_id })].filter(Boolean) } : {}),
   };
+}
+
+/** One success receipt per picture that was really generated and saved, with its media id. Failed pictures get none. */
+export function pictureReceipts(results, { provider = 'workers_ai' } = {}) {
+  return (results || []).filter((r) => r?.ok).map((r) => turnReceipt({
+    tool: 'image_generation', operation: 'generate_and_save', status: 'success', id: r.id, provider, ...(r.engine ? { engine: r.engine } : {}),
+  })).filter(Boolean);
+}
+
+// A pixel size named in the request: "256 by 256", "512x512", "1024 × 768".
+const PIXEL_SIZE = /\b(\d{2,4})\s*(?:x|by|\u00d7)\s*(\d{2,4})\b(?:\s*(?:px|pixels?))?/i;
+/**
+ * When the owner names a pixel size, the reply says it was not applied: the chat picture path (media.js generateImage)
+ * sends no width or height to any engine, so a picture at the engine's own size is never passed off as the size asked for.
+ */
+export function pictureSizeNote(message) {
+  const size = PIXEL_SIZE.exec(String(message || ''));
+  if (!size) return '';
+  return ` You asked for ${size[1]} by ${size[2]} pixels; I cannot set a picture's size, so it is at the image engine's own size, not ${size[1]} by ${size[2]}.`;
 }
 
 /**
@@ -87,5 +109,10 @@ export async function chatPictureTurn(env, storage, { message, origin, makeImage
     return { text: modalPictureReply(started), meta: pictureMeta(started) };
   }
   const results = await makeImages(count);
-  return { text: workersAiNote(choice.reason) + chatImageReply(results), meta: { source: CHAT_IMAGE_SOURCE, ok: results.some((r) => r.ok), model_calls: 0, provider_used: 'workers_ai', media: chatImageMedia(results), ...chatImageInline(results, origin) } };
+  const receipts = pictureReceipts(results, { provider: 'workers_ai' });
+  const sizeNote = receipts.length ? pictureSizeNote(message) : '';
+  return {
+    text: workersAiNote(choice.reason) + chatImageReply(results) + sizeNote,
+    meta: { source: CHAT_IMAGE_SOURCE, ok: results.some((r) => r.ok), model_calls: 0, provider_used: 'workers_ai', media: chatImageMedia(results), ...chatImageInline(results, origin), ...(receipts.length ? { execution_receipts: receipts } : {}) },
+  };
 }
