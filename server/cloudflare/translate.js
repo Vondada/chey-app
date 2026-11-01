@@ -94,7 +94,12 @@ export function parseTranslatePhrase(original, normalized) {
   // set preferred reply locale (not a translate job)
   const setLoc = t.match(/\b(?:set|prefer|use)\s+(?:my\s+)?(?:locale|language|reply language)\s+(?:to\s+)?([a-z]{2,20})\b/)
     || t.match(/\b(?:speak|reply|answer)\s+(?:to me\s+)?in\s+([a-z]{2,20})\b/);
-  if (setLoc && !/\btranslat/.test(t)) {
+  // A standing reply language is set only when the turn is that instruction and nothing else. "Reply in Spanish, then
+  // Japanese" or "answer in French: what time is it" is a one-off request for this reply, and it never changes the setting.
+  const standing = setLoc && !t.replace(setLoc[0], ' ')
+    .replace(/\b(?:please|pls|from now on|going forward|for now on|always|by default|for (?:all )?(?:my |your )?(?:replies|answers)|to me|with me|instead(?: of english)?|only|now|thanks?|thank you|sir|hey|ok(?:ay)?|can you|could you|would you|will you|i want you to|i'd like you to|che|chay|chey|shay)\b/g, ' ')
+    .replace(/[^a-z0-9]+/g, ' ').trim();
+  if (setLoc && standing && !/\btranslat/.test(t)) {
     let loc = setLoc[1];
     const byName = CHE_LANGUAGES.find((l) => l.name.toLowerCase() === loc || l.code === loc);
     if (byName) loc = byName.code;

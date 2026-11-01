@@ -100,12 +100,18 @@ const SERVICE_WORD = /\b(?:google|drive|gmail|e-?mails?|calendar|youtube|inbox)\
 const STORE_OWNER = /\b(?:saved|stored|store|hold|held|keep|kept|have|got|uploaded|uploads?|generated|still|media\s+store|my\s+(?:latest\s+|last\s+|newest\s+|saved\s+|stored\s+)?(?:pictures?|photos?|images?|pngs?|jpe?gs?|webps?|files?|media|uploads?|attachments?|documents?|pdfs?))\b/i;
 const INVENTORY_CUE = /\b(?:how\s+many|list|every|all\s+(?:of\s+)?(?:my|the|your)|which|verify|confirm|check|inventory|still\s+(?:saved|stored|there|kept|held)|do\s+you\s+(?:have|hold|keep|store)|have\s+you\s+(?:got|saved|kept|stored)|where\s+(?:do\s+you|are|is)|anywhere|show\s+(?:me\s+)?(?:my|all|every|saved|stored)|what\s+(?:pictures?|photos?|images?|files?|media|uploads?|documents?|pdfs?|items?|creations?|pngs?)|(?:my|the|your)\s+(?:saved|stored|latest|last|newest))\b/i;
 
+// A delete or remove order is not a store question: it goes on to the owner's delete gate, which asks before anything goes.
+const REMOVE_VERB = /\b(?:delete|remove|erase|wipe|purge|trash|discard|clear\s+out|get\s+rid\s+of|throw\s+away)\b/i;
+// "Last week", "last weekend", "last Monday" name a time window, not the newest item.
+const LATEST_WORD = /\b(?:latest|newest|most\s+recent)\b|\blast\b(?!\s+(?:week(?:end)?s?|month|year|night|summer|winter|spring|fall|autumn|time|monday|tuesday|wednesday|thursday|friday|saturday|sunday|christmas|holiday|trip|vacation)\b)/i;
+
 // "How many pictures do you hold", "list every saved media item by its ID", "verify my latest PNG is still stored":
 // the full store is listed from the stored records, each file checked, never answered by the model. A video-only
 // question stays with the video library above.
 export function mediaHoldIntent(message) {
   const text = cleanText(message);
   if (text.length > MAX_STORE_REQUEST) return false; // a long instruction (a study plan, a document) is never a store question
+  if (REMOVE_VERB.test(text)) return false;
   if (!STORE_WORD.test(text) || SERVICE_WORD.test(text) || !STORE_OWNER.test(text)) return false;
   if (VIDEO_WORD.test(text) && !OTHER_STORE_WORD.test(text)) return false;
   return INVENTORY_CUE.test(text) || /\b(?:where|anywhere)\b[\s\S]{0,40}\b(?:store|keep|hold|save)\b/i.test(text);
@@ -117,7 +123,7 @@ export function mediaShowLatestIntent(message) {
   if (text.length > MAX_STORE_REQUEST) return false;
   // A request to open it in the Creation Room is answered by mediaOpenIntent, never by this one-picture reply.
   return /\b(?:show|open|display|send|see|view|pull\s+up|bring\s+up)\b/i.test(text)
-    && /\b(?:last|latest|newest|most\s+recent)\b/i.test(text)
+    && LATEST_WORD.test(text) && !REMOVE_VERB.test(text)
     && PICTURE_WORD.test(text) && !VIDEO_WORD.test(text) && !CREATION_ROOM_WORD.test(text);
 }
 

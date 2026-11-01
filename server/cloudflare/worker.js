@@ -138,7 +138,7 @@ import { SIM_SOURCE, labId, listRuns, loadRun, loadSimMemory, runLab, saveRun, s
 import { manifestChat, manifestRoute } from './manifest_api.js';
 import { pcm16ToWav } from './audio_wav.js';
 import { PLAN_SOURCE, answerPlanFollowUp, buildPlan, classifyProject, listPlans, loadPlan, planFollowUpIntent, planSubject, projectPlanIntent, researchSource, savePlan } from './project_plan.js';
-import { BRAIN_ROOMS_SOURCE, ROOMS as BRAIN_ROOMS, answerCrossRoom, crossRoomIntent, drainRoomEvents, imageReference, pointsAtScreen, prFollowUp, recentScreen, relinkRecords, rememberScreen, screenDeictic, screenFollowUp, screenRoomContext, screenRoomFor, statusLabel } from './brain_rooms.js';
+import { BRAIN_ROOMS_SOURCE, ROOMS as BRAIN_ROOMS, answerCrossRoom, crossRoomIntent, drainRoomEvents, imageReference, noImageReply, pointsAtScreen, prFollowUp, recentScreen, relinkRecords, rememberScreen, screenDeictic, screenFollowUp, screenRoomContext, screenRoomFor, statusLabel } from './brain_rooms.js';
 import { controlChangeEvent, meetingEvent, officeTaskEvent, paperOrderRefusedEvent, phoneRoomEvent, queueRoomEvent, researchEvent } from './room_events.js';
 import { cloudDailyLimit, sanitizeOwnerText } from './che_errors.js';
 import { commitIntent, commitReceipt, speakReceipt } from './deploy_receipt.js';
@@ -10831,7 +10831,7 @@ export class CheState extends DurableObject {
           }
           // "What is on my screen?" with no screen sent and nothing recent: say so, never guess.
           if (!body.attachment && !String(body.screen_context || '').trim() && imageReference(rawMessage) && !asksAboutScreen(rawMessage)) {
-            return ndjsonReply('I have no image from earlier in this conversation, sir: either it was not read, or its summary has expired, and I never keep the image itself. Send the screenshot again and ask your question with it.', { source: 'che_screen', ok: false, model_calls: 0 });
+            return ndjsonReply(noImageReply(rawMessage), { source: 'che_screen', ok: false, model_calls: 0 });
           }
           if (!body.attachment && !String(body.screen_context || '').trim() && (asksAboutScreen(rawMessage) || screenFollowUp(rawMessage))) {
             if (ownerDevice) await this.dropHeldActions();
@@ -14054,11 +14054,11 @@ export class CheState extends DurableObject {
         const rememberAsked = /\bremember\b/i.test(rawMessage)
           ? /^(?:(?:chay|chey|shay|che)[, ]+)?remember(?: that)?\s+(.+)/i.exec(message)
           : null;
-        // A question is asked, not told: it is never saved as a memory (personal_recall.js isQuestionLike).
-        if (rememberAsked && isQuestionLike(rememberAsked[1])) {
+        // A question is never saved as a memory (isQuestionLike); "Remember X?" goes on to the normal reply.
+        if (rememberAsked && isQuestionLike(rememberAsked[1]) && !/\?\s*$/.test(String(rawMessage || ''))) {
           return ndjsonReply('That is a question, sir, so I did not save it as a fact. Tell me the fact itself, for example "my favorite food is pizza".', { source: 'che_memory', model_calls: 0 });
         }
-        const remember = rememberAsked;
+        const remember = rememberAsked && !isQuestionLike(rememberAsked[1]) ? rememberAsked : null;
         if (remember) {
           const memory = remember[1].trim().slice(0, 500);
           if (/password|passcode|security code|social security|credit card/i.test(memory)) {

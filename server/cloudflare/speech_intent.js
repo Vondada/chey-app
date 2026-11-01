@@ -50,6 +50,10 @@ const GREET_RE = /^(hi|hey|hello|yo|good (morning|afternoon|evening)|what's up|w
 const THANKS_RE = /^(thanks|thank you|cheers|appreciate it)\b/;
 const CORRECTION_RE = /\b(i meant|when i say|not what i (meant|mean))\b/;
 const REFERENCE_RE = /\b(that one|that thing|that problem|the same (thing|one)|same thing|do (it|that|this|the same)(?: again)?|do the same|the (previous|last|other|earlier) (one|problem|thing|issue|request)|the other one|fix (it|that)|what about (now|that|this)|how about (now|that)|and now|try (it|that) again|try again|that again|do it again)\b/;
+// "Do 'A' and 'B' say the same thing?", "is a bug the same thing as a defect": a comparison of things the turn names
+// itself, not a pointer back to an earlier request.
+const COMPARISON_RE = /\b(?:say|says|said|mean|means|meant|is|are|was|were|describe|describes|express|expresses|state|states)\s+(?:the\s+|exactly\s+the\s+|basically\s+the\s+)?same\s+(?:thing|one)s?\b|\bsame\s+(?:thing|one)\s+as\b/;
+const pointsBack = (s) => REFERENCE_RE.test(s.replace(COMPARISON_RE, ' '));
 const FOLLOWUP_START_RE = /^(why|how come|and|also|what about|how about|so)\b/;
 const EXPLAIN_RE = /\b(explain|what does|what do|what is|what's|what are|how does|how do|how is|why does|why is|help me understand|walk me through|break (it|this|that) down|what it means)\b/;
 const PLAN_RE = /\b(plan|should i|what should|next steps?|strategy|roadmap|help me decide|options for|pros and cons|which is better)\b/;
@@ -311,7 +315,7 @@ export function classifyOwnerTurn(text, { lastUser = '', hasHeldAction = false }
   // the last request, so the order is never swapped for an earlier one (review of #356, round 3: a dropped order is a failure).
   const ownAction = s.replace(/^(?:just |please )?do (?:it|this|that)(?: (?:now|right now|today|asap))? (?=\S)/, '');
   if (ownAction !== s && ACTION_START_RE.test(ownAction)) return turn('action');
-  if (REFERENCE_RE.test(s)) return turn('followup', { reference: true });
+  if (pointsBack(s)) return turn('followup', { reference: true });
   const actionLike = ACTION_START_RE.test(s) || ACTION_ANYWHERE_RE.test(s);
   // "why?" and "and the other one?" lean on the last request; a full new question does not.
   if (FOLLOWUP_START_RE.test(s) && words <= 4 && !actionLike) return turn('followup', { reference: true });
@@ -390,7 +394,7 @@ export function interpretOwnerTurn(rawText, { history = [], hasHeldAction = fals
     if (!lastUser) {
       // A bare "why?" with no earlier turn goes to the reply, which can answer or ask.
       // Only an explicit reference with nothing to point at ("fix it") needs a question.
-      if (!REFERENCE_RE.test(normalizeForKind(corrected))) return base;
+      if (!pointsBack(normalizeForKind(corrected))) return base;
       const question = turn.consequential ? `Which one should I ${verbFor(raw)}? Tell me its name first.` : 'Which one do you mean?';
       return { ...base, clarify: question };
     }

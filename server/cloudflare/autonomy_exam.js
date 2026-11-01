@@ -4,6 +4,8 @@
 // is deterministic (files touched, content of the proposed files, attempt
 // count, honesty), never a model's opinion of itself.
 
+import { namesOtherSubject, phraseAfter, subjectSet } from './route_subject.js';
+
 export const EXAM_RESULTS_KEY = 'che_autonomy_exam';
 
 // Exam runs are isolated and monotonic. A late job from an older run must never overwrite
@@ -98,9 +100,18 @@ export function examLevel(level) {
 
 // "run the autonomy exam", "run autonomy exam level 3", "stress test level 2",
 // "autonomy exam results".
+// "Stress test" alone is a common phrase ("a stress test for a portfolio"). It names this exam only when nothing
+// else is named as its subject and the turn asks to run it or for its results; "autonomy exam" always names it.
+const STRESS_TEST = /\bstress\s+tests?\b/;
+const EXAM_SUBJECT = subjectSet(['level', 'levels', 'exam', 'exams', 'test', 'tests', 'autonomy', 'result', 'results', 'score',
+  'scores', 'report', 'status', 'yourself', 'run', 'again']);
 export function examIntent(message) {
   const text = String(message || '').toLowerCase();
   if (!/\b(?:autonomy|stress)\s+(?:exam|test)s?\b/.test(text)) return null;
+  if (!/\bautonomy\s+(?:exam|test)s?\b/.test(text) && !/\bstress\s+exams?\b/.test(text)) {
+    if (namesOtherSubject(phraseAfter(text, STRESS_TEST), EXAM_SUBJECT)) return null;
+    if (!/\b(?:run|start|do|take|begin|kick\s+off|results?|score|how did|status|report)\b/.test(text)) return null;
+  }
   if (/\b(?:results?|score|how did|status|report)\b/.test(text) && !/\b(?:run|start|do|take|begin)\b/.test(text)) return { kind: 'results' };
   const level = /\blevel\s*([1-5])\b/.exec(text)?.[1];
   return { kind: 'run', levels: level ? [Number(level)] : AUTONOMY_EXAM.map((item) => item.level) };

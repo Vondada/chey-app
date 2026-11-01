@@ -1872,6 +1872,11 @@ const AUTONOMY = [
     id: 'c-recovery', domain: 'coding', title: 'Recovery: resuming after a crash without repeating work', level: 'expert',
     summary: 'Recovering safely means resuming from saved progress and making every retry idempotent, so no side effect happens twice.',
     aliases: ['job recovery', 'crash recovery', 'recovering from a crash', 'recovery after a crash', 'idempotency', 'idempotent', 'idempotent operations', 'idempotency keys', 'idempotency key', 'safe retries', 'retry safety', 'at least once delivery', 'exactly once delivery', 'dead letter queue', 'dead letters'],
+    // Aliases the lesson mentions but does not define: asked by one of these names, the reply leads with its definition.
+    defines: {
+      'dead letters': 'A dead letter is a message or job that failed too many times and was moved to a dead-letter queue instead of being retried forever.',
+      'dead letter queue': 'A dead-letter queue is a separate holding queue for messages or jobs that failed too many times. Instead of retrying them forever or losing them, the system parks them there with their error, so the main queue keeps moving and someone can inspect the failed messages, fix the cause and replay them.',
+    },
     tags: ['autonomy', 'reliability'], prerequisites: ['c-checkpoints', 'c-model-failover'], related: ['c-databases', 'c-self-repair', 'c-cloudflare-workers'],
     levels: {
       beginner: 'Programs get interrupted: the server restarts, the network drops, a time limit hits. Recovering means picking up where the work stopped, not starting over and not doing anything twice. If a message was already sent before the crash, sending it again on the retry would be a second message, so the program has to remember what it already did.',

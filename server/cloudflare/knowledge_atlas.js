@@ -1175,7 +1175,7 @@ export function atlasIntent(message, history = [], { explainLevel = '' } = {}) {
 function resolveTopic(rawTopic, { kind, level = 'beginner', explicit = false }) {
   const topic = rawTopic.replace(QUALIFIER, '').trim();
   const found = conceptCard(topic, rawTopic);
-  if (found) return kind === 'teach' ? { kind, card: found, level } : { kind, card: found };
+  if (found) return kind === 'teach' ? { kind, card: found, level, ...(aliasDefinition(found, topic) ? { asked: topic } : {}) } : { kind, card: found };
   const purpose = kind === 'quiz' ? 'quiz' : 'teach';
   const domain = domainOf(topic);
   // "Quiz me on trading", "/learn coding": the whole domain, so its cards are offered.
@@ -1720,8 +1720,18 @@ function speakList(domain, { forQuiz = false } = {}) {
   return `${DOMAINS[domain]} cards in the Knowledge Atlas${forQuiz ? ', for a quiz' : ''}, sir: ${shown.length}.\n${lines.join('\n')}\n${say}`;
 }
 
-function teachText(c, level, records) {
-  const lines = [`${c.title}, ${level} level, sir. ${c.levels[level]}`];
+// A card reached through an alias its lesson only mentions ("dead letter queue" for the Recovery card) answers that
+// alias first, from the card's own `defines` text, so the reply is about what was asked.
+function aliasDefinition(c, topic) {
+  const key = topicKey(topic);
+  if (!key || !c?.defines) return '';
+  const hit = Object.entries(c.defines).find(([name]) => topicKey(name) === key);
+  return hit ? hit[1] : '';
+}
+
+function teachText(c, level, records, asked = '') {
+  const defined = aliasDefinition(c, asked);
+  const lines = [`${c.title}, ${level} level, sir. ${defined ? `${defined} The lesson around it: ` : ''}${c.levels[level]}`];
   if (level === 'beginner') lines.push(`Analogy, and only an analogy: ${c.analogy}`);
   if (level !== 'beginner' && c.formula) lines.push(formulaWords(c));
   lines.push(`Worked example: ${exampleWords(c)}`);
@@ -1793,7 +1803,8 @@ export async function answerAtlas(intent, { storage = null, now } = {}) {
       // A study is recorded only for an explicit lesson request, never for a definition or a reading.
       if (intent.study) practice({ kind: 'lesson', level });
       const kept = brain ? editedCardNote(brain, c) : '';
-      return out(kept ? `${teachText(c, level, records)}\n${kept}` : teachText(c, level, records));
+      const taught = teachText(c, level, records, intent.asked || '');
+      return out(kept ? `${taught}\n${kept}` : taught);
     }
     case 'formula': {
       if (!c.formula) {

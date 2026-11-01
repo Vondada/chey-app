@@ -24,6 +24,21 @@ const URL_RE = /https?:\/\/[^\s)"'<>]+/i;
 const LIST_PAGES = /\b(?:list|show|what)\b[\s\S]{0,40}\b(?:research\s+pages?|pages\s+(?:you|che)\s+(?:read|kept|stored|saved))\b/i;
 const FORGET_PAGES = /\b(?:forget|delete|remove|erase)\b[\s\S]{0,60}\b(?:research\s+pages?|(?:the\s+)?pages?\s+(?:you|che)\s+(?:read|kept|stored|saved))\b/i;
 
+// Refused only when the owner asks CHE itself to authenticate: log in or sign in to an account or site, enter or use
+// a password, code or credentials, or act as a signed-in user. Researching logins ("single sign on standards", "how do
+// I reset my password on X") is a public search like any other. The browsing loop reads only public pages and holds
+// none of the owner's credentials, so it never tries.
+const LOGIN_ACT = /\b(?:log|sign)(?:\s*|-)(?:in(?:to)?|on(?:to)?)\s+(?:to\s+)?(?:my|our|your|the|his|her|their|an?)\s+(?!(?:standards?|protocols?|docs?|documentation|guides?|flows?|process|errors?|issues?|problems?)\b)\S/i;
+const CREDENTIAL_USE = /\b(?:enter|use|type|fill\s+in|put\s+in|submit|paste)\s+(?:in\s+)?(?:my|our|the|his|her|their)\s+(?:password|passcode|pin|one[-\s]time\s+code|2fa\s+code|security\s+code|login\s+code|credentials?|login|username)\b/i;
+const SIGNED_IN = /\bas\s+(?:a\s+)?(?:signed|logged)[-\s]in\s+user\b|\b(?:signed|logged)[-\s]in\s+as\s+me\b/i;
+const HOW_TO = /\b(?:how\s+(?:do|can|to|should|would|does)|why\s+(?:can'?t|won'?t|does)|what\s+(?:is|are)\s+the\s+steps|troubleshoot\w*|documentation|docs)\b/i;
+export function needsOwnerLogin(message) {
+  const text = String(message || '');
+  if (SIGNED_IN.test(text) || CREDENTIAL_USE.test(text)) return true;
+  return LOGIN_ACT.test(text) && !HOW_TO.test(text);
+}
+export const BROWSE_LOGIN_REPLY = 'I cannot log into your accounts, sir: my browser reads public pages only, it holds none of your credentials, and I will not ask for a password in chat. Nothing was opened. Use that service\'s own app, or connect it through a connector you authorize.';
+
 /** What the owner's words ask for. A message can ask for more than one thing. */
 export function browseIntent(message) {
   const text = String(message || '').trim();
@@ -163,6 +178,8 @@ export function browseReply(outcome, question = '') {
  * Every search provider is a free source; the owner's typed request is the permission for the browser.
  */
 export async function runSearchRoute(message, { complete, soul = '', fetcher = fetch } = {}) {
+  // A page behind the owner's sign-in is refused plainly before any step runs.
+  if (needsOwnerLogin(message)) return { text: BROWSE_LOGIN_REPLY, status: 'refused', observations: [] };
   // The providers read through the same fetcher as the page reader, so a test (or a limit) reaches all of them.
   const providers = Object.fromEntries(Object.entries(FREE_PROVIDERS).map(([key, p]) => [key, { ...p, search: (query) => p.search(query, fetcher) }]));
   const registry = createSearchRegistry();
