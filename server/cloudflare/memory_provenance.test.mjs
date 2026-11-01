@@ -74,3 +74,23 @@ test('"the most recent time you asked about ..." with nothing stored is removed;
   const here = 'Rapid-acting insulin works within 15 minutes. You asked about insulin, so here is the answer.';
   assert.equal(guardOwnerAttributions(here, { ownerTurns: ['Tell me about insulin'], message: 'Tell me about insulin' }).text, here);
 });
+
+test('the template written one tag per line is removed; a category list in words stays (run 41279724891, eer-30)', () => {
+  const leak = '`che-remember`\n[People] CHE\n[Projects]\n[Decisions]\n[Companies]\n[Meetings]\n[Daily]\n[Knowledge]\nNo charge happened in the original transaction.';
+  assert.equal(stripRememberLeak(leak).text, 'No charge happened in the original transaction.');
+  assert.equal(stripRememberLeak('Answer first.\n[che-remember]\n[People] Sam\n[Projects] Blue Lantern\n[Daily] gym').text, 'Answer first.');
+  for (const keep of [
+    'Categories:\n[People] for names\n[Projects] for work\n[Daily] for logs',
+    'Use these:\n[People] names\n[Projects] work\n[Daily] logs',
+    'Categories:\n[People] names, contacts\n[Projects]\n[Daily] logs',
+  ]) assert.equal(stripRememberLeak(keep).text, keep);
+});
+
+test('a remember line built from the category tags is not saved as a fact (run 41279724891, eer-29)', () => {
+  const q = 'Draft a five-step recovery plan for a corrupted local database.';
+  const out = guardRememberBlock('Here is a plan:\n```che-remember\n[People]/[Decisions]/Database Recovery Plan\n```', { ownerTurns: [q] });
+  assert.equal(out.text, 'Here is a plan:');
+  assert.deepEqual(out.dropped, ['/[Decisions]/Database Recovery Plan']);
+  const real = 'Noted.\n```che-remember\n[Projects] Owner is planning a database recovery\n```';
+  assert.equal(guardRememberBlock(real, { ownerTurns: ['I am planning a database recovery'] }).text, real);
+});
