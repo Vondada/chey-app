@@ -65,6 +65,9 @@ test('derivedReceipt: real actions get a receipt from their done facts; reads, r
   assert.deepEqual(pick({ source: 'che_trading_desk', order_sent: true, order_id: 'o1' }), ['alpaca_paper', 'success', 'o1']);
   assert.equal(pick({ source: 'che_trading_desk', order_sent: true, order_id: 'o1', repeated: true }), null, 'a retried yes sent nothing new');
   assert.equal(pick({ source: 'che_trading_desk', order_sent: false }), null);
+  assert.equal(pick({ source: 'che_self_development', background_job_id: 'j1', background_job_status: 'queued', deduplicated: true }), null, 'a reused job was not queued by this turn');
+  assert.equal(pick({ source: 'che_self_development', job_id: 'j2', state: 'queued', deduplicated: true }), null, 'a reused runtime job either');
+  assert.equal(pick({ source: 'video_renderer', video_status: 'queued', task_id: 'gha_1', dispatched: false }), null, 'a reused render dispatched nothing');
   const own = { tool: 'arithmetic', status: 'success' };
   assert.equal(derivedReceipt({ source: 'che_self_development', background_job_id: 'j1', background_job_status: 'queued', execution_receipts: [own] }), null, 'a route\'s own receipt is kept');
 });
@@ -153,6 +156,23 @@ test('a dispatched video render carries a queued receipt with the task id and th
   } finally { gh.restore(); }
 });
 
+test('the same video asked again inside the reuse window reuses the queued task and carries no new receipt', async () => {
+  const gh = githubVideo(204);
+  try {
+    const che = await paired(VIDEO_ENV());
+    const ask = 'Could you render a twenty-second clip about desert foxes?';
+    const first = await che.say(ask);
+    assert.equal(first.done.execution_receipts[0].status, 'queued');
+    // The pending render is forgotten, so the second ask reaches generateVideo and its reuse path, not the status check.
+    await che.saved.delete('che_video_pending');
+    const second = await che.say(ask);
+    assert.equal(gh.dispatches, 1, 'no second dispatch');
+    assert.match(second.reply, /already has this job/);
+    assert.equal(second.done.task_id, first.done.task_id);
+    assert.equal(second.done.execution_receipts, undefined, 'nothing was dispatched this turn');
+  } finally { gh.restore(); }
+});
+
 test('a refused video dispatch carries no receipt', async () => {
   const gh = githubVideo(403);
   try {
@@ -200,5 +220,24 @@ test('a coding request that does not ask for a commit gets the receipt and no co
     const out = await che.say('Update your code: make the ready banner friendlier');
     assert.equal(out.done.execution_receipts[0].status, 'queued');
     assert.doesNotMatch(out.reply, /No commit has been made/);
+  } finally { globalThis.fetch = original; }
+});
+
+test('the same coding request twice: the first turn queues the job with a receipt, the repeat gets none', async () => {
+  const original = globalThis.fetch;
+  globalThis.fetch = async () => new Response(JSON.stringify({ message: 'Not Found' }), { status: 404 });
+  try {
+    const saved = new Map();
+    const che = await paired(CODING_ENV(), saved);
+    const ask = 'Update your code: add a short pause before the morning greeting';
+    const first = await che.say(ask);
+    const [r] = first.done.execution_receipts;
+    assert.equal(r.status, 'queued');
+    const second = await che.say(ask);
+    assert.equal(second.done.background_job_id, r.id, 'the same job');
+    assert.equal(second.done.deduplicated, true);
+    assert.match(second.reply, /already queued/);
+    assert.equal(second.done.execution_receipts, undefined, 'the repeat queued nothing');
+    assert.equal(saved.get('che').jobs.filter((j) => j.kind === 'self_development').length, 1);
   } finally { globalThis.fetch = original; }
 });

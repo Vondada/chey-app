@@ -13830,7 +13830,7 @@ export class CheState extends DurableObject {
             const engine = made.engine === 'github-actions-offline' ? 'The free GitHub renderer' : 'The video renderer';
             return ndjsonReply(
               `${earlierFailure}${engine} ${made.reused ? 'already has this job' : 'accepted the job'}, sir: a ${seconds}-second vertical video about ${topic}, with free narration, a thumbnail, a title and a description. Task ${made.job_id} is queued. No MP4 is ready yet, and nothing will be uploaded to YouTube.${chosen} Ask me whether your video is ready in about two minutes.${alsoNote}`,
-              { ok: true, video_status: 'queued', task_id: made.job_id, source: 'video_renderer', topic, dispatched: true },
+              { ok: true, video_status: 'queued', task_id: made.job_id, source: 'video_renderer', topic, dispatched: !made.reused },
             );
           }
           videoGeneration = made.item?.verified
@@ -15474,7 +15474,7 @@ export class CheState extends DurableObject {
         const label = started.runtime === 'builtin' ? 'coding job' : 'OpenCode coding job';
         const posture = String(started.state || 'queued') === 'queued' ? 'It is queued, not running yet.' : `It is ${String(started.state || '').replace(/_/g, ' ')}.`;
         return ndjsonReply(`I accepted ${label} ${String(started.job_id || started.session_id).slice(0, 8)}, sir. ${posture} Ask "coding status" anytime.${noCommitNote(message, started.state || 'queued')}`, {
-          source: 'che_self_development', runtime: 'opencode', job_id: started.job_id, session_id: started.session_id, state: started.state,
+          source: 'che_self_development', runtime: 'opencode', job_id: started.job_id, session_id: started.session_id, state: started.state, deduplicated: started.deduplicated,
         });
       }
       await this.ctx.storage.put('che_runtime_last_fallback', { at: new Date().toISOString(), detail: String(started.detail || '').slice(0, 300) });
@@ -15498,7 +15498,7 @@ export class CheState extends DurableObject {
       owner_approval_required: payload.owner_approval_required === true,
       engineering_team: payload.engineering_team || [],
       ...(payload.failure_class ? { failure_class: payload.failure_class } : {}),
-      ...(payload.background_job_id ? { background_job_id: payload.background_job_id, background_job_status: payload.background_job_status } : {}),
+      ...(payload.background_job_id ? { background_job_id: payload.background_job_id, background_job_status: payload.background_job_status, deduplicated: payload.deduplicated } : {}),
       ...(payload.already_satisfied ? { already_satisfied: true } : {}),
       repository_research: Boolean(payload.repository_research),
       vector_memory_status: vectorRecall.status,

@@ -23,15 +23,17 @@ export function turnReceipt({ tool = '', operation = '', status = '', id = '', .
  * The receipt a chat reply's done frame earns from the facts it already carries, so worker.js routes need no receipt code.
  * Each rule reads only fields a route sets after the action really happened; a failure, a read or a repeat matches none:
  *  - che_self_development with background_job_id and status queued: the coding job this turn saved (status reads of an old
- *    job use other sources). With job_id and state queued: the coding runtime accepted it.
- *  - video_status queued with dispatched: the render this turn dispatched (a status check of a pending render does not set
- *    dispatched). video_status complete or preview on a video with its media_id: the verified MP4 that was saved.
+ *    job use other sources). With job_id and state queued: the coding runtime accepted it. A deduplicated job (the same
+ *    request again while its job waits) gets none.
+ *  - video_status queued with dispatched: the render this turn dispatched (a status check of a pending render, or the
+ *    same request again inside the reuse window, does not set dispatched). video_status complete or preview on a video with its media_id: the verified MP4 that was saved.
  *  - che_trading_desk with order_sent, an order_id and not repeated: the Alpaca PAPER order sent this turn.
  * A frame that already carries a receipt is left as it is.
  */
 export function derivedReceipt(m = {}) {
   if (Array.isArray(m.execution_receipts) || m.execution_receipt) return null;
-  if (m.source === 'che_self_development') {
+  // A repeated request that found its job already queued queued nothing this turn.
+  if (m.source === 'che_self_development' && m.deduplicated !== true) {
     if (m.background_job_id && m.background_job_status === 'queued') return turnReceipt({ tool: 'coding_job', operation: 'queue', status: 'queued', id: m.background_job_id });
     if (m.job_id && (m.state ?? 'queued') === 'queued') return turnReceipt({ tool: 'coding_job', operation: 'queue', status: 'queued', id: m.job_id, runtime: m.runtime || '' });
   }
