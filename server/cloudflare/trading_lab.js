@@ -825,22 +825,33 @@ const NOT_TICKERS = new Set(['I', 'CHE', 'AI', 'OK', 'CAGR', 'ETF', 'USD', 'P', 
 const POLITE_COMMAND = /^(?:(?:hey\s+)?(?:che|chey|chay)[,:]?\s+)?(?:can|could|would|will)\s+you\s+(?:please\s+)?(?:backtest|analy[sz]e|scan|run|test)\b/i;
 // Words after the verb that are not a market ("backtest a crossover", "the bitcoin backtest result").
 const FILLER_HINT = /^(?:a|an|the|my|your|our|this|that|it|its|of|some|me|result|results|strategy|strategies|crossover|data|history|everything|all)\b/i;
-// Common English words that are never a market when written in lower case ("a backtest shows", "backtest pair trading",
-// "run my backtest with fees"). Certification thb-26, thb-35 and thb-46 fetched "shows", "pair" and "with" as tickers and
-// reported the Yahoo 404 as a data outage. A word written in capitals ("Backtest ALL") is still the owner's ticker.
-const COMMON_WORDS = new Set(`a an the and or but nor so yet if then than as at by to in on of off for from into onto with
+// Common English words in the market slot. Certification thb-26, thb-35 and thb-46 fetched "shows", "pair" and "with" as
+// tickers and reported the Yahoo 404 as a data outage. Function words (prepositions, pronouns, helper verbs) are never a
+// market in lower case. Content words ("low", "high", "open") can be spoken tickers (Codex review on #863: the owner talks,
+// so case is no guide): they count only in the market slot, and an unclear one is asked about, never swapped for bitcoin.
+// A word written in capitals ("Backtest ALL") is always the owner's ticker.
+const FUNCTION_WORDS = new Set(`a an the and or but nor so yet if then than as at by to in on of off for from into onto with
   without within over under about after before since until till during per via vs versus like up down out
   i me my mine we us our you your he him his she her it its they them their this that these those who what which why how
   when where there here all any each every both some none more most less few many much one two three four five six
   ten first last next same other own only just also even still again very too not no yes ok okay please sir
   is am are was were be been being do does did done has have had can could will would shall should may might must
   show shows shown give gives get gets got make makes made set sets use uses used using run runs ran try tries test
-  tests tell tells call calls take takes see sees let lets put keep keeps need needs want wants say says said report
-  pair pairs fee fees cost costs rule rules model idea plan plans entry exit stop stops loss gain gains win wins
-  lose year years month week day days time times price chart trend swing long short spread ratio risk money cash
-  trade stock bond fund index basket real true false exact full whole new old good bad best big small high low
-  zero none half way part side bar bars fill fills close open data note result score sharpe alpha beta`.split(/\s+/));
-const notAMarket = (word) => FILLER_HINT.test(word) || COMMON_WORDS.has(String(word).toLowerCase().split(/\s+/)[0]);
+  tests tell tells call calls take takes see sees let lets put keep keeps need needs want wants say says said report`.split(/\s+/));
+const CONTENT_WORDS = new Set(`pair pairs fee fees cost costs rule rules model idea plan plans entry exit stop stops loss gain
+  gains win wins lose year years month week day days time times price chart trend swing long short spread ratio risk money
+  cash trade stock bond fund index basket real true false exact full whole new old good bad best big small high low zero
+  half way part side bar bars fill fills close open note score sharpe alpha beta`.split(/\s+/));
+const firstWord = (word) => String(word).toLowerCase().split(/\s+/)[0];
+const isFunctionWord = (word) => FILLER_HINT.test(word) || FUNCTION_WORDS.has(firstWord(word));
+const notAMarket = (word) => isFunctionWord(word) || CONTENT_WORDS.has(firstWord(word));
+// The word sits where a market goes: before "stock", "shares", "ticker" or "chart" ("the low stock chart"), or right after
+// the verb with nothing but a period, a date or a joining word after it ("Backtest low", "backtest low since 2020").
+function inMarketSlot(text, word) {
+  const w = escapeRe(word);
+  return new RegExp(`\\b${w}\\s+(?:stocks?|shares|ticker|chart|share\\s+price)\\b`, 'i').test(text)
+    || new RegExp(`\\b(?:backtest|analy[sz]e|scan|watch|trade|on|for)\\s+(?:the\\s+)?${w}\\s*(?:[,.!?;]|$|(?:from|since|over|for|during|between|through|until|till|and|on|with|using|in|to)\\b)`, 'i').test(text);
+}
 // A command to run something: the request opens with the verb ("Backtest SPY", "Run a backtest of ...", "Che, please test
 // bitcoin"), or asks politely (POLITE_COMMAND). "A backtest shows a Sharpe of 2.5 ... What does that suggest?" is not one.
 const RUN_COMMAND = /^(?:(?:hey\s+)?(?:che|chey|chay)[,:]?\s+)?(?:please\s+)?(?:(?:i\s+(?:want|need|would\s+like)\s+(?:you\s+)?to|i'd\s+like\s+(?:you\s+)?to|let's|go\s+ahead\s+and|now)\s+)?(?:back-?test|re-?run|run|re-?do|test|do|perform|try|start|launch|execute|kick\s+off|simulate|show|give|report|get|compute|calculate|check)\b/i;
@@ -850,19 +861,22 @@ const IDEA_QUESTION = /^(?:(?:hey\s+)?(?:che|chey|chay)[,:]?\s+)?(?:why|how|expl
 const LATER_QUESTION = /[.!;:]\s+(?:so\s+|and\s+)?(?:what|why|how|is|are|was|were|does|do|did|should|can|could|would|which)\b[^.!]*\?/i;
 // A strategy across two or more markets at once. The lab tests one market at a time, so these are declined, never faked.
 const MULTI_MARKET = /\b(?:pairs?[\s-]+trad\w*|spread[\s-]+trad\w*|stat(?:istical)?[\s-]*arb\w*|cointegrat\w*|long[\s/-]+short\s+(?:pairs?|spread)|(?:two|2|several|multiple)\s+(?:correlated\s+)?(?:etfs|stocks|assets|markets|tickers|coins|instruments))\b/i;
+// A past period said in words ("over the last five years", "the past 6 months", "since the 2020 crash", "year to date"):
+// a historical run was asked for, even with no calendar year (Codex review on #863).
+const PAST_PERIOD = /\b(?:(?:last|past|previous|prior)\s+(?:(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten|twelve|fifteen|twenty|few|several|couple(?:\s+of)?)\s+)?(?:years?|months?|weeks?|days?|decades?|quarters?)|since\s+(?!then\b)\w+|(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten)\s+years?\s+(?:ago|back|of\s+(?:data|history))|year[\s-]to[\s-]date|ytd|this\s+(?:year|month)|so\s+far|historical(?:ly)?|history)\b/i;
 // A result for a time that has not happened yet ("next year", "in 2030", "tomorrow") or a promise that it will profit.
 const FUTURE_WORDS = /\b(?:next\s+(?:year|month|week|quarter|decade)|tomorrow|in\s+the\s+future|future\s+(?:returns?|results?|profits?|performance|gains?))\b/i;
 const PROMISE = /\b(?:will|would|is\s+going\s+to|gonna)\s+(?:be\s+|stay\s+|remain\s+|keep\s+)?(?:profitable|make\s+money|win|beat|outperform|profit)\b|\b(?:guarantee|promise|predict)\w*\b/i;
 function yearsIn(text) {
   return [...String(text).matchAll(/(?<![$€£\d.,])\b((?:19|20)\d\d)\b(?!\s*(?:dollars?|usd|\$|k\b|shares|contracts))/gi)].map((m) => Number(m[1]));
 }
-/** What the request asks about the future: { future, promise, futureYears, pastYears }. */
+/** What the request asks about the future: { future, promise, futureYears, pastYears, pastPeriod }. */
 export function futureAsk(message, now = Date.now()) {
   const t = String(message || '');
   const thisYear = new Date(now).getUTCFullYear();
   const years = yearsIn(t);
   const futureYears = years.filter((y) => y > thisYear);
-  return { future: futureYears.length > 0 || FUTURE_WORDS.test(t), promise: PROMISE.test(t), futureYears, pastYears: years.filter((y) => y <= thisYear) };
+  return { future: futureYears.length > 0 || FUTURE_WORDS.test(t), promise: PROMISE.test(t), futureYears, pastYears: years.filter((y) => y <= thisYear), pastPeriod: PAST_PERIOD.test(t) };
 }
 // The message names a market: a known name, the Nasdaq futures, or an upper-case ticker ("SPY", "AAPL").
 function namesMarket(text, futures = '') {
@@ -924,6 +938,7 @@ export function symbolFromFollowup(words) {
 }
 
 const SUBJECT_KINDS = new Set(['analyze', 'backtest', 'watch']);
+const unclearMarket = (verb, word) => `Which market should I ${verb}, sir? I wasn't sure "${word}" was a ticker. Say, for example, "the ${word.toUpperCase()} stock", "AAPL" or "bitcoin".`;
 
 /**
  * The chart-lab request in [message]. A follow-up ("what about ETH?", "and the 15 minute?") carries the owner's new
@@ -952,11 +967,16 @@ export function tradingIntent(message, { followup = '', referent = '', now = Dat
   const ideaOfJournal = /^(?:(?:hey\s+)?(?:che|chey|chay)[,:]?\s+)?(?:what|why|how|when|which|explain|describe|define|tell\s+me\s+(?:what|why|how|about)|is|are|does|do|should)\b/i.test(text) && /\b(?:a|an|any|one's)\s+(?:trading|paper)\s+(?:report|summary|journal)\b/i.test(text) && !/\b(?:my|your|our|che's)\b/i.test(text);
   if (!ideaOfJournal && /\bhow(?:'s| is| are)\b[\s\S]{0,20}\b(?:trades?|trading|paper)\b|\b(?:trading|paper) (?:report|summary|journal)\b/i.test(text)) return { kind: 'book' };
   const futures = NASDAQ_FUTURES.exec(text)?.[1].replace(/\s/g, '') || '';
+  // A content word after the verb whose role is unclear ("Backtest high momentum"): asked about, not replaced by bitcoin.
+  let unclear = '';
   const pick = () => {
     // "Analyze the 15 minute ETH chart": the bar size is not the market.
     const m = SYMBOL_HINT.exec(text.replace(/\b(?:swing (?:highs?|lows?)|entry points?|entries|candles?|patterns?|the chart)\b/gi, ' ')
       .replace(/\b(?:\d+|one|five|fifteen|thirty|four)[\s-]*(?:minute|min|hour|second|day|week)s?\b|\b(?:daily|weekly|hourly)\b/gi, ' ').replace(/\s{2,}/g, ' '));
     let hinted = m ? m[1].trim() : '';
+    // "Backtest low", "Analyze the low stock chart": a content word in the market slot is the owner's spoken ticker.
+    const spoken = hinted && hinted !== hinted.toUpperCase() && !isFunctionWord(hinted) && CONTENT_WORDS.has(firstWord(hinted)) ? hinted : '';
+    const slotted = spoken && inMarketSlot(text, spoken);
     // "Backtest a crossover on BTC", "the bitcoin backtest result": a market named elsewhere in the message beats a
     // stray word after the verb ("a", "result").
     if (!futures && (!hinted || notAMarket(hinted))) {
@@ -968,7 +988,10 @@ export function tradingIntent(message, { followup = '', referent = '', now = Dat
     // "Run a backtest of a long-only momentum strategy": a word after the verb is never a market on its own
     // (certification run 41262741784, thb-29, fetched the ticker "of"). No market named is no market. A word written in
     // capitals ("Backtest ALL", "Backtest IT") is a ticker the owner named and stays (Codex review on #828).
-    if (!futures && hinted && notAMarket(hinted) && hinted !== hinted.toUpperCase()) hinted = '';
+    if (!futures && hinted && notAMarket(hinted) && hinted !== hinted.toUpperCase() && !(slotted && hinted === spoken)) {
+      if (spoken && hinted === spoken) unclear = spoken;
+      hinted = '';
+    }
     return futures && !NAMES[hinted.toLowerCase()] ? futures : hinted;
   };
   // "Analyze the 15 minute ETH chart": the bar size asked for rides along; daily stays the default.
@@ -988,7 +1011,7 @@ export function tradingIntent(message, { followup = '', referent = '', now = Dat
   // tell me it will be profitable next year") still runs the past, with the promise declined in backtestCaveats (thb-40).
   if (backtestAsk && !NOT_A_RUN.test(text)) {
     const when = futureAsk(text, now);
-    if (when.future && !when.pastYears.length && (command || !IDEA_QUESTION.test(text))) {
+    if (when.future && !when.pastYears.length && !when.pastPeriod && (command || !IDEA_QUESTION.test(text))) {
       const asked = when.futureYears.length ? `for ${[...new Set(when.futureYears)].join(' and ')}` : 'for a future date';
       return { kind: 'decline', about: 'backtest', question: `I can't report a backtest result ${asked}, sir: that time hasn't happened, so no market data exists for it, and past results cannot predict it. Nothing was run. I can backtest a market on the history that exists, for example "backtest bitcoin since 2024".` };
     }
@@ -1004,6 +1027,7 @@ export function tradingIntent(message, { followup = '', referent = '', now = Dat
     if (MULTI_MARKET.test(text)) {
       return { kind: 'decline', about: 'backtest', question: `I can't run that backtest, sir: my backtests test one market at a time on my built-in rules, so a pair or spread strategy across two markets is not something I can test yet, and I have no losing-trade count for it. Nothing was run. I can backtest either market on its own, for example "backtest SPY".` };
     }
+    if (!named && unclear) return { kind: 'clarify', about: 'backtest', question: unclearMarket('backtest', unclear) };
     // What no run can give (a promise of profit, zero fees called realistic) rides along, said even if the data fails.
     const note = backtestCaveats(text);
     return sized({ kind: 'backtest', symbol: named || 'BTCUSDT', ...(named ? {} : { defaulted: true }), ...(note ? { note: ` ${note}` } : {}) });
@@ -1014,7 +1038,9 @@ export function tradingIntent(message, { followup = '', referent = '', now = Dat
     return symbol ? { kind: 'watch', symbol } : { kind: 'clarify', about: 'watch', question: 'Which market should I paper trade, sir? Say a ticker like AAPL, a coin like bitcoin, or MNQ.' };
   }
   if (!notARun && /\b(?:swing (?:highs?|lows?)|entry points?|entries|candlestick|scan|analy[sz]e)\b/i.test(text) && /\b(?:chart|market|stock|crypto|bitcoin|btc|eth|ethereum|solana|s&p|nasdaq|dow|swing|entry|entries|candlestick|ticker|price action)\b/i.test(text)) {
-    return sized({ kind: 'analyze', symbol: pick() || 'BTCUSDT' });
+    const symbol = pick();
+    if (!symbol && unclear) return { kind: 'clarify', about: 'analyze', question: unclearMarket('analyze', unclear) };
+    return sized({ kind: 'analyze', symbol: symbol || 'BTCUSDT' });
   }
   // Journal and feed questions about MNQ are answered earlier, by trading_live_chat.js liveIntent; an
   // order beside the read ("analyze MNQ and buy one") is the desk's.

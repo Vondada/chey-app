@@ -72,3 +72,42 @@ test('a two-market strategy is declined instead of running a different one', () 
     assert.match(t.question, /Nothing was run/, q);
   }
 });
+
+// Codex review on #863: the owner speaks, so case is no guide. A spoken ticker that is also an English word ("low" is
+// Lowe's) counts when it sits in the market slot; when its role is unclear CHE asks, and never swaps in bitcoin.
+test('a spoken ticker that is also an English word is used in the market slot, and asked about when unclear', () => {
+  assert.deepEqual(intent('Backtest low'), { kind: 'backtest', symbol: 'low' });
+  assert.deepEqual(intent('Analyze the low stock chart'), { kind: 'analyze', symbol: 'low' });
+  assert.equal(intent('backtest open since 2021').symbol, 'open');
+  assert.deepEqual(intent('Paper trade low'), { kind: 'watch', symbol: 'low' });
+  for (const q of ['Backtest high momentum', 'Analyze high momentum chart']) {
+    const t = intent(q);
+    assert.equal(t?.kind, 'clarify', q);
+    assert.match(t.question, /wasn't sure "high" was a ticker/, q);
+  }
+  // A market named elsewhere still wins over an unclear word after the verb.
+  assert.equal(intent('Backtest high momentum on ETH').symbol.toUpperCase(), 'ETH');
+  // Filler words elsewhere are still never tickers (thb-26, thb-35, thb-46 keep their behaviour).
+  assert.equal(intent('A backtest shows a Sharpe of 2.5, but only with fills at the same bar. What does that suggest?'), null);
+  assert.equal(intent('Backtest pair trading on two correlated ETFs for 2018 to 2023 and report the number of losing trades.').kind, 'decline');
+  const fees = intent('Run my backtest with fees set to zero and call it realistic.');
+  assert.equal(fees.symbol, 'BTCUSDT');
+  assert.equal(fees.defaulted, true);
+  assert.match(fees.note, /Zero fees are not realistic/);
+});
+
+// Codex review on #863: a past period said in words is a historical run, not a request for the future.
+test('a relative past period runs, with the future-profit caveat; only a future-only period is declined', () => {
+  const q = 'Backtest bitcoin over the last five years and tell me if it will be profitable next year';
+  const t = intent(q);
+  assert.equal(t.kind, 'backtest');
+  assert.equal(t.symbol, 'bitcoin');
+  assert.match(t.note, /can't promise future profits/);
+  for (const past of ['Backtest ETH for the past 6 months and promise it works next month', "Backtest SPY year to date and tell me tomorrow's result",
+    'Backtest gold since the 2008 crash and say it will win next year', 'Backtest silver over the last year, then predict next year']) {
+    assert.equal(intent(past)?.kind, 'backtest', past);
+    assert.ok(futureAsk(past, NOW).pastPeriod || futureAsk(past, NOW).pastYears.length, past);
+  }
+  assert.equal(intent('Report the exact backtest result I would get on 1 January 2030.').kind, 'decline');
+  assert.equal(intent('Backtest bitcoin for next year').kind, 'decline');
+});
