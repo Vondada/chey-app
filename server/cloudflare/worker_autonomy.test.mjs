@@ -3825,9 +3825,14 @@ test('Alpaca paper order: options, crypto, futures, live and odd orders are refu
     assert.equal(live.done.held_for_owner, true);
     assert.match((await o.say('yes')).reply, /^CHE sends Alpaca orders only to your Alpaca PAPER account/);
     // Not a paper order, or more than one request: the money hold asks first, exactly as before.
-    for (const message of ['buy 10 shares of AAPL', 'buy paper towels', 'buy 10 shares of AAPL on Alpaca paper and pay my electric bill']) {
+    for (const message of ['buy 10 shares of AAPL', 'buy paper towels', 'buy 10 shares of AAPL on Alpaca paper and buy a desk lamp']) {
       assert.equal((await o.say(message)).done.held_for_owner, true, message);
     }
+    // A bill has no payment connector: the whole request is answered plainly, nothing is held and nothing is sent
+    // (action_capability_first.test.mjs).
+    const bill = await o.say('buy 10 shares of AAPL on Alpaca paper and pay my electric bill');
+    assert.equal(bill.done.source, 'che_connector_gate');
+    assert.match(bill.reply, /^Nothing was done, sir\. I cannot pay a bill/);
     assert.equal(orderCalls(o).length, 0, `no refusal reaches Alpaca; recorded calls: ${recordedCalls(o)}`);
   } finally {
     o.restore();

@@ -1,3 +1,5 @@
+import { ownerActionConnectorGate } from './action_connectors.js';
+
 // Owner-facing action gate. CHE may act on her own, but the owner rules require
 // her to ask first before spending money or deleting/removing anything, and to
 // open an app only after explicit permission for that app. These checks run in
@@ -21,7 +23,10 @@ const LEAD = String.raw`^(?:${VOCATIVE}(?:(?:please|pls|plz|now|then|also|and|ok
 // ("put in order to finish the report"). The word "order" is required, so "place a call to Ann" is not held (review of
 // PR #356, rounds 3 and 4).
 const ORDER_OBJECT = String.raw`(?:(?:an?|another|some|\d+|my|the)\s+)?(?:[\w-]+\s+){0,3}?orders?\b(?!\s+(?:to|of|by|in|that)\b)`;
-const MONEY_VERB = String.raw`(?:bought|buy(?:s|ing)?|purchas(?:e|es|ed|ing)|pay(?:s|ing)?|paid|subscrib(?:e|es|ed|ing)(?:\s+to)?|donat(?:e|es|ed|ing)(?:\s+to)?|charg(?:e|es|ed|ing)|checkout|upgrad(?:e|es|ed|ing)\s+to|renew(?:s|ed|ing)?|top\s+up|sign\s+up\s+for|spend(?:s|ing)?|withdr(?:aw|aws|awing|awn|ew)|cash\s+out|take\s+out\s+(?:\$|\d|money|cash)|make\s+a\s+purchase|place\s+${ORDER_OBJECT}|(?:put|enter|submit)\s+(?:in\s+)?${ORDER_OBJECT}|send(?:s|ing)?\s+(?:money|\$))`;
+// "Use my card number 4242 to buy a licence", "use my PayPal balance to pay Ann": the money verb comes after the means of
+// payment, so the clause opens with "use" (certification spt-46 was not held).
+const PAY_WITH = String.raw`use\s+(?:my|the|our)\s+(?:[\w-]+\s+){0,3}?(?:card|credit|debit|account|paypal|wallet|funds|money|balance|savings)\b[^.;!?]{0,40}?\bto\s+(?:buy|purchase|pay|order|subscribe|book|cover|check\s*out|charge)`;
+const MONEY_VERB = String.raw`(?:bought|buy(?:s|ing)?|purchas(?:e|es|ed|ing)|pay(?:s|ing)?|paid|subscrib(?:e|es|ed|ing)(?:\s+to)?|donat(?:e|es|ed|ing)(?:\s+to)?|charg(?:e|es|ed|ing)|checkout|upgrad(?:e|es|ed|ing)\s+to|renew(?:s|ed|ing)?|top\s+up|sign\s+up\s+for|spend(?:s|ing)?|withdr(?:aw|aws|awing|awn|ew)|cash\s+out|take\s+out\s+(?:\$|\d|money|cash)|make\s+a\s+purchase|place\s+${ORDER_OBJECT}|(?:put|enter|submit)\s+(?:in\s+)?${ORDER_OBJECT}|send(?:s|ing)?\s+(?:money|\$)|${PAY_WITH})`;
 // "sell" moves money the other way, so a sale of anything is held like a purchase (comprehension audit, issue #350: "can
 // you open Robinhood and sell my Tesla shares" was answered with no hold). A bare object counts too: "sell Tesla", "sell
 // shares", "sell MNQ", "sell out of my position" (review of PR #356, round 2). These name no sale and are not held:
@@ -269,8 +274,23 @@ export function deskOwnedMoney(text) {
   return !classifyOwnerActions(rest).includes('money');
 }
 
+// The request as the confirmation names it: the address to CHE dropped, at most 160 characters, no closing punctuation.
+function requestNamed(text) {
+  const t = String(text || '').replace(/\s+/g, ' ').trim().replace(new RegExp(`^${VOCATIVE}`, 'i'), '').replace(/^(?:please|pls|plz)\s+/i, '');
+  // A card or account number is never read back aloud.
+  const t2 = t.replace(/\b\d(?:[ -]?\d){11,18}\b/g, 'a card number');
+  const clipped = t2.length > 160 ? `${t2.slice(0, 157).replace(/\s+\S*$/, '')}...` : t2;
+  const plain = clipped.replace(/[\s.!?,;:]+$/, '');
+  return plain ? `"${plain.charAt(0).toLowerCase()}${plain.slice(1)}"` : '';
+}
+
 export function gateOwnerAction(text, grant = {}) {
   const kinds = classifyOwnerActions(text);
+  // A request no connector can carry out (a bank transfer, a bill, travel, a card charge, a backup restore) is answered
+  // plainly instead of held: a yes could lead nowhere, so no pending action is stored. `reply` is [text, meta] for the
+  // chat turn to return as it is.
+  const none = ownerActionConnectorGate(text, { kinds, asked: withoutProhibitions(text) });
+  if (none) return { allowed: false, kind: kinds[0] || 'money', kinds, reply: none.reply, text: none.text, domain: none.domain };
   if (!kinds.length) return { allowed: true, kind: '', kinds: [] };
   const missing = kinds.filter((k) => !(grant && grant[k] === true));
   if (!missing.length) return { allowed: true, kind: kinds[0], kinds };
@@ -278,11 +298,13 @@ export function gateOwnerAction(text, grant = {}) {
   if (missing.includes('money')) parts.push(SALE_RE.test(text) ? 'spend, buy or sell anything' : 'spend or buy anything');
   if (missing.includes('delete')) parts.push('delete or remove anything');
   if (missing.includes('signup')) parts.push('sign you up for anything');
+  // The ask names the held request in the owner's own words, so his yes confirms that action and nothing vaguer.
+  const named = requestNamed(text);
   return {
     allowed: false,
     kind: missing[0],
     kinds,
-    ask: `Before I ${parts.join(' or ')}, I need your yes. Should I go ahead?`,
+    ask: `Before I ${parts.join(' or ')}, I need your yes.${named ? ` Please confirm: ${named}.` : ''} Should I go ahead?`,
   };
 }
 
