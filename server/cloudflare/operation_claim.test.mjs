@@ -38,7 +38,19 @@ test('work inside the reply, plans, negations, stories, quotes and other people 
     ['Continue the story from where we stopped, in the same voice.', 'I pushed the heavy brass lever back into place and felt the hum.'],
     ['Buy it.', 'I will not do that. I have blocked it.'],
     ['Quote?', 'He said "I\'ve restarted it" but there is no record.'],
+    // Codex review on #848: text generated in the reply, and edits to the owner's text.
+    ['Suggest two names for my bakery.', "I've generated two names: Hearth & Honey and Golden Crumb."],
+    ['Fix this paragraph.', 'I fixed the grammar in your paragraph.'],
   ]) assert.equal(guard(reply, message).text, reply, reply);
+});
+
+test('a research or tool result this turn that backs the sentence keeps it (Codex review on #848)', () => {
+  const reply = 'I pulled the latest news: NASA published a mission update.';
+  const records = ['NASA published a mission update for Artemis on 2026-11-01.'];
+  assert.equal(guardClaimedOwnerActions(reply, { message: 'Any space news?', records }).text, reply);
+  assert.match(guardClaimedOwnerActions(reply, { message: 'Any space news?', records: [] }).text, /Nothing was done/);
+  // A generated artifact is still an operation.
+  assert.match(guard("I've generated a blue cube for you, sir.", 'Which one is it?').text, /Nothing was done/);
 });
 
 test('a receipt this turn (acted) keeps a real operation', () => {

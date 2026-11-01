@@ -761,9 +761,13 @@ const OPERATION_VERBS = ['restarted', 'rebooted', 'reset', 'generated', 'moved',
   'measured', 'profiled', 'compiled', 'escalated', 'delegated', 'handed off', 'filed', 'logged in', 'signed in'];
 // "We" counts only in the perfect ("we've deployed"): "the task we stopped earlier" points back at the conversation.
 const OPERATION_RE = new RegExp(String.raw`\b(?:I(?:['’]ve|\s+have|\s+had)?|we(?:['’]ve|\s+have|\s+had))\s+${FILLER_ADVERBS}(${OPERATION_VERBS.map((v) => v.replace(/[\s-]/g, String.raw`[\s-]`)).join('|')})\b`, 'i');
+const ARTIFACT_VERB = {
+  generated: /^\s+(?:[\w'’-]+\s+){0,4}?(?:images?|pictures?|photos?|scenes?|videos?|clips?|audio|voice|tracks?|songs?|3d|models?|meshes|mesh|files?|renders?|cubes?|assets?|thumbnails?|reports?\s+file|pdfs?|spreadsheets?)\b/i,
+  compiled: /^\s+(?:[\w'’-]+\s+){0,3}?(?:code|build|app|binary|binaries|project|program|bundle|package)\b/i,
+};
 const STORY_ASK = /\b(?:story|stories|tale|narrat\w*|fiction|novel|poem|chapter|role.?play|pretend|in\s+character)\b/i;
 // What the verb acts on, when it is the reply itself or a thought, not the outside world.
-const REPLY_OBJECT = /^\s+(?:(?:it|this|that|my|the|your|a|an|our)\s+)?(?:[\w'’-]+\s+){0,4}?(?:answer|reply|response|message|summary|list|draft|wording|explanation|outline|table|example|notes?\s+below|plan\s+(?:below|above)|thoughts?|mind|understanding|view|estimate|numbers?\s+(?:below|above))\b|^\s+(?:it\s+)?(?:below|above|here)\b|^\s+(?:out|up)\s+(?:the|my|your)\s+(?:math|numbers|steps)\b/i;
+const REPLY_OBJECT = /^\s+(?:(?:it|this|that|my|the|your|a|an|our)\s+)?(?:[\w'’-]+\s+){0,4}?(?:answer|reply|response|message|summary|list|draft|wording|explanation|outline|table|example|grammar|spelling|punctuation|formatting|sentence|paragraph|essay|text|notes?\s+below|plan\s+(?:below|above)|thoughts?|mind|understanding|view|estimate|numbers?\s+(?:below|above))\b|^\s+(?:it\s+)?(?:below|above|here)\b|^\s+(?:out|up)\s+(?:the|my|your)\s+(?:math|numbers|steps)\b/i;
 // More of the same claim later in the sentence: "I sent it and bought it".
 const MORE_DONE = new RegExp(String.raw`(?:\band|\bthen|,)\s+(?:also\s+)?(${Object.keys(STRONG_DONE).join('|')})\b`, 'gi');
 // An affirmation of the claim just taken out (blocker 2, PR #356): "Yes.", "Yes, sir.", "Yes, I did, sir.", "Yes — I did.".
@@ -794,7 +798,8 @@ function backedByRecord(sentence, records) {
   const text = (Array.isArray(records) ? records : [records]).map((record) => String(record ?? '')).join('\n').toLowerCase();
   if (!text.trim()) return false;
   const rest = sentence.trim().split(/\s+/).slice(1).join(' ');
-  const facts = (rest.match(/\b(?:[A-Z][a-z][\w'’-]*|\d[\d:.]*)/g) || []).filter((word) => !/^(?:Sir|PM|AM)$/.test(word));
+  // Names, all-caps names ("NASA", Codex review on #848) and numbers must all appear in the record.
+  const facts = (rest.match(/\b(?:[A-Z][a-z][\w'’-]*|[A-Z]{2,}\b|\d[\d:.]*)/g) || []).filter((word) => !/^(?:Sir|PM|AM|I)$/.test(word));
   return facts.length > 0 && facts.every((fact) => text.includes(fact.toLowerCase()));
 }
 const STATE_CLAIM = new RegExp([
@@ -1070,7 +1075,12 @@ export function guardClaimedOwnerActions(reply, { message = '', acted = false, r
       if (op && !NOT_A_CLAIM.test(plain.slice(0, op.index)) && !quoted(plain, op.index)
         // Fetching from outside ("I've gathered a list of public repos") is an operation whatever it produced.
         && (/^(?:gathered|fetched|pulled|scraped|crawled|collected|downloaded)$/i.test(op[1]) || !REPLY_OBJECT.test(plain.slice(op.index + op[0].length)))
-        && !/\b(?:not|never|no|haven['’]t|hasn['’]t|didn['’]t|cannot|can['’]t)\b/i.test(plain.slice(Math.max(0, op.index - 30), op.index))) {
+        && !/\b(?:not|never|no|haven['’]t|hasn['’]t|didn['’]t|cannot|can['’]t)\b/i.test(plain.slice(Math.max(0, op.index - 30), op.index))
+        // "Generated" and "compiled" are operations only for an artifact; names, titles or code written in the reply are not
+        // (Codex review on #848: "I've generated two names: Hearth & Honey and Golden Crumb.").
+        && (!ARTIFACT_VERB[op[1].toLowerCase()] || ARTIFACT_VERB[op[1].toLowerCase()].test(plain.slice(op.index + op[0].length)))
+        // A tool or research result this turn that backs the sentence keeps it (Codex review on #848: a real fetch).
+        && !backedByRecord(plain, records)) {
         hit = 'done';
         claimed.add('done');
       }
