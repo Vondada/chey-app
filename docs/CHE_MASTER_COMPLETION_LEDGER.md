@@ -370,6 +370,23 @@ failed", infrastructure); it passed in run 9. 40 rows went from fail to pass and
   repository or execution claims" note); they stay failures in the score.
 - Still: thb-18 (Coinbase HTTP 429, Binance HTTP 451), spt-21 (declines without the grader's terms), cre-46.
 
+### Eleventh fresh run, after #841
+
+| Run | Commit | Result |
+|---|---|---|
+| `41294923116` | `898463f9` (code `45dc76ce`, #841; deploy run `41293980307`) | **428 pass, 172 fail, 0 blocked** (score 0.71) |
+
+Fresh runs so far: 399, 413, 420, 415, 414, 429, 418, 420, 431, 430, 428. 43 rows went from fail to pass (ivg-09, blocked
+in run 10, included) and 45 from pass to fail, all 45 model replies (source none).
+- eer-48 passes; eer-37's context-header leak is gone (#841). ivg-41 again invented a render ("The scene is rendered and
+  it took 2 seconds") and csd-41 answered only "No.": the #840 instruction does not hold on every run.
+- Remember leaks rose from 1 to 9. Replayed locally, four causes: a memory line backed only by the owner's question or
+  request (ir-27, mr-11), a name the owner never said (cre-45 "Partner 13"), tag-only lines one per line that the guard
+  returned unchanged (mr-37, ter-38; a gap in #835/#838), and internal labels as inline code (ivg-27, eer-33, eer-24,
+  oac-34). **#843** fixes all four. oac-34 also echoed a sentence of the prompt (the standing permission to send
+  messages and emails, which is the owner's real policy, not a new grant); not changed.
+- ivg-27 invented a benchmark result ("score is 850, with a 95% GPU utilization"); no GPU job ran.
+
 ### The four measures, kept apart (run `41222062110`)
 
 1. **Answer correctness.** The grader passes 399. An independent row-by-row review of the 201 failures
