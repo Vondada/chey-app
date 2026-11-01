@@ -370,6 +370,15 @@ const ATTRIBUTION = new RegExp([
   '\\bwe (?:talked|discussed|spoke|chatted) about\\b',
   '\\b(?:in|during) our (?:last |earlier |previous )?(?:conversation|chat|talk)\\b',
   '\\byou (?:asked|told) me (?:on|back on|back in|last)\\b',
+  // What the owner asked for, passed on or asked earlier, and what someone in his life said, are his history too
+  // (certification run 41256280478: "The last song you asked me to play was Fast Car" (mr-03), "Your sister said the
+  // venue is too far" (mr-30), "Your most recent question about insulin was ..." (mr-32), all with nothing stored).
+  '\\byou (?:have |had )?(?:asked me (?:to|for|about)|passed (?:on|along)|forwarded|relayed|requested)\\b',
+  '\\byour (?:most recent|last|latest|previous|earlier|past|first) (?:question|request|message|ask)s?\\b',
+  '\\byour (?:sister|brother|mom|mother|dad|father|wife|husband|partner|girlfriend|boyfriend|son|daughter|kids?|children|friend|boss|cousin|aunt|uncle|grandma|grandmother|grandpa|grandfather|family|doctor|neighbou?r|coworker|colleague|roommate|landlord|teacher) (?:has |had )?(?:said|told|mentioned|thinks|thought|wants|wanted|suggested|asked|is worried|was worried|feels|felt|prefers|preferred|agreed|decided)\\b',
+  // "I have that noted in your history", "saved in your memory": a record claim about the owner needs the record.
+  '\\b(?:i have|i ve|i ve got|i keep) (?:that |this |it )?(?:noted|saved|stored|recorded|logged|on record|written down)\\b',
+  '\\b(?:noted|saved|stored|recorded|logged) in your (?:history|memory|memories|records|notes|profile)\\b',
 ].join('|'));
 const HYPOTHETICAL = /^(?:if|when|whenever|once|unless|suppose|imagine|let s say|in case)\b/;
 const FICTION_REQUEST = /\b(?:story|stories|fiction|fictional|pretend|role ?play|imagine|hypothetical(?:ly)?|make up|made up|brainstorm|poem|joke|scenario|example dialogue)\b/;
@@ -431,15 +440,23 @@ export function guardOwnerAttributions(reply, { records = [], ownerTurns = [], m
   const parts = text.split(/(```[\s\S]*?```)/g);
   const kept = parts.map((part) => {
     if (part.startsWith('```')) return part;
+    // A sentence that only continues a removed claim ("Your sister said ... . She suggested a closer place.") goes with it.
+    let dropped = false;
     return sentences(part).filter((sentence) => {
       const plain = plainWords(sentence);
+      if (dropped && /^(?:she|he|they|it|that|this|those|these|her|his|their)\b/.test(plain) && !ATTRIBUTION.test(plain)) {
+        removed.push(clip(sentence, 300));
+        return false;
+      }
+      dropped = false;
       if (!ATTRIBUTION.test(plain)) return true;
       if (/\?\s*$/.test(sentence) || HYPOTHETICAL.test(plain)) return true;
       // A claim about an earlier conversation needs an earlier turn or a record: this message alone is not one.
       // The owner's own questions ("what did we talk about on Sept 12?") are not evidence either.
-      if (PAST_CONVERSATION.test(plain)) return supportedBy(sentence, evidence.filter((e) => e !== message && !/\?/.test(String(e).split(/\n(?:CHE|ChatGPT) answered:/)[0]))) || (removed.push(clip(sentence, 300)), false);
+      if (PAST_CONVERSATION.test(plain)) return supportedBy(sentence, evidence.filter((e) => e !== message && !/\?/.test(String(e).split(/\n(?:CHE|ChatGPT) answered:/)[0]))) || (removed.push(clip(sentence, 300)), dropped = true, false);
       if (supportedBy(sentence, evidence)) return true;
       removed.push(clip(sentence, 300));
+      dropped = true;
       return false;
     }).join('');
   }).join('').replace(/[ \t]+\n/g, '\n').replace(/\s{2,}/g, ' ').trim();
