@@ -19,7 +19,7 @@ export async function voiceStudioTurn(storage, data, env, message, { fetcher = f
   const last = stored && now - Date.parse(stored.at) < LAST_MS ? stored : null;
   let intent = voiceStudioIntent(message, { last });
   if (!intent) return null;
-  const ctx = { storage, data, env, fetcher, now, last, library: null };
+  const ctx = { storage, data, env, fetcher, now, last, library: null, message };
   if (intent.kind === 'needs_names') {
     ctx.library = await fetchElevenLibrary(env, { fetcher });
     // With the library unreadable, a request that names a voice or a provider says why. Other
@@ -61,12 +61,12 @@ const voiceName = (v) => `${v.name || 'an unnamed voice'} (${PROVIDER_NAME[v.pro
 const dateOf = (ms) => (Number(ms) > 1e12 ? new Date(Number(ms)).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric', timeZone: 'UTC' }) : '');
 
 // The saved choice and what it replaced, from CHE's own voice record only: no provider call, no guess.
-async function currentVoice(ctx) {
+async function currentVoice(ctx, asksSpeed = false) {
   let pref = null;
   try { pref = await ctx.storage.get(VOICE_PREF_KEY); } catch (_) { pref = null; }
   const choice = pref?.choice || ctx.data.voice_choice || null;
   const source = 'Where I found it: my saved voice setting on the Worker. I did not call ElevenLabs or search conversation memories for this.';
-  if (!choice) return { ok: true, reply: `No voice choice is saved, sir, so I speak with my default voice. ${source}` };
+  if (!choice) return { ok: true, reply: `No voice choice is saved, sir, so I speak with my default voice.${asksSpeed ? ` ${speedLine(null, ctx.data)}` : ''} ${source}` };
   const changed = dateOf(pref?.at || ctx.data.voice_choice_at);
   const parts = [`My saved voice is ${voiceName(choice)}${changed ? `; the setting was last changed ${changed}` : ''}.`];
   const before = pref?.before_fish ?? ctx.data.voice_choice_before_fish ?? null;
@@ -74,12 +74,26 @@ async function currentVoice(ctx) {
   parts.push(pref && 'previous' in pref
     ? `It replaced ${pref.previous ? voiceName(pref.previous) : 'my built-in voice'}${dateOf(pref.replaced_at) ? ` on ${dateOf(pref.replaced_at)}` : ''}.`
     : 'My saved setting does not record which voice it replaced, so I will not guess.');
+  if (asksSpeed) parts.unshift(speedLine(choice, ctx.data));
   return { ok: true, reply: `${parts.join(' ')} ${source}` };
+}
+
+// "What voice speed did I set, and when?": the saved speed, and its date only when a spoken speed change recorded one.
+const SPEED_ASK = /\b(?:speed|speeds|speaking rate|speech rate|pace|tempo|how fast|how slow|faster|slower)\b/i;
+function speedLine(choice, data) {
+  const speed = Number(choice?.speed);
+  const set = data?.voice_speed_set;
+  const value = Number.isFinite(speed) && speed > 0 ? speed : 1;
+  const dated = set && Number(set.speed) === value ? dateOf(set.at) : '';
+  if (!(Number.isFinite(speed) && speed > 0) || speed === 1) {
+    return `My speaking speed is ${value.toFixed(2)}, the default${dated ? `, set on ${dated}` : '; I have no record of you setting a different one'}.`;
+  }
+  return `My speaking speed is ${value.toFixed(2)}${dated ? `, set on ${dated}` : '; when it was set is not recorded, since my voice record dates only the whole voice setting, not the speed'}.`;
 }
 
 async function act(intent, ctx) {
   switch (intent.kind) {
-    case 'current': return currentVoice(ctx);
+    case 'current': return currentVoice(ctx, SPEED_ASK.test(String(ctx.message || '')));
     case 'list': return listVoices(intent.provider, ctx);
     case 'refresh': return refreshVoices(ctx);
     case 'provider': return switchProvider(intent.provider, ctx);
@@ -235,6 +249,8 @@ async function changeSetting(intent, ctx) {
   const choices = await availableVoiceChoices(ctx.env, ctx.fetcher, ctx.data.voice_saved);
   const chosen = validateVoiceChoice({ provider: 'elevenlabs', id: current.id, speed: next.speed, model_id: model.id, settings: next.settings }, choices);
   if (!chosen) return { ok: false, reply: `That setting is not allowed for ${model.name}, sir. Nothing changed.` };
+  // A spoken speed change keeps its own date, so "when did I set the speed?" has a recorded answer.
+  if (intent.name === 'speed' && intent.kind !== 'boost') ctx.data.voice_speed_set = { speed: chosen.speed, at: ctx.now };
   await setChoice(ctx, { ...chosen, name: current.name });
   if (intent.kind === 'boost') return { ok: true, reply: `Speaker boost is ${intent.on ? 'on' : 'off'} for ${label}, sir.` };
   if (intent.name === 'speed') return { ok: true, reply: `Speaking speed is ${chosen.speed.toFixed(2)} for ${label}, sir.` };
