@@ -345,3 +345,19 @@ test('yesterday uses the previous Chicago calendar date across daylight saving',
   assert.equal(result.records.length, 1);
   assert.match(result.records[0].title, /previous/);
 });
+
+test('two records made in the same instant stay newest first when a later write rewrites the older one (CI run 41322605379)', sqlite, async () => {
+  // Both mention the Trading Room, so writing the second adds a link to the first. That rewrite raised the first record's seq,
+  // and with equal created_at "newest first" put the older record on top.
+  const storage = storageFor();
+  const store = new CheBrainStore(storage);
+  const at = '2026-11-01T15:43:00.000Z';
+  const now = Date.parse('2026-11-01T15:50:00Z');
+  await queueRoomEvent(storage, { room: 'help', kind: 'explained', key: 'help-a', title: 'Help explained: What does Emergency Stop do?', body: 'CHE explained the Emergency Stop button on the Trading Room.', status: 'observed', at });
+  await queueRoomEvent(storage, { room: 'help', kind: 'walkthrough', key: 'help-b', title: 'Help walkthrough: Walkthrough of the Trading Room', body: 'A walkthrough of the Trading Room.', status: 'observed', at });
+  await drainRoomEvents(storage, store, { now });
+  // A later write to the older record (a link from another room's record, as a chat turn can add) raises its seq.
+  const older = roomActivity(store, 'help', { now }).records.find((r) => r.title.startsWith('Help explained'));
+  store.put({ ...older, links: [...(older.links || []), { type: 'related', to: 'other-record' }] }, { origin: 'cloud', now: now + 1000 });
+  assert.deepEqual(roomActivity(store, 'help', { now }).records.map((r) => r.title), ['Help walkthrough: Walkthrough of the Trading Room', 'Help explained: What does Emergency Stop do?']);
+});

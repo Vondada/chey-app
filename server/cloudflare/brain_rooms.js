@@ -465,8 +465,10 @@ const WINDOW_WORDS = { today: 'today', yesterday: 'yesterday', week: 'this week'
 /** A room's own records (source.room), newest first, within the asked window. Reads ids only, then each record. */
 export function roomActivity(store, room, { when = 'recent', now = Date.now(), limit = 6 } = {}) {
   if (!store?.init?.() || !ROOMS[room]) return { records: [], latest: null };
+  // Ties on created_at break on rowid, the order the records were made: seq changes on every later write (a link added
+  // to the older record put it on top; CI run 41322605379, brain_build2 "What did I ask help about?").
   const ids = store.rows(
-    "SELECT id FROM brain_records WHERE deleted = 0 AND json_extract(source, '$.room') = ? ORDER BY created_at DESC, seq DESC LIMIT 200", room,
+    "SELECT id FROM brain_records WHERE deleted = 0 AND json_extract(source, '$.room') = ? ORDER BY created_at DESC, rowid DESC LIMIT 200", room,
   ).map((row) => row.id);
   const all = ids.map((id) => store.get(id)).filter((r) => r && !r.deleted);
   return { records: all.filter((r) => inWindow(r.created_at, when, now)).slice(0, limit), latest: all[0] || null };
