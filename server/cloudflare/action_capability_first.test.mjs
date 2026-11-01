@@ -201,3 +201,60 @@ test('the gates hand the chat turn a ready reply; a named plugin tool, the compu
   assert.ok(receiptGate('Run the uptime tool on the server.', {}, { plugin_tools: [{ plugin: 'weather', name: 'forecast' }] }));
   assert.equal(receiptGate('Compress this image.', {}, { attachment: { kind: 'image' } }), null);
 });
+
+// Integration check for #866: routes that really perform these actions answer before the receipt gate, so the gate never
+// says "nothing was done" for them. Each turn below is answered by its own route.
+test('chat: the real render, picture and coding-job routes still win over the no-tool gate', async () => {
+  const che = await owner(() => 'Here you go, sir.');
+  for (const [message, source] of [
+    ['Render a short video about red foxes', 'video_renderer'],
+    ['Generate an image of a red fox', 'che_image_generation'],
+    ['Render an image of a red fox', 'che_image_generation'],
+    ['Build it: add a dark mode toggle to the settings screen and open a pull request', 'che_self_development'],
+  ]) {
+    const out = await che.say(message);
+    assert.equal(out.done.source, source, `${message}: ${out.reply.slice(0, 80)}`);
+    assert.notEqual(out.done.action_domain, 'no_tool', message);
+  }
+});
+
+test('plugin tools serve a request that names one, whether the phone sent the list or the Worker\'s catalog does', () => {
+  // No plugin_tools key (the probe, a client with no registry): the catalog's weather tool can serve it.
+  assert.equal(receiptGate('Use the weather tool for London', {}), null);
+  assert.equal(receiptGate('Chain five tools: weather, news, calendar, email and timer. Report each outcome.', {}), null);
+  // The phone sent its list: only its own tools count, so a turned-off plugin does not exempt the request.
+  assert.ok(receiptGate('Use the weather tool for London', {}, { plugin_tools: [] }));
+  assert.equal(receiptGate('Use the weather tool for London', {}, { plugin_tools: [{ plugin: 'weather', name: 'forecast' }] }), null);
+  // An Office delegation is a writing request, never an action the gate answers.
+  assert.equal(receiptGate('Have the writing agent draft a launch note', {}), null);
+  // Codex on #866: an installed tool whose description fits is the planner's, as the chat turn's own rule decides.
+  const device = { plugin_tools: [{ plugin: 'device', name: 'check', description: 'Run diagnostics tests on the phone' }] };
+  assert.equal(receiptGate('Run the diagnostics tests.', {}, device), null);
+  assert.ok(receiptGate('Run the diagnostics tests.', {}, { plugin_tools: [] }), 'with no such tool the gate answers');
+});
+
+test('the connector a turn needs comes from the action it requests, not from words inside its object (Codex on #866)', () => {
+  const reminder = gateOwnerAction('Delete the reminder to pay my rent.');
+  assert.deepEqual(reminder.kinds, ['delete']);
+  assert.equal(reminder.reply, undefined, 'a delete is held for the yes, never answered as a bill payment');
+  assert.match(reminder.ask, /Please confirm: "delete the reminder to pay my rent"/);
+  for (const ask of ['Remove the note about wiring money to Ann.', 'Cancel the reminder to book a flight.', 'Delete my list of bills to pay off the loan'])
+    assert.equal(gateOwnerAction(ask).reply, undefined, ask);
+  assert.equal(gateOwnerAction('Pay my rent').domain, 'bill_pay');
+  assert.equal(gateOwnerAction('Please pay my rent, then delete the reminder.').domain, 'bill_pay');
+});
+
+test('chat: "delete the reminder to pay my rent" is held, and the yes reaches the timer route, which cancels it', async () => {
+  const che = await owner(() => 'Here you go, sir.');
+  const set = await che.say('Remind me to pay my rent in 30 minutes');
+  assert.equal(set.done.source, 'che_timer', set.reply);
+  const held = await che.say('Delete the reminder to pay my rent.');
+  assert.equal(held.done.held_for_owner, true, held.reply);
+  const yes = await che.say('yes');
+  assert.equal(yes.done.source, 'che_timer', yes.reply);
+  assert.match(yes.reply, /^Cancelled, sir/);
+  const rent = await che.say('Pay my rent');
+  assert.equal(rent.done.source, 'che_connector_gate');
+  assert.match(rent.reply, /cannot pay a bill/);
+  assert.equal(che.saved.get('che:pending_owner_action') ?? null, null);
+});

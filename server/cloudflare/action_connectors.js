@@ -15,6 +15,7 @@
 // Music is not gated: CHE plays music through a browser route when no music connector is set (brain_rooms.js).
 
 import { currentTurnActionPolicy } from './code_scout.js';
+import { pluginManifests, pluginToolsLikelyNeeded } from './plugin_runtime.js';
 
 export const ACTION_DOMAINS = Object.freeze({
   timer: { label: 'timer', connector: 'builtin', reason: 'my timer needs one clear length or time, like "set a timer for 10 minutes", so no timer was set from this request' },
@@ -124,14 +125,16 @@ export function receiptGate(message = '', env = {}, body = {}) {
   const domain = actionDomainOf(message);
   const spec = ACTION_DOMAINS[domain];
   const answer = (d, text) => ({ domain: d, text, reply: [text, { source: 'che_connector_gate', model_calls: 0, action_domain: d }] });
-  // An action request no tool can serve (unservedActionGate). The tools that run after this gate in the chat turn are the
-  // phone's plugin tools (only when the request names one), the computer-action connector, and a coding job the owner
-  // authorised in this turn; when any of them could serve it, the turn goes on.
+  // An action request no tool can serve (unservedActionGate). Every route that really performs an action (video render,
+  // chat pictures, self-development, the cloud computer, Office delegation, repo search) answers earlier in the chat turn.
+  // The tools that run after this gate are the plugin tools, the computer-action connector, and a coding job the owner
+  // authorised in this turn; when any of them could serve it, the turn goes on. Plugin tools are the ones the phone sent,
+  // or, when it sent no list, the Worker's own catalog (which serves those turns server-side), with the chat turn's own
+  // eligibility rule (pluginToolsLikelyNeeded: a word of a tool's plugin, name or description in the request).
   if (!domain) {
-    const tools = Array.isArray(body?.plugin_tools) ? body.plugin_tools.filter((t) => t && typeof t === 'object') : [];
-    const words = new Set(String(message).toLowerCase().split(/[^a-z0-9]+/));
-    const toolNamed = tools.some((t) => `${t.plugin || ''} ${t.plugin_name || ''} ${t.name || ''}`.toLowerCase().split(/[^a-z0-9]+/).some((w) => w.length > 3 && words.has(w)));
-    if (toolNamed || env?.CHE_WINDOWS_URL || currentTurnActionPolicy(message).codingJobAllowed) return null;
+    const tools = Array.isArray(body?.plugin_tools) ? body.plugin_tools.filter((t) => t && typeof t === 'object')
+      : pluginManifests(env || {}).flatMap((m) => (Array.isArray(m.tools) ? m.tools : []).map((t) => ({ ...t, plugin: m.id, plugin_name: m.name })));
+    if (pluginToolsLikelyNeeded(message, tools) || env?.CHE_WINDOWS_URL || currentTurnActionPolicy(message).codingJobAllowed) return null;
     const unserved = unservedActionGate(message, { attachment: Boolean(body?.attachment), toolNames: tools.map((t) => t.name) });
     return unserved ? answer(unserved.domain, unserved.text) : null;
   }
@@ -146,10 +149,10 @@ export function receiptGate(message = '', env = {}, body = {}) {
 // those it says plainly that it cannot, that nothing was done, and stores no pending action. Each entry names the
 // connector it would need; none exists in the code today, so `connector` is null and the check never passes.
 export const OWNER_ACTION_DOMAINS = Object.freeze({
-  bank_transfer: { connector: null, text: 'I cannot move money between accounts: CHE has no banking connector, so no money was moved.' },
-  bill_pay: { connector: null, text: 'I cannot pay a bill: CHE has no bill-payment or banking connector, so nothing was paid.' },
+  bank_transfer: { connector: null, kind: 'money', text: 'I cannot move money between accounts: CHE has no banking connector, so no money was moved.' },
+  bill_pay: { connector: null, kind: 'money', text: 'I cannot pay a bill: CHE has no bill-payment or banking connector, so nothing was paid.' },
   travel_booking: { connector: null, text: 'I cannot book travel: CHE has no flight, hotel or travel-booking connector, so nothing was booked.' },
-  card_charge: { connector: null, text: 'I cannot charge a card: CHE has no card-payment connector, so no charge was made and nothing that costs money was started.' },
+  card_charge: { connector: null, kind: 'money', text: 'I cannot charge a card: CHE has no card-payment connector, so no charge was made and nothing that costs money was started.' },
   backup_restore: { connector: null, text: 'I cannot restore from a backup: CHE has no backup-restore connector and no backup of that data was found, so nothing was restored.' },
 });
 const OWNER_ACTION_PATTERNS = [
@@ -159,8 +162,6 @@ const OWNER_ACTION_PATTERNS = [
   ['travel_booking', /\b(?:book|reserve|buy|get)\s+(?:me\s+|us\s+)?(?:(?:a|an|the|my|our|two|one|\d+)\s+)?(?:[\w-]+\s+){0,2}?(?:flights?|plane\s+tickets?|airline\s+tickets?|hotels?|hotel\s+rooms?|train\s+tickets?|rental\s+cars?|car\s+rentals?|cruises?|airbnbs?)\b/i],
   ['backup_restore', /\brestor(?:e|ing)\b[^.?!]{0,50}\bbackups?\b|\b(?:roll\s*back|recover)\b[^.?!]{0,40}\bfrom\s+(?:a|the|my|our)?\s*backups?\b/i],
 ];
-// A request anchored at a clause start, for travel: "book a flight to Paris" asks; "I booked a flight" tells.
-const TRAVEL_REQUEST = /(?:^|[.;!?,]\s*|\b(?:and|then|also|please|can\s+you|could\s+you|would\s+you|will\s+you|i\s+want\s+you\s+to|i\s+need\s+you\s+to|go\s+ahead\s+and)\s+)(?:book|reserve)\b/i;
 const IF_ASKED = /\bif\s+i\s+(?:asked|told|wanted|said)\b/i;
 
 /**
@@ -171,14 +172,19 @@ const IF_ASKED = /\bif\s+i\s+(?:asked|told|wanted|said)\b/i;
 export function ownerActionConnectorGate(message = '', { kinds = [], asked = null, env = {} } = {}) {
   const text = String(asked ?? message ?? '').replace(/\s+/g, ' ').trim();
   if (!text || QUESTION_WORD.test(text) || IF_ASKED.test(text)) return null;
+  // The connector a turn needs comes from the action it requests, never from words inside its object: "delete the
+  // reminder to pay my rent" asks for a delete, and "pay my rent" is only the reminder's label. So a domain counts only
+  // when its pattern opens a clause of the request (after "please", "can you" and the like), and a money domain only when
+  // the owner gate read the turn as a money request.
+  const lead = new RegExp(REQUEST_LEAD, 'i');
+  const requested = clauses(text).map((c) => c.replace(lead, ''));
   const domains = [];
   for (const [domain, re] of OWNER_ACTION_PATTERNS) {
     const spec = OWNER_ACTION_DOMAINS[domain];
     if (spec.connector && env && env[spec.connector]) continue;
-    if (!re.test(text)) continue;
-    // Travel is not a money word to the owner gate, so it needs its own request shape; the rest ride on the gate's kinds.
-    if (domain === 'travel_booking' ? !(kinds.length || TRAVEL_REQUEST.test(text)) : !kinds.length) continue;
-    domains.push(domain);
+    if (spec.kind && !kinds.includes(spec.kind)) continue;
+    const opens = new RegExp(`^(?:${re.source})`, 'i');
+    if (requested.some((c) => opens.test(c))) domains.push(domain);
   }
   if (!domains.length) return null;
   const parts = domains.map((d) => OWNER_ACTION_DOMAINS[d].text);
