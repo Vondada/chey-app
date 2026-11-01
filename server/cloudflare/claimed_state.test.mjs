@@ -77,6 +77,9 @@ test('a named operation reported as done without a receipt is removed; descripti
     ['Is the job done?', 'The job has not finished yet.'],
     ['Did the migration run?', 'If the migration completed, the table would exist.'],
     ['How long does the script take?', 'The script ran in 4 minutes last time according to the log you pasted.'],
+    // Codex review on #849: how often a process runs is a description.
+    ['When do the tests run?', 'The tests run daily.'],
+    ['How do backups work?', 'The backup is completed automatically.'],
     // Codex review on #845: the object of an instruction is not a report.
     ['How do I make the video?', 'Get the scene rendered, then encode the video.'],
     ['How do I move on?', 'Mark the test completed, then start the next test.'],

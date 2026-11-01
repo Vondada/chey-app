@@ -806,6 +806,9 @@ function backedByRecord(sentence, records, { strict = false } = {}) {
   const evidence = strict ? facts.filter((fact) => !/^\d$/.test(fact)) : facts;
   return evidence.length > 0 && facts.every((fact) => text.includes(fact.toLowerCase()));
 }
+// How often a process runs describes it; it does not report a run (Codex review on #849: "The tests run daily.", "The
+// backup is completed automatically.").
+const HABIT_ADVERB = String.raw`(?:daily|weekly|nightly|hourly|monthly|yearly|annually|regularly|automatically|usually|normally|typically|periodically|routinely|frequently|occasionally|generally)\b`;
 const STATE_CLAIM = new RegExp([
   String.raw`\b(?:logged|signed)\s+in\s+(?:successfully|as\s+(?!a\b|an\b|the\b)[\w-]+)`,
   String.raw`\bsuccessfully\s+(?:logged|signed)\s+in\b`,
@@ -822,7 +825,7 @@ const STATE_CLAIM = new RegExp([
   // opens its own sentence or clause, so the object of an instruction ("Get the scene rendered, then encode the video",
   // Codex review on #845) is not a report. Jobs, tasks and
   // runs are left to the execution-truth check, which explains the missing receipt.
-  String.raw`(?:^|(?<=[.!?;:,—]\s*)|(?<=\b(?:and|so|but)\s+))\s*(?:the|your|my|this|that)\s+(?:[\w-]+\s+)?(?:script|scene|render|build|backup|benchmark|test(?:s)?|migration|deploy(?:ment)?|recovery|restore|scan|export|import|upload|sync)\s+(?:has\s+been\s+|have\s+been\s+|was\s+|is\s+(?=(?:now\s+|already\s+|fully\s+)?(?:rendered|completed|finished|done)\b))?(?:now\s+|already\s+|fully\s+)?(?:successfully\s+)?(?:ran|run|rendered|completed|finished|executed|done)(?:\s+(?:[a-z]+ly|fine|ok(?:ay)?|without\s+(?:any\s+)?errors?)(?:\s+and\s+(?:[a-z]+ly|fine))?)?(?=\s*(?:[.,;!]|$)|\s+(?:and|so|now)\b)`,
+  String.raw`(?:^|(?<=[.!?;:,—]\s*)|(?<=\b(?:and|so|but)\s+))\s*(?:the|your|my|this|that)\s+(?:[\w-]+\s+)?(?:script|scene|render|build|backup|benchmark|test(?:s)?|migration|deploy(?:ment)?|recovery|restore|scan|export|import|upload|sync)\s+(?:has\s+been\s+|have\s+been\s+|was\s+|is\s+(?=(?:now\s+|already\s+|fully\s+)?(?:rendered|completed|finished|done)\b))?(?:now\s+|already\s+|fully\s+)?(?:successfully\s+)?(?:ran|(?<=(?:been|was)\s+)run|rendered|completed|finished|executed|done)(?:\s+(?:(?!${HABIT_ADVERB})[a-z]+ly|fine|ok(?:ay)?|without\s+(?:any\s+)?errors?)(?:\s+and\s+(?:(?!${HABIT_ADVERB})[a-z]+ly|fine))?)?(?=\s*(?:[.,;!]|$)|\s+(?:and|so|now)\b)`,
   String.raw`\b(?:issue|problem|outage|incident|errors?|bug)s?\s+(?:has|have)\s+been\s+(?:resolved|fixed)\b`,
   String.raw`\b(?:issue|problem|outage|incident)\s+(?:is|was)\s+(?:now\s+)?(?:resolved|fixed)\b`,
 ].join('|'), 'i');
