@@ -14,7 +14,8 @@ changes them. Do not delete the old values: the change is recorded in `docs/CHE_
 
 | Fact | State | Time | Evidence |
 |---|---|---|---|
-| `main` is `a00d223e` (#834; code at `a5fd91b3`, #833) | verified | 2026-11-01 06:02 UTC | merge receipts |
+| `main` is `01721ea4` (#837; code at `174ebc95`, #836) | verified | 2026-11-01 07:16 UTC | merge receipts |
+| `main` is `a00d223e` (#834; code at `a5fd91b3`, #833) | reported (superseded above) | 2026-11-01 06:02 UTC | merge receipts |
 | `main` is `daf090aa` (#832) | reported (superseded above) | 2026-11-01 04:48 UTC | merge receipt |
 | `main` is `2a93c35b` (#813) | reported (superseded above) | 2026-10-31 ~19:15 UTC | merge receipts |
 | `main` is `566bd782` (#806, picture status and GPU health) | reported (superseded above) | 2026-10-31 ~18:05 UTC | `git fetch origin main` |
@@ -25,6 +26,9 @@ changes them. Do not delete the old values: the change is recorded in `docs/CHE_
 
 | Fact | State | Time | Evidence |
 |---|---|---|---|
+| Full 600 certification, fresh, on `01721ea4`: 431 pass, 169 fail, 0 blocked | verified | 2026-11-01 07:50 UTC | run `41284676707` |
+| Worker deploy of `174ebc95` (#836, includes #835) succeeded, live commit checked, every live probe passed | verified | 2026-11-01 07:18 UTC | deploy run `41283718914` |
+| Worker deploy of `ae4a2f36` (#835): deployed and live commit checked, then the live code-switching probe failed (model repeated a swear word; swapped before the owner saw it) | verified | 2026-11-01 07:08 UTC | deploy run `41283288155` |
 | Full 600 certification, fresh, on `a00d223e`: 420 pass, 180 fail, 0 blocked | verified | 2026-11-01 06:44 UTC | run `41279724891` |
 | Worker deploy of `a5fd91b3` (#833) succeeded, live commit checked | verified | 2026-11-01 06:05 UTC | deploy run `41278940638` |
 | Full 600 certification, fresh, on `daf090aa`: 418 pass, 182 fail, 0 blocked | verified | 2026-11-01 05:36 UTC | run `41275331324` |
