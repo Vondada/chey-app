@@ -2,7 +2,7 @@
 // hypotheticals, guesses, quotes and fiction are never facts; the wake prefix is stripped; nothing is invented.
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { activeFactSubject, answerPersonalFact, isQuestionLike, ownerAssertion, ownerFactTurn, personalFactQuestion, stripWake } from './personal_recall.js';
+import { activeFactSubject, answerPersonalFact, isQuestionLike, ownerAssertion, ownerFactTurn, personalFactQuestion, storedStatementQuestion, stripWake } from './personal_recall.js';
 
 const brainSaid = (id, said, extra = {}) => ({
   id, verification: 'owner_attested', source: { kind: 'owner_chat' }, created_at: '2026-10-21T18:00:00.000Z',
@@ -181,4 +181,13 @@ test('a typed "favfavorite drink" finds the stored favorite drink, same as "favo
     assert.match(out.answer, /Sprite/, asked);
     assert.doesNotMatch(out.answer, /don't have a record/, asked);
   }
+});
+
+test('a question about a kind of thing ("what does a Monte Carlo test show") never reads stored statements', () => {
+  assert.equal(storedStatementQuestion('What does a Monte Carlo test of a strategy trade list show?'), null);
+  assert.equal(storedStatementQuestion('How does a trailing stop work?'), null);
+  // The owner named in the question: still a records question.
+  assert.ok(storedStatementQuestion('What is a good gift for my sister Nadia?'));
+  assert.ok(storedStatementQuestion('What was a restaurant I liked in Lisbon?'));
+  assert.ok(storedStatementQuestion('What phrase opens the vault Copper Lantern?'));
 });

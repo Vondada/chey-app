@@ -560,11 +560,19 @@ function keyWords(text) {
 }
 
 /** The words of a question that could name a stored statement, or null. Only questions qualify. */
+const GENERIC_CONCEPT = /^(?:what|how|why|when)\s+(?:is|are|was|were|does|do|did|would|can|could|should|will)\s+(?:an?|any)\s+\w/i;
+const OWNER_WORD = /\b(?:my|mine|our|ours|me|i|we|us|i'm|i've|i'd)\b/i;
+
 export function storedStatementQuestion(message) {
   const text = stripWake(message);
   if (!text || !isQuestionLike(text)) return null;
   if (/\b(?:story|pretend|imagine|hypothetical|poem|joke)\b/i.test(text)) return null;
   const first = text.split(/[?!]/)[0];
+  // "What does a Monte Carlo test of a strategy trade list show?" asks about a kind of thing, not about anything the owner
+  // said: no stored statement answers it, even one that shares its words (certification run 41256280478, thb-21, was
+  // answered with the owner's instruction to "proceed with strategy testing"). A question that also names the owner
+  // ("a gift for my sister", "a restaurant I liked") still reads the records.
+  if (GENERIC_CONCEPT.test(first.trim()) && !OWNER_WORD.test(first)) return null;
   const asked = keyWords(first);
   // "Do you remember Silver Falcon 27?" asks whether that exact thing is stored: a record saying just those words answers it.
   const confirm = /^(?:do|did) you (?:still )?(?:remember|have|keep|know|recall)\b|^(?:is|was) .+ (?:saved|stored|remembered)$/i.test(first.trim());
