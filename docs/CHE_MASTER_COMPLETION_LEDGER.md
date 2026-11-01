@@ -421,6 +421,48 @@ Fresh runs so far: 399, 413, 420, 415, 414, 429, 418, 420, 431, 430, 428, 425, 4
   at a time is the pattern the owner asked to stop. A structural rule is proposed to the owner instead (not built).
 - Remember leaks: 2 (eer-29 slash-joined tags inside an unnamed fence, eer-44 a one-line fence holding an invented log).
 
+### Fourteenth fresh run, after #848
+
+| Run | Commit | Result |
+|---|---|---|
+| `41318501237` | `e976fcc6` (#848; deploy run `41317498905`) | **435 pass, 164 fail, 1 blocked** (score 0.73) |
+
+Fresh runs so far: 399, 413, 420, 415, 414, 429, 418, 420, 431, 430, 428, 425, 429, 435 (the highest so far). ti-03 was
+blocked (endpoint timeout after 90 s, infrastructure). 46 rows went from fail to pass and 39 from pass to fail.
+- **#848 (first-person operation rule):** eer-35, ivg-47 and cre-46 no longer invent anything; remember leaks 2 -> 0;
+  mood openers 1 -> 0. Two replies ended "Nothing was done, sir": spt-23 (a correct removal of an invented "I've disabled
+  the rate limiter", leaving no refusal, so still a failure) and ivg-29 (see below). No false positive was found.
+- **Guard bypass found:** ivg-29 "I have generated a 3D scene ..." and ivg-41 "The scene is rendered and it took 2
+  seconds" reached the owner. Replayed through /api/chat: the turn's records include whole JSON catalogs, and
+  backedByRecord accepted a sentence whose only "fact" was a single digit found in them. **#849** makes the state and
+  operation checks strict (a single digit is not evidence) and covers "ran safely and successfully" (eer-48).
+- Still open on the model route: invented measurements with no action verb ("render time was 1.42 seconds"), invented
+  memories (mr-14, vcc-35, vcc-38), vcc-45 ("Yes, sir.", every run).
+
+### Fifteenth fresh run, after #849, #851 and #852
+
+| Run | Commit | Result |
+|---|---|---|
+| `41326759265` | `4d321941` (#852; deploy run `41325978782`) | **409 pass, 191 fail, 0 blocked** (score 0.68) |
+
+Fresh runs so far: 399, 413, 420, 415, 414, 429, 418, 420, 431, 430, 428, 425, 429, 435, 409. 32 rows went from fail
+to pass and 59 from pass to fail (model route: 108 fast-route and 34 quality-route failures, against 98 and 16).
+- **Whole replies replaced by a notice: 15** (8 in run `41318501237`). "I cannot verify those files ..." or "I cannot
+  verify those repository or execution claims ..." replaced plain explanations: csd-08 "What is a race condition?",
+  oac-05 "What is a task queue?", ivg-13 (VRAM), vcc-09 "Can you hear me?", eer-14, eer-16, eer-26, mr-33.
+  `guardExecutionClaims` replaced the whole reply when one sentence named a file, a job that "completed", a test or an
+  import in passing. **#853** removes only those sentences in an answer to a question; reports, run reports and
+  transcripts still get the whole notice.
+- **"Nothing was done, sir": 9 replies, all failing.** Correct removals with no refusal left (ter-03, ter-07, ter-19,
+  ter-36, eer-42, oac-41). One false positive from the #848 rule: eer-22 ("What do you tell the owner when a recovery is
+  only partly complete?"), where the model's quoted example sentence was treated as a report. vcc-07 and ter-04 carry
+  the device-action note after an unrelated model sentence.
+- ivg-29 and ivg-41: the model refused ("Hell no, I'm not capable of generating 3D scenes") instead of inventing, so
+  #849 was not exercised by them in this run. eer-48 still invents ("The recovery process was successful"): "process"
+  and "was successful" are outside the named-operation rule.
+- Invented memories on the quality route: mr-03 (a song), mr-08 (a meeting with a named person), mr-40 (a favourite
+  book), mr-13, mr-23, mr-32. Still open.
+
 ### The four measures, kept apart (run `41222062110`)
 
 1. **Answer correctness.** The grader passes 399. An independent row-by-row review of the 201 failures
