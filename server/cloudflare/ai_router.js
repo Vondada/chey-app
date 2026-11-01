@@ -541,6 +541,7 @@ async function callProvider(env, provider, strongModel, input, fetcher, modelOve
         model: modelName,
         messages: input.messages,
         max_tokens: input.max_tokens || 2000,
+        ...(Number.isFinite(input.temperature) ? { temperature: input.temperature } : {}),
         ...(input.response_format && !provider.keyless ? { response_format: input.response_format } : {}),
         // Reasoning models spend tokens "thinking"; keep that short so the
         // reply arrives fast and isn't cut off.
@@ -630,6 +631,17 @@ function inputForProvider(engineInput, providerId, context) {
 const PRIVATE_FALLBACK_MODEL = '@cf/meta/llama-3.1-8b-instruct-fp8';
 const PRIVATE_TURN_NOTE = 'PRIVATE VOICE IS ON for this turn: the owner asked that his words reach no outside service. You have no web search, research, news, other AIs, Office agents or coding crew this turn, and nothing was looked up. Answer from what you already know and from the memory in this conversation. If the answer needs live facts or an outside service, say so plainly and that he can say "turn off private voice" to allow it. Never claim you searched, asked another AI or delegated.';
 
+// The owner's chat is sampled at a low temperature (CHE_CHAT_TEMPERATURE, default 0.3). No caller set one, so every
+// engine used its own default (0.6-1.0): five fresh certification runs (2026-11-01) scored 409-435 on the same code,
+// and 173 of the 178 questions that changed between runs were answered by the model. A caller's own temperature stays,
+// and internal pipelines keep the engine default.
+function applyChatTemperature(env, engineInput, ownerChat) {
+  if (!ownerChat || Number.isFinite(engineInput.temperature)) return;
+  const raw = env?.CHE_CHAT_TEMPERATURE;
+  const t = raw === undefined || raw === '' ? 0.3 : Number(raw);
+  if (Number.isFinite(t) && t >= 0 && t <= 2) engineInput.temperature = t;
+}
+
 export function privateRouteActive(input) {
   return input?.che_private === true || privateEgressHeld();
 }
@@ -639,6 +651,7 @@ async function routePrivate(env, model, input, usageStorage) {
   const quality = input?.che_route === 'quality';
   const engineInput = compactEngineInput(input);
   for (const key of Object.keys(engineInput)) if (key.startsWith('che_')) delete engineInput[key];
+  applyChatTemperature(env, engineInput, quality || input?.che_owner_chat === true);
   if (engineInput.response_format) delete engineInput.response_format;
   if (quality) {
     const firstConversation = engineInput.messages.findIndex((message) => message?.role !== 'system');
@@ -704,6 +717,7 @@ export async function routeText(env, model, input, fetcher = fetch, usageStorage
   // Evidence deduplication belongs at evidence assembly. A repeated chat
   // turn can be a correction or have a different speaker; keep its role/order.
   for (const key of Object.keys(engineInput)) if (key.startsWith('che_')) delete engineInput[key];
+  applyChatTemperature(env, engineInput, ownerChat);
   if (quality) {
     const firstConversation = engineInput.messages.findIndex((message) => message?.role !== 'system');
     engineInput.messages.splice(firstConversation < 0 ? engineInput.messages.length : firstConversation, 0,
