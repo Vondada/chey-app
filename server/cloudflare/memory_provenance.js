@@ -487,6 +487,12 @@ export function guardRememberBlock(reply, { ownerTurns = [], retracted = [] } = 
     const keep = body.split('\n').filter((line) => {
       const fact = line.replace(/^\s*[-*•]\s*/, '').replace(/^\[[^\]]{1,30}\]\s*/, '').trim();
       if (!fact) return false;
+      // A line made of the category tags ("[People]/[Decisions]/Database Recovery Plan", certification run
+      // 41279724891, eer-29) is the template copied into the block, not a fact about the owner.
+      if (new RegExp(TAG).test(fact)) {
+        dropped.push(clip(fact, 200));
+        return false;
+      }
       // A hedged guess is never a fact, whatever the owner said (owner, 2026-10-28). Nor is a claim about what CHE
       // looked up or ran: that is recorded by tool receipts, not by a memory line.
       if (SPECULATIVE.test(fact) || INTERNAL_RUN.test(fact)) {
@@ -513,6 +519,10 @@ const TAG = String.raw`\[(?:People|Projects|Decisions|Companies|Meetings|Daily|K
 const LEAK_INSTRUCTION = /(^|[\n.!?]\s*)\**(?<!`)che[\s-]?remember\**(?:\s+block)?(?:[^.\n]{0,80}?\b(?:one\s+(?:tagged\s+)?fact\s+per\s+line|tagged\s+\[[^\]]{1,30}\])[^.\n]{0,40})?[.:]?[ \t]*/gi;
 const TAG_SPAN = new RegExp(String.raw`[ \t]*(?:\[che[\s-]?remember\][ \t]*)?${TAG}[^\n\u0000]*${TAG}`, 'gi');
 const TAG_RUN = new RegExp(String.raw`(?:[ \t]*${TAG}){3,}`, 'g');
+// The same template written one tag per line, under a marker line or with bare tags ("`che-remember`\n[People] CHE\n
+// [Projects]\n[Decisions]\n...", certification run 41279724891, eer-30).
+const MARKER_LINE = String.raw`[ \t]*(?:\[che[\s-]?remember\]|\x60che[\s-]?remember\x60|che[\s-]?remember)[ \t]*:?[ \t]*\n`;
+const TAG_LINES = new RegExp(String.raw`(^|\n)(${MARKER_LINE})?((?:[ \t]*${TAG}[^\n\u0000]{0,30}(?:\n|$)){3,})`, 'gi');
 export function stripRememberLeak(reply) {
   const text = String(reply || '');
   const fences = [];
@@ -531,6 +541,14 @@ export function stripRememberLeak(reply) {
     if (!/^\s*\[che[\s-]?remember\]/i.test(m) && !gaps.some((g) => !g.trim())) return m;
     removed.push(m.trim());
     return '';
+  });
+  out = out.replace(TAG_LINES, (m, lead, marker, lines) => {
+    const labels = lines.split('\n').filter((l) => l.trim()).map((l) => l.replace(new RegExp(TAG, 'g'), '').trim());
+    // Same evidence as one line: bare labels only, and the marker or a tag with no label at all.
+    if (labels.some((l) => l.length > 30 || /[,.;:!?]/.test(l))) return m;
+    if (!marker && !labels.some((l) => !l)) return m;
+    removed.push(m.trim());
+    return lead;
   });
   out = out.replace(LEAK_INSTRUCTION, (m, lead) => { removed.push(m.trim()); return lead; });
   out = out.replace(TAG_RUN, (m) => { removed.push(m.trim()); return ''; });
