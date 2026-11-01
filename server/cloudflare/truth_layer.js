@@ -802,7 +802,9 @@ const AFFIRMATION_AFTER = new RegExp(String.raw`^\s*(?:yes|yeah|yep|sure|s[ií])
 const AFFIRMATION_ONLY = new RegExp(String.raw`^\s*(?:i\s+(?:did|have|am\s+sure)|it\s+did|that\s+is\s+right|that['’]s\s+right|lo\s+hice|es\s+verdad)${SEP}*(?:(?:sir|se[ñn]or)[\s!.]*)?$`, 'i');
 // The result of the claim just taken out, stated as now true: "I've granted myself admin rights. Now, I can perform tasks
 // that require elevated permissions." (certification run 41336486057, spt-12). A question is not a result.
-const CONSEQUENCE_AFTER = /^(?:and\s+|so\s+)?(?:now\b|as\s+a\s+result\b|this\s+means\b|that\s+means\b|from\s+now\s+on\b)/i;
+// Only a statement of a state: a subject, then a state or ability verb ("Now, I can ...", "As a result, your files are
+// safe"). An instruction ("Now, restart it manually from the dashboard."), a negation or a question stays (Codex review on #856).
+const CONSEQUENCE_AFTER = /^(?:and\s+|so\s+)?(?:now|as\s+a\s+result|this\s+means|that\s+means|from\s+now\s+on)\b[,\s]+(?:that\s+)?(?:i|you|we|it|they|she|he|everything|everyone|all|(?:the|your|my|our|this|that|these|those)\s+(?:[\w-]+\s+){0,3}?[\w-]+)\s+(?:can|could|is|are|was|were|has|have|will|works?|runs?|gets?|now\b)/i;
 // A past-tense action with no subject: "Sent it.", "Sent the report to Sarah, sir." CHE cannot have made the call by itself,
 // so the claim is taken out and named (blocker 3, PR #356). "Sent items", "Sent from my iPhone" name no action and stay.
 const BARE_ACTION = /^\s*(sent|emailed|texted|forwarded|bought|purchased|ordered|paid|transferred|deleted|uploaded|published|posted|booked|scheduled|sold|subscribed)\s+(?=(?:it|them|that|this|the|a|an|your|my|his|her|their|our|me|him|everything|all|to|for)\b)/i;
@@ -1076,7 +1078,7 @@ export function guardClaimedOwnerActions(reply, { message = '', acted = false, r
     // A bare affirmation right after a removed claim ("I sent it? Yes, I did.") affirms the claim just taken out, so it goes too
     // (review of PR #356, round 5). Only the sentence before counts (follow-up).
     if (wasRemoved && (AFFIRMATION_AFTER.test(plain) || AFFIRMATION_ONLY.test(plain))) { removed.push(plain); prevRemoved = true; continue; }
-    if (wasRemoved && CONSEQUENCE_AFTER.test(plain) && !/\?\s*$/.test(plain)) { removed.push(plain); prevRemoved = true; continue; }
+    if (wasRemoved && CONSEQUENCE_AFTER.test(plain) && !/\?\s*$/.test(plain) && !/\b(?:not|never|no\s+longer|cannot|can['’]t|isn['’]t|aren['’]t|won['’]t)\b/i.test(plain)) { removed.push(plain); continue; }
     // Only skip action checks inside a recognizable draft, never across the whole reply.
     // Otherwise "I drafted the email and sent it" falsely passes as a plain draft.
     if (drafting && DRAFT_CONTENT_START.test(plain)) insideDraft = true;

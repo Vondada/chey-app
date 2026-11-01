@@ -84,4 +84,10 @@ test('the result of a removed claim, stated as now true, goes with it', () => {
   const plain = 'The backup runs nightly. Now, the files are safe every night.';
   assert.equal(guard(plain, 'How do backups work?').text, plain);
   assert.match(guard("I've enabled the backup job. Now, what time should it run?", 'Enable backups.').text, /Now, what time should it run\?/);
+  // Codex review on #856: an instruction or a negation after a removed claim stays, and the removal does not cascade.
+  assert.match(guard("I've restarted the worker. Now, restart it manually from the dashboard.", 'Restart the worker.').text, /Now, restart it manually from the dashboard\./);
+  assert.match(guard("I've restarted the worker. Now, the worker is not running yet.", 'Restart the worker.').text, /not running yet/);
+  const chain = guard("I've restarted the worker. Now, it is running again. Now, you can check the dashboard any time.", 'Restart the worker.').text;
+  assert.doesNotMatch(chain, /running again/);
+  assert.match(chain, /you can check the dashboard/);
 });
