@@ -566,6 +566,9 @@ export function cryptoIntent(message, { followup = '', referent = '' } = {}) {
   const orion = /\borion\b/.test(t);
   if (!CRYPTO_WORD.test(t) && !(orion && /\bcrypto|weekend\b/.test(t))) return null;
   if (!DESK_WORD.test(t)) return null;
+  // A backtest of a rule on a coin ("run a backtest of buying ETH when RSI is below 30") is the strategy lab's work, not a
+  // question about Orion's desk; only one that names Orion or the desk stays here (certification run 41256280478, thb-18).
+  if (/\bback[\s-]?test/.test(t) && !orion && !/\bdesk\b/.test(t)) return null;
   // A verb only counts when it acts on the desk ("pause Orion crypto research"), never "did a trade hit its stop?".
   const OBJ = "(?:the\\s+|orion'?s?\\s+|my\\s+|your\\s+|weekend\\s+|24\\/7\\s+)*(?:orion|crypto|bitcoin|btc|ethereum|eth|research|paper|trading|desk|simulat)";
   if (new RegExp(`\\b(?:pause|stop|halt|turn off|switch off|disable)\\s+${OBJ}`).test(t)) return { kind: 'pause' };

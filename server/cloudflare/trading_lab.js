@@ -955,6 +955,40 @@ export function tradingIntent(message, { followup = '', referent = '' } = {}) {
 }
 
 /// The honest span of a candle series for the backtest's first line: years of daily data, or days of intraday bars.
+/// What a backtest request asked for that the run did not do, said plainly before the results (certification run
+/// 41256280478, thb-11: "a 50/200 moving average crossover on BTC from 2020 to 2024 ... total return" was answered with
+/// CHE's own rules on about a year of data, with no word that it was not the asked rule or period).
+/// Empty when the request asks for nothing the run left out.
+export function backtestScopeNote(message, candles) {
+  const t = String(message || '');
+  const notes = [];
+  const customRule = /\b\d+\s*\/\s*\d+\b|\b(?:moving[\s-]+averages?|sma|ema|cross(?:over|es)?|rsi|macd|bollinger|stochastic|momentum|mean[\s-]+reversion|dollar[\s-]+cost|dca|buy(?:ing)?\s+(?:\w+\s+){0,3}(?:daily|weekly|monthly|when|whenever|if|every))\b/i;
+  if (customRule.test(t)) {
+    notes.push(`I can't run a rule you describe yet, sir, so these are my own built-in rules (${Object.values(STRATEGIES).map((s) => s.name.toLowerCase()).join(', ')}), not the one you asked for.`);
+  }
+  // Years from date expressions only ("from 2020 to 2024", "since 2021", "over 2008", "2020-2024"); an amount such as
+  // "$2000 initial account" or "2000 dollars" is never a requested year (Codex review on #823).
+  const NOT_MONEY = '(?!\\d|[,.]\\d|\\s*(?:dollars?|usd\\w*|eur\\w*|bucks|k\\b|initial|account|balance|capital|shares|contracts|units))';
+  const dated = new RegExp(`(?:\\b(?:from|since|to|until|till|through|thru|in|over|during|between|after|before|and|starting|year)\\s+(?:the\\s+)?(?:year\\s+)?)((?:19|20)\\d\\d)\\b${NOT_MONEY}`, 'gi');
+  const range = new RegExp(`(?<![$€£\\d])\\b((?:19|20)\\d\\d)\\s*[-–]\\s*((?:19|20)\\d\\d)\\b${NOT_MONEY}`, 'g');
+  const years = [...[...t.matchAll(dated)].map((m) => m[1]), ...[...t.matchAll(range)].flatMap((m) => [m[1], m[2]])].map(Number);
+  if (years.length && Array.isArray(candles) && candles.length) {
+    const from = Math.min(...years);
+    const to = Math.max(...years);
+    const first = String(candles[0].t).slice(0, 10);
+    const last = String(candles[candles.length - 1].t).slice(0, 10);
+    // "Since 2021" or "from 2021" with no end year runs to today.
+    const openEnded = years.length === 1 && /\b(?:since|from|after|starting)\s+(?:in\s+)?(?:19|20)\d\d\b/i.test(t) && !/\b(?:to|until|till|through|thru)\s+(?:19|20)\d\d\b/i.test(t);
+    if (Number(first.slice(0, 4)) > from || (!openEnded && Number(last.slice(0, 4)) > to)) {
+      notes.push(`You asked for ${from === to ? from : `${from} to ${to}`}; the free data I have runs from ${first} to ${last}, so the figures cover that span instead.`);
+    }
+  }
+  if (/\b(?:total|overall|cumulative|annual(?:ised|ized)?)\s+returns?\b|\bcagr\b/i.test(t)) {
+    notes.push('I report results per trade in R (multiples of the risk taken), not as a total percentage return.');
+  }
+  return notes.join(' ');
+}
+
 export function candleSpan(candles, interval = '1d') {
   const ms = Date.parse(candles[candles.length - 1].t) - Date.parse(candles[0].t);
   if (interval === '1d' || interval === '1w') return Math.max(1, Math.round(ms / (365.25 * 86400000)));

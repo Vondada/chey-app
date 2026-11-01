@@ -84,7 +84,7 @@ import { recordReliability, reliabilityIntent, reliabilitySummary, speakReliabil
 import { reliabilityApi, reliabilityTurn } from './reliability_registry.js';
 import { answerOwnerMemoryQuestion, auditMemoryProvenance, evidenceQuestion, evidenceReferent, evidenceRequestSplit, explainEvidenceFor, findAnswerEvidence, brainRecordForProvenance, guardOwnerAttributions, guardRememberBlock, guardSpeakerAttributions, latestAnswerEvidence, loadRetractions, RECALL_OUTCOMES, readOutcome, memoryPromptContext, ownerFactCorrection, ownerMemoryQuestion, ownerWords, recordAnswerEvidence, recordRetractions, storedSpeaker, storyRequested, requestNamesAction } from './memory_provenance.js';
 import { condenseHistory, ownerNotificationPolicy } from './workflow_governor.js';
-import { analyze as tradeAnalyze, backtestAll, candleSpan, loadCandles, paperTick, readBook, speakAnalysis, speakBacktest, speakBook, speakLearning, nextTradingTickAt, tradingIntent, watchSymbol, STRATEGIES } from './trading_lab.js';
+import { analyze as tradeAnalyze, backtestAll, backtestScopeNote, candleSpan, loadCandles, paperTick, readBook, speakAnalysis, speakBacktest, speakBook, speakLearning, nextTradingTickAt, tradingIntent, watchSymbol, STRATEGIES } from './trading_lab.js';
 import { intelligenceIntent, intelligenceReport, intelligenceView, speakIntelligence, startStudy, studyAlarm, studyStep } from './historical_intelligence.js';
 import { evaluateSample, applyRightsAction, applySpokenRightsWrite, defensibility, musicRightsIntent, musicRightsWriteIntent, releaseReadiness, songFor, speakReadiness } from './music_rights.js';
 import { ACTIVITIES, JURISDICTIONS, SOURCES, LEGAL_INDEX, activitiesIn, placeIn, checkUpdates, defenseArguments, findAlternatives, jurisdiction as legalPlace, legalAnswer, legalDifferences, legalIntent, loadLegal, recordDecision, recordsFor, releaseLegalCheck, saveLegal, speakDifferences, subscribe as legalSubscribe, verifyRecord } from './legal_intelligence.js';
@@ -13351,11 +13351,31 @@ export class CheState extends DurableObject {
           }
           // "And the 15 minute?": the bar size asked for; intraday is free for crypto only, and loadCandles says so for stocks.
           const interval = trade.interval || '1d';
+          if (trade.kind === 'backtest') {
+            // A backtest is a real computation on fetched candles: it carries an execution receipt (data source, bar span,
+            // strategies run), and a failed data load is a failed receipt, never a result (certification run 41256280478).
+            const { result: run, receipt } = await executeWithReceipt({
+              tool: 'trading_lab', operation: 'backtest', source: 'trading_lab.js', request_id: crypto.randomUUID(),
+              run: async () => {
+                const data = await loadCandles(trade.symbol, { interval });
+                if (data.error) return { ok: false, data };
+                return { ok: true, data, results: backtestAll(data.candles) };
+              },
+              response: (r) => ({ symbol: r.data.label, data: r.data.data || null, interval, bars: r.data.candles.length,
+                from: String(r.data.candles[0].t).slice(0, 10), to: String(r.data.candles[r.data.candles.length - 1].t).slice(0, 10),
+                strategies: r.results.map((x) => x.id) }),
+            });
+            await recordReceipt(this.ctx.storage, { ...receipt, key: `execution:${receipt.invocation_id}` }).catch(() => null);
+            if (receipt.status !== 'success') {
+              const why = run?.data?.error || 'The backtest could not run.';
+              return ndjsonReply(`${why} Try a ticker like AAPL or a coin like bitcoin, sir.`, { source: 'che_trading', ok: false, execution_receipts: [receipt] });
+            }
+            const note = backtestScopeNote(rawMessage, run.data.candles);
+            return ndjsonReply([note, speakBacktest(run.data.label, candleSpan(run.data.candles, interval), run.results)].filter(Boolean).join('\n'),
+              { source: 'che_trading', execution_receipts: [receipt] });
+          }
           const data = await loadCandles(trade.symbol, { interval });
           if (data.error) return ndjsonReply(`${data.error} Try a ticker like AAPL or a coin like bitcoin, sir.`, { source: 'che_trading' });
-          if (trade.kind === 'backtest') {
-            return ndjsonReply(speakBacktest(data.label, candleSpan(data.candles, interval), backtestAll(data.candles)), { source: 'che_trading' });
-          }
           return ndjsonReply(speakAnalysis(tradeAnalyze(data)), { source: 'che_trading' });
         }
 

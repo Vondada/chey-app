@@ -570,10 +570,14 @@ export function intelligenceIntent(message) {
   const text = String(message || '');
   const history = /\b(?:historical(?:ly)?|history|since (?:19|20)\d\d|decades?|trading intelligence|dirty\s*trez)\b/i;
   // Method words alone are a general question ("is walk forward testing better than..."): the Knowledge Atlas
-  // answers those. They reach the study only when asked about CHE's own results.
-  const method = /\b(?:walk[\s-]*forward|out[\s-]*of[\s-]*sample|regimes?|look[\s-]*ahead|leakage)\b/i.test(text) && /\b(?:your|you|che'?s)\b/i.test(text);
+  // answers those. They reach the study only when asked about CHE's own results; a generic "how do you avoid look-ahead
+  // bias" is a method question, not one about CHE's study (certification run 41256280478, thb-25).
+  const method = /\b(?:walk[\s-]*forward|out[\s-]*of[\s-]*sample|regimes?|look[\s-]*ahead|leakage)\b/i.test(text) && /\b(?:your|che'?s)\b|\b(?:did|have|has)\s+(?:you|che)\b|\byou\s+(?:ran|tested|found|got|measured)\b/i.test(text);
   const trading = /\b(?:strateg\w*|nq|mnq|nasdaq|trad\w*|ict|smart money|vwap|orb|opening range|ema|backtest\w*|signals?|dirty\s*trez)\b/i;
   if (!(history.test(text) || method) || !trading.test(text)) return null;
+  // The study is Nasdaq-100 history. A backtest on a coin ("buying ETH when RSI is below 30, since 2021") is the strategy
+  // lab's, never a reason to start the Nasdaq study (certification run 41256280478, thb-18).
+  if (/\b(?:crypto\w*|bitcoin|btc|ethereum|eth|ether|solana|sol|dogecoin|doge)\b/i.test(text) && !/\b(?:nq|mnq|nasdaq)\b/i.test(text)) return null;
   if (/\bdirty\s*trez\b/i.test(text)) return { kind: 'dirty' };
   if (/\b(?:run|start|begin|refresh|update|redo|re-?run|kick off)\b[\s\S]{0,40}\b(?:study|test\w*|backtest\w*|analysis|intelligence|history)\b/i.test(text)) return { kind: 'run' };
   if (/\bsignals?\b/i.test(text)) return { kind: 'signals' };
