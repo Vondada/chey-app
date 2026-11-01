@@ -410,4 +410,8 @@ test('a first-person run report, a short reply or a bare claim still gets the wh
   assert.match(guardExecutionClaims('Here is what happened when I pushed your branch to the server this morning, sir. The workflow completed.\n$ git push origin main', { message: 'What happened with my branch?' }).text, whole);
   // A report he asked for is made of its claims: its other lines (a branch name) are invented with them.
   assert.match(guardExecutionClaims('Here is the job report you asked for, sir, with everything in it.\nBranch: CHE-2023-01-01-001-auth-tests\nThe workflow completed and every check is green on it.', { message: 'Write me the job report.' }).text, whole);
+  // Codex review on #853: asked as a question, a report is still a report, and a kept field line is invented with it.
+  const report = 'Here is the job report you asked for, sir, with everything in it.\nBranch: CHE-2023-01-01-001-auth-tests\nThe workflow completed and every check is green on it.';
+  assert.match(guardExecutionClaims(report, { message: 'Can you give me the job report?' }).text, whole);
+  assert.match(guardExecutionClaims(report, { message: 'How did my autonomy test go?' }).text, whole);
 });
