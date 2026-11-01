@@ -33,6 +33,8 @@ changes them. Do not delete the old values: the change is recorded in `docs/CHE_
 
 | Fact | State | Time | Evidence |
 |---|---|---|---|
+| Full 600 certification, fresh, on `c19823ff` (temperature 0.3): 430 pass, 170 fail, 0 blocked; +1 against run 16, 70 rows flipped | verified | 2026-11-01 22:38 UTC | run `41354289425` |
+| Worker deploys of #862 `7ad32379`, #863 `93fe6974`, #864 `5ae85475`: live commit verified, all probes passed; #861 `dc3367fa` deployed and verified, then the SideStore install-link check failed (external) | verified | 2026-11-01 23:07 UTC | deploy runs `41358477490`, `41359194162`, `41359560981`, `41357865214` |
 | Full 600 certification, fresh, on `f4243843`: 429 pass, 170 fail, 1 blocked (cre-15, endpoint timeout) | verified | 2026-11-01 19:03 UTC | run `41336486057` |
 | Worker deploy of `f4243843` (#853): live commit checked; post-deploy code-switching probe failed (model behaviour), later probes skipped | verified (deploy) / failed (probe) | 2026-11-01 18:16 UTC | deploy run `41335293443` |
 | Worker deploy of `10f7272b` (#854) succeeded, live commit checked | verified | 2026-11-01 18:09 UTC | deploy run `41334472360` |
