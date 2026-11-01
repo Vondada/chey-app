@@ -6,13 +6,13 @@ import { readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import test from 'node:test';
 import { examIntent } from './autonomy_exam.js';
 import { imageEditKind, imageEditNoImageReply } from './brain_rooms.js';
-import { BROWSE_LOGIN_REPLY, runSearchRoute } from './browse_chat.js';
+import { BROWSE_LOGIN_REPLY, needsOwnerLogin, runSearchRoute } from './browse_chat.js';
 import { replyFromNdjson } from './brain_memory.js';
 import { statusIntent } from './collaboration.js';
 import { mediaHoldIntent, mediaShowLatestIntent } from './media_library.js';
 import { projectPlanIntent } from './project_plan.js';
 import { answerAtlas, atlasIntent } from './knowledge_atlas.js';
-import { foreignWords, namesOtherSubject, phraseAfter, subjectSet } from './route_subject.js';
+import { foreignWords, mentionsSubject, namesOtherSubject, phraseAfter, subjectSet } from './route_subject.js';
 import { classifyOwnerTurn, interpretOwnerTurn } from './speech_intent.js';
 import { tradingStatusIntent } from './trading_answers.js';
 import { parseTranslatePhrase } from './translate.js';
@@ -23,6 +23,8 @@ test('route_subject: words after the keyword that name another subject are found
   assert.deepEqual(foreignWords(' of the nightly backup', own), ['nightly', 'backup']);
   assert.equal(namesOtherSubject(' of my last builds', own), false, 'plurals and generic words do not count');
   assert.equal(namesOtherSubject('', own), false, 'no words, no other subject');
+  assert.equal(mentionsSubject(' of the nightly backups', subjectSet(['backup'])), true);
+  assert.equal(mentionsSubject(' you are working on', subjectSet(['backup'])), false);
 });
 
 test('status: "what is the status of X" is the job status only when X is CHE\'s own work', () => {
@@ -31,6 +33,11 @@ test('status: "what is the status of X" is the job status only when X is CHE\'s 
   assert.equal(statusIntent('What is the status of my coding job?')?.kind, 'status');
   assert.equal(statusIntent("What's the progress on the app?")?.kind, 'status');
   assert.equal(statusIntent('what is the status')?.kind, 'status');
+  // Engineering work and filler words keep the receipt-backed route; only a recognised other subject leaves it.
+  assert.equal(statusIntent('What is the status of the coding job you are working on?')?.kind, 'status');
+  assert.equal(statusIntent('What is the status of the bug fix?')?.kind, 'status');
+  assert.equal(statusIntent("What's the progress on the branch you opened yesterday?")?.kind, 'status');
+  assert.equal(statusIntent('What is the status of my parcel from Berlin?'), null);
 });
 
 test('autonomy exam: "stress test" alone names the exam only as a run or results request with no other subject', () => {
@@ -74,6 +81,15 @@ test('translate: one reply in another language never becomes the standing reply 
   assert.equal(parseTranslatePhrase(ask, ask.toLowerCase()), null);
   const standing = 'Please reply in Italian from now on';
   assert.deepEqual(parseTranslatePhrase(standing, standing.toLowerCase()), { type: 'setLocale', locale: 'it' });
+});
+
+test('browser: only a request for CHE to authenticate is refused; researching logins is a search', () => {
+  assert.equal(needsOwnerLogin('Use the browser to research single sign on standards'), false);
+  assert.equal(needsOwnerLogin('Use the browser to find how do I reset my password on Netflix'), false);
+  assert.equal(needsOwnerLogin('Browse for why can\'t I log into my router admin page'), false);
+  assert.equal(needsOwnerLogin('Use the browser to log into my bank and check the balance'), true);
+  assert.equal(needsOwnerLogin('Browse to the utility site and enter my password'), true);
+  assert.equal(needsOwnerLogin('Use the browser as a signed-in user to read my orders'), true);
 });
 
 test('browser: a request that needs the owner\'s sign-in is refused before any step or model call', async () => {
@@ -186,6 +202,19 @@ test('chat: a browser request behind a sign-in is refused before any step, with 
   assert.equal(out.meta.source, 'che_browse');
   assert.equal(out.modelCalls, 0);
   assert.match(out.reply, /cannot log into[\s\S]*Nothing was opened/);
+});
+
+test('chat: a browser search about logins still searches, and a bank login is still refused', async () => {
+  const che = await owner({ model: () => '{"action":"answer","answer":"none"}' });
+  for (const message of ['Use the browser to research single sign on standards', 'Use the browser to find how do I reset my password on Netflix']) {
+    const out = await che.say(message);
+    assert.equal(out.meta.source, 'che_browse', message);
+    assert.ok(out.modelCalls >= 1, `${message}: the browsing loop ran`);
+    assert.doesNotMatch(out.reply, /cannot log into/, message);
+  }
+  const bank = await che.say('Use the browser to log into my bank and check the balance');
+  assert.equal(bank.modelCalls, 0);
+  assert.match(bank.reply, /cannot log into[\s\S]*Nothing was opened/);
 });
 
 test('chat: an image edit with no image says nothing was edited, and why', async () => {

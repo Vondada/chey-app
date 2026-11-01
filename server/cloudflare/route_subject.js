@@ -46,3 +46,8 @@ export function foreignWords(phrase, own) {
 export function namesOtherSubject(phrase, own) {
   return foreignWords(phrase, own).length > 0;
 }
+
+/** True when [phrase] holds a word from [subjects] (a set from subjectSet). */
+export function mentionsSubject(phrase, subjects) {
+  return subjectWords(phrase).some((word) => subjects.has(word) || subjects.has(singular(word)));
+}

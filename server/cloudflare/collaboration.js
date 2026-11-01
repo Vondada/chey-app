@@ -4,7 +4,7 @@
 
 import { idempotencyKey } from './recovery_policy.js';
 import { normalizePeerName } from './truth_layer.js';
-import { namesOtherSubject, phraseAfter, subjectSet } from './route_subject.js';
+import { mentionsSubject, phraseAfter, subjectSet } from './route_subject.js';
 
 const PEER_WORDS = '(claude|chat\\s?gpt|codex|gemini|grok|copilot|cursor)';
 
@@ -27,13 +27,19 @@ export function parallelPreference(message) {
   return /\b(?:batch\s+(?:this|it|the work|them)|do (?:it|this) fast|work(?:ing)? in parallel|in parallel|parallel lanes?|split (?:it|the work|this) up|all at once)\b/i.test(String(message || ''));
 }
 
-// "What is the status of X" is this route's question only when X is CHE's own work: a job, a change, the app, a peer.
-// "The status of the last security scan" names something the job records cannot answer, so it goes on to the model.
+// "What is the status of X" stays with this receipt-backed route unless X is a recognised other subject: a parcel, a
+// flight, a refund, someone's health, a security scan. Engineering work ("the bug fix", "the coding job you are working
+// on") and filler words keep it here, so only a clearly different subject goes on to the model.
 const STATUS_ASK = /\bwhat(?:'s| is)\s+(?:the\s+)?(?:status|progress)\b/i;
-const STATUS_SUBJECT = subjectSet(['job', 'jobs', 'work', 'coding', 'code', 'build', 'task', 'change', 'fix', 'feature', 'app',
-  'pr', 'pull', 'request', 'repo', 'repository', 'study', 'claude', 'chatgpt', 'gpt', 'codex', 'gemini', 'grok', 'copilot', 'cursor',
-  'peer', 'peers', 'ai', 'ais', 'everything', 'thing', 'things', 'lane', 'collaboration', 'project', 'implementation', 'review',
-  'deploy', 'deployment', 'merge', 'update', 'upgrade', 'status', 'progress', 'going', 'we', 'yours']);
+const ENGINEERING_WORK = subjectSet(['job', 'work', 'working', 'coding', 'code', 'build', 'task', 'change', 'fix', 'bug', 'feature',
+  'app', 'pr', 'pull', 'request', 'branch', 'commit', 'merge', 'deploy', 'deployment', 'release', 'test', 'run', 'ci', 'check',
+  'repo', 'repository', 'study', 'review', 'patch', 'claude', 'chatgpt', 'codex', 'gemini', 'grok', 'copilot', 'cursor', 'peer']);
+const OTHER_SUBJECT = subjectSet(['order', 'parcel', 'package', 'delivery', 'shipment', 'shipping', 'tracking', 'flight', 'train',
+  'booking', 'reservation', 'refund', 'tax', 'claim', 'insurance', 'loan', 'mortgage', 'payment', 'bill', 'invoice', 'visa',
+  'passport', 'application', 'appointment', 'health', 'surgery', 'patient', 'recovery', 'treatment', 'lawsuit', 'case', 'security',
+  'scan', 'audit', 'firewall', 'antivirus', 'backup', 'warranty', 'repair', 'car', 'house', 'mom', 'dad', 'mother', 'father',
+  'wife', 'husband', 'son', 'daughter', 'brother', 'sister', 'friend', 'grandma', 'grandpa', 'baby', 'dog', 'cat']);
+const otherStatusSubject = (phrase) => mentionsSubject(phrase, OTHER_SUBJECT) && !mentionsSubject(phrase, ENGINEERING_WORK);
 
 // Status questions answered from receipts, never from model guesses.
 export function statusIntent(message) {
@@ -41,7 +47,7 @@ export function statusIntent(message) {
   if (/^(?:ok(?:ay)?|k|alright|all right|cool|got it)[.!]?$/i.test(text)) return { kind: 'ack' };
   if (/\b(?:tell|let)\s+me\s+(?:know\s+)?when\s+(?:you(?:'re| are)|it(?:'s| is)|everything is)\s+(?:ready|done|finished)\b/i.test(text)) return { kind: 'status' };
   if (/^(?:status|update|progress)\??$/i.test(text)
-    || (STATUS_ASK.test(text) && !namesOtherSubject(phraseAfter(text, STATUS_ASK), STATUS_SUBJECT))
+    || (STATUS_ASK.test(text) && !otherStatusSubject(phraseAfter(text, STATUS_ASK)))
     || /\b(?:where\s+are\s+(?:we|you)(?:\s+at)?|are\s+you\s+(?:done|ready|finished)|how(?:'s| is)\s+(?:it|the (?:job|work|coding)) going)\b/i.test(text)
     || new RegExp(`\\b(?:did|has|have|is|are)\\s+${PEER_WORDS}\\b[^.?!]{0,25}\\b(?:repl\\w*|answer\\w*|respond\\w*|working|done|finished|help\\w*|said)\\b`, 'i').test(text)
     || new RegExp(`\\bwhat\\s+(?:did|is)\\s+${PEER_WORDS}\\s+(?:say|doing)\\b`, 'i').test(text)) {
