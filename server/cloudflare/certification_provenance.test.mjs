@@ -49,3 +49,14 @@ test('compareRuns names the questions that flipped and flags a drop of 20 or mor
   assert.equal(compareRuns(run(worse), run(many)).regression, true);
   assert.equal(compareRuns(run(worse), run(many), { threshold: 21 }).regression, false);
 });
+
+test('only a full, fresh run of the current question set qualifies as a baseline', async () => {
+  const { baselineProblem } = await import('../../tools/certification/run_certification.mjs');
+  const questions = [{ id: 'a-1' }, { id: 'a-2' }];
+  const row = (id, extra = {}) => ({ id, verdict: 'pass', ...extra });
+  assert.equal(baselineProblem({ results: [row('a-1'), row('a-2', { verdict: 'fail' })] }, questions), null);
+  assert.match(baselineProblem({ results: [row('a-1'), row('a-2', { verdict: 'not_run' })] }, questions), /partial/);
+  assert.match(baselineProblem({ results: [row('a-1'), row('a-2', { reused_from_earlier_run: true })] }, questions), /resumed/);
+  assert.match(baselineProblem({ results: [row('a-1'), row('b-9')] }, questions), /different question set/);
+  assert.match(baselineProblem({ results: [] }, questions), /no results/);
+});

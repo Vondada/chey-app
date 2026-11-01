@@ -108,20 +108,27 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           path: earlier
 
-      - name: Baseline for regression (the last successful full 600 run)
+      - name: Baseline for regression (the latest full, fresh 600 run)
         if: inputs.category == '' && inputs.limit == '' && inputs.questions_file == '' && inputs.resume_run_id == ''
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          id=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow che-certification.yml --status success --limit 20 \
-            --json databaseId,event --jq '[.[] | select(.event == "workflow_dispatch")][0].databaseId // empty')
-          if [ -z "$id" ]; then echo "No earlier successful run to compare with."; exit 0; fi
-          if gh run download "$id" --repo "$GITHUB_REPOSITORY" -n certification-results -D baseline; then
-            total=$(python3 -c "import json;print(json.load(open('baseline/certification-results.json'))['summary']['total'])" 2>/dev/null || echo 0)
-            if [ "$total" = "600" ]; then echo "CHE_BASELINE=baseline/certification-results.json" >> "$GITHUB_ENV"; echo "Baseline: run $id"; else echo "Run $id was not a full 600 run; no baseline."; fi
-          else
-            echo "::warning::could not download the results of run $id; no baseline."
-          fi
+          # A full run with failed questions ends red, so completed runs of any conclusion are searched, newest first, and
+          # each report is checked itself: every current question asked, nothing reused from a resume.
+          ids=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow che-certification.yml --status completed --limit 30 \
+            --json databaseId,event --jq '.[] | select(.event == "workflow_dispatch") | .databaseId')
+          for id in $ids; do
+            [ "$id" = "$GITHUB_RUN_ID" ] && continue
+            rm -rf baseline
+            gh run download "$id" --repo "$GITHUB_REPOSITORY" -n certification-results -D baseline 2>/dev/null || continue
+            echo "Run $id: $(node tools/certification/run_certification.mjs --check-baseline=baseline/certification-results.json)"
+            if node tools/certification/run_certification.mjs --check-baseline=baseline/certification-results.json >/dev/null; then
+              echo "CHE_BASELINE=baseline/certification-results.json" >> "$GITHUB_ENV"
+              echo "Baseline: run $id"
+              exit 0
+            fi
+          done
+          echo "No earlier full run qualifies as a baseline."
 
       - name: 2. Run the 600 questions against the live chat route
         env:

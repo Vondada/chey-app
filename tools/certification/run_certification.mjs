@@ -366,6 +366,20 @@ export function compareRuns(current, baseline, { threshold = 20 } = {}) {
 
 // The earlier rows a resumed run keeps: real CHE answers only. Infrastructure, auth and empty-reply rows are asked again.
 // --rerun=CLASS,... asks again the earlier rows of those classes (for example after a fix), and keeps the rest.
+// Whether an earlier report can stand as the regression baseline: every question of the current bank was asked in that
+// run (no not_run row, nothing reused from a resumed run), and its question ids are exactly the current bank's ids.
+// Returns null when it qualifies, else the reason.
+export function baselineProblem(report, questions) {
+  const rows = Array.isArray(report?.results) ? report.results : [];
+  if (!rows.length) return 'no results';
+  if (rows.some((r) => r.verdict === 'not_run')) return 'a partial run (some questions were not asked)';
+  if (rows.some((r) => r.reused_from_earlier_run)) return 'a resumed run (some answers came from an earlier run)';
+  const want = new Set(questions.map((q) => q.id));
+  const have = new Set(rows.map((r) => r.id));
+  if (have.size !== want.size || [...want].some((id) => !have.has(id))) return 'a different question set';
+  return null;
+}
+
 export function reuseFrom(rows, rerun = new Set()) {
   const kept = new Map();
   for (const row of rows) {
@@ -492,6 +506,15 @@ function parseArgs(argv) {
 }
 
 async function main(argv) {
+  // --check-baseline=report.json: exit 0 when that report qualifies as a full, fresh run of the current 600 questions.
+  if (argv.length === 1 && argv[0].startsWith('--check-baseline=')) {
+    const path = argv[0].slice('--check-baseline='.length);
+    let report = null;
+    try { report = JSON.parse(await readFile(path, 'utf8')); } catch { /* unreadable: reported below */ }
+    const problem = report ? baselineProblem(report, await loadQuestions()) : 'unreadable report';
+    console.log(problem ? `not a baseline: ${problem}` : 'qualifies as a baseline');
+    return problem ? 1 : 0;
+  }
   const opts = parseArgs(argv);
   if (opts.error) {
     console.error(opts.error);
