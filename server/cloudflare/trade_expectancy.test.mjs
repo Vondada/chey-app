@@ -100,3 +100,24 @@ test('a dataset\'s time range comes from its own entry dates; an undated set say
     { entry: { time: 'not a date' } },
   ]), 'runs 2026-10-02 to 2026-10-09');
 });
+
+// Stable certification failure ti-25: "wins 60% of trades" was read as a $60 average win, so CHE asked for figures the
+// message already gave. A percentage next to "of trades" or "of the time" is a win (or loss) rate, never an amount.
+test('a percentage of trades or of the time is a rate, never a money amount', () => {
+  const a = parseTradeFigures('This setup is right 45 percent of the time; winners average $3 and losers average $2. What is the expected value per trade?');
+  assert.equal(a.winRatePct, 45);
+  assert.equal(a.winAvg, 3);
+  assert.equal(a.lossAvg, 2);
+  const b = tradeExpectancy('This setup is right 45 percent of the time; winners average $3 and losers average $2. What is the expected value per trade?');
+  assert.equal(b.status, 'verified');
+  assert.equal(b.expectancy, '$0.25');
+  const c = parseTradeFigures('A system loses 30% of its trades, wins $2 and loses $5.');
+  assert.deepEqual([c.winRatePct, c.winAvg, c.lossAvg], [70, 2, 5]);
+  const d = tradeExpectancy('A method wins 40% of the time with an average win of 3 and an average loss of 2. What is the expectancy?');
+  assert.equal(d.expectancy, '$0.00');
+  assert.match(d.text, /zero: it breaks even/);
+  assert.match(d.text, /sits exactly on it/);
+  // The figures of a money amount still read as before.
+  const e = parseTradeFigures('A $4 average win and a $15 average loss at a 70% win rate.');
+  assert.deepEqual([e.winRatePct, e.winAvg, e.lossAvg], [70, 4, 15]);
+});

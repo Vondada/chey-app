@@ -11,6 +11,10 @@ import { evaluate, formatRational, parseDecimal } from './arithmetic.js';
 const OWN_RECORDS = /\b(?:my|our|mine|ours|CHE'?s|the journal|paper journal|the evidence pass|evidence pass|so far|right now|today|recorded|actual|real results?)\b/i;
 
 const AMOUNT = '\\$?(\\d+(?:\\.\\d+)?)';
+// A money amount, never a percentage: "wins 60% of trades" states a win rate, not a $60 average win (certification ti-25).
+const MONEY = '(?<!\\d|\\d\\.)\\$?(\\d+(?:\\.\\d+)?)(?!\\d|\\.\\d|\\s*(?:%|percent\\b))';
+// "of trades", "of its trades", "of the time": the percentage is a share of the trades.
+const OF_TRADES = '\\s*(?:%|percent)\\s+of\\s+(?:(?:the|its|all|his|her|their)\\s+)?(?:trades|the\\s+time)\\b';
 
 /** Reads the figures the message gives. A figure that is not stated stays null; nothing is inferred. */
 export function parseTradeFigures(text = '') {
@@ -21,17 +25,25 @@ export function parseTradeFigures(text = '') {
   const winCount = figure(new RegExp(`\\b(\\d+)\\s+(?:winning trades?|wins?|winners?)\\b[^.;]{0,40}?\\b(?:averag\\w*|at|of|each of|worth)\\s+${AMOUNT}`, 'i'));
   const lossCount = figure(new RegExp(`\\b(\\d+)\\s+(?:losing trades?|losses?|losers?)\\b[^.;]{0,40}?\\b(?:averag\\w*|at|of|each of|worth)\\s+${AMOUNT}`, 'i'));
   // "wins $4 and loses $15", "a $4 average win"
-  const winAmount = figure(new RegExp(`\\bwins?\\b[^.;$]{0,30}?${AMOUNT}|${AMOUNT}\\s+(?:average\\s+)?wins?\\b`, 'i'));
-  const lossAmount = figure(new RegExp(`\\b(?:loses?|losses?|losing|loss)\\b[^.;$]{0,30}?${AMOUNT}|${AMOUNT}\\s+(?:average\\s+)?(?:losses?|losing)\\b`, 'i'));
-  const rate = figure(/(\d+(?:\.\d+)?)\s*%\s*(?:win rate|win-rate|win ratio|winning trades)|win[- ]rate\s*(?:of|is|at|:)?\s*(\d+(?:\.\d+)?)\s*%/i);
+  // The words between the side and its amount never cross into the other side ("loses 30% of trades, wins $2").
+  const winAmount = figure(new RegExp(`\\b(?:wins?|winners?)\\b(?:(?!\\blos)[^.;$]){0,30}?${MONEY}|${MONEY}\\s+(?:average\\s+)?(?:wins?|winners?)\\b`, 'i'));
+  const lossAmount = figure(new RegExp(`\\b(?:loses?|loss(?:es)?|losing|losers?)\\b(?:(?!\\bwin)[^.;$]){0,30}?${MONEY}|${MONEY}\\s+(?:average\\s+)?(?:loss(?:es)?|losing|losers?)\\b`, 'i'));
+  // "a 60% win rate", "win rate of 60%", "wins 60% of trades", "is right 60% of the time", "60% of its trades are winners".
+  const rate = figure(new RegExp(`(\\d+(?:\\.\\d+)?)\\s*%\\s*(?:win rate|win-rate|win ratio|winning trades)|win[- ]rate\\s*(?:of|is|at|:)?\\s*(\\d+(?:\\.\\d+)?)\\s*%`
+    + `|\\b(?:wins?|winning|right|correct|profitable)\\s+(?:on\\s+|in\\s+)?(\\d+(?:\\.\\d+)?)${OF_TRADES}`
+    + `|(\\d+(?:\\.\\d+)?)${OF_TRADES}\\s+(?:are|were|is|was|end\\s+as|close\\s+as)?\\s*(?:wins?|winners?|winning|profitable)\\b`, 'i'));
+  // "loses 40% of trades", "40% of the trades are losers": the win rate is the rest.
+  const lossRate = figure(new RegExp(`\\b(?:loses?|losing|wrong)\\s+(?:on\\s+|in\\s+)?(\\d+(?:\\.\\d+)?)${OF_TRADES}|(\\d+(?:\\.\\d+)?)${OF_TRADES}\\s+(?:are|were|is|was)?\\s*(?:loss(?:es)?|losers?|losing)\\b`, 'i'));
   const num = (m, i = 1) => (m && m[i] != null ? Number(m[i]) : null);
+  // The first group that matched, for a pattern with alternatives ("wins $4" or "a $4 average win").
+  const any = (m) => (m ? Number(m.slice(1).find((v) => v != null)) : null);
   return {
     trades: num(trades),
     winCount: num(winCount),
-    winAvg: winCount ? Number(winCount[2]) : num(winAmount),
+    winAvg: winCount ? Number(winCount[2]) : any(winAmount),
     lossCount: num(lossCount),
-    lossAvg: lossCount ? Number(lossCount[2]) : num(lossAmount),
-    winRatePct: rate ? Number(rate[1] ?? rate[2]) : null,
+    lossAvg: lossCount ? Number(lossCount[2]) : any(lossAmount),
+    winRatePct: rate ? any(rate) : lossRate ? 100 - any(lossRate) : null,
   };
 }
 
@@ -116,11 +128,11 @@ export function tradeExpectancy(text = '') {
   const profitable = per.n > 0n;
 
   const summary = [
-    `Expected profit per trade: ${money(per)}${per.n < 0n ? ' (a loss)' : ''} before any costs.`,
+    `Expected profit per trade: ${money(per)}${per.n < 0n ? ' (a loss)' : per.n === 0n ? ' (zero: it breaks even)' : ''} before any costs.`,
     total ? `Over ${trades} trades that is ${money(total)} (${wins != null ? `${wins}×$${f.winAvg} − ${losses}×$${f.lossAvg}` : `${trades} × ${money(per)}`}).` : null,
     `The win rate is ${percent(winRate)}, and it does not decide profit: each win averages $${f.winAvg} and each loss averages $${f.lossAvg}.`,
-    `The break-even win rate at these sizes is ${percent(breakEvenPct)} (loss ÷ (win + loss)). The strategy ${profitable ? 'clears it' : `needs ${percent(breakEvenPct)} or more to break even`}.`,
-    `Keep running it? ${profitable ? 'Not on these figures alone: the expectancy is positive, but it still needs costs and out-of-sample evidence.' : 'Not on these figures: it loses money on average, and a higher win rate would not fix it unless the payoff changes.'}`,
+    `The break-even win rate at these sizes is ${percent(breakEvenPct)} (loss ÷ (win + loss)). The strategy ${profitable ? 'clears it' : per.n === 0n ? 'sits exactly on it' : `needs ${percent(breakEvenPct)} or more to break even`}.`,
+    `Keep running it? ${profitable ? 'Not on these figures alone: the expectancy is positive, but it still needs costs and out-of-sample evidence.' : per.n === 0n ? 'Not on these figures: it breaks even before costs, so fees and slippage make it lose money.' : 'Not on these figures: it loses money on average, and a higher win rate would not fix it unless the payoff changes.'}`,
     'What the win rate hides: the size of the losses against the wins, the costs and slippage (not in these figures), how many trades the average is based on, and the period it covers.',
     'Evidence still needed: each trade result with its costs; the spread (standard deviation) of results, so the expectancy has a range, not a single number; an out-of-sample period the rule was not tuned on; and the largest run of losses (drawdown).',
   ].filter(Boolean).join(' ');
