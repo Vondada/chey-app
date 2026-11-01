@@ -927,8 +927,9 @@ export function tradingIntent(message, { followup = '', referent = '' } = {}) {
     }
     // "What's MNQ doing in the last hour": a named future wins over a stray word ("last"), not over a known market.
     // "Run a backtest of a long-only momentum strategy": a word after the verb is never a market on its own
-    // (certification run 41262741784, thb-29, fetched the ticker "of"). No market named is no market.
-    if (!futures && FILLER_HINT.test(hinted)) hinted = '';
+    // (certification run 41262741784, thb-29, fetched the ticker "of"). No market named is no market. A word written in
+    // capitals ("Backtest ALL", "Backtest IT") is a ticker the owner named and stays (Codex review on #828).
+    if (!futures && FILLER_HINT.test(hinted) && hinted !== hinted.toUpperCase()) hinted = '';
     return futures && !NAMES[hinted.toLowerCase()] ? futures : hinted;
   };
   // "Analyze the 15 minute ETH chart": the bar size asked for rides along; daily stays the default.

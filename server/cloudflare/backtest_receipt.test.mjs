@@ -138,6 +138,11 @@ test('a backtest that names no market uses bitcoin and says so; a filler word is
   assert.deepEqual(tradingIntent(q), { kind: 'backtest', symbol: 'BTCUSDT', defaulted: true });
   assert.equal(tradingIntent('Backtest SPY over 2008').symbol, 'SPY');
   assert.equal(tradingIntent('Backtest bitcoin').defaulted, undefined);
+  // A ticker written in capitals is the owner's market, even when the word is also a filler word (Codex review on #828).
+  assert.equal(tradingIntent('Backtest ALL').symbol, 'ALL');
+  assert.equal(tradingIntent('Backtest IT').symbol, 'IT');
+  assert.equal(tradingIntent('Analyze the ALL stock chart').symbol, 'ALL');
+  assert.deepEqual(tradingIntent('Paper trade ALL'), { kind: 'watch', symbol: 'ALL' });
   marketUp = true;
   const { done, reply } = await say(q);
   assert.equal(done.execution_receipts?.[0]?.status, 'success');
