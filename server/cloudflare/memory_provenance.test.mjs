@@ -50,6 +50,21 @@ test('after a removed claim, only a sentence reporting the same person\'s words 
   assert.match(sister.text, /Venues near the church are easier for guests\./);
 });
 
+test('a leaked template line with values between the tags is removed whole (run 41267724614, cre-37)', () => {
+  const leak = "I'll cite the calendar's answer. [che-remember] [People] CHE [Projects] [Decisions] [Companies] [Meetings] Meeting - Calendar [Daily] [Knowledge]";
+  assert.equal(stripRememberLeak(leak).text, "I'll cite the calendar's answer.");
+  // Without the marker, two tags side by side still mark the filled-in template.
+  assert.equal(stripRememberLeak('Done. [People] CHE [Projects] [Meetings] Meeting [Daily]').text, 'Done.');
+  // Prose about the categories, two tags, and a real fenced block stay.
+  for (const keep of [
+    'Use [People] for names, [Projects] for work, and [Daily] for logs.',
+    'Use [People] for names and [Projects] for work and [Daily] for logs.',
+    'Pick [People] or [Projects] or [Daily] for it.',
+    'Tag it [People] or [Projects] as you like.',
+    'Answer.\n```che-remember\n[People] Sam [Projects] X [Daily] y\n```',
+  ]) assert.equal(stripRememberLeak(keep).text, keep);
+});
+
 test('"the most recent time you asked about ..." with nothing stored is removed; a reference to this question stays', () => {
   // Certification run 41267724614 (mr-32).
   const q = 'Which of my past questions about insulin was the most recent?';
