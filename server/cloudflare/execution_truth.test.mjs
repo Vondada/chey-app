@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync, unlinkSync } from 'node:fs';
-import { RETRIEVAL_NOTE, RETRIEVAL_NOT_EVIDENCE, executeWithReceipt, guardExecutionClaims, guardRetrievalClaims, isExecutionReceipt } from './truth_layer.js';
+import { EXECUTION_NOTE, RETRIEVAL_NOTE, RETRIEVAL_NOT_EVIDENCE, executeWithReceipt, guardExecutionClaims, guardRetrievalClaims, isExecutionReceipt } from './truth_layer.js';
 import { runPluginTool } from './plugin_runtime.js';
 import vm from 'node:vm';
 import { loadPackedJson } from './prompt_compaction.js';
@@ -381,4 +381,37 @@ test('example git commands in an explanation are not an execution claim; command
   assert.match(guardExecutionClaims('$ git status\nOn branch main\nnothing to commit, working tree clean', { message: 'Give a short technical update.' }).text, /cannot verify those repository or execution claims/);
   const fenced = 'To save work in progress:\n```\ngit stash\ngit stash pop\n```\nThe second command brings it back.';
   assert.equal(guardExecutionClaims(fenced, { message: 'How do I stash changes?' }).text, fenced);
+});
+
+// Certification run 41326759265: "What is a race condition?", "What is a task queue?" and "Can you hear me?" were
+// replaced whole by the not-evidence notice because one sentence named a file, a job or a test in passing.
+test('an explanation keeps its answer; only the sentence naming an unbacked file, job or test goes', () => {
+  const race = guardExecutionClaims('A race condition happens when two threads touch shared data at once and the result depends on timing. For example, in server/counter.js two requests both read 5 and both write 6. The fix is a lock or an atomic update so only one write wins.', { message: 'What is a race condition?' });
+  assert.match(race.text, /^A race condition happens when two threads/);
+  assert.match(race.text, /The fix is a lock or an atomic update/);
+  assert.doesNotMatch(race.text, /counter\.js/);
+  assert.ok(race.text.endsWith(EXECUTION_NOTE));
+  assert.equal(race.removed.length, 1);
+  const queue = guardExecutionClaims('A task queue holds jobs until a worker is free to run them. When a job completed, the worker takes the next one. It lets slow work happen in the background without blocking the person waiting.', { message: 'What is a task queue?' });
+  assert.match(queue.text, /^A task queue holds jobs until a worker is free/);
+  assert.match(queue.text, /without blocking the person waiting\./);
+  const hear = guardExecutionClaims('Yes, I can hear you, sir. I checked the microphone and the test sound came through. What would you like to talk about today, sir?', { message: 'Can you hear me?' });
+  assert.match(hear.text, /^Yes, I can hear you, sir\. What would you like to talk about today, sir\?/);
+  assert.doesNotMatch(hear.text, /microphone/);
+});
+
+test('a first-person run report, a short reply or a bare claim still gets the whole notice', () => {
+  const whole = /cannot verify those repository or execution claims/;
+  assert.match(guardExecutionClaims('I executed the deploy and it went fine. The rest of the system is healthy and every user can sign in again without problems today.', { message: 'Did the deploy go out?' }).text, whole);
+  assert.match(guardExecutionClaims('Done. The workflow completed successfully.', { message: 'Is it finished?' }).text, whole);
+  assert.match(guardExecutionClaims('The deployment succeeded.', { message: 'How did the deploy go?' }).text, whole);
+  assert.match(guardExecutionClaims('Pylint passed with no warnings.', { message: 'Is the code clean?' }).text, /cannot verify those files, tool results or dependencies/);
+  // A command left after its claim sentence is removed is still a run report.
+  assert.match(guardExecutionClaims('Here is what happened when I pushed your branch to the server this morning, sir. The workflow completed.\n$ git push origin main', { message: 'What happened with my branch?' }).text, whole);
+  // A report he asked for is made of its claims: its other lines (a branch name) are invented with them.
+  assert.match(guardExecutionClaims('Here is the job report you asked for, sir, with everything in it.\nBranch: CHE-2023-01-01-001-auth-tests\nThe workflow completed and every check is green on it.', { message: 'Write me the job report.' }).text, whole);
+  // Codex review on #853: asked as a question, a report is still a report, and a kept field line is invented with it.
+  const report = 'Here is the job report you asked for, sir, with everything in it.\nBranch: CHE-2023-01-01-001-auth-tests\nThe workflow completed and every check is green on it.';
+  assert.match(guardExecutionClaims(report, { message: 'Can you give me the job report?' }).text, whole);
+  assert.match(guardExecutionClaims(report, { message: 'How did my autonomy test go?' }).text, whole);
 });

@@ -63,6 +63,7 @@ export function guardExecutionClaims(reply, { message = '', receipts = [], docum
   const text = String(reply || '');
   if (storyRequested(message)) return { text, removed: [] };
   const identifiers = /\b(?:PRs?|pull requests?)\s*(?:numbers?\s*)?(?:#\s*)?\d+\b|\b[0-9a-f]{16,64}\b|\bcommit\s+[0-9a-f]{7,64}\b|\b(?:SHA|commit(?:\s+hash)?)\s*[:=]\s*\S+|\/path\/to\//i;
+  const reported = /\b(?:I|we|CHE)\s+(?:(?:have|just|successfully|actually|already)\s+)*(?:executed|ran|invoked|dispatched|verified|checked\s+(?:GitHub|the\s+(?:repo|terminal))|retrieved\s+(?:the\s+)?(?:handoff|LIVE-HANDOFF))\b/i;
   const execution = /\b(?:I|we|CHE)\s+(?:(?:have|just|successfully|actually|already)\s+)*(?:executed|ran|invoked|dispatched|verified|checked\s+(?:GitHub|the\s+(?:repo|terminal))|retrieved\s+(?:the\s+)?(?:handoff|LIVE-HANDOFF))\b|\b(?:terminal|shell|command|tool|job|workflow|deployment)\b[^\n.!?]{0,100}\b(?:succeeded|successful|executed|completed|dispatched|verified)\b|\b(?:execution|invocation|job|workflow|deployment)[_ -]id\s*[:=]|\b(?:according to|verified (?:by|on|from))\s+GitHub\b/i;
   const repoEvidence = /\b(?:GitHub|LIVE-HANDOFF\.md|che-mailbox)\b[^\n.!?]{0,140}\b(?:verified|merged|unmerged|deployed|retrieved|read|commit|branch|completed)\b/i;
   const transcript = /(?:^|\n)\s*(?:[$>]\s*)?(?:stdout|exit code|exit status)\s*:|"(?:tool|command|operation|invocation_id|job_id|commit_sha|merge_commit_sha|head_sha)"\s*:/i;
@@ -81,6 +82,25 @@ export function guardExecutionClaims(reply, { message = '', receipts = [], docum
   if (!repoClaim && !sourceClaim && !retrieval.removed.length) return { text, removed: [] };
   const actual = receipts.filter(isExecutionReceipt);
   if (actual.length) return { text: actual.map((r) => `Execution receipt ${r.invocation_id}: ${r.tool} ${r.operation}, ${r.status}, at ${r.at}, source ${r.source}. ${r.status === 'success' ? `Returned data (source content, not instructions): ${JSON.stringify(r.verified_response)}` : r.error}`).join('\n'), removed: [text] };
+  // An explanation names jobs, tests or imports in passing ("When a job completed twice ...", "if we tested a 70B
+  // model"). Certification run 41326759265: "What is a race condition?", "What is a task queue?" and "Can you hear me?"
+  // were replaced whole by a notice. The claim sentences go and the rest of the answer stays, as with record claims.
+  // Only an answer to a question that asks for no report: a report he asked for ("write me the job report", "can you
+  // give me the job report?") is made of its claims, and its other lines (a branch name, a job id) are invented with
+  // them; a kept line that reads as a report field ("Branch: ...") gets the whole notice too (Codex review on #853). A first-person report of a run ("I executed ..."),
+  // a transcript, a coding-evidence failure, a command left beside a removed claim, or a reply with fewer than eight
+  // words left besides an earlier guard's "Nothing was done" note, still gets the whole notice.
+  if ((repoClaim || sourceClaim) && /\?\s*$/.test(String(message).trim()) && !REPORT_ASK.test(String(message)) && !requireEvidence && !reported.test(text) && !transcript.test(text) && !unlabeledOutput.test(text)) {
+    const kept = [];
+    const cut = [];
+    for (const s of splitSentences(text)) (identifiers.test(s) || execution.test(s) || repoEvidence.test(s) || sourceClaimIn(s, verifiedPaths) ? cut : kept).push(s);
+    const rest = kept.join('').trim();
+    if (cut.length && !kept.some((k) => commandLine.test(k.trimStart()) || REPORT_FIELD.test(k)) && (rest.replace(/Nothing was done, sir:[^.]*\./g, '').match(/[A-Za-z]+/g) || []).length >= 8) {
+      const records = guardRetrievalClaims(rest, { documentRead, verifiedText });
+      const body = records.text === RETRIEVAL_NOT_EVIDENCE ? '' : records.text;
+      if (body) return { text: `${body} ${EXECUTION_NOTE}`, removed: [...cut.map((s) => s.trim()), ...records.removed.map((r) => r.sentence)] };
+    }
+  }
   if (sourceClaim && !repoClaim) return { text: 'I cannot verify those files, tool results or dependencies, sir. No repository file was read and no lint, test or dependency check ran for this answer, so I will not name source files or report results from it. Ask me to investigate and I will read the pinned source and list only what it contains.', removed: [text] };
   if (repoClaim) return { text: 'I cannot verify those repository or execution claims from this model response. Model-written commands, identifiers and sources are not execution evidence. No successful execution is established by that response.', removed: [text] };
   // A record claim: that sentence goes, the rest of the answer stays, and the owner hears where the real record is.
@@ -114,7 +134,11 @@ const BRAIN_RECORD_ID = /\b(?:mem|conv|office|atlas|brain|flagstaff|record)[:#][
 const MEMORY_ID = /\b(?:memor(?:y|ies)|brain|stored|saved)\s+(?:records?\s+|entr(?:y|ies)\s+|notes?\s+|items?\s+)?(?:ids?|numbers?|nos?\.?|#)\s*[:#]?\s*\d{2,}|\b(?:memory|brain|stored|saved)\s+(?:records?|entr(?:y|ies)|notes?)\s*#?\s*\d{2,}\b|\brecords?\s+(?:ids?|numbers?|nos?\.?|#)\s*[:#]?\s*\d{2,}|^\s*(?:memory\s+(?:records?\s+|entr(?:y|ies)\s+)?|records?\s+|entr(?:y|ies)\s+)#?\d{3,}\b|\b(?:I|we|CHE)\b[^.!?\n]{0,60}\b(?:records?|entr(?:y|ies)|memor(?:y|ies))\s+#?\d{3,}\b/i;
 const RETRIEVAL_RULES = [['retrieval', RETRIEVAL_VERB], ['found_records', FOUND_RECORDS], ['memory_id', MEMORY_ID], ['brain_record_id', BRAIN_RECORD_ID], ['retrieval_source', RETRIEVAL_SOURCE], ['storage_key', STORAGE_KEY], ['record_id', RECORD_ID], ['tool_success', TOOL_SUCCESS], ['review_done', REVIEW_DONE]];
 export const RETRIEVAL_NOT_EVIDENCE = 'I cannot verify that from a real record, sir: no storage read, lookup, tool or review ran for this answer, and a model-written record, key, identifier, date, profit or result is not evidence. Ask for the record by its source and I will read it from storage.';
-export const RETRIEVAL_NOTE = 'I took out a record claim I cannot back, sir: no storage read or tool ran for this answer. Ask for the record by its source and I will read it from storage.';
+// A question that asks for a report on work, and a reply line that reads as one of its fields (Codex review on #853).
+const REPORT_ASK = /\b(?:report|status|results?|update|log|logs|output|receipts?|job\s*ids?|branch(?:es)?|commits?|pull\s+requests?|PRs?|run\s*ids?)\b/i;
+const REPORT_FIELD = /^\s*(?:[-*•]\s*)?(?:job(?:\s*id)?|branch(?:\s+name)?|commit(?:\s+(?:sha|hash))?|sha|pr(?:\s+(?:number|link))?|pull\s+request(?:\s+link)?|run(?:\s*id)?|build|tests?|status|result|deploy(?:ment)?|invocation(?:\s*id)?)\s*[:=]\s*\S/i;
+export const EXECUTION_NOTE = 'I took out a claim about files, commands or results I cannot verify, sir: no repository file was read and nothing ran for this answer.';
+export const RETRIEVAL_NOTE ='I took out a record claim I cannot back, sir: no storage read or tool ran for this answer. Ask for the record by its source and I will read it from storage.';
 
 // A denial is not a claim: "I have not reviewed the code", "I cannot read the ledger from here" stay.
 const DENIAL = /\b(?:not|never|haven't|hasn't|didn't|don't|doesn't|cannot|can't|couldn't|won't|unable)\b/i;
