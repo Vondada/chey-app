@@ -14,7 +14,8 @@ changes them. Do not delete the old values: the change is recorded in `docs/CHE_
 
 | Fact | State | Time | Evidence |
 |---|---|---|---|
-| `main` is `1f611d56` (#843; after #844 `f92959fa`) | verified | 2026-11-01 10:59 UTC | merge receipts |
+| `main` is `20418da5` (#845; after #846 `14e80b14`) | verified | 2026-11-01 12:24 UTC | merge receipts |
+| `main` is `1f611d56` (#843; after #844 `f92959fa`) | reported (superseded above) | 2026-11-01 10:59 UTC | merge receipts |
 | `main` is `898463f9` (#842; code at `45dc76ce`, #841) | reported (superseded above) | 2026-11-01 09:41 UTC | merge receipts |
 | `main` is `306c7aa2` (#840) | reported (superseded above) | 2026-11-01 09:31 UTC | merge receipts |
 | `main` is `01721ea4` (#837; code at `174ebc95`, #836) | reported (superseded above) | 2026-11-01 07:16 UTC | merge receipts |
@@ -29,6 +30,8 @@ changes them. Do not delete the old values: the change is recorded in `docs/CHE_
 
 | Fact | State | Time | Evidence |
 |---|---|---|---|
+| Full 600 certification, fresh, on `20418da5`: 429 pass, 171 fail, 0 blocked | verified | 2026-11-01 12:53 UTC | run `41307299628` |
+| Worker deploy of `20418da5` (#845) succeeded, live commit checked | verified | 2026-11-01 12:33 UTC | deploy run `41306333556` |
 | Full 600 certification, fresh, on `1f611d56`: 425 pass, 175 fail, 0 blocked | verified | 2026-11-01 11:28 UTC | run `41300811270` |
 | Worker deploy of `1f611d56` (#843) succeeded, live commit checked | verified | 2026-11-01 11:07 UTC | deploy run `41299887465` |
 | Full 600 certification, fresh, on `898463f9`: 428 pass, 172 fail, 0 blocked | verified | 2026-11-01 ~10:08 UTC | run `41294923116` |
