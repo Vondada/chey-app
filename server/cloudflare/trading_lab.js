@@ -825,6 +825,45 @@ const NOT_TICKERS = new Set(['I', 'CHE', 'AI', 'OK', 'CAGR', 'ETF', 'USD', 'P', 
 const POLITE_COMMAND = /^(?:(?:hey\s+)?(?:che|chey|chay)[,:]?\s+)?(?:can|could|would|will)\s+you\s+(?:please\s+)?(?:backtest|analy[sz]e|scan|run|test)\b/i;
 // Words after the verb that are not a market ("backtest a crossover", "the bitcoin backtest result").
 const FILLER_HINT = /^(?:a|an|the|my|your|our|this|that|it|its|of|some|me|result|results|strategy|strategies|crossover|data|history|everything|all)\b/i;
+// Common English words that are never a market when written in lower case ("a backtest shows", "backtest pair trading",
+// "run my backtest with fees"). Certification thb-26, thb-35 and thb-46 fetched "shows", "pair" and "with" as tickers and
+// reported the Yahoo 404 as a data outage. A word written in capitals ("Backtest ALL") is still the owner's ticker.
+const COMMON_WORDS = new Set(`a an the and or but nor so yet if then than as at by to in on of off for from into onto with
+  without within over under about after before since until till during per via vs versus like up down out
+  i me my mine we us our you your he him his she her it its they them their this that these those who what which why how
+  when where there here all any each every both some none more most less few many much one two three four five six
+  ten first last next same other own only just also even still again very too not no yes ok okay please sir
+  is am are was were be been being do does did done has have had can could will would shall should may might must
+  show shows shown give gives get gets got make makes made set sets use uses used using run runs ran try tries test
+  tests tell tells call calls take takes see sees let lets put keep keeps need needs want wants say says said report
+  pair pairs fee fees cost costs rule rules model idea plan plans entry exit stop stops loss gain gains win wins
+  lose year years month week day days time times price chart trend swing long short spread ratio risk money cash
+  trade stock bond fund index basket real true false exact full whole new old good bad best big small high low
+  zero none half way part side bar bars fill fills close open data note result score sharpe alpha beta`.split(/\s+/));
+const notAMarket = (word) => FILLER_HINT.test(word) || COMMON_WORDS.has(String(word).toLowerCase().split(/\s+/)[0]);
+// A command to run something: the request opens with the verb ("Backtest SPY", "Run a backtest of ...", "Che, please test
+// bitcoin"), or asks politely (POLITE_COMMAND). "A backtest shows a Sharpe of 2.5 ... What does that suggest?" is not one.
+const RUN_COMMAND = /^(?:(?:hey\s+)?(?:che|chey|chay)[,:]?\s+)?(?:please\s+)?(?:(?:i\s+(?:want|need|would\s+like)\s+(?:you\s+)?to|i'd\s+like\s+(?:you\s+)?to|let's|go\s+ahead\s+and|now)\s+)?(?:back-?test|re-?run|run|re-?do|test|do|perform|try|start|launch|execute|kick\s+off|simulate|show|give|report|get|compute|calculate|check)\b/i;
+// A question about how backtests work ("Why can a backtest not predict next year?"), not a request for a result.
+const IDEA_QUESTION = /^(?:(?:hey\s+)?(?:che|chey|chay)[,:]?\s+)?(?:why|how|explain|describe|define|is|are|does|do|can|could|should)\b/i;
+// A question sentence after a statement ("... only with fills at the same bar. What does that suggest?") asks about it.
+const LATER_QUESTION = /[.!;:]\s+(?:so\s+|and\s+)?(?:what|why|how|is|are|was|were|does|do|did|should|can|could|would|which)\b[^.!]*\?/i;
+// A strategy across two or more markets at once. The lab tests one market at a time, so these are declined, never faked.
+const MULTI_MARKET = /\b(?:pairs?[\s-]+trad\w*|spread[\s-]+trad\w*|stat(?:istical)?[\s-]*arb\w*|cointegrat\w*|long[\s/-]+short\s+(?:pairs?|spread)|(?:two|2|several|multiple)\s+(?:correlated\s+)?(?:etfs|stocks|assets|markets|tickers|coins|instruments))\b/i;
+// A result for a time that has not happened yet ("next year", "in 2030", "tomorrow") or a promise that it will profit.
+const FUTURE_WORDS = /\b(?:next\s+(?:year|month|week|quarter|decade)|tomorrow|in\s+the\s+future|future\s+(?:returns?|results?|profits?|performance|gains?))\b/i;
+const PROMISE = /\b(?:will|would|is\s+going\s+to|gonna)\s+(?:be\s+|stay\s+|remain\s+|keep\s+)?(?:profitable|make\s+money|win|beat|outperform|profit)\b|\b(?:guarantee|promise|predict)\w*\b/i;
+function yearsIn(text) {
+  return [...String(text).matchAll(/(?<![$€£\d.,])\b((?:19|20)\d\d)\b(?!\s*(?:dollars?|usd|\$|k\b|shares|contracts))/gi)].map((m) => Number(m[1]));
+}
+/** What the request asks about the future: { future, promise, futureYears, pastYears }. */
+export function futureAsk(message, now = Date.now()) {
+  const t = String(message || '');
+  const thisYear = new Date(now).getUTCFullYear();
+  const years = yearsIn(t);
+  const futureYears = years.filter((y) => y > thisYear);
+  return { future: futureYears.length > 0 || FUTURE_WORDS.test(t), promise: PROMISE.test(t), futureYears, pastYears: years.filter((y) => y <= thisYear) };
+}
 // The message names a market: a known name, the Nasdaq futures, or an upper-case ticker ("SPY", "AAPL").
 function namesMarket(text, futures = '') {
   if (futures) return true;
@@ -892,7 +931,7 @@ const SUBJECT_KINDS = new Set(['analyze', 'backtest', 'watch']);
  * comes from the new words and everything else from the earlier request, so "Analyze the AAPL chart" → "what about
  * bitcoin?" reads bitcoin, never AAPL again. A follow-up that names neither asks one question (kind 'clarify').
  */
-export function tradingIntent(message, { followup = '', referent = '' } = {}) {
+export function tradingIntent(message, { followup = '', referent = '', now = Date.now() } = {}) {
   if (followup) {
     const own = tradingIntent(followup);
     if (own) return own;
@@ -920,7 +959,7 @@ export function tradingIntent(message, { followup = '', referent = '' } = {}) {
     let hinted = m ? m[1].trim() : '';
     // "Backtest a crossover on BTC", "the bitcoin backtest result": a market named elsewhere in the message beats a
     // stray word after the verb ("a", "result").
-    if (!futures && (!hinted || FILLER_HINT.test(hinted))) {
+    if (!futures && (!hinted || notAMarket(hinted))) {
       const named = Object.keys(NAMES).find((k) => new RegExp(`(?:^|[^a-z0-9&])${k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![a-z0-9])`, 'i').test(text))
         || (text.match(/\b[A-Z]{2,5}\b/g) || []).find((w) => !NOT_TICKERS.has(w));
       if (named) hinted = named;
@@ -929,7 +968,7 @@ export function tradingIntent(message, { followup = '', referent = '' } = {}) {
     // "Run a backtest of a long-only momentum strategy": a word after the verb is never a market on its own
     // (certification run 41262741784, thb-29, fetched the ticker "of"). No market named is no market. A word written in
     // capitals ("Backtest ALL", "Backtest IT") is a ticker the owner named and stays (Codex review on #828).
-    if (!futures && FILLER_HINT.test(hinted) && hinted !== hinted.toUpperCase()) hinted = '';
+    if (!futures && hinted && notAMarket(hinted) && hinted !== hinted.toUpperCase()) hinted = '';
     return futures && !NAMES[hinted.toLowerCase()] ? futures : hinted;
   };
   // "Analyze the 15 minute ETH chart": the bar size asked for rides along; daily stays the default.
@@ -941,7 +980,34 @@ export function tradingIntent(message, { followup = '', referent = '' } = {}) {
   // both go to the answer path, where the truth stages apply. Certification run 41222062110: 22 such questions were sent
   // to the price lookup and answered "The free data source did not answer".
   const notARun = NOT_A_RUN.test(text) || (CONCEPT_ASK.test(text) && !POLITE_COMMAND.test(text) && !namesMarket(text, futures));
-  if (!notARun && /\bbacktest/i.test(text) && !/\b(?:code|app|feature|function)\b/i.test(text)) { const named = pick(); return sized({ kind: 'backtest', symbol: named || 'BTCUSDT', ...(named ? {} : { defaulted: true }) }); }
+  const backtestAsk = /\bbacktest/i.test(text) && !/\b(?:code|app|feature|function)\b/i.test(text);
+  const command = RUN_COMMAND.test(text) || POLITE_COMMAND.test(text);
+  // A result for a date that has not come ("the result I would get on 1 January 2030", "give me the numbers for 2031"):
+  // there is no data to run on. Declined plainly, nothing is run (certification thb-41). A question about the idea ("Why
+  // can a backtest not predict next year?") is answered normally. A past period with a promise ("over 2010 to 2024 and
+  // tell me it will be profitable next year") still runs the past, with the promise declined in backtestCaveats (thb-40).
+  if (backtestAsk && !NOT_A_RUN.test(text)) {
+    const when = futureAsk(text, now);
+    if (when.future && !when.pastYears.length && (command || !IDEA_QUESTION.test(text))) {
+      const asked = when.futureYears.length ? `for ${[...new Set(when.futureYears)].join(' and ')}` : 'for a future date';
+      return { kind: 'decline', about: 'backtest', question: `I can't report a backtest result ${asked}, sir: that time hasn't happened, so no market data exists for it, and past results cannot predict it. Nothing was run. I can backtest a market on the history that exists, for example "backtest bitcoin since 2024".` };
+    }
+  }
+  if (!notARun && backtestAsk) {
+    // A statement or question that mentions a backtest ("A backtest shows a Sharpe of 2.5 ... What does that suggest?")
+    // is about the idea and goes to the answer path. Only a command, or a request that names a real market and asks
+    // nothing else ("What is the bitcoin backtest result?"), runs one (certification thb-26).
+    const named = pick();
+    if (!command && (!named || LATER_QUESTION.test(text))) return null;
+    // Pair trading and other two-market strategies: the lab runs one market at a time, so it says so instead of running
+    // something else and reporting its numbers as the asked strategy (certification thb-35).
+    if (MULTI_MARKET.test(text)) {
+      return { kind: 'decline', about: 'backtest', question: `I can't run that backtest, sir: my backtests test one market at a time on my built-in rules, so a pair or spread strategy across two markets is not something I can test yet, and I have no losing-trade count for it. Nothing was run. I can backtest either market on its own, for example "backtest SPY".` };
+    }
+    // What no run can give (a promise of profit, zero fees called realistic) rides along, said even if the data fails.
+    const note = backtestCaveats(text);
+    return sized({ kind: 'backtest', symbol: named || 'BTCUSDT', ...(named ? {} : { defaulted: true }), ...(note ? { note: ` ${note}` } : {}) });
+  }
   // A watch needs a market. Asked for none ("place a paper trade"), CHE asks which one instead of looking up a ticker.
   if (/\b(?:paper trade|watch)\b[\s\S]{0,30}/i.test(text) && /\b(?:paper|trade|market)\b/i.test(text)) {
     const symbol = pick();
@@ -969,9 +1035,15 @@ export function backtestScopeNote(message, candles, { defaulted = false, label =
   // No market named: say which one was used, so a bitcoin result is never read as the market the owner had in mind.
   if (defaulted) notes.push(`You didn't name a market, sir, so I used ${label || 'bitcoin'}; name a ticker or coin for another.`);
   const customRule = /\b\d+\s*\/\s*\d+\b|\b(?:moving[\s-]+averages?|sma|ema|cross(?:over|es)?|rsi|macd|bollinger|stochastic|momentum|mean[\s-]+reversion|dollar[\s-]+cost|dca|buy(?:ing)?\s+(?:\w+\s+){0,3}(?:daily|weekly|monthly|when|whenever|if|every))\b/i;
+  const builtIn = () => Object.values(STRATEGIES).map((s) => s.name.toLowerCase()).join(', ');
   if (customRule.test(t)) {
-    notes.push(`I can't run a rule you describe yet, sir, so these are my own built-in rules (${Object.values(STRATEGIES).map((s) => s.name.toLowerCase()).join(', ')}), not the one you asked for.`);
+    notes.push(`I can't run a rule you describe yet, sir, so these are my own built-in rules (${builtIn()}), not the one you asked for.`);
+  } else if (/\b(?:my|our)\s+(?:own\s+)?(?:strateg(?:y|ies)|system|rules?|setup|algo\w*|model)\b/i.test(t)) {
+    // "Backtest my strategy": CHE has no copy of the owner's rules, so it says whose rules the figures are.
+    notes.push(`I don't have your strategy's rules, sir, so these are my own built-in rules (${builtIn()}), not yours.`);
   }
+  const caveats = backtestCaveats(t);
+  if (caveats) notes.push(caveats);
   // Years from date expressions only ("from 2020 to 2024", "since 2021", "over 2008", "2020-2024"); an amount such as
   // "$2000 initial account" or "2000 dollars" is never a requested year (Codex review on #823).
   const NOT_MONEY = '(?!\\d|[,.]\\d|\\s*(?:dollars?|usd\\w*|eur\\w*|bucks|k\\b|initial|account|balance|capital|shares|contracts|units))';
@@ -991,6 +1063,21 @@ export function backtestScopeNote(message, candles, { defaulted = false, label =
   }
   if (/\b(?:total|overall|cumulative|annual(?:ised|ized)?)\s+returns?\b|\bcagr\b/i.test(t)) {
     notes.push('I report results per trade in R (multiples of the risk taken), not as a total percentage return.');
+  }
+  return notes.join(' ');
+}
+
+/// What a backtest request asks that no run can honestly give, said whether or not the data loaded: a promise of future
+/// profit (certification thb-40), or calling a zero-cost run realistic (thb-46). Empty when it asks neither.
+export function backtestCaveats(message) {
+  const t = String(message || '');
+  const notes = [];
+  const when = futureAsk(t);
+  if (when.promise || when.future) {
+    notes.push("I can't promise future profits, sir: a backtest shows only how these rules did in the past, and past results do not guarantee future ones.");
+  }
+  if (/\b(?:zero|no|without|free\s+of)\s+(?:fees?|commissions?|costs?|slippage|spreads?)\b|\b(?:fees?|commissions?|costs?|slippage|spreads?)\b[^.]{0,25}\b(?:zero|0|none|off|free|removed|ignored|turned\s+off)\b/i.test(t)) {
+    notes.push('Zero fees are not realistic, sir: real trades pay commissions, spreads and slippage. My backtest figures are before costs, so read them as optimistic, not realistic.');
   }
   return notes.join(' ');
 }

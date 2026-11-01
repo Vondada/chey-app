@@ -13335,8 +13335,8 @@ export class CheState extends DurableObject {
         }
         const trade = tradingIntent(message, { followup: followupWords, referent: referentText });
         if (trade) {
-          // A follow-up that names neither a market nor a bar size ("and the other one?"): one question, no model guess.
-          if (trade.kind === 'clarify') return ndjsonReply(trade.question, { source: 'che_trading', ok: false, model_calls: 0, clarification: true });
+          // A follow-up naming no market or bar size ("and the other one?"), or a backtest no run can give: no model guess.
+          if (trade.question) return ndjsonReply(trade.question, { source: 'che_trading', ok: false, model_calls: 0, clarification: trade.kind == 'clarify' });
           if (trade.kind === 'book') {
             const book = await this.tradingTick().catch(() => null) || await readBook(this.ctx.storage);
             return ndjsonReply(speakBook(book), { source: 'che_trading' });
@@ -13368,7 +13368,7 @@ export class CheState extends DurableObject {
             await recordReceipt(this.ctx.storage, { ...receipt, key: `execution:${receipt.invocation_id}` }).catch(() => null);
             if (receipt.status !== 'success') {
               const why = run?.data?.error || 'The backtest could not run.';
-              return ndjsonReply(`${why} Try a ticker like AAPL or a coin like bitcoin, sir.`, { source: 'che_trading', ok: false, execution_receipts: [receipt] });
+              return ndjsonReply(`${why} Try a ticker like AAPL or a coin like bitcoin, sir.${trade.note || ''}`, { source: 'che_trading', ok: false, execution_receipts: [receipt] });
             }
             const note = backtestScopeNote(rawMessage, run.data.candles, { defaulted: trade.defaulted, label: run.data.label });
             return ndjsonReply([note, speakBacktest(run.data.label, candleSpan(run.data.candles, interval), run.results)].filter(Boolean).join('\n'),

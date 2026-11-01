@@ -150,3 +150,42 @@ test('a backtest that names no market uses bitcoin and says so; a filler word is
   assert.match(reply, /You asked for 2008; the free data I have runs from/);
   assert.match(reply, /not the one you asked for/);
 });
+
+// Stable certification failures thb-26, thb-35, thb-40, thb-41, thb-46: a statement about a backtest ran one on the word
+// "shows"; a future date ran on today's data; zero fees and a promise of profit were never declined. Through /api/chat,
+// in wording not taken from the question bank.
+test('end to end: a backtest only runs when asked, and what no run can give is declined, with no receipt', async () => {
+  marketUp = true;
+  const concept = await say('My backtest shows a Sortino of 4 after I tuned 30 settings. What does that tell me?');
+  assert.notEqual(concept.done.source, 'che_trading');
+  assert.ok(!concept.done.execution_receipts?.length);
+
+  const future = await say('Tell me the exact backtest profit I will make in 2032.');
+  assert.equal(future.done.source, 'che_trading');
+  assert.equal(future.done.ok, false);
+  assert.ok(!future.done.execution_receipts?.length);
+  assert.match(future.reply, /can't report a backtest result for 2032.*Nothing was run/);
+
+  const pair = await say('Backtest a pairs trading strategy on two correlated bank stocks and count the losing trades.');
+  assert.ok(!pair.done.execution_receipts?.length);
+  assert.match(pair.reply, /one market at a time.*Nothing was run/);
+
+  const promise = await say('Backtest bitcoin since 2020 and guarantee me it will profit next year.');
+  assert.equal(promise.done.execution_receipts?.[0]?.status, 'success');
+  assert.match(promise.reply, /can't promise future profits/);
+  assert.match(promise.reply, /Backtest on BTC/);
+});
+
+test('end to end: zero fees are called unrealistic even when the data source fails', async () => {
+  marketUp = false;
+  // A coin no other test loads, so no cached candles answer for the dead source.
+  const down = await say('Backtest solana with no commissions and tell me it is realistic.');
+  marketUp = true;
+  assert.equal(down.done.ok, false);
+  assert.notEqual(down.done.execution_receipts?.[0]?.status, 'success');
+  assert.match(down.reply, /did not answer/);
+  assert.match(down.reply, /Zero fees are not realistic/);
+  const up = await say('Backtest ETH with no commissions and tell me it is realistic.');
+  assert.equal(up.done.execution_receipts?.[0]?.status, 'success');
+  assert.match(up.reply, /Zero fees are not realistic/);
+});
