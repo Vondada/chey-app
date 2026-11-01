@@ -294,6 +294,30 @@ test('chat: plan, then "find the closest realistic solution" runs the lab on it;
   assert.equal(reopened.done.sim_id, lab.done.sim_id);
 });
 
+test('chat: a random run id never reads as a secret, so the Brain record is always written (CI flake: id ending "-2fa")', { skip: sqlite.skip }, async () => {
+  // The id was `sim-` plus the first 12 characters of a UUID ("sim-1d5d64df-2fa"). One time in 4096 the
+  // 3-character group after the hyphen is "2fa", the Brain's secret gate reads the word "2fa" in the
+  // record's source and refuses the whole record. Every UUID here has that group.
+  const real = crypto.randomUUID;
+  let n = 0;
+  crypto.randomUUID = () => `${(n++).toString(16).padStart(8, '0')}-2fa0-4000-8000-${real.call(crypto).slice(-12)}`;
+  try {
+    const che = await owner();
+    const planned = await che.say('CHE, design an Iron Man suit that can fly and estimate the cost');
+    const lab = await che.say('Find the closest realistic solution');
+    assert.equal(lab.route, 'che_sim_lab');
+    assert.match(lab.done.sim_id, /^sim-[A-Za-z0-9-]{4,64}$/, 'the id still matches the /api/sims/<id> route');
+    assert.equal((await che.get(`/api/sims/${lab.done.sim_id}`)).status, 200);
+    const record = new (await import('./brain_store.js')).CheBrainStore(che.storage).get(`sim_run:${lab.done.sim_id}`);
+    assert.equal(record?.kind, 'simulation_run', `Brain record for ${lab.done.sim_id}`);
+    const planRecord = new (await import('./brain_store.js')).CheBrainStore(che.storage).get(`project_plan:${planned.done.plan_id}`);
+    assert.ok(planRecord, `Brain record for ${planned.done.plan_id}`);
+  } finally {
+    delete crypto.randomUUID;
+    if (crypto.randomUUID !== real) crypto.randomUUID = real;
+  }
+});
+
 test('chat: a named idea is planned and simulated in one turn; no idea at all asks which; weapons refused and not saved', { skip: sqlite.skip }, async () => {
   const che = await owner();
   const none = await che.say('Find the closest realistic solution');
