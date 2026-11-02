@@ -14525,6 +14525,7 @@ export class CheState extends DurableObject {
               ? soulProvenance(soulProfile, { applied: false, route: 'cache', reason: 'this reply came from the answer cache' })
               : soulProvenance(soulProfile, { applied: Boolean(answer?.served_by), route: answer?.served_by ? 'model' : 'handler', reason: answer?.served_by ? '' : 'no model call produced this reply' }),
             served_by: answer?.served_by || null,
+            guard_trace: verified.trace,
           }),
         ]).join('\n') + '\n', {
           headers: { 'Content-Type': 'application/x-ndjson; charset=utf-8', 'Cache-Control': 'no-store' },
