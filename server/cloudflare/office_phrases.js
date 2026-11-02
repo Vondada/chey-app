@@ -23,6 +23,11 @@ function roleAgent(words) {
 // ("don't reassign …") or one that waits on something ("… after I approve it", "once I send the brief") is not one.
 const NEGATED = /\b(?:don'?t|do not|never|no need to|stop|not yet)\b/;
 const CONDITIONAL = /\b(?:if|unless|once|when|whenever|after|until|before|later|tomorrow|tonight|next (?:week|month|time))\b/;
+const ASSIGN_WORK = /\b(?:assign|give|hand|delegate|route|send)\b.*\b(?:tasks?|jobs?|work|it|this|that)\b.*\b(?:agents?|desks?|coworkers?)\b|\b(?:assign|give|hand|delegate|route|send)\b.*\b(?:agents?|desks?|coworkers?)\b.*\b(?:tasks?|jobs?|work)\b/;
+const NONEXISTENT_AGENT = /\b(?:agents?|desks?|coworkers?)\s+(?:that|which|who)\s+(?:does not|doesn't|doesnt|do not|don't|dont)\s+exist\b|\b(?:nonexistent|non existent|fake|imaginary|made up|fictional|invented|unknown)\s+(?:agents?|desks?|coworkers?)\b/;
+const CALLED_AGENT = /\b(?:agent|desk|coworker)\s+(?:called|named)\s+([a-z][a-z0-9]*)\b/;
+const NAMED_AGENT = /\bto\s+(?:the\s+)?agent\s+([a-z][a-z0-9]*)\b|\bto\s+([a-z][a-z0-9]*)\s+the\s+agent\b/;
+const NOT_A_NAME = /^(?:that|which|who|with|for|and|to|a|an|the|in|on|of|is|was|it|this|you|me|my|your|their|desk|queue|team|office|called|named)$/;
 function notAnOrderNow(t) {
   return NEGATED.test(t) || CONDITIONAL.test(t);
 }
@@ -130,6 +135,14 @@ export function matchOfficePhrase(raw) {
     return { type: 'goal', goal: (`Draft a tonight pack${rest ? ` ${rest}` : ''}`).trim() };
   }
 
+  // "Assign a task to an agent that does not exist", "give the job to the agent called Zephyr": work for a desk that is not
+  // on the roster is refused, never handed to an invented one (certification run 19, oac-41: the model made up "Nova's
+  // Twin" and reported its task finished). worker.js checks a named agent against the live team first.
+  if (ASSIGN_WORK.test(t)) {
+    const named = (t.match(CALLED_AGENT) || t.match(NAMED_AGENT) || []).slice(1).find(Boolean) || '';
+    if (NONEXISTENT_AGENT.test(t)) return { type: 'unknownAgent', name: '' };
+    if (named && !NOT_A_NAME.test(named) && !AGENTS.includes(named)) return { type: 'unknownAgent', name: cap(named) };
+  }
   // "Ask the writing agent to draft a memo": the desk with that role gets the task. A role the roster does not
   // have ("the travel agent") is not the Office, so it falls through.
   const delegate = original.match(/^(?:(?:hey )?(?:che|chay|chey)[, ]+)?(?:please )?(?:ask|tell|have|get|let) the ((?:[a-z]+ )?[a-z]+) (?:agent|desk|department|director|lead|head)(?: to|,)? (.{4,})$/i);

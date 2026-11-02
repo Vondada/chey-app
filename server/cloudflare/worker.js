@@ -235,7 +235,7 @@ import {
 import { matchOfficePhrase, speakGoalPlan, speakOfficeAgentMore, speakOfficeBoard } from './office_phrases.js';
 import { advanceOfficeJobs, officeJobView, officeJobsView, planOfficeJob, speakOfficeJob } from './office_jobs.js';
 import { headRecord, officeOrg, speakOfficeOrg } from './office_org.js';
-import { assertOwnerTalksToCheOnly, codexWorkPacket } from './office_router.js';
+import { assertOwnerTalksToCheOnly, codexWorkPacket, OFFICE_AGENTS } from './office_router.js';
 import {
   mlProjectFromResult,
   mlReadiness,
@@ -10573,7 +10573,7 @@ export class CheState extends DurableObject {
           await this.dropHeldActions();
           const receipt = await commitReceipt(this.env, { ref: commitAsk.ref, changes: commitAsk.changes, verify: commitAsk.verify, runtime: runtimeVersion(this.env), client: body.client_app, fetcher: fetch })
             .catch(() => ({ commit: null, evidence: [], missing: ['The commit lookup failed inside CHE; nothing is verified.'] }));
-          return ndjsonReply(speakReceipt(receipt, commitAsk), {
+          return ndjsonReply(speakReceipt(receipt, { ...commitAsk, deployAsk: /\bdeploy/i.test(rawMessage) }), {
             source: 'che_commit_receipt', ok: Boolean(receipt.commit), model_calls: 0, deploy_receipt: receipt,
             evidence_links: receipt.evidence,
             execution_receipt: receipt.commit ? { tool: 'github', operation: 'read_commit_and_runs', status: 'success', source: receipt.commit.url, commit_sha: receipt.commit.sha } : null,
@@ -10966,7 +10966,7 @@ export class CheState extends DurableObject {
           ? { kind: 'google', text: message, passthrough: true }
           : memoryRoute
             ? { kind: 'memory', text: message, passthrough: true }
-            : interpretOwnerTurn(message, { history: ownerHistory, hasHeldAction: Boolean(heldPeek) });
+            : interpretOwnerTurn(message, { history: ownerHistory, hasHeldAction: Boolean(heldPeek), hasContext: Boolean(body.attachment || body.screen_context) });
         // The reply model reads a vague turn itself; this extra read is only worth
         // its cost when there is conversation for it to resolve against. A turn whose whole sentence
         // the frame reads without loss ("CHE, switch to paper trading") is not vague: reading it
@@ -11897,7 +11897,15 @@ export class CheState extends DurableObject {
 
         // The Office by voice. CHE answers from the live board; agents never speak.
         // Shortcut commands are short; a long pasted message is conversation.
-        const officePhrase = message.length > 400 ? null : matchOfficePhrase(message);
+        let officePhrase = message.length > 400 ? null : matchOfficePhrase(message);
+        if (officePhrase?.type === 'unknownAgent') {
+          const desks = [...new Set([...OFFICE_AGENTS.map((n) => n[0].toUpperCase() + n.slice(1)), ...(data.team || []).filter((a) => a?.name && !a.retired).map((a) => String(a.name))])];
+          if (officePhrase.name && desks.some((n) => n.toLowerCase() === officePhrase.name.toLowerCase())) officePhrase = null;
+          else {
+            const roster = desks.slice(0, 12).join(', ');
+            return ndjsonReply(`There is no ${officePhrase.name ? `agent called ${officePhrase.name}` : 'such agent'} in the Office, sir: that agent does not exist, so I assigned nothing and nothing finished. The Office desks are ${roster}. Name one and I will assign the task to it.`, { source: 'che_office', office: 'unknownAgent', ok: false, model_calls: 0 });
+          }
+        }
         if (officePhrase?.type === 'goal') {
           const plan = await this.officeGoal(data, officePhrase.goal);
           return ndjsonReply(plan.reply, { office: 'goal', jobs: plan.jobs.length });
@@ -12388,7 +12396,7 @@ export class CheState extends DurableObject {
         // talks with the owner that relate to this message.
         await syncWarRoomMemories(this.ctx.storage, data).catch(() => 0);
         const rememberedContext = ownerDevice
-          ? redactBrainText(rememberedText(await recallMemories(this.ctx.storage, message).catch(() => [])), message)
+          ? redactBrainText(rememberedText(await recallMemories(this.ctx.storage, message, { ownerWordsOnly: true }).catch(() => [])), message)
           : '';
         // CHE User Knowledge Bundle: canonical items from pgvector. The router
         // sends each engine only the data classes it is authorized for.

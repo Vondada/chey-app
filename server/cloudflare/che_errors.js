@@ -98,10 +98,22 @@ const PROVIDER_DUMP = /all ai engines failed|enospc|stack trace|<html|pollinatio
 const PROVIDER_STATUS = /\b(?:http(?:\/\d(?:\.\d)?)?|status|code|error)\W{0,4}(?:401|402|404|429)\b|\b(?:401|402|404|429)\W{1,4}(?:unauthorized|payment required|not found|too many requests)/i;
 const CREDENTIAL = /\bgsk_[a-z0-9]|\bsk-[a-z0-9]{2,}|\bAIza[0-9a-z_-]{20,}|\bBearer\s+[a-z0-9._~+/=-]{8,}/i;
 
-export function sanitizeOwnerText(text, { truncate = true } = {}) {
+// A status code the owner's own message names is the subject of the answer, not a provider failure: "What does HTTP status
+// 404 mean?" was answered with the outage notice (certification run 19, csd-07).
+const STATUS_CODE = /\b(?:401|402|404|429)\b/g;
+// A question about HTTP or status codes in general ("why do APIs return a not-found error?") makes every code a subject.
+const ABOUT_CODES = /\b(?:http|status\s+codes?|error\s+codes?|response\s+codes?|not\s+found\s+errors?|rate[-\s]limit\w*)\b/i;
+function codesAsked(message) {
+  const text = String(message || '');
+  return ABOUT_CODES.test(text) ? new Set(['401', '402', '404', '429']) : new Set(text.match(STATUS_CODE) || []);
+}
+
+export function sanitizeOwnerText(text, { truncate = true, message = '' } = {}) {
   const raw = String(text || '');
   if (!raw) return ownerFacingMessage('temporary_cloud_unavailable');
-  if ((PROVIDER_DUMP.test(raw) || PROVIDER_STATUS.test(raw) || CREDENTIAL.test(raw))
+  const asked = codesAsked(message);
+  const statusDump = PROVIDER_STATUS.test(asked.size ? raw.replace(STATUS_CODE, (code) => (asked.has(code) ? 'NNN' : code)) : raw);
+  if ((PROVIDER_DUMP.test(raw) || statusDump || CREDENTIAL.test(raw))
       && raw.length > 120) {
     return ownerFacingMessage('temporary_cloud_unavailable');
   }

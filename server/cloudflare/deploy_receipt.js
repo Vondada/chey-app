@@ -239,15 +239,28 @@ export async function commitReceipt(env, { ref = 'main', changes = true, verify 
   return receipt;
 }
 
+/** The deploy answer for the commit the receipt reads. Runs are looked up by that commit's SHA, so this is that
+ * commit's deploy run, never "the last deploy" of any commit (Codex review on #877). */
+export function deployVerdict(b = {}) {
+  const run = b.run;
+  if (!run) return b.needed ? 'I cannot confirm a deploy of this commit: there is no deploy run record for it.' : 'I cannot confirm a deploy of this commit: it did not change the Worker, so no deploy run was expected.';
+  if (run.state === 'success') return `This commit's deploy succeeded: Deploy CHE Worker run ID ${run.id}.`;
+  if (run.state === 'running') return `I cannot confirm this commit's deploy yet: Deploy CHE Worker run ID ${run.id} is still running.`;
+  return `I cannot confirm this commit's deploy succeeded: Deploy CHE Worker run ID ${run.id} ended ${run.state}.`;
+}
+
 function when(iso) {
   const d = new Date(iso);
   return Number.isFinite(d.getTime()) ? d.toISOString().replace('T', ' ').slice(0, 16) + ' UTC' : 'an unknown time';
 }
 
 /** Spoken text, three labelled parts; every number is from the receipt. */
-export function speakReceipt(r, { changes = true, verify = true } = {}) {
+export function speakReceipt(r, { changes = true, verify = true, deployAsk = false } = {}) {
   const out = [];
   if (!r.commit) return r.missing.join(' ') || 'I could not read that commit.';
+  // "Confirm the last deploy succeeded and cite the run ID": this commit's deploy run answers first, by its run ID, and a
+  // run that did not succeed (or no run) is said plainly to be unconfirmed (certification run 19, spt-25 led with the commit).
+  if (deployAsk && verify && r.backend) out.push(deployVerdict(r.backend));
   out.push(`Commit ${shortSha(r.commit.sha)}, "${r.commit.title}", merged ${when(r.commit.date)}.`);
   if (changes && r.changes) {
     const ch = r.changes;
