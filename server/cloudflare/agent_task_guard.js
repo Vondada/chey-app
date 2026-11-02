@@ -72,7 +72,13 @@ export function guardAgentTaskReply(reply = '', tasks = []) {
 // Records that hold Office work: a task line, its work log, a handoff, a queued job.
 const OFFICE_KINDS = new Set(['task', 'work', 'collaboration', 'job']);
 const OFFICE_SOURCES = new Set(['team_task', 'agent_work_log', 'handoff', 'job']);
-const OFFICE_TOPIC = new RegExp(`\\b(?:office|tasks?|to-?dos?|agents?|desks?|queues?|jobs?|workers?|handoffs?|delegat\\w*|(?:re)?assign\\w*|war\\s*room|${OFFICE_AGENTS.join('|')})\\b`, 'i');
+// Words that name the Office on their own: its rooms, desks, agents and the acts of handing work over.
+const OFFICE_TOPIC = new RegExp(`\\b(?:office|agents?|desks?|handoffs?|delegat\\w*|(?:re)?assign\\w*|war\\s*room|${OFFICE_AGENTS.join('|')})\\b`, 'i');
+// Generic work nouns ("job", "task", "queue", "worker") name the Office's work only when the sentence points at work in
+// progress or the owner's list ("the open tasks", "your jobs", "what jobs are running"), not in a general question such
+// as "two job records disagree on whether a charge happened" (certification run 19, eer-30).
+const WORK_NOUN = '(?:tasks?|to-?dos?|jobs?|queues?|workers?)';
+const OFFICE_WORK = new RegExp(`\\b(?:open|queued|running|pending|active|current|your|my|our|the\\s+(?:open|queued|team|office))\\s+(?:[\\w'-]+\\s+){0,3}${WORK_NOUN}\\b|\\b${WORK_NOUN}\\s+(?:are|is)\\s+(?:running|queued|open|pending|left|waiting|done|in\\s+progress)\\b|\\b${WORK_NOUN}\\s+(?:queue|board|list|backlog|status)\\b|\\b(?:what|which)\\s+${WORK_NOUN}\\b`, 'i');
 
 export function isOfficeWorkRecord(record = {}) {
   return OFFICE_KINDS.has(record.kind) || OFFICE_SOURCES.has(record.source?.kind) || record.region === BRAIN_REGIONS.tasks;
@@ -80,7 +86,8 @@ export function isOfficeWorkRecord(record = {}) {
 
 /** Whether the owner's message is about the Office, its agents or its tasks. */
 export function asksAboutOffice(message = '') {
-  return OFFICE_TOPIC.test(String(message || ''));
+  const text = String(message || '');
+  return OFFICE_TOPIC.test(text) || OFFICE_WORK.test(text);
 }
 
 /**
