@@ -14,7 +14,8 @@ changes them. Do not delete the old values: the change is recorded in `docs/CHE_
 
 | Fact | State | Time | Evidence |
 |---|---|---|---|
-| `main` is `f4243843` (#853; after #854 `10f7272b` and #850 `6bb7cb4b`) | verified | 2026-11-01 18:11 UTC | merge receipts |
+| `main` is `530296d9` (#885; run-20 regression batch #880-#884 before it); live Worker verified by deploy `41418568470`; run 21 `41420922829` scored 501/600 | verified | 2026-11-02 10:20 UTC | merge receipts, deploy and certification runs |
+| `main` is `f4243843` (#853; after #854 `10f7272b` and #850 `6bb7cb4b`) | reported (superseded above) | 2026-11-01 18:11 UTC | merge receipts |
 | `main` is `4d321941` (#852; after #851 `4366e168` and #849 `eabecee0`) | reported (superseded above) | 2026-11-01 16:22 UTC | merge receipts |
 | `main` is `e976fcc6` (#848; after #847 `52e0d7a3`) | reported (superseded above) | 2026-11-01 14:42 UTC | merge receipts |
 | `main` is `20418da5` (#845; after #846 `14e80b14`) | reported (superseded above) | 2026-11-01 12:24 UTC | merge receipts |
