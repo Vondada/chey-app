@@ -20,6 +20,7 @@ import { auditEvidenceFrom, auditReply, claimKindsIn, guardRemovalEntries, recor
 import { answerEvidenceReceipt, LAST_ANSWER_EVIDENCE_KEY } from './knowledge_cache.js';
 import { brainRecordForProvenance, guardOwnerAttributions, guardRememberBlock, guardSpeakerAttributions, loadRetractions, ownerWords, storyRequested } from './memory_provenance.js';
 import { numericNotes } from './numeric_truth.js';
+import { contextEchoStage, historyRecordsStage } from './context_echo.js';
 import { groundedReply } from './personal_recall.js';
 import { redactGoogleIds } from './research_memory.js';
 import { guardEngineClaims, guardSoulClaims } from './soul.js';
@@ -29,6 +30,9 @@ import { guardClaimedOwnerActions, guardClaimedResearchActions, guardExecutionCl
 const userTurns = (history, n) => (Array.isArray(history) ? history : []).filter((turn) => turn?.role === 'user').slice(-n).map((turn) => String(turn.content ?? turn.text ?? ''));
 
 export const TRUTH_STAGES = Object.freeze([
+  // A stored line is never the reply: speaker labels go, and a word-for-word copy of injected memory that does not
+  // take up the message becomes an honest "no record" (context_echo.js). First, on the model's own text.
+  contextEchoStage,
   // Truth layer: a model sentence can never promote execution state. Unsupported action claims and owner
   // "homework" are removed and replaced with what the receipts actually show.
   { name: 'truth_layer', async run(reply, ctx) {
@@ -119,6 +123,8 @@ export const TRUTH_STAGES = Object.freeze([
     if (grounded.removed.length) console.log('CHE grounding removed dates', JSON.stringify(grounded.removed));
     return { text: grounded.text, removed: grounded.removed };
   } },
+  // "Summarise our years of conversations": counts, dates and what is not recorded, from the records (context_echo.js).
+  historyRecordsStage,
   // A visual exists only when a record of this request made it, and a post only when one was published.
   // An ad request always ends with the three facts: copy written, visuals made, nothing scheduled or published.
   { name: 'asset_truth', run(reply, ctx) {

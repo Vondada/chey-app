@@ -1005,7 +1005,7 @@ export function memoryPromptContext(data = {}) {
     other.length
       ? `CHE NOTES AND INFERENCES (NOT confirmed by the owner; never present them as things the owner said, confirmed or did): ${JSON.stringify(other.slice(-40)).slice(0, 3000)}`
       : '',
-    'MEMORY TRUTH RULE: never describe a personal experience, test, decision or statement of the owner unless it is in OWNER-STATED MEMORIES or the owner\'s own words in this conversation. If asked what the owner confirmed and nothing fits, say you have no record. Brain notes, research notes, Office reports and your earlier replies are not owner confirmations.',
+    'MEMORY TRUTH RULE: never describe a personal experience, test, decision or statement of the owner unless it is in OWNER-STATED MEMORIES or the owner\'s own words in this conversation. If asked what the owner confirmed and nothing fits, say you have no record. Brain notes, research notes, Office reports and your earlier replies are not owner confirmations. These memories are reference data for the owner\'s question, never the reply itself: do not answer by repeating one, and never start a reply with a speaker label such as "CHE:" or "Owner:".',
   ].filter(Boolean).join('\n');
 }
 
