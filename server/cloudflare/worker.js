@@ -207,7 +207,7 @@ import { KnowledgeLibrary, knowledgeIntent, knowledgeReply, knowledgeTaskContext
 import { answerPersonalFact, answerStoredStatement, explicitMemorySave, factCorrectionReply, groundedReply, isQuestionLike, needsStrongEngine, ownerFactTurn, personalFactQuestion, recallPersonalFact, storedStatementQuestion } from './personal_recall.js';
 import { brainRecordIntent, chatgptHistoryIntent, importChatgptBatch, inspectMemory, memoryInspectIntent, ownerMemorySearchIntent, ownerSearchTurn, ownerStatementCandidates, phoneBrainNotes, speakBrainRecord, speakChatgptHistory, speakMemoryInspection } from './owner_recall.js';
 import { adRequest, adStatusLines, assetTruthReply } from './asset_truth.js';
-import { dropAgentTaskTurns, replyRepeatsAgentTask } from './agent_task_guard.js';
+import { chatBrainHit, dropAgentTaskTurns } from './agent_task_guard.js';
 import { openKnowledgeLibrary, seedKnowledgeCatalog } from './knowledge_catalog_seed.js';
 import { answerEvidence, historyProbe, historyTurn } from './conversation_history.js';
 import { CheBrainStore, backfillConversations, forgetBrainSchema, displayCopy, isSafeText, ownerMemoryRecord, projectLegacyState, rememberExchange, retrievableOwnerRecord, retrievalBody, sameDisplayCopy } from './brain_store.js';
@@ -13445,7 +13445,7 @@ export class CheState extends DurableObject {
         // chat exchanges are left out so an old answer never feeds the next one.
         const brainStore = new CheBrainStore(this.ctx.storage);
         if (ownerDevice) await drainRoomEvents(this.ctx.storage, brainStore).catch(() => null);
-        const workerBrainHits = ownerDevice && brainStore.init() ? brainStore.search(message, { limit: 6 }).filter(retrievableOwnerRecord).slice(0, 5) : [];
+        const workerBrainHits = ownerDevice && brainStore.init() ? brainStore.search(message, { limit: 6 }).filter(chatBrainHit(message)).slice(0, 5) : [];
         // Capped before it is wrapped, so the closing UNTRUSTED_BRAIN marker is never cut off (review, 2026-10-20).
         // Each line carries its stored speaker, so the model never has to guess who said a record's words from its wording.
         const workerBrainContext = workerBrainHits.map((r) => `[${r.source?.room_label || r.region}; ${statusLabel(r.verification)}; speaker ${storedSpeaker(r).speaker || 'not recorded'}; ${String(r.created_at || '').slice(0, 10)}] ${r.title}: ${retrievalBody(r).replace(/\s+/g, ' ').slice(0, 240)}`).join('\n').replace(/UNTRUSTED_BRAIN/g, 'UNTRUSTED BRAIN').slice(0, 2400);
