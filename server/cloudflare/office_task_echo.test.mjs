@@ -5,7 +5,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import test from 'node:test';
-import { AGENT_TASK_NOTICE, asksAboutOffice, chatBrainHit, guardAgentTaskReply, isOfficeWorkRecord } from './agent_task_guard.js';
+import { AGENT_TASK_NOTICE, asksAboutAgentWork, asksAboutOffice, chatBrainHit, guardAgentTaskReply, isOfficeWorkRecord } from './agent_task_guard.js';
 import { CheBrainStore, projectLegacyState } from './brain_store.js';
 
 const TASK = 'Cross-check every figure in the quarterly newsletter draft against the original survey spreadsheet before it goes out';
@@ -88,7 +88,7 @@ try { mod = await import(generated.href + '?t=' + Date.now()); } finally { try {
 const { default: worker, CheState } = mod;
 globalThis.fetch = async (input) => { throw new TypeError(`offline (${new URL(String(input?.url || input)).host})`); };
 
-async function owner(model) {
+async function owner(model, tasks = TASKS) {
   const saved = new Map();
   const storage = {
     get: async (key) => (saved.has(key) ? structuredClone(saved.get(key)) : undefined),
@@ -115,10 +115,10 @@ async function owner(model) {
     body: JSON.stringify(body),
   }), env);
   const token = (await (await send('/api/pair', { code: '123456' })).json()).device_token;
-  saved.set('che', { ...(saved.get('che') || {}), team_tasks: TASKS });
+  saved.set('che', { ...(saved.get('che') || {}), team_tasks: tasks });
   const store = new CheBrainStore({ ...storage, sql });
   store.init();
-  projectLegacyState(store, { team_tasks: TASKS }, { tasks: true });
+  projectLegacyState(store, { team_tasks: tasks }, { tasks: true });
   const say = async (message) => {
     const raw = await (await send('/api/chat', { message, history: [] }, token)).text();
     const items = raw.split('\n').filter(Boolean).map((line) => JSON.parse(line));
@@ -145,4 +145,49 @@ test('through /api/chat, a reply that quotes a task line keeps the rest of the a
   assert.doesNotMatch(reply, /quarterly newsletter draft/);
   assert.match(reply, /published table/);
   assert.doesNotMatch(reply, /internal Office task/);
+});
+
+// ── The owner's own words are never an Office leak (certification run 20) ──
+// A desk that advises on a chat answer is stored as an `advisory` task whose line is the owner's message. A reply that
+// restated the question then lost everything to the Office notice. The wording below is not from the question bank.
+
+const ASK = 'Pass the half-finished ticket to a fresh worker when the old one stalls, and confirm it picked up.';
+
+test('restating the owner\'s message is not a leak, whether it is an advisory record or the current request', () => {
+  const reply = `${ASK} I would check its saved state first.`;
+  const advisory = [{ id: 'a1', task: ASK, status: 'advisory', partner_name: 'Atlas' }];
+  assert.deepEqual(guardAgentTaskReply(reply, advisory), { text: reply, removed: [] }, 'an advisory line is the owner\'s words');
+  const running = [{ id: 'r1', task: ASK, status: 'running', partner_name: 'Atlas' }];
+  assert.deepEqual(guardAgentTaskReply(reply, running, ASK), { text: reply, removed: [] }, 'the request being answered now');
+  assert.equal(guardAgentTaskReply(reply, running).text, AGENT_TASK_NOTICE, 'with no owner message the old rule holds');
+});
+
+test('a sentence quoting the owner\'s message stays, while a real task line in the same reply is removed', () => {
+  const msg = 'Get sign-off from the four regional leads at once and log every reply they send back.';
+  const reply = `Get sign-off from the four regional leads at once. ${TASK}. I would send all four requests together and log each reply with its time.`;
+  const out = guardAgentTaskReply(reply, TASKS, msg);
+  assert.match(out.text, /^Get sign-off from the four regional leads at once\./);
+  assert.doesNotMatch(out.text, /quarterly newsletter/);
+  assert.equal(out.removed.length, 1);
+});
+
+test('on a question about agent work, a short answer left after a leaked line stays instead of the notice', () => {
+  const msg = 'Can one desk overrule the scheduler and start every job at the same time?';
+  const out = guardAgentTaskReply(`No, sir: order matters. ${TASK}.`, TASKS, msg);
+  assert.equal(out.text, 'No, sir: order matters.');
+  assert.equal(guardAgentTaskReply(TASK, TASKS, msg).text, AGENT_TASK_NOTICE, 'nothing left is still the notice');
+  assert.equal(guardAgentTaskReply(`Sure, sir. ${TASK}.`, TASKS, 'Give me a quick recap of the branch.').text, AGENT_TASK_NOTICE);
+  assert.equal(asksAboutAgentWork('Who should approve the vendor change, and in what order?'), true);
+  assert.equal(asksAboutAgentWork('Hand the draft over to the second reviewer.'), true);
+  assert.equal(asksAboutAgentWork('What is the capital of Peru?'), false);
+  assert.equal(asksAboutOffice('Who should approve the vendor change, and in what order?'), false, 'grounding stays narrow');
+});
+
+test('through /api/chat, an advisory record of the owner\'s question does not hide the answer', async () => {
+  const msg = 'Line up approvals from the three site leads in parallel and keep a note of each verdict.';
+  const che = await owner(() => `${msg} I would ask all three at once and note each verdict with its time.`,
+    [...TASKS, { id: 'a2', task: msg, status: 'advisory', partner_name: 'Nova' }]);
+  const reply = await che.say(msg);
+  assert.doesNotMatch(reply, /internal Office task/);
+  assert.match(reply, /note each verdict/);
 });
