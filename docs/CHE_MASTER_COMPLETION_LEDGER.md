@@ -612,6 +612,26 @@ the grader's own reason text ("Bearer )"), so the mask is pattern-based, not a m
 CHE's own redactor caught the second instance. A real secret in the reply is **not confirmed but not ruled out**: the
 full reply is in the run's `certification-results` artifact, which this session's network cannot download.
 
+### Runs 20 and 21 (2026-11-02)
+
+| Run | Worker | Score | Fixed / regressed vs previous | Evidence |
+|---|---|---|---|---|
+| 19 | `91f61359` | 483/600 | baseline | `41379642353` |
+| 20 | `c3b38703` (#874-#879) | 485/600, 2 infrastructure | 48 / 44 (35 flaky) | `41401572719` |
+| 21 | `530296d9` (#880-#885) | 501/600, 1 infrastructure | 43 / 27 (17 flaky) | `41420922829` |
+
+Verified live in run 21 (execution receipts, not wording): weather for a named city ran the forecast (ter-38), both
+backtests ran on the Yahoo fallback (thb-11, thb-29), the deploy question returned this commit's run (spt-25), and
+earlier-turn and owner-memory questions were answered from records (mr-08, mr-28, vcc-37 and others). 19 questions
+executed with a receipt; a failed-only receipt no longer passes (#879). Unseen sets: 12/12 tools, 12/12 action
+execution.
+
+Run 21's 98 failures: 64 incorrect (mostly answers of the free 3B and 8B models, which wrote 397 of the 600 replies),
+34 unverified (an action with no receipt: 18 honest "nothing was done" where no tool exists - notes, lists, Spotify,
+code runner, Slack, Gmail and Calendar sign-in - and the connector gate's missing-capability answers). Since #885,
+every failing row whose reply a guard changed prints the text before the guard, so guard and model faults can be told
+apart from the log.
+
 ## Next, in dependency order
 
 1. Merge #809, #810, #811 and the truth-stage fix when green; deploy; re-run the affected categories live
