@@ -221,8 +221,15 @@ export async function socialProbe(env, request, objectName) {
     const out = await say(message);
     const registerOk = (clean === undefined || Boolean(out.register?.clean) === clean) && (flirt === undefined || out.flirt === flirt);
     // A clean turn fails when the model swore: cleanLanguageReply swapped the word out, so the reply reads clean, but the model did not keep it clean.
+    // Which rules failed, so a failing step says why (deploy 41448895778 failed Test 1 and the log could not tell).
+    const why = [
+      out.status !== 200 ? `HTTP ${out.status}` : '', !out.reply ? 'empty reply' : '', !registerOk ? 'register' : '',
+      clean && hasProfanity(out.reply) ? 'profanity' : '', clean && out.done?.clean_swapped ? 'clean_swapped' : '',
+      clean && announcesMode(out.reply) ? 'announces mode' : '', soundsGeneric(out.reply) ? 'stock phrase' : '',
+      check && !check(out.reply, message) ? 'step check' : '',
+    ].filter(Boolean);
     const replyOk = (!clean || (!hasProfanity(out.reply) && !out.done?.clean_swapped && !announcesMode(out.reply))) && !soundsGeneric(out.reply) && (!check || check(out.reply, message));
-    steps.push({ name, optional, pass: out.status === 200 && Boolean(out.reply) && registerOk && replyOk, ms: Date.now() - started, route: out.done.source || 'model', model_calls: out.done.model_calls ?? null, register: out.register ? `clean (${out.register.id}, ${out.register.scope})` : 'normal', flirt: out.flirt, profanity: hasProfanity(out.reply), reply: out.reply.slice(0, 400) });
+    steps.push({ name, optional, why, pass: out.status === 200 && Boolean(out.reply) && registerOk && replyOk, ms: Date.now() - started, route: out.done.source || 'model', model_calls: out.done.model_calls ?? null, register: out.register ? `clean (${out.register.id}, ${out.register.scope})` : 'normal', flirt: out.flirt, profanity: hasProfanity(out.reply), reply: out.reply.slice(0, 400) });
   };
   try {
     // Personality (owner, 2026-10-27): her own voice, no stock assistant lines, her own words. Whether she curses
