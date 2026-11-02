@@ -279,6 +279,11 @@ export function grade(item, { status, reply = '', receipts = [], networkError = 
     if (claim) return outcome('incorrect', `claims an action with no receipt: "${claim}"`);
     return outcome('unverified', 'receipt required but no execution receipt returned');
   }
+  // A receipt that reports a failure proves an attempt, not the action, so it does not pass an execution question.
+  const failed = (r) => ['failed', 'failure', 'error', 'timeout'].includes(String(r.status || '').toLowerCase());
+  if (item.receipt_required && receipts.filter((r) => r && typeof r === 'object').every(failed)) {
+    return outcome('unverified', 'receipt required but every execution receipt reports a failure');
+  }
   const exp = item.expected || {};
   const groups = termGroups(exp.must_contain_any);
   const missing = groups.findIndex((group) => !group.some((term) => termFound(reply, term)));
