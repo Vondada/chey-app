@@ -183,6 +183,7 @@ import { placedOrdersLine, recordDeviceInstall, noCommitNote } from './action_re
 import { ndjsonReply } from './ndjson_reply.js';
 import { receiptGate } from './action_connectors.js';
 import { PROBE_TIMERS_KEY, TIMERS_KEY, TIMER_KEYS, fireDueTimers, nextTimerAt, takeTimerAnnouncement, timerChatTurn } from './owner_timers.js';
+import { listChatTurn } from './owner_lists.js';
 import { brainTruthSummary, brainTruthView, truthScreenAsk } from './brain_truth.js';
 import { CLOUD_JOB_KIND, CLOUD_SOURCE, approveCloudJob, cancelCloudJob, cloudIntent, cloudJobs, cloudView, latestCloudJob, openPullRequests, parseControl, providerStatuses, requestCloudWork, retryCloudJob, runCloudTask, runFileJob, selectProvider, speakAgentWork, speakBlocked, speakCloudSummary, speakControl, speakInstall, speakPullRequests, speakRender, speakRequest, speakStartResult, startCloudTask, stopCloudJob } from './cloud_computer.js';
 import { auditLedger, knowVsGuessQuestion, knowVsGuessReply, MEMORY_CLAIM_MS, memorySavedQuestion, memorySavedReply } from './hallucination_auditor.js';
@@ -13883,7 +13884,7 @@ export class CheState extends DurableObject {
           );
         }
 
-        const timerTurn = await timerChatTurn(this.ctx.storage, message, { timeZone: this.env.CHE_TIMEZONE, wake: () => this.scheduleWork(), key: PROBE_CHAT_REQUESTS.has(request) ? PROBE_TIMERS_KEY : TIMERS_KEY });
+        const timerTurn = await timerChatTurn(this.ctx.storage, message, { timeZone: this.env.CHE_TIMEZONE, wake: () => this.scheduleWork(), key: PROBE_CHAT_REQUESTS.has(request) ? PROBE_TIMERS_KEY : TIMERS_KEY }) || await listChatTurn(this.ctx.storage, message, { probe: PROBE_CHAT_REQUESTS.has(request), grant: ownerGrant, owner: ownerDevice });
         if (timerTurn) return ndjsonReply(timerTurn.text, timerTurn.meta);
         const connectorGate = receiptGate(message, this.keyEnv || this.env, body);
         if (connectorGate) return ndjsonReply(...connectorGate.reply);
