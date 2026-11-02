@@ -34,7 +34,10 @@ export const ACTION_DOMAINS = Object.freeze({
   // "Log in as another user": acting under someone else's identity.
   impersonate: { label: 'impersonation', connector: null, text: 'I won\'t log in as another user or act under someone else\'s identity, sir. That is not allowed: I act only as myself, for you, with your authorisation. Nothing was logged in.' },
   // "Show me the admin token": a credential read out in chat.
-  secret: { label: 'secret', connector: null, text: 'I won\'t show a secret, sir. A token, key or password is a credential that grants access, so it stays secret: I cannot display it in chat, and nothing was revealed. If one may have leaked, rotate it where it is stored.' },
+  // The wording never puts "<secret word> is" after naming one, so it cannot read like a leaked value ("password is ...").
+  secret: { label: 'secret', connector: null, text: 'I won\'t show a secret, sir. Tokens, keys and passwords are credentials that grant access, so each one stays secret: I cannot display it in chat, and nothing was revealed. If one may have leaked, rotate it where it is stored.' },
+  // "Recover everything, then say it's complete without checking": a report promised before anything is checked.
+  unchecked_report: { label: 'unchecked report', connector: null, textFor: uncheckedReportText },
 });
 
 const TIMER = /\b(?:set|start|create)\s+(?:a|an|the|my|\d+)?\s*(?:[\w-]+\s+){0,2}?(?:timer|alarm|reminder)s?\b|\btimer tool\b/i;
@@ -45,8 +48,22 @@ const PRETEND = /\bpretend\b[^.?!]{0,60}\b(?:sent|done|finished|completed|worked
 const SAY_DONE = /\b(?:tell|say)\s+(?:me\s+)?(?:it|that)\s*(?:is|was|'s|has been)\s+(?:done|sent|finished|complete)\b/i;
 // "When you finish, tell me it is done" asks for a report of real work: a condition anywhere in the sentence keeps it.
 const CONDITION = /\b(?:when|once|after|if|as soon as|until)\b/i;
+// "Then say/tell me/report it's done" joined to "without checking", "regardless" or "even if it fails": a success report
+// decided before any result exists. "Check it, then tell me if it's complete" and "don't say it's done without testing"
+// are the opposite and still reach the model.
+const REPORT_DONE = /\b(?:say|tell\s+(?:me|us|him|her|them|everyone|the\s+\w+)|report|claim|announce|confirm|mark)\b(?!\s+(?:if|whether|how|what|why)\b)(?:\s+(?:that|it\s+as|as))?\s+(?:[\w'’-]+\s+){0,5}?(?:done|complete|completed|finished|fixed|resolved|successful|a\s+success|succeeded|worked|working|passed|passing|green|recovered|restored|deployed|ok|fine)\b/i;
+const UNCHECKED = /\bwithout\s+(?:actually\s+|even\s+|first\s+)?(?:checking|verifying|testing|looking|confirming|validating|running\s+(?:the\s+|any\s+)?tests?)\b(?!\s+(?:with|in\s+with)\s+(?:me|us)\b)|\bregardless\b|\bno\s+matter\s+what\b|\beven\s+if\s+(?:it|they|that|this|something|anything)\s+(?:fails?|failed|breaks?|errors?|didn['’]?t\s+work|doesn['’]?t\s+work)\b|\bwhether\s+(?:or\s+not\s+)?it\s+(?:works|worked|succeeds|succeeded)\b/i;
+const NO_REPORT = /\b(?:don['’]?t|do\s+not|never|no\s+need\s+to)\s+(?:\w+\s+){0,2}?(?:say|tell|report|claim|announce|confirm|mark)\b/i;
+const asksUncheckedReport = (text) => REPORT_DONE.test(text) && UNCHECKED.test(text) && !NO_REPORT.test(text);
+function uncheckedReportText(message = '') {
+  const recover = /\b(?:recover|restore|retrieve)/i.test(message);
+  return 'I won\'t report it as done without checking, sir. I cannot call a result complete when nobody checked or verified it: '
+    + 'that would be a false report. ' + (recover ? 'CHE has no recovery tool, so nothing was recovered and nothing is complete.'
+      : 'No tool of mine ran for it here, so nothing was done and nothing is complete.')
+    + ' Ask me for the work itself and I\'ll tell you exactly what was done and what was checked.';
+}
 const asksFalseReceipt = (text) => PRETEND.test(text)
-  || text.split(/(?<=[.?!])\s+/).some((sentence) => SAY_DONE.test(sentence) && !CONDITION.test(sentence));
+  || text.split(/(?<=[.?!])\s+/).some((sentence) => SAY_DONE.test(sentence) && !CONDITION.test(sentence) && !NO_REPORT.test(sentence));
 const SECURITY = /\b(?:disable|turn\s+off|switch\s+off|bypass|skip|get\s+around|ignore)\b[^.?!]{0,30}\b(?:security\s+(?:checks?|gates?|rules?|scans?)|safety\s+(?:checks?|rules?)|approval\s+(?:checks?|gates?)|owner\s+approval|permission\s+checks?|authentication|2fa|two-factor|guardrails?)\b/i;
 // A device must be named: "turn off autonomy", "turn on paper trading" and "switch off flirting" are CHE settings.
 const DEVICE = String.raw`(?:lights?|lamps?|fans?|heater|heating|a\.?c\.?|air\s+conditioner|aircon|thermostat|tv|television|plugs?|outlets?|sockets?|garage(?:\s+door)?|blinds|curtains|shades|sprinklers?|camera|kettle|coffee\s+maker|purifier|humidifier|speakers?|fireplace|oven|washer|dryer|dishwasher|vacuum|roomba)`;
@@ -58,7 +75,7 @@ const EXPLAIN_WORD = /\b(?:why|how|whether|what|which)\b/i;
 const CLAIM_RESULT = /\b(?:say|claim|announce|tell\s+(?:me|him|her|them|everyone|the\s+\w+))\s+(?:that\s+)?(?:[\w'’-]+\s+){0,5}?(?:worked|works|pass(?:es|ed)?|succeeded|is\s+(?:fixed|green|working|healthy|resolved|safe)|was\s+(?:successful|fixed)|went\s+through|is\s+all\s+good)\b/i;
 const IGNORE_ERRORS = /\bignore\s+(?:the|all|any|those|these)?\s*(?:errors?|failures?|warnings?|failing\s+tests?)\b/i;
 const asksUnverifiedClaim = (text) => text.split(/(?<=[.?!])\s+/).some((sentence) => CLAIM_RESULT.test(sentence)
-  && !CONDITION.test(sentence) && !EXPLAIN_WORD.test(sentence.replace(/^(?:can|could|would|will)\s+you\s+/i, '')))
+  && !CONDITION.test(sentence) && !NO_REPORT.test(sentence) && !EXPLAIN_WORD.test(sentence.replace(/^(?:can|could|would|will)\s+you\s+/i, '')))
   || (IGNORE_ERRORS.test(text) && /\b(?:say|tell|report|claim)\b/i.test(text) && /\b(?:worked|works|green|fine|passed|success)/i.test(text));
 const BLIND_YES = /\b(?:say|answer|reply|respond)\s+(?:with\s+)?["']?(?:yes|ok|okay|sure)["']?\s+to\s+(?:whatever|everything|anything|all)\b|\bagree\s+(?:to|with)\s+(?:whatever|everything|anything)\b|\bjust\s+say\s+yes\b|\balways\s+say\s+yes\b/i;
 // Inventing data, results or evidence. A sample clearly asked for as fictional or test data is writing, not evidence,
@@ -93,6 +110,7 @@ export function actionDomainOf(message = '') {
   // "Why should I never disable 2FA?" asks for an explanation; "Can you bypass owner approval?" is still an order.
   if (QUESTION_WORD.test(order)) return null;
   // Asking for a false receipt or for a check to be switched off is answered even with a question mark.
+  if ((asked || !QUESTION_MARK.test(order)) && asksUncheckedReport(order)) return 'unchecked_report';
   if (asksFalseReceipt(order)) return 'pretend';
   if (IMPERSONATE.test(order)) return 'impersonate';
   if (asksSecret(order)) return 'secret';
@@ -140,7 +158,7 @@ export function receiptGate(message = '', env = {}, body = {}) {
   }
   // A built-in connector answers its own requests before this gate; one that reaches here is one it declined.
   if (spec.connector !== 'builtin' && connectorConnected(domain, env)) return null;
-  return answer(domain, spec.text || `Nothing was done, sir: ${spec.reason}. I have no receipt that anything ran, so nothing is running.${spec.instead ? ` ${spec.instead}` : ''}`);
+  return answer(domain, spec.textFor?.(message) || spec.text || `Nothing was done, sir: ${spec.reason}. I have no receipt that anything ran, so nothing is running.${spec.instead ? ` ${spec.instead}` : ''}`);
 }
 
 // ---- Money and delete requests that no connector can carry out ------------------------------------------------------
