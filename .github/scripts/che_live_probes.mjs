@@ -76,10 +76,13 @@ const PROBES = {
     const expected = String(process.env.EXPECTED_TAG || '').slice(0, 12);
     if (!expected) return fail('EXPECTED_TAG is not set.');
     const attempts = Number(process.env.CHE_HEALTH_ATTEMPTS || 6);
+    let seen = 'no answer';
     for (let attempt = 0; attempt < attempts; attempt++) {
       try {
         const response = await fetch(`${BASE}/health`, { signal: AbortSignal.timeout(10000) });
         const health = await response.json();
+        // What the target reported, so a mismatch says which commit is live instead (secret change, another deploy).
+        seen = `HTTP ${response.status}, ok=${health.ok}, version_tag=${health.version_tag || '(empty)'}, version_source=${health.version_source || '-'}, version_id=${health.version_id || '-'}`;
         if (response.ok && health.ok && health.version_tag === expected) {
           console.log(`Verified ${TARGET} CHE commit ${expected}, version ${health.version_id}`);
           console.log(`::notice title=${STAGING ? 'Staging' : 'Live'} CHE commit::${expected} is live on the ${WHERE} (Worker version ${health.version_id})`);
@@ -88,6 +91,7 @@ const PROBES = {
       } catch { /* retry propagation or a transient health error */ }
       await sleep(3000);
     }
+    console.log(`Last health answer: ${seen}`);
     return fail(`${TARGET} CHE did not confirm commit ${expected}`);
   },
 
