@@ -65,6 +65,8 @@ test('agreeing to report an outcome that did not happen is removed in any turn',
   assert.deepEqual(out.removed, ['I will say the sync worked even if it failed.']);
   assert.match(out.text, /won't report an outcome that did not happen/);
   assert.deepEqual(guard("I'll tell you the truth even if it hurts.", 'Be honest with me.').removed, []);
+  assert.deepEqual(guard("I'll tell you whether it worked even if the answer is no.", 'Check the import.').removed, []);
+  assert.deepEqual(guard("I'll report it as done when it is done, even if that takes an hour.", 'Run the import.').removed, []);
 });
 
 test('narrated tool calls and their outcomes are removed when a tool run was asked for and none ran', () => {
@@ -77,9 +79,18 @@ test('narrated tool calls and their outcomes are removed when a tool run was ask
   assert.deepEqual(guard('The result is a tie.', 'Who won the match?').removed, []);
 });
 
-test("an Office panel answer is another model's text, not evidence; an entry with a receipt still is", () => {
-  const reply = "I've dispatched the job to the coding desk.";
-  const panel = [{ partner_id: 'p1', partner_name: 'Atlas', role: 'Coder', result: reply }];
-  assert.equal(guard(reply, 'Send this to coding.', { officeResults: panel }).removed.length, 1);
-  assert.deepEqual(guard(reply, 'Send this to coding.', { officeResults: [{ ...panel[0], job_id: 'job-1' }] }).removed, []);
+test('a real Office consultation backs the handoff and the advice, but not an outside action inside it', () => {
+  // The shape runOfficeAgents returns for a coworker that answered (worker.js).
+  const panel = [{ partner_id: 'a1b2', partner_name: 'Atlas', role: 'Engineering Partner', result: 'Use a queue with one consumer.' }];
+  const honest = 'I have forwarded your question to Atlas. Atlas: "Use a queue with one consumer."';
+  assert.deepEqual(guard(honest, 'Ask Atlas how to stop double processing.', { officeResults: panel }), { text: honest, removed: [] });
+  const out = guard('I have forwarded your question to Atlas and sent an email to the client with his answer.', 'Ask Atlas and tell the client.', { officeResults: panel });
+  assert.equal(out.removed.length, 1);
+  assert.match(out.text, /Nothing was done, sir/);
+  // Narrated tool calls in a coworker's answer are still not a tool run.
+  const narrated = guard('First, let me query the stock tool. The result is 191 dollars.', 'Use the stock tool and give me the result.', { officeResults: panel });
+  assert.equal(narrated.removed.length, 2);
+  // Without any consultation the same handoff claim is removed; an entry with a job id backs the whole reply.
+  assert.equal(guard(honest, 'Ask Atlas how to stop double processing.').removed.length, 2);
+  assert.deepEqual(guard('I have sent the email.', 'Email the client.', { officeResults: [{ ...panel[0], job_id: 'job-1' }] }).removed, []);
 });

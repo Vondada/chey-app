@@ -207,13 +207,17 @@ const SOURCE_LINE = /[=(){};\[\]]|^\s*(?:import|from|def|const|let|var|function|
 const HYPOTHETICAL = /\b(?:might|could|would|may|should|for\s+example|e\.g\.|such\s+as|suppose|assume|typically|usually|expect(?:ed)?|target|time-?outs?|limits?|delays?|sleeps?|waits?|intervals?|budget|within|up\s+to|at\s+most|less\s+than|more\s+than|if)\b/i;
 const RUN_NARRATION = /^(?:now\s+)?(?:benchmarking|running|executing|measuring|timing|profiling|testing)\b(?![^.!?]*\b(?:is|are|can|should|requires?|means|helps?)\b)/i;
 // "I'll say it worked even if it didn't": agreeing to report an outcome that did not happen. Refused in any turn.
-const FALSIFY = /\b(?:i['’]ll|i\s+will|i\s+can|i['’]m\s+going\s+to)\s+(?:\w+\s+){0,2}?(?:report|say|tell\s+(?:you|them)|claim|mark|show)\b[^.!?]{0,40}\b(?:success\w*|succeeded|worked|working|done|complete[ds]?|passed|fine)\b[^.!?]{0,40}\b(?:even\s+(?:if|though|when)|regardless|whether\s+or\s+not|no\s+matter)\b/i;
+// It needs a success asserted ("say it worked", not "tell you whether it worked") and a failure that contradicts it.
+const FALSIFY = /\b(?:i['’]ll|i\s+will|i\s+can|i['’]m\s+going\s+to)\s+(?:\w+\s+){0,2}?(?:report|say|tell\s+(?:you|them)|claim|mark|show)\b(?!\s+(?:you\s+|them\s+)?(?:whether|if|how|what|why)\b)[^.!?]{0,40}\b(?:success\w*|succeeded|worked|working|done|complete[ds]?|passed|fine)\b[^.!?]{0,40}\b(?:even\s+(?:if|though|when)\s+(?:[\w'’-]+\s+){0,3}?(?:didn['’]?t|did\s+not|doesn['’]?t|does\s+not|wasn['’]?t|isn['’]?t|never|fail\w*|broke|errors?|crash\w*)|regardless\s+of\s+(?:the\s+)?(?:outcome|result|errors?|failures?)|whether\s+or\s+not\s+it\s+(?:did|does|worked|works|succeeded|happened))\b/i;
 // "Chain three tools and give me each result": with no tool run, a narrated call ("First, I'll check the forecast with the
 // weather app") and the outcome it reports are made up.
 const TOOL_ASK = /\b(?:chain|run|use|call|invoke|trigger|execute)\b[^.?!]{0,40}\btools?\b|\b(?:outcomes?|results?)\b[^.?!]{0,20}\breceipts?\b/i;
 const NARRATED = /^(?:(?:sir|first|next|then|finally|now|after\s+that|moving\s+on)[,\s]+)*(?:i['’]ll|i\s+will|i['’]m\s+going\s+to|let\s+me|let['’]s)\s+(?:now\s+|first\s+|then\s+)?(?:check|look\s+up|fetch|query|call|use|run|chain|pull|get|grab|search|trigger|invoke|see\s+what)\b|^(?:the\s+|its\s+)?(?:outcome|result|output|response|receipt)s?\s+(?:is|was|are|were)\b/i;
 // After a removed handoff claim, quoted output put in an agent's mouth ('Atlas: "..."') is invented too.
 const HANDOFF = /\b(?:dispatch|rout|forward|delegat|escalat|handed|coming\s+in|arriving)/i;
+// With an Office consultation in the turn, the handoff and the coworker's returned advice are backed; any other claim in
+// the same sentence (a sent email, a set timer) is not. This finds such a claim once the handoff words are taken out.
+const otherClaimIn = (s) => { const t = s.replace(/\b(?:dispatched|re-?routed|routed|forwarded|delegated|escalated|handed|coming\s+in|arriving)\b/gi, 'X'); return MODEL_DONE.test(t) || OTHER_DONE.test(t); };
 const ATTRIBUTED = /^\**[A-Z][\w-]*\**\s*:\s*["“]/;
 // A story, a draft or a role-play the owner asked for may promise things in its own voice.
 const WRITING_ASK = /\b(?:write|draft|compose|reword|rephrase|translate|proofread|story|poem|role.?play|pretend|script|dialogue|lyrics)\b/i;
@@ -223,11 +227,13 @@ const MODEL_TEXT_KEYS = new Set(['partner_id', 'partner_name', 'role', 'result',
 /** Removes model-only completion, in-progress, promise and invented-measurement sentences when no tool or connector result exists in this turn. */
 export function guardModelOnlyCompletions(reply, { message = '', skillResults = [], actionResults = [], plugins = [], officeResults = [] } = {}) {
   const text = String(reply || '');
-  // An Office panel answer ({ partner_name, role, result }) is another model's text, not a run: only an entry with more than
-  // that (a job, a receipt, a tool) counts (run 20, ter-50: a partner's narrated tool chain passed as evidence).
+  // An Office panel answer ({ partner_name, role, result }) shows that a coworker was consulted and what it advised, nothing
+  // more: it backs a handoff claim and the quoted advice, but not an outside action inside it (run 20, ter-50: a partner's
+  // narrated tool chain passed as evidence). An entry with more than that (a job, a receipt, a tool) backs the whole reply.
   const office = (Array.isArray(officeResults) ? officeResults : []).filter((r) => r && Object.keys(r).some((k) => !MODEL_TEXT_KEYS.has(k)));
   const ranSomething = [skillResults, actionResults, plugins, office].some((list) => Array.isArray(list) && list.length > 0);
   if (ranSomething) return { text, removed: [] };
+  const consulted = (Array.isArray(officeResults) ? officeResults : []).some((r) => r && r.result);
   const ask = String(message || '');
   const writing = WRITING_ASK.test(ask);
   const measuring = MEASURE_ASK.test(ask.trim());
@@ -263,6 +269,7 @@ export function guardModelOnlyCompletions(reply, { message = '', skillResults = 
     // Source code (a timeout, a sleep) and hypothetical figures ("the timeout might be 1 second") are not measurements.
     const figure = MEASURED.test(plain) && !(code ? SOURCE_LINE.test(plain) : HYPOTHETICAL.test(plain));
     if (!kind && measuring && !question && (figure || (!code && RUN_NARRATION.test(plain)))) kind = 'measured';
+    if (consulted && kind === 'done' && HANDOFF.test(plain) && !otherClaimIn(plain)) kind = '';
     if (!kind) {
       kept.push(sentence);
       continue;
