@@ -192,7 +192,25 @@ jobs:
       - name: Deploy to the staging Worker
         working-directory: server/cloudflare
         # After the secret sync, so the final staging version keeps this commit's tag.
-        run: npx --yes wrangler@4 deploy --config wrangler.staging.json --tag "${GITHUB_SHA::12}" --message "staging ${GITHUB_SHA::12}" --var "CHE_POOL_COMMIT:${GITHUB_SHA}"
+        run: |
+          set -o pipefail
+          npx --yes wrangler@4 deploy --config wrangler.staging.json --tag "${GITHUB_SHA::12}" --message "staging ${GITHUB_SHA::12}" --var "CHE_POOL_COMMIT:${GITHUB_SHA}" | tee /tmp/staging-deploy.out
+          version="$(grep -oE 'Current Version ID: [0-9a-f-]{36}' /tmp/staging-deploy.out | awk '{print $4}' | tail -1)"
+          if [[ -z "$version" ]]; then echo "::error::wrangler deploy printed no version ID."; exit 1; fi
+          echo "STAGING_VERSION_ID=$version" >> "$GITHUB_ENV"
+
+      - name: Make sure the new staging version serves all traffic
+        working-directory: server/cloudflare
+        # Staging once kept serving an older version after later deploys reported success, so the
+        # check names the active deployment and, if this run's version is not at 100%, promotes it.
+        run: |
+          set -o pipefail
+          npx --yes wrangler@4 deployments status --config wrangler.staging.json | tee /tmp/staging-status.out
+          if ! grep -qE "${STAGING_VERSION_ID}.*\(100%\)|\(100%\).*${STAGING_VERSION_ID}|100%.*${STAGING_VERSION_ID}|${STAGING_VERSION_ID}.*100%" /tmp/staging-status.out; then
+            echo "::warning::The active staging deployment is not ${STAGING_VERSION_ID} at 100%; promoting it."
+            npx --yes wrangler@4 versions deploy "${STAGING_VERSION_ID}@100%" --config wrangler.staging.json --message "staging ${GITHUB_SHA::12} (promote)" --yes
+            npx --yes wrangler@4 deployments status --config wrangler.staging.json
+          fi
 
       - name: Live probes on staging (same suite as production)
         env:

@@ -78,6 +78,7 @@ model sampling, not code.
 | R-04 | Guard against CHE quoting the owner's message back | waiting on owner | Owner decides | staging social Test 2 failure on #850 |
 | R-05 | Certification probe runs on the owner's real state (Office tasks, coding jobs, media pile up) | waiting on owner | Owner decides on a probe sandbox. Run 21 mr-24 listed real stored tasks for "three tasks I left unfinished yesterday" | `/api/probe/chat` -> `getByName('owner')` |
 | R-06 | Saved owner facts appear in unrelated answers ("The owner's favorite drink is Sprite.", run 20 cre-45) | waiting on owner | The OWNER-STATED MEMORIES list goes into every prompt by design (#354 test); filtering by relevance changes that design | `worker.test.mjs` eighth-review test |
+| R-08 | Live code-switching probe does not say which reply rule failed (deploy `41448895778`) | open | Make the step report profanity / clean_swapped / stock phrase / mode announcement | `social_corrections.js` socialProbe |
 | R-07 | An Office consultation backs handoff text without checking the named agent was the one consulted | open | Small follow-up | #882 review note |
 
 ## Owner decisions needed
@@ -87,6 +88,7 @@ model sampling, not code.
 - Whether automatic background runs are allowed: yes, for the reliability recovery (owner, 2026-11-01).
 
 ## Log
+- 2026-11-02: #889 merged (context echo, history records); run 23 497/600 (-12; probe-state carry-over, Office notice, one claim slip under fix).
 - 2026-11-02: #887 merged (owner notes and lists with read-back receipts); run 22 509/600 (+8).
 - 2026-11-02: #880-#885 merged (run-20 regressions, guard trace); run 21 501/600 (+16); unseen sets 12/12 and 12/12.
 - 2026-11-02: #873-#879 merged; run 20 485/600 (+2; 44 regressions traced, fixed in #880-#884).

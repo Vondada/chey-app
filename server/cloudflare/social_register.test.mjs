@@ -144,6 +144,12 @@ test('the live check passes on a CHE that answers clean, and fails one that keep
   assert.equal(clean.steps.length, 20);
   const dirty = await run('Hell yeah, that shit is wild.');
   assert.equal(dirty.ok, false);
+  // A failing step names the rule it broke, so a red deploy says why.
+  const failed = dirty.steps.filter((s) => !s.pass && !s.optional);
+  assert.ok(failed.length > 0);
+  assert.ok(failed.every((s) => s.why.length > 0), JSON.stringify(failed.map((s) => s.why)));
+  assert.ok(failed.some((s) => s.why.includes('profanity') || s.why.includes('clean_swapped')));
+  assert.ok(clean.steps.filter((s) => s.pass).every((s) => Array.isArray(s.why)));
 });
 
 test('personality: one shared character; profanity is hers in relaxed talk, never in serious moments', async () => {
