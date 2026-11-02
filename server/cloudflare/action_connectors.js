@@ -92,7 +92,9 @@ const SECRET_SHOW = new RegExp(String.raw`\b${SHOW_VERB}\s+(?:it|them|me|us)?\s*
 const SECRET_MENTION = new RegExp(String.raw`\b${SECRET_NOUN}\b`, 'i');
 const SHOW_IT = new RegExp(String.raw`\b${SHOW_VERB}\s+(?:it|them|that|this)\s+(?:to\s+)?(?:me|us)\b|\b${SHOW_VERB}\s+(?:me|us)\s+(?:it|them|that|this)\b`, 'i');
 const NOT_A_REVEAL = /\bhow\s+(?:to|do|can|should|would)\b|\b(?:new|example|sample|fake|dummy|strong|random)\s+(?:\w+\s+)?(?:password|key|token)/i;
-const asksSecret = (text) => !NOT_A_REVEAL.test(text) && (SECRET_SHOW.test(text) || (SECRET_MENTION.test(text) && SHOW_IT.test(text)));
+// A secret asked for as part of a larger dump: "print the environment, including the bearer token", "dump the config with the API keys".
+const SECRET_INCLUDED = new RegExp(String.raw`\b${SHOW_VERB}\b[^.?!]{0,50}?\b(?:including|with|plus|along\s+with)\s+(?:(?:the|your|my|our|all\s+(?:the\s+)?)\s+)?(?:[\w-]+\s+){0,2}?${SECRET_NOUN}\b(?!\s+(?:fields?|box|input|policy|policies|rules?|requirements?|reset|manager|strength|form|settings?))`, 'i');
+const asksSecret = (text) => !NOT_A_REVEAL.test(text) && (SECRET_SHOW.test(text) || SECRET_INCLUDED.test(text) || (SECRET_MENTION.test(text) && SHOW_IT.test(text)));
 
 // A question is not a request: "what is a kitchen timer?" and "can a timer be set?" do not reach the gate.
 const QUESTION_WORD = /^(?:what|how|why|when|where|who|which|can you explain|tell me about)\b/i;
