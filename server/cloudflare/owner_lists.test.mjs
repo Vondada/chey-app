@@ -113,7 +113,12 @@ test('adds, notes and reads run for real: stored, read back, receipted, no model
   assert.equal(more.done.execution_receipt.after_count, 3);
   const again = await c.say('Add eggs to my grocery list');
   assert.match(again.reply, /already on your shopping list/);
-  assert.ok(!again.done.execution_receipt, 'nothing changed, so no change receipt');
+  // Already there: a checked outcome with its own receipt (change: none), not a write.
+  assert.equal(again.done.execution_receipt.status, 'success');
+  assert.equal(again.done.execution_receipt.change, 'none: already present');
+  assert.equal(again.done.execution_receipt.verified, 'read_back');
+  assert.equal(again.done.execution_receipt.before_count, again.done.execution_receipt.after_count);
+  assert.match(again.reply, /Nothing changed\. I read it back: it has 3 items\./);
   assert.equal(items(c.storage, LISTS_KEY, 'shopping').length, 3);
 
   const note = await c.say('Jot down: the gate code is 4412');
@@ -453,4 +458,46 @@ test('an owner hold made while a probe turn runs is kept and released only by th
   const ownerYes = await c.say('yes');
   assert.equal(ownerYes.done.execution_receipt.operation, 'remove');
   assert.deepEqual(items(c.storage, LISTS_KEY, 'shopping'), []);
+});
+
+// Certification run 23 (ter-04): an add of an item already on a probe list from the run before came back with no receipt.
+test('an add of something already on the list gets a read-back receipt that says nothing changed', async () => {
+  const saved = new Map();
+  const storage = { get: async (k) => structuredClone(saved.get(k)), put: async (k, v) => { saved.set(k, structuredClone(v)); } };
+  const t0 = Date.parse('2026-11-02T10:00:00Z');
+  for (const probe of [false, true]) {
+    const key = probe ? PROBE_LISTS_KEY : LISTS_KEY;
+    await listChatTurn(storage, 'Put dish soap and coffee filters on the grocery list', { probe, now: t0 });
+    const writes = saved.get(key).lists.shopping.updated_at;
+    const again = await listChatTurn(storage, 'Could you add coffee filters to my groceries list?', { probe, now: t0 + 5 * 60_000 });
+    const r = again.meta.execution_receipt;
+    assert.equal(r.status, 'success', `${key}: receipted`);
+    assert.equal(r.change, 'none: already present');
+    assert.equal(r.verified, 'read_back');
+    assert.deepEqual(r.items, ['coffee filters']);
+    assert.deepEqual(r.stored, ['dish soap', 'coffee filters']);
+    assert.match(again.text, /coffee filters is already on your shopping list, sir\. Nothing changed\./);
+    assert.equal(saved.get(key).lists.shopping.updated_at, writes, `${key}: nothing was written`);
+  }
+  assert.equal(saved.get('che_receipts').length, 1, 'only the owner\'s real add is in his change log');
+});
+
+test('an already-present add whose read-back fails says so with no receipt', async () => {
+  const saved = new Map();
+  let reads = 0;
+  const storage = { get: async (k) => { if (k === LISTS_KEY && ++reads > 3) throw new Error('read refused'); return structuredClone(saved.get(k)); }, put: async (k, v) => { saved.set(k, structuredClone(v)); } };
+  await listChatTurn(storage, 'Add rice to my shopping list', { now: 1 });
+  const again = await listChatTurn(storage, 'Add rice to my shopping list', { now: 2 });
+  assert.match(again.text, /already on your shopping list, sir\. Nothing changed\.$/);
+  assert.equal(again.meta.execution_receipt, undefined);
+});
+
+test('probe list items from an earlier certification run (over an hour ago) are gone', async () => {
+  const saved = new Map();
+  const storage = { get: async (k) => structuredClone(saved.get(k)), put: async (k, v) => { saved.set(k, structuredClone(v)); } };
+  const t0 = Date.parse('2026-11-02T12:00:00Z');
+  await listChatTurn(storage, 'Add batteries to my to-do list', { probe: true, now: t0 });
+  const later = await listChatTurn(storage, 'Add batteries to my to-do list', { probe: true, now: t0 + 2 * 3600_000 });
+  assert.equal(later.meta.execution_receipt.before_count, 0);
+  assert.equal(later.meta.execution_receipt.change, undefined, 'a real add');
 });

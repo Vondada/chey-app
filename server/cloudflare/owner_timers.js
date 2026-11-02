@@ -165,8 +165,14 @@ function name(t) {
   return `${t.kind === 'reminder' ? 'reminder' : `${spokenDuration(t.duration_ms)} timer`}${t.label ? ` (${t.label})` : ''}`;
 }
 
-/** Fired timers the owner has not heard yet, as one line; marks them heard. */
+// Each probe question stands alone, so a probe timer is never announced into a later reply (certification run 23: a
+// 10-minute timer set by one question was announced into an unrelated answer). Its firing stays on the timer record and
+// in "what timers do I have?". Probe timers set more than an hour ago (an earlier run) are left out of that list.
+const PROBE_WINDOW_MS = 3600_000;
+
+/** Fired timers the owner has not heard yet, as one line; marks them heard. Probe timers: always ''. */
 export async function takeTimerAnnouncement(storage, timeZone = 'UTC', key = TIMERS_KEY) {
+  if (key === PROBE_TIMERS_KEY) return '';
   const list = await load(storage, key);
   const fresh = list.filter((t) => t.status === 'fired' && !t.announced);
   if (!fresh.length) return '';
@@ -207,7 +213,7 @@ export async function timerChatTurn(storage, message, { timeZone = 'UTC', now = 
   const zone = safeTimeZone(timeZone);
   const meta = (extra = {}) => ({ source: 'che_timer', model_calls: 0, ...extra });
   if (intent.action === 'list') {
-    const list = await load(storage, key);
+    const list = (await load(storage, key)).filter((t) => key !== PROBE_TIMERS_KEY || now - Date.parse(t.set_at) < PROBE_WINDOW_MS);
     let live = list.filter((t) => t.status === 'scheduled');
     let fired = list.filter((t) => t.status === 'fired').slice(-3);
     if (!live.length && !fired.length) return { text: 'You have no timers or reminders, sir. Nothing is running.', meta: meta({ timers: [] }) };

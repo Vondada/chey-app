@@ -153,10 +153,10 @@ async function load(storage, key) {
   return value && typeof value === 'object' && value.lists && typeof value.lists === 'object' ? value : { lists: {} };
 }
 
-// Probe items expire after six hours, so each certification run starts from empty lists and its "add milk" is a real add,
-// not "already on your list". The owner's items never expire.
+// Probe items expire after an hour (a certification run takes about 35 minutes), so the next run starts from empty lists
+// and its "add milk" is a real add, not "already on your list". The owner's items never expire.
 const CURSOR_MS = 10 * 60_000;
-const PROBE_TTL_MS = 6 * 3600_000;
+const PROBE_TTL_MS = 3600_000;
 async function loadFor(storage, key, now) {
   const store = await load(storage, key);
   if (key !== PROBE_LISTS_KEY) return store;
@@ -347,7 +347,16 @@ export async function listChatTurn(storage, message, { probe = false, grant = {}
     const existing = store.lists[name]?.items || [];
     const fresh = intent.action === 'note' ? intent.items : intent.items.filter((i) => !existing.some((e) => norm(e.text) === norm(i)));
     const already = intent.items.filter((i) => !fresh.includes(i));
-    if (!fresh.length) return { text: `${preview(already.map((text) => ({ text })))} ${already.length === 1 ? 'is' : 'are'} already on your ${called(name)}, sir. Nothing changed.`, meta: meta({ ok: true, list: name, unchanged: true }) };
+    if (!fresh.length) {
+      // Nothing to write, but "it is already there" is still a checked outcome: read the list back and, when every item is
+      // on it, receipt that (change: none). If the read-back fails or disagrees, no receipt is sent.
+      const said = `${preview(already.map((text) => ({ text })))} ${already.length === 1 ? 'is' : 'are'} already on your ${called(name)}, sir. Nothing changed.`;
+      let back = null;
+      try { back = (await load(storage, key)).lists[name]?.items || []; } catch (_) { /* no receipt */ }
+      if (!back || !already.every((i) => back.some((e) => norm(e.text) === norm(i)))) return { text: said, meta: meta({ ok: true, list: name, unchanged: true }) };
+      const receipt = { tool: 'che_lists', operation: intent.action, list: name, status: 'success', change: 'none: already present', id: `${name}:${now}`, at: new Date(now).toISOString(), items: already, before_count: back.length, after_count: back.length, verified: 'read_back', stored: back.slice(0, 50).map((i) => i.text) };
+      return { text: `${said} I read it back: it has ${plural(back.length, 'item')}.`, meta: meta({ ok: true, list: name, unchanged: true, execution_receipt: receipt }) };
+    }
     if (existing.length + fresh.length > MAX_ITEMS) return { text: `I did not add it, sir: your ${called(name)} would pass ${MAX_ITEMS} items. Nothing was saved.`, meta: meta({ ok: false }) };
     const added = fresh.map((text, k) => ({ id: makeId(now + k), text, added_at: new Date(now).toISOString() }));
     const done = await commit(storage, key, store, name, (list) => [...list, ...added], intent.action, now);

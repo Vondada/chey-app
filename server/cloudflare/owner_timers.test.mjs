@@ -105,7 +105,26 @@ test('probe timers live under their own key: the owner\'s list and receipt log a
   const fired = storage.map.get(PROBE_TIMERS_KEY)[0];
   assert.deepEqual(fired.receipts.map((r) => r.kind), ['timer_set', 'timer_fired']);
   assert.equal(await takeTimerAnnouncement(storage, 'UTC'), '', 'the owner hears nothing');
-  assert.match(await takeTimerAnnouncement(storage, 'UTC', PROBE_TIMERS_KEY), /went off/);
+  // Certification run 23 (eer-22): a probe timer's firing was announced into an unrelated later answer. Probe timers are
+  // never announced; the firing shows in the timer list instead.
+  assert.equal(await takeTimerAnnouncement(storage, 'UTC', PROBE_TIMERS_KEY), '');
+  const listed = await timerChatTurn(storage, 'Which timers are running?', { now: T0 + 7000, key: PROBE_TIMERS_KEY });
+  assert.match(listed.text, /went off/);
+});
+
+test('a fired probe timer never reaches a later reply, and the owner\'s timer still does', async () => {
+  const storage = memory();
+  const t0 = Date.parse('2026-11-02T14:22:56Z');
+  await timerChatTurn(storage, 'Start a 10 minute timer please.', { now: t0, key: PROBE_TIMERS_KEY });
+  await timerChatTurn(storage, 'Start a 10 minute timer please.', { now: t0 });
+  await fireDueTimers(storage, t0 + 600_000, PROBE_TIMERS_KEY);
+  await fireDueTimers(storage, t0 + 600_000);
+  assert.equal(await takeTimerAnnouncement(storage, 'UTC', PROBE_TIMERS_KEY), '');
+  assert.match(await takeTimerAnnouncement(storage, 'UTC'), /^Your 10 minutes timer went off/);
+  assert.equal(await takeTimerAnnouncement(storage, 'UTC'), '', 'once');
+  // A later certification run does not see the earlier run's probe timer in its list.
+  const nextRun = await timerChatTurn(storage, 'Which timers are running?', { now: t0 + 3 * 3600_000, key: PROBE_TIMERS_KEY });
+  assert.equal(nextRun.text, 'You have no timers or reminders, sir. Nothing is running.');
 });
 
 // Certification run 41233462389 (mr-15): "What reminder did I ask you to set for Thursday?" listed an unrelated timer.
