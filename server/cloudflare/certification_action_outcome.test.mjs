@@ -31,3 +31,15 @@ test('through the probe route: a held turn and a single execution_receipt both r
   const out = parseReplyBody(JSON.stringify({ ok: true, status: 200, reply: timer.reply, done: timer.done, execution_receipts: timer.receipts }));
   assert.equal(actionOutcome({ classification: 'pass', receipts: out.receipts, done: out.done, held: out.held }), 'executed');
 });
+
+test('a failed receipt does not pass a question that needs a receipt', async () => {
+  const { grade } = await import('../../tools/certification/run_certification.mjs');
+  const item = { id: 'x-1', receipt_required: true, expected: { must_contain_any: ['backtest'] } };
+  const reply = 'The backtest did not run, sir: the price source refused the request.';
+  const failedOnly = grade(item, { status: 200, reply, receipts: [{ kind: 'backtest', status: 'failed' }] });
+  assert.equal(failedOnly.classification, 'unverified');
+  const mixed = grade(item, { status: 200, reply, receipts: [{ status: 'error' }, { status: 'success' }] });
+  assert.equal(mixed.classification, 'pass');
+  const held = grade(item, { status: 200, reply, receipts: [{ status: 'blocked' }] });
+  assert.equal(held.classification, 'pass');
+});
