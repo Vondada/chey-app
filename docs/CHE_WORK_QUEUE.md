@@ -78,8 +78,9 @@ model sampling, not code.
 | R-04 | Guard against CHE quoting the owner's message back | waiting on owner | Owner decides | staging social Test 2 failure on #850 |
 | R-05 | Certification probe runs on the owner's real state (Office tasks, coding jobs, media pile up) | waiting on owner | Owner decides on a probe sandbox. Run 21 mr-24 listed real stored tasks for "three tasks I left unfinished yesterday" | `/api/probe/chat` -> `getByName('owner')` |
 | R-06 | Saved owner facts appear in unrelated answers ("The owner's favorite drink is Sprite.", run 20 cre-45) | waiting on owner | The OWNER-STATED MEMORIES list goes into every prompt by design (#354 test); filtering by relevance changes that design | `worker.test.mjs` eighth-review test |
-| R-08 | Live code-switching probe does not say which reply rule failed (deploy `41448895778`) | open | Make the step report profanity / clean_swapped / stock phrase / mode announcement | `social_corrections.js` socialProbe |
+| R-08 | Live code-switching probe does not say which reply rule failed (deploy `41448895778`) | done | #894 `5847d7dd` prints `why:`; the first `clean_swapped` it named was fixed in #895 `92f8f5ec` (clean mode cleans earlier turns sent to the model) | `social_corrections.js` socialProbe, cleanTurns |
 | R-07 | An Office consultation backs handoff text without checking the named agent was the one consulted | open | Small follow-up | #882 review note |
+| R-09 | 48 of 61 incorrect run-24 answers came from the 3B fast model (reasoning, arithmetic, code, trading terms) | waiting on owner | Widen the strong-model test to these question kinds; it uses more of the free Workers AI allowance (the 8B model was chosen to stretch it) | run 24 `41491194768` |
 
 ## Owner decisions needed
 - Office swipe (Q-02).
@@ -88,6 +89,7 @@ model sampling, not code.
 - Whether automatic background runs are allowed: yes, for the reliability recovery (owner, 2026-11-01).
 
 ## Log
+- 2026-11-02: #891, #892, #894, #895 merged (probe state, Office notice and security refusals, staging deploy check, clean history); run 24 506/600 (+9); R-08 done, R-09 added.
 - 2026-11-02: #889 merged (context echo, history records); run 23 497/600 (-12; probe-state carry-over, Office notice, one claim slip under fix).
 - 2026-11-02: #887 merged (owner notes and lists with read-back receipts); run 22 509/600 (+8).
 - 2026-11-02: #880-#885 merged (run-20 regressions, guard trace); run 21 501/600 (+16); unseen sets 12/12 and 12/12.
