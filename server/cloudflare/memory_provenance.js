@@ -294,6 +294,10 @@ function parseOwnerMemoryQuestion(message) {
   // is next?" is a statement followed by an unrelated question.
   if (!ASK_FORM.test(q) && !/^(?:anything|something|one thing)\b/.test(q)) return null;
   if (!OWNER_SUBJECT_ACT.test(q) && !OWNER_INVERTED_ACT.test(q)) return null;
+  // "liked/enjoyed/visited" recovers his past only in a plain recall question: "Which city should I visit next if I
+  // enjoyed Vienna?" asks for advice and stays with the model.
+  const told = q.replace(/\b(?:lik|lov|enjoy|visit)(?:e|ed|s)?\b/g, 'x');
+  if (!OWNER_SUBJECT_ACT.test(told) && !OWNER_INVERTED_ACT.test(told) && /\b(?:should|could|would|can|might|recommend\w*|suggest\w*|if|next|why|how)\b/.test(q)) return null;
   // "What did I just say?" asks for the owner's last words in this
   // conversation, not for his stored memories.
   if (/\b(?:just|a (?:moment|second|minute) ago|right now)\b/.test(q) && /\b(?:say|said|ask|asked|tell you|told you)\b/.test(q)) return { topic: '', recent: true };

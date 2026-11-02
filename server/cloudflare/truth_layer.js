@@ -417,8 +417,9 @@ const RULES = [
       || /\b(?:and I|with me|we)\b[^.]{0,30}\b(?:are|am|have been|were)\b[^.]{0,20}\b(?:working|reading|reviewing|coordinating|collaborating|analy[sz]ing|comparing|building|coding)\b/i.test(s)
       || new RegExp(`\\b${PEER_RE}\\b[^.]{0,20}\\b(?:is|are|has been)\\s+(?:currently\\s+)?(?:working|helping|reviewing|reading|coding|building|analy[sz]ing|on it|finished|done)\\b`, 'i').test(s)
       || /\b(?:replied|responded|answered|acknowledged|agreed|confirmed)\b/i.test(s)
-      // A promise to ask another AI is a send no route made ("I'll ask Grok." to "Can you hear me?", run 20).
-      || /\bI(?:'ll|’ll|\s+will)\s+(?:ask|message|contact|ping|email|tell)\b/i.test(s)
+      // A promise to ask another AI is a send no route made ("I'll ask Grok." to "Can you hear me?", run 20). The AI must be
+      // the one asked: "I'll ask you whether you prefer Claude" asks the owner.
+      || new RegExp(`\\bI(?:'ll|’ll|\\s+will)\\s+(?:ask|message|contact|ping|email|tell)\\s+${PEER_RE}\\b`, 'i').test(s)
     ),
     supported: (s, st) => {
       const peers = mentionedPeers(s);

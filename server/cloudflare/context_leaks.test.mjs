@@ -62,7 +62,10 @@ test('a live-price claim needs a quoted figure; an explanation that says "curren
   const explain = 'Contango is when a futures contract trades above the current price of the underlying, because holding it costs money.';
   assert.deepEqual(claimKindsIn(explain), []);
   assert.equal(auditReply(explain, { evidence: {} }).text, explain);
-  for (const quote of ['The current price of gold is 2,410 dollars.', 'Right now 5120 is the latest price for the index.']) {
+  const carry = 'Cost of carry links the futures price to the current price of the spot asset, adding financing and storage and subtracting any income.';
+  assert.deepEqual(claimKindsIn(carry), []);
+  // A figure on either side of the label, in the same clause, is a quoted price.
+  for (const quote of ['The current price of gold is 2,410 dollars.', 'Right now 5120 is the latest price for the index.', '$2,410 is gold\'s current price.', 'At 98.5 the live quote for the bond looks cheap.']) {
     assert.deepEqual(claimKindsIn(quote), ['live_price'], quote);
     assert.match(auditReply(quote, { evidence: {} }).text, /cannot give a live price/);
   }
@@ -75,6 +78,10 @@ test('a promise to ask another AI with nothing sent is removed', () => {
   assert.equal(out.text, 'Sounds good.');
   // Asking the owner, or a general "I'll ask", is not a peer claim.
   assert.equal(guardOwnerReply('I will ask you one more thing first.', state).removed.length, 0);
+  // The owner is asked; the AIs are only named.
+  assert.equal(guardOwnerReply("I'll ask you whether you prefer Claude or Gemini.", state).removed.length, 0);
+  assert.equal(guardOwnerReply('I will tell you what Copilot is good at.', state).removed.length, 0);
+  assert.deepEqual(guardOwnerReply("I'll ping ChatGPT for a second opinion.", state).removed.map((r) => r.rule), ['peer_collaboration']);
 });
 
 test('through /api/chat: a removed AI promise is answered with the AI record, not the coding-job list', async () => {
@@ -100,7 +107,10 @@ test('the owner in the third person, and a place he liked, are questions for his
   assert.ok(ownerMemoryQuestion('Which museum did I enjoy in Vienna?', []));
   assert.ok(ownerMemoryQuestion('What was the hotel I visited in Oslo?', []));
   // Someone else's owner, advice, and a present-tense preference stay with the model.
-  for (const ask of ['What did the owner of the bakery tell you?', 'What should I visit in Rome?', 'Which car do I like more, the red or the blue?']) {
+  assert.ok(ownerMemoryQuestion('Where did I enjoy the best coffee?', []));
+  // Advice or an explanation that only mentions a liked place stays with the model.
+  for (const ask of ['What did the owner of the bakery tell you?', 'What should I visit in Rome?', 'Which car do I like more, the red or the blue?',
+    'Which city should I visit next if I enjoyed Vienna?', 'What wine would suit me, since I loved the Rioja?', 'Why did I enjoy Lisbon so much?']) {
     assert.equal(ownerMemoryQuestion(ask, []), null, ask);
   }
 });
