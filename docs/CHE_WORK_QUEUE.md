@@ -72,10 +72,11 @@ model sampling, not code.
 
 | id | item | status | next step | evidence |
 |---|---|---|---|---|
-| R-01 | Root causes of the 101 questions that fail every run, grouped by shared defect | in progress | #860-#864 and #867 merged; #865, #866 in review; measure with run 18 | `stable_fail` analysis of runs l-p |
+| R-01 | Root causes of the 101 questions that fail every run, grouped by shared defect | in progress | #860-#867 merged and live; run 18 477/600, 52 of the 101 now pass; follow-ups: Office-task echo, gate wording/misreport | run `41367267850` |
 | R-02 | Certification records model, provider, fallback, latency and receipts per question; alerts on a score regression | done | - | #858 `c19823ff`; first used by run `41354289425` |
 | R-03 | Repeatable answers: no chat model call sets a sampling temperature | done (measured) | Temperature 0.3 cut flips 82 -> 70 only; next lever is which engine answers | #859 `ff1cf1d5`; run `41354289425` |
 | R-04 | Guard against CHE quoting the owner's message back | waiting on owner | Owner decides | staging social Test 2 failure on #850 |
+| R-05 | Certification probe runs on the owner's real state (Office tasks, coding jobs, media pile up) | waiting on owner | Owner decides on a probe sandbox | `/api/probe/chat` -> `getByName('owner')` |
 
 ## Owner decisions needed
 - Office swipe (Q-02).
@@ -84,6 +85,7 @@ model sampling, not code.
 - Whether automatic background runs are allowed: yes, for the reliability recovery (owner, 2026-11-01).
 
 ## Log
+- 2026-11-02: #865, #866, #867 merged and deployed; run 18 477/600 (+47); R-05 added.
 - 2026-11-01: R-02 and R-03 done (#858, #859); run 17 430/600; six stable-failure PRs merged (#860-#864, #867).
 - 2026-11-01: Reliability recovery section added (R-01 to R-04); scheduled continuation every 3 hours, per the owner's standing order.
 - 2026-10-28: Q-39 Phase 1 audit done (`docs/CHE_UNIVERSAL_CREATION_AUDIT.md`). Modal /health verified live; Creation Engine end-to-end was skipped (opt-in) on run 40609806059.
