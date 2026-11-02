@@ -14,10 +14,15 @@ const baseCtx = (storage) => ({ storage, body: {}, data: {}, env: {}, rawMessage
 
 test('the stage order is exactly the order worker.js ran before the pipeline existed', () => {
   assert.deepEqual([...TRUTH_STAGE_ORDER], [
+    // added run 22: a stored line copied as the reply is caught on the model's own text, before any guard edits it
+    'context_echo',
     'truth_layer', 'research_actions', 'owner_actions',
     // added with device_action_claims.js: a timer, app or device claim needs a completed connector receipt this turn
     'device_actions',
-    'citations', 'grounding', 'asset_truth', 'capability_gap',
+    'citations', 'grounding',
+    // added run 22: a long-history summary from the records, after the date check (its dates are the records' own)
+    'history_records',
+    'asset_truth', 'capability_gap',
     'attribution', 'agent_task', 'answer_receipt', 'wake_text', 'pretend_tool_call', 'execution_claims', 'auditor',
     'engine_claims',
     // added 2026-10-31: the owner's voice rule in code, after the claim checks (social_corrections.js ownVoiceReply)
