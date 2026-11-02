@@ -191,3 +191,22 @@ test('through /api/chat, an advisory record of the owner\'s question does not hi
   assert.doesNotMatch(reply, /internal Office task/);
   assert.match(reply, /note each verdict/);
 });
+
+// ── A bare continuation never gets the Office notice (certification run 23, vcc-24) ──
+// "Keep going." has no topic, so a reply that only repeated a task line used to become "That is an internal Office
+// task". The notice answers a question nobody asked; the honest answer says what can be continued. Not bank wording.
+
+test('a bare continuation that leaked only a task line is answered honestly, not with the Office notice', async () => {
+  const none = guardAgentTaskReply(`Sure, sir. ${TASK}.`, TASKS, 'Carry on, please.');
+  assert.equal(none.text, 'I don\'t have anything in progress to continue, sir. What should I pick up?');
+  assert.equal(none.removed[0].rule, 'office_task_reply', 'the removal is still recorded');
+  const talk = guardAgentTaskReply(TASK, TASKS, 'Okay, go on.', { history: [{ role: 'user', content: 'Plan my week.' }, { role: 'assistant', content: 'Monday is free.' }] });
+  assert.equal(talk.text, 'I lost the thread there, sir. What should I continue with?');
+  const kept = `Here is the next step, sir: read the second chapter and write down the three questions it raises. ${TASK}.`;
+  assert.doesNotMatch(guardAgentTaskReply(kept, TASKS, 'Go on.').text, /quarterly newsletter|Office/, 'a real answer left over still stays');
+  assert.equal(guardAgentTaskReply(TASK, TASKS, 'Carry on with the newsletter check.').text, AGENT_TASK_NOTICE, 'a turn with a topic keeps the old rule');
+  const che = await owner(() => TASK);
+  const reply = await che.say('Alright, carry on.');
+  assert.doesNotMatch(reply, /internal Office task|quarterly newsletter/);
+  assert.match(reply, /continue/);
+});

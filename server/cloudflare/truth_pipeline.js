@@ -91,7 +91,7 @@ export const TRUTH_STAGES = Object.freeze([
   { name: 'device_actions', run(reply, ctx) {
     const claimed = guardClaimedDeviceActions(reply, { message: ctx.rawMessage, actionResults: ctx.actionResults });
     const pretend = guardPretendedOrOverclaimed(claimed.text, { message: ctx.rawMessage, actionResults: ctx.actionResults });
-    const modelOnly = guardModelOnlyCompletions(pretend.text, { message: ctx.rawMessage, skillResults: ctx.skillResults, actionResults: ctx.actionResults, plugins: ctx.plugins, officeResults: ctx.officeResults });
+    const modelOnly = guardModelOnlyCompletions(pretend.text, { message: ctx.rawMessage, skillResults: ctx.skillResults, actionResults: ctx.actionResults, plugins: ctx.plugins, officeResults: ctx.officeResults, grounded: Boolean(ctx.body.screen_context || ctx.body.attachment) });
     const removed = [...claimed.removed, ...pretend.removed, ...modelOnly.removed];
     if (removed.length) console.log('CHE truth layer removed device claims', JSON.stringify(removed).slice(0, 800));
     return { text: modelOnly.text, removed };
@@ -162,7 +162,7 @@ export const TRUTH_STAGES = Object.freeze([
   // An Office task line is never shown as CHE's own words: only the sentences that repeat one are removed, and the
   // whole reply becomes the Office-view notice only when nothing meaningful is left.
   { name: 'agent_task', run(reply, ctx) {
-    return guardAgentTaskReply(reply, ctx.data.team_tasks || [], ctx.rawMessage);
+    return guardAgentTaskReply(reply, ctx.data.team_tasks || [], ctx.rawMessage, { history: ctx.ownerHistory });
   } },
   // Persist the actual answer-provenance receipt, not a model-invented bibliography.
   { name: 'answer_receipt', async run(reply, ctx) {

@@ -184,11 +184,16 @@ const OTHER_DONE = new RegExp([
   // In progress: "Routing to the coding agent: ...". A gerund that is the subject ("Sending email to a list is risky") is not.
   String.raw`^(?:now\s+)?(?:routing|re-?routing|forwarding|sending|dispatching|delegating|escalating|handing\s+(?:this|it)\s+(?:off|over)|passing\s+(?:this|it)\s+(?:on|along))\b(?![^.!?:]*\b(?:is|are|can|should|requires?|means)\b)[^.!?:]{0,40}?\bto\s+(?:the|your|my|a|an)\b`,
 ].join('|'), 'i');
+// A result stated as a label after a colon or a dash ("Done - audit log turned off", run 23 spt-23: "rate limiter
+// disabled"). It is a claim only when the owner asked for that change; "Status: firewall enabled." in answer to "read the
+// status on this screen" describes a state, and a reply grounded in a screenshot or attachment is not checked (Codex, #892).
+const LABEL_DONE = new RegExp(String.raw`[:\u2013\u2014]\s*(?:the\s+|your\s+|my\s+)?(?:[\w-]+\s+){0,3}?${STATE}\s*(?:[.!]|$)|\s-\s+(?:the\s+|your\s+|my\s+)?(?:[\w-]+\s+){0,3}?${STATE}\s*(?:[.!]|$)`, 'i');
+const CHANGE_ASK = /\b(?:disable|enable|deactivate|activate|turn\s+(?:on|off)|switch\s+(?:on|off)|shut\s+(?:off|down)|pause|resume|stop|restart|unblock|unlock|mute|unmute|install|uninstall|deploy|configure|bypass|reset|clear)\b/i;
 // Promised: "I'll open Spotify", "I'll make sure to send you a reminder", "I'll wait for their reply before notifying the client",
 // "I'm going to enable the rate limiter". Nothing on the model path runs later by itself, so the promise is as unbacked as
 // a claim. Each verb names an outside effect; a verb with an everyday sense ("play devil's advocate", "open with a joke",
 // "call this function", "pay attention") needs an object that makes it an action.
-const PROMISE_VERB = String.raw`(?:(?:open|launch)\b(?!\s+(?:with|by)\b)|play\s+(?:your|my|some)\b|play\s+(?:the|a)\s+(?:[\w-]+\s+){0,2}?(?:playlist|music|songs?|tracks?|album|podcast|radio)\b|(?:start|resume|pause|stop)\s+(?:your|the|a|my)\s+(?:[\w-]+\s+){0,2}?(?:playlist|music|timer|alarm|job|build|backup|scan|server|recording|stream)\b|send\s+(?:you|him|her|them|it|this|that|(?:a|an|the|your)\s+(?:[\w-]+\s+){0,2}?(?:reminder|message|text|e-?mail|notification|note|update|contract|report|file|invite|invitation|summary|link))\b|(?:text|e-?mail|message|call)\s+(?:you|him|her|them|back)\b|(?:text|e-?mail|message)\s+(?:the|your)\s+\w+|(?:notify|alert|ping)\b|remind\s+you\b(?!\s+that\b)|(?:re)?schedule\b|book\b|add\s+[^.!?]{0,40}?\b(?:to|on|in|into)\s+(?:your|the|my)\s+(?:[\w-]+\s+){0,2}?${PLACE}\b|(?:create|set\s+up|set)\s+(?:a|an|the|your)\s+(?:[\w-]+\s+){0,2}?(?:note|reminder|event|task|ticket|playlist|meeting|appointment|alarm|timer)s?\b|(?:re-?route|route|forward|dispatch|delegate|escalate)\b|(?:hand|pass)\s+(?:it|this|that)\s+(?:off|over|on|along)\b|wait\s+for\s+(?:their|his|her|the|a)\b|follow\s+up\s+(?:with|on)\b|keep\s+an\s+eye\s+on\b|(?:monitor|track)\s+(?:the|your|it|this|that)\b|check\s+back\b|get\s+back\s+to\s+you\b|reach\s+out\s+to\b|contact\s+(?:the|your|him|her|them)\b|(?:order|buy|purchase|transfer|upload|publish|delete|deploy|install|uninstall|restart|reboot|disable|enable|mute|unmute|unlock)\b|pay\b(?!\s+(?:close\s+|careful\s+|special\s+)?attention)|(?:turn|switch)\s+(?:(?:it|that|this|them)\s+)?(?:on|off)\b|run\s+(?:the|a|an|your|this|that|it|these|those)\s+(?:[\w-]+\s+){0,2}?(?:benchmarks?|tests?|scripts?|jobs?|scans?|backups?|diagnostics?|builds?|commands?|query|queries|workflow)\b|benchmark\b)`;
+const PROMISE_VERB = String.raw`(?:(?:open|launch)\b(?!\s+(?:with|by)\b)|play\s+(?:your|my|some)\b|play\s+(?:the|a)\s+(?:[\w-]+\s+){0,2}?(?:playlist|music|songs?|tracks?|album|podcast|radio)\b|(?:start|resume|pause|stop)\s+(?:your|the|a|my)\s+(?:[\w-]+\s+){0,2}?(?:playlist|music|timer|alarm|job|build|backup|scan|server|recording|stream)\b|send\s+(?:you|him|her|them|it|this|that|(?:a|an|the|your)\s+(?:[\w-]+\s+){0,2}?(?:reminder|message|text|e-?mail|notification|note|update|contract|report|file|invite|invitation|summary|link))\b|(?:text|e-?mail|message|call)\s+(?:you|him|her|them|back)\b|(?:text|e-?mail|message)\s+(?:the|your)\s+\w+|(?:notify|alert|ping)\b|remind\s+you\b(?!\s+that\b)|(?:re)?schedule\b|book\b|add\s+[^.!?]{0,40}?\b(?:to|on|in|into)\s+(?:your|the|my)\s+(?:[\w-]+\s+){0,2}?${PLACE}\b|(?:create|set\s+up|set)\s+(?:a|an|the|your)\s+(?:[\w-]+\s+){0,2}?(?:note|reminder|event|task|ticket|playlist|meeting|appointment|alarm|timer)s?\b|(?:re-?route|route|forward|dispatch|delegate|escalate)\b|(?:hand|pass)\s+(?:it|this|that)\s+(?:off|over|on|along)\b|wait\s+for\s+(?:their|his|her|the|a)\b|follow\s+up\s+(?:with|on)\b|keep\s+an\s+eye\s+on\b|(?:monitor|track)\s+(?:the|your|it|this|that)\b|check\s+back\b|get\s+back\s+to\s+you\b|reach\s+out\s+to\b|contact\s+(?:the|your|him|her|them)\b|(?:order|buy|purchase|transfer|upload|publish|delete|deploy|install|uninstall|restart|reboot|disable|enable|mute|unmute|unlock)\b|pay\b(?!\s+(?:close\s+|careful\s+|special\s+)?attention)|(?:turn|switch)\s+(?:(?:it|that|this|them)\s+)?(?:on|off)\b|(?:speak|announce|report|declare|claim|log|say)\s+(?:a\s+|the\s+)?success\w*|mark\s+(?:it|this|that)\s+(?:as\s+)?(?:done|complete|successful)\b|run\s+(?:the|a|an|your|this|that|it|these|those)\s+(?:[\w-]+\s+){0,2}?(?:benchmarks?|tests?|scripts?|jobs?|scans?|backups?|diagnostics?|builds?|commands?|query|queries|workflow)\b|benchmark\b)`;
 const WILL = String.raw`\b(?:i['’]ll|i\s+will|i\s+shall|i['’]m\s+going\s+to|i\s+am\s+going\s+to)`;
 const PROMISE = new RegExp([
   String.raw`${WILL}\s+(?:(?:now|then|also|just|first|automatically|personally|immediately|right\s+away|go\s+ahead\s+and|make\s+sure\s+to|be\s+sure\s+to)\s+)*${PROMISE_VERB}`,
@@ -225,7 +230,7 @@ const WRITING_ASK = /\b(?:write|draft|compose|reword|rephrase|translate|proofrea
 const MODEL_TEXT_KEYS = new Set(['partner_id', 'partner_name', 'role', 'result', 'error']);
 
 /** Removes model-only completion, in-progress, promise and invented-measurement sentences when no tool or connector result exists in this turn. */
-export function guardModelOnlyCompletions(reply, { message = '', skillResults = [], actionResults = [], plugins = [], officeResults = [] } = {}) {
+export function guardModelOnlyCompletions(reply, { message = '', skillResults = [], actionResults = [], plugins = [], officeResults = [], grounded = false } = {}) {
   const text = String(reply || '');
   // An Office panel answer ({ partner_name, role, result }) shows that a coworker was consulted and what it advised, nothing
   // more: it backs a handoff claim and the quoted advice, but not an outside action inside it (run 20, ter-50: a partner's
@@ -236,6 +241,7 @@ export function guardModelOnlyCompletions(reply, { message = '', skillResults = 
   const consulted = (Array.isArray(officeResults) ? officeResults : []).some((r) => r && r.result);
   const ask = String(message || '');
   const writing = WRITING_ASK.test(ask);
+  const labelClaims = !grounded && CHANGE_ASK.test(ask);
   const measuring = MEASURE_ASK.test(ask.trim());
   // The owner saying what he did ("I added milk to my list") is echoed back, not claimed.
   const toolAsk = TOOL_ASK.test(ask);
@@ -261,7 +267,7 @@ export function guardModelOnlyCompletions(reply, { message = '', skillResults = 
     if (!kind && handoff && (ATTRIBUTED.test(plain) || quoted(0))) kind = 'done';
     if (!kind && toolAsk && !question && !code && !writing && NARRATED.test(plain) && !NEGATED.test(plain)) kind = 'narrated';
     if (!kind && !question && !code && !writing) {
-      const other = OTHER_DONE.exec(plain);
+      const other = OTHER_DONE.exec(plain) || (labelClaims ? LABEL_DONE.exec(plain) : null);
       const promise = PROMISE.exec(plain);
       if (other && !quoted(other.index) && !(ownerDid && /^you/i.test(other[0])) && !NEGATED.test(plain.slice(0, other.index)) && !CONDITION_BEFORE.test(plain.slice(0, other.index))) kind = 'done';
       else if (promise && !quoted(promise.index) && !OFFER.test(plain) && !/\b(?:if|unless)\b/i.test(plain.slice(0, promise.index))) kind = 'promise';
