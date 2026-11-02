@@ -5,6 +5,7 @@
 //
 // Domains and the connector that backs each one (the same environment variable actionPanel in worker.js reads):
 //   timer       built in (owner_timers.js): worker.js answers timer requests before this gate, with receipts
+//   lists       built in (owner_lists.js): notes and lists are answered before this gate, with read-back receipts
 //   app_open    no connector exists in the code: nothing can run it
 //   smart_home  CHE_SMART_HOME_URL; without it no device is controlled
 //   phone       none can exist: iOS gives an app no control of the phone's volume, mute, brightness or radios
@@ -19,6 +20,7 @@ import { pluginManifests, pluginToolsLikelyNeeded } from './plugin_runtime.js';
 
 export const ACTION_DOMAINS = Object.freeze({
   timer: { label: 'timer', connector: 'builtin', reason: 'my timer needs one clear length or time, like "set a timer for 10 minutes", so no timer was set from this request' },
+  lists: { label: 'list', connector: 'builtin', reason: 'my notes and lists tool could not tell which item and which of your own lists you meant (it takes requests like "add milk to my shopping list"; a mailing or contact list is not one CHE keeps), so nothing was saved or removed' },
   app_open: { label: 'app', connector: null, reason: 'CHE has no app connector, so nothing can open or close an app here', instead: 'You can open it yourself, or ask Siri.' },
   smart_home: { label: 'smart-home', connector: 'CHE_SMART_HOME_URL', reason: 'no smart-home connector is configured (CHE_SMART_HOME_URL), so no device is controlled here', instead: 'The Home app or Siri can do it until a smart-home bridge is connected to me.' },
   phone: { label: 'phone', connector: null, reason: 'iOS does not let CHE\'s app change your phone\'s volume, mute, brightness or settings, so nothing on your phone changed', instead: 'Control Center or Siri can do it in a second.' },
@@ -46,6 +48,8 @@ export const ACTION_DOMAINS = Object.freeze({
 });
 
 const TIMER = /\b(?:set|start|create)\s+(?:a|an|the|my|\d+)?\s*(?:[\w-]+\s+){0,2}?(?:timer|alarm|reminder)s?\b|\btimer tool\b/i;
+// "Add it to my list", "put that on my notes": a list request the list connector could not read an item from.
+const LISTS = /^(?:add|put|save|remove|delete|take|cross)\b[^.?!]{0,60}\b(?:to|on|onto|in|into|from|off)\s+(?:my|our)\s+(?:[\w'-]+\s+){0,2}?(?:list|notes)\s*[.!]*$/i;
 const APP = /\b(?:open|launch|close|quit)\s+(?:the\s+|my\s+)?(?:[\w' -]{1,30}\s+)?app\b|\b(?:open|launch)\s+(?:the\s+|my\s+)?(?:calendar|maps|settings|camera|photos|browser|mail)\b/i;
 const PHONE = /\b(?:mute|unmute|silence)\s+(?:my\s+|the\s+)?(?:phone|iphone|ringer|notifications)\b|\b(?:turn|set|put|raise|lower|increase|decrease|change)\b[^.?!]{0,20}\b(?:volume|brightness|ringer)\b|\b(?:volume|brightness)\b[^.?!]{0,20}\b(?:up|down|to\s+\d+|\d+\s*(?:%|percent))|\b(?:turn|switch)\s+(?:on|off)\s+(?:my\s+|the\s+)?(?:wi-?fi|bluetooth|airplane mode|do not disturb|flashlight|hotspot|location services)\b|\b(?:turn|switch)\s+(?:my\s+|the\s+)?(?:wi-?fi|bluetooth|airplane mode|do not disturb|flashlight|hotspot)\s+(?:on|off)\b|\b(?:enable|disable)\s+(?:do not disturb|airplane mode|wi-?fi|bluetooth)\b/i;
 const SMS = /\b(?:text|sms)\s+(?!me\b|it\b|this\b|that\b)(?:my\s+)?[a-z][\w'-]*(?:\s+[a-z][\w'-]*)?\s+(?:that|saying|and\s+(?:say|tell))\b|\bsend\s+(?:a\s+)?(?:text|sms)(?:\s+message)?\s+to\b/i;
@@ -144,6 +148,7 @@ export function actionDomainOf(message = '') {
   if (SECURITY.test(order)) return 'security';
   if (!asked && QUESTION_MARK.test(order)) return null;
   if (TIMER.test(order)) return 'timer';
+  if (LISTS.test(order)) return 'lists';
   if (APP.test(order)) return 'app_open';
   if (PHONE.test(order)) return 'phone';
   if (SMS.test(order)) return 'sms';
