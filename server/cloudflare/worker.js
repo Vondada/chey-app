@@ -26,7 +26,7 @@ import {
   steerAgentTask,
   handoffAgentTask,
 } from './agent_runtime.js';
-import { pluginManifests, runChatPlugins, runPluginTool } from './plugin_runtime.js';
+import { pluginManifests, runChatPlugins, runPluginTool, withForecastPlace } from './plugin_runtime.js';
 import { contextItemsFrom, routingForAgent } from './agent_runtime.js';
 import {
   aiOverview, evaluateOne, handleAiVoiceIntent, privacyPermissionsMap, syncRoutingSnapshot, watchModels,
@@ -14404,6 +14404,7 @@ export class CheState extends DurableObject {
           forecastVerified: skillResults.some((result) =>
             result.ok === true && /^weather$/i.test(result.plugin) && result.tool === 'forecast'),
         });
+        reply = withForecastPlace(reply, skillResults);
         // Reject unrelated diagnostics or model/template scaffolding before
         // it can become the owner's answer or enter the cache.
         if (replyHijacksOwnerRequest(message, reply)) {

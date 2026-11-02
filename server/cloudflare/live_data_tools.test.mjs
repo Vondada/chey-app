@@ -5,7 +5,7 @@ import { readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import test from 'node:test';
 
 import { capabilityGap } from './capability_gap.js';
-import { runChatPlugins, serverPluginTools, weatherPlace } from './plugin_runtime.js';
+import { forecastPlace, runChatPlugins, serverPluginTools, weatherPlace, withForecastPlace } from './plugin_runtime.js';
 import { newsQuestion, newsResearch } from './source_verification.js';
 import { loadCandles } from './trading_lab.js';
 import { guardLocationWeatherReply } from './truth_layer.js';
@@ -119,6 +119,67 @@ test('through /api/chat: a forecast backed by the forecast tool is kept, with it
     assert.doesNotMatch(reply, /verified live weather forecast/);
     const receipts = done.execution_receipts || [];
     assert.ok(receipts.some((r) => r.tool === 'forecast' && r.status === 'success'));
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
+// Codex review on #878: "Paris, Texas" was cut to "Paris" and "St. Louis" to "St", and the first geocoder hit was
+// given as the verified forecast. The place keeps its abbreviation and qualifier; a qualifier the geocoder's result
+// does not match goes to the planner instead of a guess; the reply says which place the forecast was for.
+const GEO = {
+  Paris: { results: [{ name: 'Paris', admin1: 'Île-de-France', country: 'France', country_code: 'FR', latitude: 48.85, longitude: 2.35 }] },
+  'St. Louis': { results: [{ name: 'St. Louis', admin1: 'Missouri', country: 'United States', country_code: 'US', latitude: 38.63, longitude: -90.2 }] },
+  Berlin: { results: [{ name: 'Berlin', admin1: 'Land Berlin', country: 'Germany', country_code: 'DE', latitude: 52.52, longitude: 13.41 }] },
+};
+function geoWeb() {
+  const fetched = [];
+  globalThis.fetch = async (url) => {
+    fetched.push(decodeURIComponent(String(url)));
+    if (String(url).startsWith('https://geocoding-api.open-meteo.com/')) return Response.json(GEO[new URL(url).searchParams.get('name')] || {});
+    if (String(url).startsWith('https://api.open-meteo.com/')) return Response.json(WET);
+    throw new TypeError('offline');
+  };
+  return fetched;
+}
+const plannerNone = { AI: { run: async () => ({ response: 'NONE' }) } };
+const memory = () => { const m = new Map(); return { get: async (k) => m.get(k), put: async (k, v) => m.set(k, v), delete: async (k) => m.delete(k), list: async () => new Map() }; };
+
+test('a place keeps its abbreviation and its comma qualifier', () => {
+  assert.equal(weatherPlace('Is it going to rain in Paris, Texas over the weekend?'), 'Paris, Texas');
+  assert.equal(weatherPlace('Umbrella needed in St. Louis tomorrow?'), 'St. Louis');
+  assert.equal(weatherPlace('Snow near Mt. Hood, Oregon on Friday?'), 'Mt. Hood, Oregon');
+  assert.equal(weatherPlace('Weather in Cambridge, UK?'), 'Cambridge, UK');
+  assert.equal(weatherPlace("What's the weather in Berlin, and do I need a coat?"), 'Berlin');
+  assert.equal(weatherPlace('Any rain in Berlin. Also, how are you?'), 'Berlin');
+});
+
+test('"Paris, Texas" never gets the forecast for Paris, France; St. Louis and Berlin run directly', async () => {
+  const fetched = geoWeb();
+  try {
+    // The geocoder's only Paris is in France: no forecast is run for it, and the planner (NONE here) decides.
+    const texas = await runChatPlugins(plannerNone, memory(), {}, 'Is it going to rain in Paris, Texas over the weekend?', 'fast');
+    assert.deepEqual(texas.skillResults.map((r) => r.tool), ['find_place']);
+    assert.ok(fetched.some((u) => u.includes('name=Paris')) && !fetched.some((u) => u.startsWith('https://api.open-meteo.com/')));
+    assert.equal(forecastPlace(texas.skillResults), '');
+
+    fetched.length = 0;
+    const louis = await runChatPlugins(plannerNone, memory(), {}, 'Umbrella needed in St. Louis tomorrow?', 'fast');
+    assert.ok(fetched[0].includes('name=St. Louis'));
+    assert.deepEqual(louis.skillResults.map((r) => `${r.tool}:${r.ok}`), ['find_place:true', 'forecast:true']);
+    assert.equal(forecastPlace(louis.skillResults), 'St. Louis, Missouri, United States');
+
+    const berlin = await runChatPlugins(plannerNone, memory(), {}, 'Should I take a brolly? Forecast for Berlin tomorrow, please.', 'fast');
+    assert.equal(forecastPlace(berlin.skillResults), 'Berlin, Land Berlin, Germany');
+    // The reply names the place used when the model left it out, and is unchanged when it already did.
+    assert.match(withForecastPlace('Light rain is likely, take an umbrella.', berlin.skillResults), /Forecast used: Berlin, Land Berlin, Germany \(Open-Meteo\)\.$/);
+    assert.equal(withForecastPlace('Berlin, Land Berlin, Germany: light rain.', berlin.skillResults), 'Berlin, Land Berlin, Germany: light rain.');
+
+    // A qualifier the result does match runs directly.
+    GEO.Paris.results.unshift({ name: 'Paris', admin1: 'Texas', country: 'United States', country_code: 'US', latitude: 33.66, longitude: -95.56 });
+    const matched = await runChatPlugins(plannerNone, memory(), {}, 'Is it going to rain in Paris, Texas over the weekend?', 'fast');
+    assert.equal(forecastPlace(matched.skillResults), 'Paris, Texas, United States');
+    GEO.Paris.results.shift();
   } finally {
     globalThis.fetch = realFetch;
   }

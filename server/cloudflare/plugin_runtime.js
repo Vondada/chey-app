@@ -187,28 +187,76 @@ export function serverPluginTools(env, message = null) {
     })));
 }
 
-// A weather question, in any wording, and the place it names. "for/in/at/near <Place>"; words such as "tomorrow",
+// A weather question, in any wording, and the place it names: "for/in/at/near <Place>", with an abbreviation kept
+// ("St. Louis", "Mt. Hood") and a comma qualifier kept ("Paris, Texas", "Cambridge, UK"). Words such as "tomorrow",
 // "the weekend" or "me" are not places. Returns '' when no place is named, so the planner model decides instead.
 const WEATHER_ASK = /\b(?:weather|forecast|umbrella|rain(?:ing|y|coat)?|snow(?:ing|y)?|temperatures?|sunny|windy)\b/i;
 const NOT_PLACE = new Set(('today tomorrow tonight yesterday this next last on and or but then please right now over during the a an ' +
   'me my us our it its that there here you your weekend week morning afternoon evening night days degrees celsius fahrenheit general ' +
   'monday tuesday wednesday thursday friday saturday sunday whether if so to with will is are do does should').split(' '));
+const ABBREVIATION = /^(?:st|ste|ft|mt|pt|n|s|e|w)\.$/i;
+const PARTICLE = /^(?:de|da|del|do|la|le|di|du|van|von|upon)$/;
 export function weatherPlace(message) {
   const text = String(message || '');
   if (text.length > 400 || !WEATHER_ASK.test(text)) return '';
   // In a message with capitals, a place is capitalised ("good for running" is not a place; "Rio de Janeiro" is).
   const cased = text !== text.toLowerCase();
-  for (const m of text.matchAll(/\b(?:in|for|at|near|around)\s+(?=([^.,;:!?()\n]+))/giu)) {
+  // Words of a place from the start of `rest`; stops at a sentence end or a word that is not part of a place.
+  const take = (rest) => {
     const words = [];
-    for (const w of m[1].trim().split(/\s+/)) {
-      if (!/^\p{L}[\p{L}'’.-]*$/u.test(w) || NOT_PLACE.has(w.toLowerCase()) || words.length === 4) break;
-      if (cased && !/^\p{Lu}/u.test(w) && !(words.length && /^(?:de|da|del|do|la|le|di|du|van|von|upon)$/.test(w))) break;
+    let end = false;
+    for (const token of rest.trim().split(/\s+/)) {
+      let w = token.replace(/,$/, '');
+      const comma = w !== token;
+      if (ABBREVIATION.test(w) && !comma) { words.push(w); continue; }
+      if (/\.$/.test(w)) { w = w.slice(0, -1); end = true; }
+      if (!/^\p{L}[\p{L}'’-]*$/u.test(w) || NOT_PLACE.has(w.toLowerCase()) || words.length === 4) break;
+      if (cased && !/^\p{Lu}/u.test(w) && !(words.length && PARTICLE.test(w))) break;
       words.push(w.replace(/['’]s$/i, ''));
+      if (end || comma) return { words, comma };
     }
-    while (words.length && /^\p{Ll}/u.test(words[words.length - 1]) && cased) words.pop();
-    if (words.length) return words.join(' ');
+    while (words.length && cased && /^\p{Ll}/u.test(words[words.length - 1])) words.pop();
+    return { words, comma: false };
+  };
+  for (const m of text.matchAll(/\b(?:in|for|at|near|around)\s+(?=([^;:!?()\n]+))/giu)) {
+    const { words, comma } = take(m[1]);
+    if (!words.length) continue;
+    let place = words.join(' ');
+    if (comma) {
+      const after = m[1].slice(m[1].indexOf(',', m[1].indexOf(words[words.length - 1])) + 1);
+      const qualifier = take(after).words;
+      if (qualifier.length && (!cased || /^\p{Lu}/u.test(qualifier[0]))) place += `, ${qualifier.join(' ')}`;
+    }
+    return place;
   }
   return '';
+}
+
+// Whether a geocoder result is the place asked for: "Paris, Texas" needs Texas (or TX, US) in the result.
+const COUNTRY_ALIAS = { uk: 'gb', england: 'gb', scotland: 'gb', wales: 'gb', usa: 'us', america: 'us' };
+function placeMatches(hit, qualifier) {
+  if (!qualifier) return true;
+  const q = qualifier.toLowerCase().replace(/\./g, '');
+  const fields = [hit.admin1, hit.admin2, hit.admin3, hit.country].map((v) => String(v || '').toLowerCase());
+  return fields.includes(q) || String(hit.country_code || '').toLowerCase() === (COUNTRY_ALIAS[q] || q);
+}
+
+// "Paris, Île-de-France, France" for the place a forecast was run for, or its coordinates.
+export function forecastPlace(skillResults) {
+  const results = Array.isArray(skillResults) ? skillResults : [];
+  const forecast = results.find((r) => r.ok && r.tool === 'forecast');
+  if (!forecast) return '';
+  const { latitude, longitude } = forecast.params || {};
+  const hit = results.filter((r) => r.ok && r.tool === 'find_place').flatMap((r) => (Array.isArray(r.data?.results) ? r.data.results : []))
+    .find((h) => Math.abs(h.latitude - latitude) < 0.01 && Math.abs(h.longitude - longitude) < 0.01);
+  return hit ? [hit.name, hit.admin1, hit.country].filter(Boolean).join(', ') : `latitude ${latitude}, longitude ${longitude}`;
+}
+
+// The reply always says which place the forecast was for, so a wrong match is visible to the owner.
+export function withForecastPlace(reply, skillResults) {
+  const place = forecastPlace(skillResults);
+  if (!place || String(reply).toLowerCase().includes(place.toLowerCase())) return reply;
+  return `${reply}\n\nForecast used: ${place} (Open-Meteo).`;
 }
 
 /**
@@ -247,13 +295,17 @@ export async function runChatPlugins(env, storage, body, message, model) {
   // coordinates it returned. A small planner model often answered NONE or failed to chain the two (run 19, ter-38).
   const place = weatherPlace(message);
   const weatherTool = (name) => pluginTools.find((t) => t.plugin === 'weather' && t.name === name);
+  // A qualifier ("Paris, Texas") is checked against the geocoder's result; when it does not match, the planner decides
+  // with that result in view, rather than CHE giving another city's forecast as verified.
   if (place && weatherTool('find_place') && weatherTool('forecast')) {
-    const geo = await run(weatherTool('find_place'), { name: place });
-    const hit = geo.ok && Array.isArray(geo.data?.results) ? geo.data.results[0] : null;
+    const [name, qualifier] = place.split(/,\s*/);
+    const geo = await run(weatherTool('find_place'), { name });
+    const hit = geo.ok && Array.isArray(geo.data?.results) ? geo.data.results.find((h) => placeMatches(h, qualifier)) : null;
     if (hit && Number.isFinite(hit.latitude) && Number.isFinite(hit.longitude)) {
       await run(weatherTool('forecast'), { latitude: hit.latitude, longitude: hit.longitude });
+      return { skillResults, executionRequestId };
     }
-    return { skillResults, executionRequestId };
+    if (!qualifier || !geo.ok) return { skillResults, executionRequestId };
   }
   for (let round = 0; round < 2 && pluginTools.length && toolsLikelyNeeded; round++) {
     const choice = await planPluginCall(env, model, message, pluginTools, skillResults);
