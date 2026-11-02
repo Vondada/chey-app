@@ -251,6 +251,8 @@ const EARLIER_TURN = new RegExp([
   '\\bwhere (?:we|you|i) (?:stopped|left off|left it)\\b',
   '^(?:\\w+ ){0,2}(?:the )?same (?:as|thing as) (?:last time|before)\\b',
   '\\b(?:earlier|before|last time) you (?:said|told me|suggested|thought|called)\\b|\\byou (?:said|told me) (?:earlier|before|last time)\\b',
+  // "Combine the drafts you wrote me earlier", "the plan you sent us yesterday": CHE's own earlier output, placed in time.
+  '\\b(?:answers?|repl(?:y|ies)|plans?|drafts?|versions?|suggestions?|lists?|ideas?|options?|summar(?:y|ies)|notes?) (?:that )?you (?:gave|sent|wrote|made|suggested|showed|drafted) (?:me|us) (?:this (?:morning|afternoon|evening)|yesterday|earlier|before|last (?:time|night|week))\\b',
   // "What did I want you to change in the last draft?": a question about the owner's own words that points at a turn.
   '\\b(?:did|have) i\\b.*\\b(?:the|my|your|our) (?:last|previous|prior|earlier) (?:draft|version|message|question|answer|reply)\\b',
 ].join('|'));

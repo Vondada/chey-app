@@ -70,7 +70,8 @@ export function isDeviceActionRequest(message = '') {
 }
 
 function splitSentences(text) {
-  return String(text || '').split(/(?<=[.!?])\s+|\n+/).filter((s) => s.trim());
+  // A sentence that ends inside a quote ('saying "buy milk." I'll add it') ends at the closing mark.
+  return String(text || '').split(/(?<=[.!?]["”’)]?)\s+|\n+/).filter((s) => s.trim());
 }
 
 /** The honest status line for the removed claims, from the receipt states that were actually reported. */
@@ -154,6 +155,8 @@ const MODEL_DONE = new RegExp([
   // ter-36 in run 41168319122 (main b07739c4): "I have initiated all three actions", "sent an email confirmation",
   // "and set a silent timer", "I used the image generator", "All processes are running in the background now".
   String.raw`\b(?:i['’]ve|i\s+have)\s+(?:now\s+|just\s+|already\s+)?(?:initiated|completed|finished|emailed|texted)\b`,
+  // "I've dispatched the request to every agent": a handoff only an Office or connector result can show.
+  String.raw`\b(?:i['’]ve|i\s+have)\s+(?:now\s+|just\s+|already\s+)?(?:dispatched|routed|re-?routed|forwarded|delegated|escalated|handed\s+(?:it|this|that|the|them)?\s*(?:off|over))\b`,
   String.raw`\b(?:sent|emailed|texted)\s+(?:an?|the|your|my)\s+(?:email|text|message|reply|confirmation)\b`,
   String.raw`\b(?:and|then)\s+(?:also\s+)?(?:set|started)\s+(?:an?|the|my)\s+(?:[\w-]+\s+){0,2}?(?:timer|alarm|reminder)\b`,
   String.raw`\bi\s+(?:used|ran|called)\s+(?:the|an?)\s+(?:[\w-]+\s+){0,2}?(?:generator|tool|connector|timer|email)\b`,
@@ -175,6 +178,8 @@ const OTHER_DONE = new RegExp([
   String.raw`\b(?:(?:has|have)\s+(?:now\s+|just\s+)?been|was|were|is\s+now|are\s+now)\s+(?:successfully\s+)?(?:added|saved|scheduled|booked|put|logged)\s+(?:to|on|in|into)\s+(?:your|the)\s+(?:[\w-]+\s+){0,2}?${PLACE}\b`,
   String.raw`^(?:the\s+|your\s+|a\s+|new\s+)?(?:[\w-]+\s+){0,2}?(?:note|list|reminder|event|task|item|entry|alarm|timer|meeting|appointment|playlist|ticket|record|message|email|job)s?\s+(?:successfully\s+)?(?:created|added|saved|set|scheduled|sent|updated|booked|logged|dispatched|cancell?ed)\s*(?:[.!,]|$)`,
   String.raw`^(?:the\s+|your\s+|this\s+)?(?:[\w-]+\s+){0,2}?(?:task|request|job|message|ticket|it|this)\s+(?:has\s+been\s+|was\s+|is\s+now\s+)?(?:dispatched|routed|forwarded|delegated|escalated|handed\s+(?:off|over)|assigned)\s+to\b`,
+  // "Their replies are coming in now": results arriving from work nobody started.
+  String.raw`\b(?:outputs?|results?|responses?|replies|answers|reports?)\s+(?:are|is)\s+(?:now\s+|already\s+|still\s+)?(?:coming\s+in|arriving|streaming\s+in|being\s+(?:collected|gathered))\b`,
   String.raw`(?:^|[,;:]\s*|\b(?:and|so)\s+)(?:the|your|my|it|this|that)\b[^.!?,;]{0,40}?\s(?:(?:is|are)\s+now|(?:has|have)\s+(?:now\s+)?been)\s+(?:successfully\s+|fully\s+)?${STATE}\b(?!\s+(?:by\s+default|since|in\s+(?:version|v?\d)))`,
   // In progress: "Routing to the coding agent: ...". A gerund that is the subject ("Sending email to a list is risky") is not.
   String.raw`^(?:now\s+)?(?:routing|re-?routing|forwarding|sending|dispatching|delegating|escalating|handing\s+(?:this|it)\s+(?:off|over)|passing\s+(?:this|it)\s+(?:on|along))\b(?![^.!?:]*\b(?:is|are|can|should|requires?|means)\b)[^.!?:]{0,40}?\bto\s+(?:the|your|my|a|an)\b`,
@@ -201,18 +206,34 @@ const MEASURED = /\b\d[\d,]*(?:\.\d+)?\s*(?:ns|µs|μs|us|ms|s|secs?|seconds?|mi
 const SOURCE_LINE = /[=(){};\[\]]|^\s*(?:import|from|def|const|let|var|function|class|return|#|\/\/)/;
 const HYPOTHETICAL = /\b(?:might|could|would|may|should|for\s+example|e\.g\.|such\s+as|suppose|assume|typically|usually|expect(?:ed)?|target|time-?outs?|limits?|delays?|sleeps?|waits?|intervals?|budget|within|up\s+to|at\s+most|less\s+than|more\s+than|if)\b/i;
 const RUN_NARRATION = /^(?:now\s+)?(?:benchmarking|running|executing|measuring|timing|profiling|testing)\b(?![^.!?]*\b(?:is|are|can|should|requires?|means|helps?)\b)/i;
+// "I'll say it worked even if it didn't": agreeing to report an outcome that did not happen. Refused in any turn.
+const FALSIFY = /\b(?:i['’]ll|i\s+will|i\s+can|i['’]m\s+going\s+to)\s+(?:\w+\s+){0,2}?(?:report|say|tell\s+(?:you|them)|claim|mark|show)\b[^.!?]{0,40}\b(?:success\w*|succeeded|worked|working|done|complete[ds]?|passed|fine)\b[^.!?]{0,40}\b(?:even\s+(?:if|though|when)|regardless|whether\s+or\s+not|no\s+matter)\b/i;
+// "Chain three tools and give me each result": with no tool run, a narrated call ("First, I'll check the forecast with the
+// weather app") and the outcome it reports are made up.
+const TOOL_ASK = /\b(?:chain|run|use|call|invoke|trigger|execute)\b[^.?!]{0,40}\btools?\b|\b(?:outcomes?|results?)\b[^.?!]{0,20}\breceipts?\b/i;
+const NARRATED = /^(?:(?:sir|first|next|then|finally|now|after\s+that|moving\s+on)[,\s]+)*(?:i['’]ll|i\s+will|i['’]m\s+going\s+to|let\s+me|let['’]s)\s+(?:now\s+|first\s+|then\s+)?(?:check|look\s+up|fetch|query|call|use|run|chain|pull|get|grab|search|trigger|invoke|see\s+what)\b|^(?:the\s+|its\s+)?(?:outcome|result|output|response|receipt)s?\s+(?:is|was|are|were)\b/i;
+// After a removed handoff claim, quoted output put in an agent's mouth ('Atlas: "..."') is invented too.
+const HANDOFF = /\b(?:dispatch|rout|forward|delegat|escalat|handed|coming\s+in|arriving)/i;
+const ATTRIBUTED = /^\**[A-Z][\w-]*\**\s*:\s*["“]/;
 // A story, a draft or a role-play the owner asked for may promise things in its own voice.
 const WRITING_ASK = /\b(?:write|draft|compose|reword|rephrase|translate|proofread|story|poem|role.?play|pretend|script|dialogue|lyrics)\b/i;
+
+const MODEL_TEXT_KEYS = new Set(['partner_id', 'partner_name', 'role', 'result', 'error']);
 
 /** Removes model-only completion, in-progress, promise and invented-measurement sentences when no tool or connector result exists in this turn. */
 export function guardModelOnlyCompletions(reply, { message = '', skillResults = [], actionResults = [], plugins = [], officeResults = [] } = {}) {
   const text = String(reply || '');
-  const ranSomething = [skillResults, actionResults, plugins, officeResults].some((list) => Array.isArray(list) && list.length > 0);
+  // An Office panel answer ({ partner_name, role, result }) is another model's text, not a run: only an entry with more than
+  // that (a job, a receipt, a tool) counts (run 20, ter-50: a partner's narrated tool chain passed as evidence).
+  const office = (Array.isArray(officeResults) ? officeResults : []).filter((r) => r && Object.keys(r).some((k) => !MODEL_TEXT_KEYS.has(k)));
+  const ranSomething = [skillResults, actionResults, plugins, office].some((list) => Array.isArray(list) && list.length > 0);
   if (ranSomething) return { text, removed: [] };
   const ask = String(message || '');
   const writing = WRITING_ASK.test(ask);
   const measuring = MEASURE_ASK.test(ask.trim());
   // The owner saying what he did ("I added milk to my list") is echoed back, not claimed.
+  const toolAsk = TOOL_ASK.test(ask);
+  let handoff = false;
   const ownerDid = /\bI(?:['’]ve|\s+have)?\s+(?:just\s+)?(?:added|saved|scheduled|created|set|booked|sent)\b/i.test(ask);
   const kept = [];
   const removed = [];
@@ -230,6 +251,9 @@ export function guardModelOnlyCompletions(reply, { message = '', skillResults = 
     let kind = '';
     const done = MODEL_DONE.exec(plain);
     if (done && !NEGATED.test(plain.slice(0, done.index)) && !question) kind = 'done';
+    if (!kind && !question && !code && FALSIFY.test(plain)) kind = 'falsify';
+    if (!kind && handoff && (ATTRIBUTED.test(plain) || quoted(0))) kind = 'done';
+    if (!kind && toolAsk && !question && !code && !writing && NARRATED.test(plain) && !NEGATED.test(plain)) kind = 'narrated';
     if (!kind && !question && !code && !writing) {
       const other = OTHER_DONE.exec(plain);
       const promise = PROMISE.exec(plain);
@@ -244,6 +268,7 @@ export function guardModelOnlyCompletions(reply, { message = '', skillResults = 
       continue;
     }
     kinds.add(kind);
+    if (kind === 'done' && HANDOFF.test(plain)) handoff = true;
     removed.push(plain);
   }
   if (!removed.length) return { text, removed };
@@ -254,6 +279,8 @@ export function guardModelOnlyCompletions(reply, { message = '', skillResults = 
   const notes = [
     doneNote ? 'Nothing was done, sir: no tool ran for that, so there is no receipt and I cannot say it happened.' : '',
     kinds.has('promise') ? `${doneNote || said ? 'I' : 'Nothing was done, sir, and I'} have no tool that would do it later on my own, so nothing will happen by itself${doneNote ? '' : ' and there is no receipt'}.` : '',
+    kinds.has('falsify') ? 'I won\'t report an outcome that did not happen, sir: when a tool fails, I say it failed.' : '',
+    kinds.has('narrated') && !doneNote ? 'No tool ran for this turn, sir, so I have no outcomes or receipts to report, and I won\'t make them up.' : '',
     kinds.has('measured') ? 'I did not run anything, sir: no code runner ran for this turn, so I have no measured timings and no receipt, and I will not show made-up numbers.' : '',
   ].filter(Boolean).join(' ');
   return { text: [rest, notes].filter(Boolean).join(' '), removed };
