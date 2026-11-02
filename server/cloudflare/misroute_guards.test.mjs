@@ -129,9 +129,11 @@ test('a remembered talk gives a chat prompt the owner\'s words only, matched on 
 });
 
 test('a deploy question is answered by the deploy run, with its run ID, or said to be unconfirmed', () => {
-  assert.match(deployVerdict({ run: { id: 77, state: 'success' } }), /succeeded: Deploy CHE Worker run ID 77/);
-  assert.match(deployVerdict({ run: { id: 78, state: 'failure' } }), /cannot confirm the last deploy succeeded: .*run ID 78 ended failure/);
-  assert.match(deployVerdict({ needed: true }), /cannot confirm a deploy: there is no deploy run record/);
+  // Runs are found by the commit's SHA, so the verdict names this commit's deploy, never "the last deploy".
+  assert.match(deployVerdict({ run: { id: 77, state: 'success' } }), /This commit's deploy succeeded: Deploy CHE Worker run ID 77/);
+  assert.match(deployVerdict({ run: { id: 78, state: 'failure' } }), /cannot confirm this commit's deploy succeeded: .*run ID 78 ended failure/);
+  assert.match(deployVerdict({ needed: true }), /cannot confirm a deploy of this commit: there is no deploy run record/);
+  for (const state of ['success', 'failure', 'running']) assert.doesNotMatch(deployVerdict({ run: { id: 1, state } }), /last deploy/);
   const receipt = { commit: { sha: 'abcdef1234567', title: 'Fix', date: '2026-11-01T00:00:00Z' }, backend: { run: { id: 79, state: 'failure' }, detail: '' }, missing: [] };
   const said = speakReceipt(receipt, { changes: false, verify: true, deployAsk: true });
   assert.ok(said.indexOf('run ID 79') < said.indexOf('Commit abcdef'), said);
@@ -190,4 +192,9 @@ test('/api/chat: an unknown agent gets nothing and no model is asked; a bare "st
 
 test('after a request to act, a report that opens with a condition is still a claim', () => {
   assert.match(guardExecutionClaims('When I pushed the change, the deployment succeeded.', { message: 'Deploy the fix now.' }).text, NOTICE);
+});
+
+test('a past-tense report that opens with a condition is still a claim outside a design or explanation', () => {
+  assert.match(guardExecutionClaims('When you asked earlier, the workflow completed successfully.', { message: 'What happened earlier?' }).text, NOTICE);
+  assert.match(guardExecutionClaims('Once you logged off, the nightly job completed and the export was verified.', { message: 'Tell me the overnight news.' }).text, NOTICE);
 });

@@ -77,8 +77,9 @@ export function guardExecutionClaims(reply, { message = '', receipts = [], docum
   // A step in a design that opens with a condition ("When the workflow has completed, mark it done", "If call one
   // succeeded, ...") describes what should happen, not what ran: it is not a claim unless CHE says she ran it or it
   // carries an identifier (certification run 19, eer-25: a whole recovery design was replaced by the notice).
-  // Only when the request asks for no action: after "deploy it", "When I pushed it, the deployment succeeded" is a report.
-  const conditional = (s) => !RUN_ASK.test(String(message)) && CONDITION_OPENING.test(s) && !reported.test(s) && !identifiers.test(s);
+  // Only in a design or explanation the owner asked for: after "deploy it" or "what happened earlier?", "When you asked,
+  // the workflow completed" is a report of the past (Codex review on #877).
+  const conditional = (s) => explanationAsk(message) && CONDITION_OPENING.test(s) && !reported.test(s) && !identifiers.test(s);
   const claimText = splitSentences(text).filter((s) => !conditional(s)).join('');
   const ranClaim = execution.test(claimText) || transcript.test(text) || unlabeledOutput.test(text);
   const repoClaim = requireEvidence || identifiers.test(text) || ranClaim || repoEvidence.test(claimText) || (commandLine.test(text) && ranClaim);
