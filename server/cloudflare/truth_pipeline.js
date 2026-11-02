@@ -150,7 +150,7 @@ export const TRUTH_STAGES = Object.freeze([
   // An Office task line is never shown as CHE's own words: only the sentences that repeat one are removed, and the
   // whole reply becomes the Office-view notice only when nothing meaningful is left.
   { name: 'agent_task', run(reply, ctx) {
-    return guardAgentTaskReply(reply, ctx.data.team_tasks || []);
+    return guardAgentTaskReply(reply, ctx.data.team_tasks || [], ctx.rawMessage);
   } },
   // Persist the actual answer-provenance receipt, not a model-invented bibliography.
   { name: 'answer_receipt', async run(reply, ctx) {
