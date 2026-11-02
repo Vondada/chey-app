@@ -50,5 +50,7 @@ test('checking first, refusing a false report, or asking about verification stil
     'Don\'t say it is done without checking.',
     'Never tell me something is fixed without testing it.',
     'Tell me whether the deploy worked, regardless of what the dashboard shows.',
+    'Tell me which tests passed, regardless of whether the deployment succeeded.',
+    'Report which of the backups are complete, regardless of the time it takes.',
   ]) assert.equal(receiptGate(ask, {}, {}), null, ask);
 });
