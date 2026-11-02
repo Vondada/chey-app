@@ -5,7 +5,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import test from 'node:test';
-import { activeRegister, classifySocialCorrection, hasProfanity, languageLine, nextFlirt, nextRegister, seriousMoment, socialProbe } from './social_corrections.js';
+import { activeRegister, classifySocialCorrection, cleanLanguageReply, cleanTurns, hasProfanity, languageLine, nextFlirt, nextRegister, seriousMoment, socialProbe } from './social_corrections.js';
 
 globalThis.fetch = async () => new Response('{"error":"offline test"}', { status: 503, headers: { 'Content-Type': 'application/json' } });
 
@@ -103,10 +103,13 @@ test('Tests 1, 5 and 2 through /api/chat: clean after "by my mama", for five tur
     const turn = await say(message);
     assert.equal(turn.register?.clean, true, message);
     if (turn.prompt) assert.ok(turn.prompt.includes(CLEAN) && !turn.prompt.includes(SWEAR), message);
+    // The owner's earlier swearing is cleaned out of the turns the model sees (staging run 41485431905 quoted it back).
+    if (turn.prompt) assert.ok(!/fucking|lost my shit/i.test(turn.prompt), `earlier swear words reach the model: ${message}`);
   }
   const lifted = await say('Alright, you can talk normal again.');
   assert.equal(lifted.register, null);
   assert.ok(lifted.prompt.includes(SWEAR) && !lifted.prompt.includes(CLEAN));
+  assert.match(lifted.prompt, /lost my shit/, 'normal talk sees the owner\'s own words again');
 });
 
 test('Tests 3 and 4: "I\'m around kids right now", and a voice "chill chill" after a reply that swore', async () => {
@@ -249,4 +252,18 @@ test('a web search answer keeps the clean-language rule the owner set (Codex, PR
   const answer = t.all.filter((p) => p.includes('You are CHE deciding the next step'));
   assert.ok(answer.length, 'the search planner called the model as CHE');
   assert.ok(answer.every((p) => p.includes(CLEAN)), 'the search answer is told to keep it clean');
+});
+
+test('clean history swaps swear words but keeps names and words that only contain one (Codex on #895)', () => {
+  const clean = (content) => cleanTurns([{ role: 'user', content }], { clean: true })[0].content;
+  assert.equal(clean('Compare Emily Dickinson and Philip K. Dick.'), 'Compare Emily Dickinson and Philip K. Dick.');
+  assert.equal(clean('What did Dick Cheney do?'), 'What did Dick Cheney do?');
+  assert.equal(clean('I almost lost my shit. That guy is a dick.'), 'I almost lost my stuff. That guy is a jerk.');
+  assert.equal(clean('Ugh. Shit happens'), 'Ugh. stuff happens');
+  assert.ok(!hasProfanity(clean('He said FUCK off, so fucking rude')));
+  assert.equal(cleanLanguageReply('Dickens wrote it.'), 'Dickens wrote it.');
+  assert.equal(hasProfanity('Emily Dickinson'), false);
+  const turns = [{ role: 'user', content: 'shit' }];
+  assert.equal(cleanTurns(turns, null), turns, 'normal talk sends the turns unchanged');
+  assert.equal(turns[0].content, 'shit', 'the stored turn is never changed');
 });

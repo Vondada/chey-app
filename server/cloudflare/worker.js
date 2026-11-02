@@ -164,7 +164,7 @@ import { intentFrame, understoodAs } from './intent_frame.js';
 import { replyHijacksOwnerRequest, usageIntent, usageReport, speakUsage } from './usage_tracker.js';
 import { newestStarredIntent, speakNewestStarred, autoImproveScan, analyticalRepositoryQuestion, chatOnlyResponseIntent, currentTurnActionPolicy, codeScoutIntent, fetchRepoFile, inspectReferenceRepo, inspirationUpgradeContext, listOwnerStarredRepos, readRepoSource, referenceSourceBlock, codingFollowupKind, codingHistoryIntent, codingTimingNote, hypotheticalChange, repositoryImplementationIntent, repositoryInspectionIntent, scoutCode, selectStudyRepos, speakScout, speakStarredRepos, starredRepoIntent, starredStudyList, studySelectionIntent } from './code_scout.js';
 import { agentReportTurn, codingHistoryReceipt, completedWorkProof, namedJobAnswer, otherAgentWorkAsk, otherAgentWorkReply, proofAsked } from './coding_history.js';
-import { EMERGENCY_REPLY, cleanLanguageReply, emergencyMoment, languageLine, readRegister, readSocial, socialProbe, socialTurn } from './social_corrections.js';
+import { EMERGENCY_REPLY, cleanLanguageReply, cleanTurns, emergencyMoment, languageLine, readRegister, readSocial, socialProbe, socialTurn } from './social_corrections.js';
 import { codingAuditApi, codingAuditProbe, codingAuditTurn, noStoredJobReceipt } from './coding_audit.js';
 import { inventionFollowUpAllowed, inventionIntent, inventionReply, planInvention, refusalReply } from './invention_studio.js';
 import { continuingInvention, inventionVisualIntent, inventionVisualRoute, makeConcept, visualTurn } from './invention_visuals.js';
@@ -14047,7 +14047,7 @@ export class CheState extends DurableObject {
         }
         // Preserve supplied conversation state; capacity checks must skip a
         // small engine instead of silently dropping the owner's earlier turns.
-        const history = dropAgentTaskTurns(Array.isArray(body.history) ? body.history : [], (await this.peekData().catch(() => ({}))).team_tasks || []);
+        const history = cleanTurns(dropAgentTaskTurns(Array.isArray(body.history) ? body.history : [], (await this.peekData().catch(() => ({}))).team_tasks || []), social);
         const { turns, condensed: earlierContext } = condenseHistory(history, { keep: 12 });
         if (turns.length &&
             turns[turns.length - 1].role === 'user' &&
