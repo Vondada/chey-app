@@ -52,15 +52,27 @@ function repeatsTask(sentence, texts, said = '') {
 
 const wordCount = (text) => String(text).split(/\s+/).filter((w) => /\p{L}/u.test(w)).length;
 
+// A turn with no topic of its own ("Keep going.", "Go on, please"): the Office notice would answer a question nobody asked.
+const BARE_CONTINUE = /^\s*(?:(?:ok(?:ay)?|alright|right|yes|yeah|sure|so|and|well|please|sir|che)[\s,.!]+)*(?:keep\s+going|go\s+on|go\s+ahead|carry\s+on|continue|proceed|more|next|and\s+then|then\s+what|what\s+(?:else|next|now))(?:[\s,]+(?:please|then|sir|che))*[\s.!?…]*$/i;
+export const isBareContinuation = (message = '') => BARE_CONTINUE.test(String(message || ''));
+
 /**
  * The reply without the sentences that repeat an Office task: { text, removed }. The rest of the answer stays. Only
  * when nothing meaningful is left, or a task line cannot be cut out sentence by sentence, is the whole reply the notice.
+ * A bare continuation never gets the notice: it gets an honest answer about what can be continued (certification run 23,
+ * vcc-24: "Keep going." got the Office notice). `history` is this conversation's turns.
  */
-export function guardAgentTaskReply(reply = '', tasks = [], message = '') {
+export function guardAgentTaskReply(reply = '', tasks = [], message = '', { history = [] } = {}) {
   const text = String(reply ?? '');
   const texts = taskTexts(tasks, message);
   const said = norm(message);
   if (!texts.length || !text.trim()) return { text, removed: [] };
+  const whole = { text: AGENT_TASK_NOTICE, removed: [{ rule: 'office_task_reply', sentence: text }] };
+  if (isBareContinuation(message)) {
+    const talk = (Array.isArray(history) ? history : []).some((t) => t?.role === 'assistant' && String(t.content ?? t.text ?? '').trim());
+    whole.text = talk ? 'I lost the thread there, sir. What should I continue with?'
+      : 'I don\'t have anything in progress to continue, sir. What should I pick up?';
+  }
   const removed = [];
   const lines = text.split('\n').map((line) => {
     const parts = line.match(/[^.!?]+(?:[.!?]+["'”’)\]]*|$)\s*/g) || [line];
@@ -70,7 +82,6 @@ export function guardAgentTaskReply(reply = '', tasks = [], message = '') {
     return /\p{L}/u.test(rest) ? rest : null;
   }).filter((line) => line !== null);
   const kept = lines.join('\n').replace(/\n{3,}/g, '\n\n').trim();
-  const whole = { text: AGENT_TASK_NOTICE, removed: [{ rule: 'office_task_reply', sentence: text }] };
   if (!removed.length) return replyRepeatsAgentTask(text, tasks, message) ? whole : { text, removed: [] };
   if (replyRepeatsAgentTask(kept, tasks, message)) return whole;
   // When the owner asks about agent work, whatever answer is left stays: only a reply with nothing left is the notice.
