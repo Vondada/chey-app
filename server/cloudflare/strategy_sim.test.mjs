@@ -498,6 +498,18 @@ function worldFetch(url) {
     const rows = Array.from({ length: 300 }, (_, i) => `${new Date(Date.UTC(2025, 0, 1) + i * 86400000).toISOString().slice(0, 10)},${100 + i * 0.3},${102 + i * 0.3},${98 + i * 0.3},${100 + i * 0.3 + Math.sin(i) * 2},1`);
     return new Response(`date,open,high,low,close,volume\n${rows.join('\n')}`, { status: 200 });
   }
+  // Daily history (interval=1d): since #878 crypto history asks Yahoo after Coinbase. Answering it with the minute
+  // series made the daily candles depend on the time of day (the test failed after about 14:00 UTC).
+  if (u.includes('finance.yahoo.com') && u.includes('interval=1d')) {
+    const day0 = Math.floor(T0 / 86400000) * 86400000 - 300 * 86400000;
+    const days = Array.from({ length: 300 }, (_, i) => day0 + i * 86400000);
+    const px = (i) => 100 + i * 0.3;
+    return bodyJson({ chart: { error: null, result: [{
+      meta: { symbol: 'BTC-USD', exchangeName: 'CCC' },
+      timestamp: days.map((d) => d / 1000),
+      indicators: { quote: [{ open: days.map((_, i) => px(i)), high: days.map((_, i) => px(i) + 2), low: days.map((_, i) => px(i) - 2), close: days.map((_, i) => px(i) + Math.sin(i) * 2), volume: days.map(() => 1) }] },
+    }] } });
+  }
   if (u.includes('finance.yahoo.com')) {
     const last = Date.parse(worldBars[worldBars.length - 1].t);
     return bodyJson({
