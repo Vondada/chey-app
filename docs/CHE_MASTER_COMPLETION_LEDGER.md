@@ -619,6 +619,7 @@ full reply is in the run's `certification-results` artifact, which this session'
 | 19 | `91f61359` | 483/600 | baseline | `41379642353` |
 | 20 | `c3b38703` (#874-#879) | 485/600, 2 infrastructure | 48 / 44 (35 flaky) | `41401572719` |
 | 21 | `530296d9` (#880-#885) | 501/600, 1 infrastructure | 43 / 27 (17 flaky) | `41420922829` |
+| 22 | `d9062d9d` (#887) | 509/600, 1 infrastructure | 29 / 21 (18 flaky) | `41438024028` |
 
 Verified live in run 21 (execution receipts, not wording): weather for a named city ran the forecast (ter-38), both
 backtests ran on the Yahoo fallback (thb-11, thb-29), the deploy question returned this commit's run (spt-25), and
