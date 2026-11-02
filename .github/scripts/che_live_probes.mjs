@@ -557,6 +557,7 @@ const PROBES = {
     }
     for (const step of report.steps || []) {
       console.log(`${step.pass ? 'PASS' : step.optional ? 'WARN' : 'FAIL'} ${step.name} [${step.route || '-'} | register=${step.register} | ${step.ms} ms] ${String(step.reply || '').replace(/\s+/g, ' ').slice(0, 200)}`);
+      if (!step.pass) console.log(`  why: ${(step.why || []).join(', ') || 'unknown'} :: ${String(step.reply || '').replace(/\s+/g, ' ').slice(0, 400)}`);
     }
     console.log(`::notice title=Code-switching::${report.passed}/${report.total} live checks passed`);
     summary(`**Code-switching (${WHERE}, real model):** ${report.passed}/${report.total} live checks passed on the isolated test CHE.`);
