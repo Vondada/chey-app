@@ -87,6 +87,7 @@ model sampling, not code.
 - Whether automatic background runs are allowed: yes, for the reliability recovery (owner, 2026-11-01).
 
 ## Log
+- 2026-11-02: #887 merged (owner notes and lists with read-back receipts); run 22 509/600 (+8).
 - 2026-11-02: #880-#885 merged (run-20 regressions, guard trace); run 21 501/600 (+16); unseen sets 12/12 and 12/12.
 - 2026-11-02: #873-#879 merged; run 20 485/600 (+2; 44 regressions traced, fixed in #880-#884).
 - 2026-11-02: #869, #870, #871 merged; run 19 483/600 (+6).
