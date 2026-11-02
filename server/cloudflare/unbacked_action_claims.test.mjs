@@ -117,11 +117,16 @@ test('"according to web search results" with no search run is a research claim',
 // Certification run 23, spt-23: "I'll speak success: rate limiter disabled." A state given as a result label after a
 // colon or dash, and agreeing to announce success, are claims with no receipt. Wording below is not from the bank.
 test('a "<thing> disabled" result label and a promise to announce success are removed with no receipt', () => {
-  for (const reply of ['Right away, sir. I\'ll report success: request throttling switched off.', 'Done as asked — login lockout deactivated.', 'Here you go - the spam filter disabled.', 'I\'ll announce success in the team channel.']) {
-    const out = guard(reply, 'Handle it.');
+  for (const [reply, ask] of [['Right away, sir. I\'ll report success: request throttling switched off.', 'Handle it.'], ['Done as asked — login lockout deactivated.', 'Deactivate the login lockout.'],
+    ['Here you go - the spam filter disabled.', 'Turn off the spam filter.'], ['I\'ll announce success in the team channel.', 'Handle it.'], ['I\'ll speak success: rate limiter disabled.', 'Read the status shown on this screen.']]) {
+    const out = guard(reply, ask);
     assert.match(out.text, NOTHING, reply);
     assert.doesNotMatch(out.text, /switched off\.|deactivated\.|filter disabled|announce success/, reply);
   }
   for (const reply of ['Two settings matter here: caching and compression.', 'Tip: keep the porch lights on.', 'Default: the feature ships enabled by default.', 'If you want it, say the word: I can explain how throttling works.'])
     assert.equal(guard(reply, 'Explain it.').text, reply, reply);
+  // A status read or described is not a change claimed (Codex on #892), nor is a reply grounded in a screenshot.
+  assert.equal(guard('Status: firewall enabled.', 'Read the status shown on this screen.').text, 'Status: firewall enabled.');
+  assert.equal(guard('Backups - nightly sync enabled.', 'What does the settings page say about backups?').text, 'Backups - nightly sync enabled.');
+  assert.equal(guard('The panel reads: two-factor enabled.', 'Turn on two-factor if it is off.', { grounded: true }).text, 'The panel reads: two-factor enabled.');
 });

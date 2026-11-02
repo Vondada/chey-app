@@ -91,7 +91,7 @@ export const TRUTH_STAGES = Object.freeze([
   { name: 'device_actions', run(reply, ctx) {
     const claimed = guardClaimedDeviceActions(reply, { message: ctx.rawMessage, actionResults: ctx.actionResults });
     const pretend = guardPretendedOrOverclaimed(claimed.text, { message: ctx.rawMessage, actionResults: ctx.actionResults });
-    const modelOnly = guardModelOnlyCompletions(pretend.text, { message: ctx.rawMessage, skillResults: ctx.skillResults, actionResults: ctx.actionResults, plugins: ctx.plugins, officeResults: ctx.officeResults });
+    const modelOnly = guardModelOnlyCompletions(pretend.text, { message: ctx.rawMessage, skillResults: ctx.skillResults, actionResults: ctx.actionResults, plugins: ctx.plugins, officeResults: ctx.officeResults, grounded: Boolean(ctx.body.screen_context || ctx.body.attachment) });
     const removed = [...claimed.removed, ...pretend.removed, ...modelOnly.removed];
     if (removed.length) console.log('CHE truth layer removed device claims', JSON.stringify(removed).slice(0, 800));
     return { text: modelOnly.text, removed };

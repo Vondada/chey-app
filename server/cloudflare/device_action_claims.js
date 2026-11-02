@@ -181,11 +181,14 @@ const OTHER_DONE = new RegExp([
   // "Their replies are coming in now": results arriving from work nobody started.
   String.raw`\b(?:outputs?|results?|responses?|replies|answers|reports?)\s+(?:are|is)\s+(?:now\s+|already\s+|still\s+)?(?:coming\s+in|arriving|streaming\s+in|being\s+(?:collected|gathered))\b`,
   String.raw`(?:^|[,;:]\s*|\b(?:and|so)\s+)(?:the|your|my|it|this|that)\b[^.!?,;]{0,40}?\s(?:(?:is|are)\s+now|(?:has|have)\s+(?:now\s+)?been)\s+(?:successfully\s+|fully\s+)?${STATE}\b(?!\s+(?:by\s+default|since|in\s+(?:version|v?\d)))`,
-  // A result stated as a label after a colon or a dash: "I'll speak success: rate limiter disabled", "Done - audit log turned off".
-  String.raw`[:\u2013\u2014]\s*(?:the\s+|your\s+|my\s+)?(?:[\w-]+\s+){0,3}?${STATE}\s*(?:[.!]|$)|\s-\s+(?:the\s+|your\s+|my\s+)?(?:[\w-]+\s+){0,3}?${STATE}\s*(?:[.!]|$)`,
   // In progress: "Routing to the coding agent: ...". A gerund that is the subject ("Sending email to a list is risky") is not.
   String.raw`^(?:now\s+)?(?:routing|re-?routing|forwarding|sending|dispatching|delegating|escalating|handing\s+(?:this|it)\s+(?:off|over)|passing\s+(?:this|it)\s+(?:on|along))\b(?![^.!?:]*\b(?:is|are|can|should|requires?|means)\b)[^.!?:]{0,40}?\bto\s+(?:the|your|my|a|an)\b`,
 ].join('|'), 'i');
+// A result stated as a label after a colon or a dash ("Done - audit log turned off", run 23 spt-23: "rate limiter
+// disabled"). It is a claim only when the owner asked for that change; "Status: firewall enabled." in answer to "read the
+// status on this screen" describes a state, and a reply grounded in a screenshot or attachment is not checked (Codex, #892).
+const LABEL_DONE = new RegExp(String.raw`[:\u2013\u2014]\s*(?:the\s+|your\s+|my\s+)?(?:[\w-]+\s+){0,3}?${STATE}\s*(?:[.!]|$)|\s-\s+(?:the\s+|your\s+|my\s+)?(?:[\w-]+\s+){0,3}?${STATE}\s*(?:[.!]|$)`, 'i');
+const CHANGE_ASK = /\b(?:disable|enable|deactivate|activate|turn\s+(?:on|off)|switch\s+(?:on|off)|shut\s+(?:off|down)|pause|resume|stop|restart|unblock|unlock|mute|unmute|install|uninstall|deploy|configure|bypass|reset|clear)\b/i;
 // Promised: "I'll open Spotify", "I'll make sure to send you a reminder", "I'll wait for their reply before notifying the client",
 // "I'm going to enable the rate limiter". Nothing on the model path runs later by itself, so the promise is as unbacked as
 // a claim. Each verb names an outside effect; a verb with an everyday sense ("play devil's advocate", "open with a joke",
@@ -227,7 +230,7 @@ const WRITING_ASK = /\b(?:write|draft|compose|reword|rephrase|translate|proofrea
 const MODEL_TEXT_KEYS = new Set(['partner_id', 'partner_name', 'role', 'result', 'error']);
 
 /** Removes model-only completion, in-progress, promise and invented-measurement sentences when no tool or connector result exists in this turn. */
-export function guardModelOnlyCompletions(reply, { message = '', skillResults = [], actionResults = [], plugins = [], officeResults = [] } = {}) {
+export function guardModelOnlyCompletions(reply, { message = '', skillResults = [], actionResults = [], plugins = [], officeResults = [], grounded = false } = {}) {
   const text = String(reply || '');
   // An Office panel answer ({ partner_name, role, result }) shows that a coworker was consulted and what it advised, nothing
   // more: it backs a handoff claim and the quoted advice, but not an outside action inside it (run 20, ter-50: a partner's
@@ -238,6 +241,7 @@ export function guardModelOnlyCompletions(reply, { message = '', skillResults = 
   const consulted = (Array.isArray(officeResults) ? officeResults : []).some((r) => r && r.result);
   const ask = String(message || '');
   const writing = WRITING_ASK.test(ask);
+  const labelClaims = !grounded && CHANGE_ASK.test(ask);
   const measuring = MEASURE_ASK.test(ask.trim());
   // The owner saying what he did ("I added milk to my list") is echoed back, not claimed.
   const toolAsk = TOOL_ASK.test(ask);
@@ -263,7 +267,7 @@ export function guardModelOnlyCompletions(reply, { message = '', skillResults = 
     if (!kind && handoff && (ATTRIBUTED.test(plain) || quoted(0))) kind = 'done';
     if (!kind && toolAsk && !question && !code && !writing && NARRATED.test(plain) && !NEGATED.test(plain)) kind = 'narrated';
     if (!kind && !question && !code && !writing) {
-      const other = OTHER_DONE.exec(plain);
+      const other = OTHER_DONE.exec(plain) || (labelClaims ? LABEL_DONE.exec(plain) : null);
       const promise = PROMISE.exec(plain);
       if (other && !quoted(other.index) && !(ownerDid && /^you/i.test(other[0])) && !NEGATED.test(plain.slice(0, other.index)) && !CONDITION_BEFORE.test(plain.slice(0, other.index))) kind = 'done';
       else if (promise && !quoted(promise.index) && !OFFER.test(plain) && !/\b(?:if|unless)\b/i.test(plain.slice(0, promise.index))) kind = 'promise';
