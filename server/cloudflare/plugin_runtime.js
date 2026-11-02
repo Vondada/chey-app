@@ -175,6 +175,8 @@ export function pluginManifests(env) {
  */
 export function serverPluginTools(env, message = null) {
   const said = message == null ? null : new Set(String(message).toLowerCase().split(/[^a-z0-9]+/));
+  // "Do I need an umbrella in Oslo?" asks for the weather without the word.
+  if (said && WEATHER_ASK.test(String(message))) said.add('weather');
   return pluginManifests(env)
     .filter((manifest) => !said || `${manifest.id} ${manifest.name || ''}`.toLowerCase().split(/[^a-z0-9]+/).some((w) => w.length > 3 && said.has(w)))
     .filter((manifest) => Array.isArray(manifest.tools) && manifest.tools.length
@@ -183,6 +185,30 @@ export function serverPluginTools(env, message = null) {
     .flatMap((manifest) => manifest.tools.map((tool) => ({
       ...tool, plugin: manifest.id, plugin_name: manifest.name, permissions: manifest.permissions,
     })));
+}
+
+// A weather question, in any wording, and the place it names. "for/in/at/near <Place>"; words such as "tomorrow",
+// "the weekend" or "me" are not places. Returns '' when no place is named, so the planner model decides instead.
+const WEATHER_ASK = /\b(?:weather|forecast|umbrella|rain(?:ing|y|coat)?|snow(?:ing|y)?|temperatures?|sunny|windy)\b/i;
+const NOT_PLACE = new Set(('today tomorrow tonight yesterday this next last on and or but then please right now over during the a an ' +
+  'me my us our it its that there here you your weekend week morning afternoon evening night days degrees celsius fahrenheit general ' +
+  'monday tuesday wednesday thursday friday saturday sunday whether if so to with will is are do does should').split(' '));
+export function weatherPlace(message) {
+  const text = String(message || '');
+  if (text.length > 400 || !WEATHER_ASK.test(text)) return '';
+  // In a message with capitals, a place is capitalised ("good for running" is not a place; "Rio de Janeiro" is).
+  const cased = text !== text.toLowerCase();
+  for (const m of text.matchAll(/\b(?:in|for|at|near|around)\s+(?=([^.,;:!?()\n]+))/giu)) {
+    const words = [];
+    for (const w of m[1].trim().split(/\s+/)) {
+      if (!/^\p{L}[\p{L}'’.-]*$/u.test(w) || NOT_PLACE.has(w.toLowerCase()) || words.length === 4) break;
+      if (cased && !/^\p{Lu}/u.test(w) && !(words.length && /^(?:de|da|del|do|la|le|di|du|van|von|upon)$/.test(w))) break;
+      words.push(w.replace(/['’]s$/i, ''));
+    }
+    while (words.length && /^\p{Ll}/u.test(words[words.length - 1]) && cased) words.pop();
+    if (words.length) return words.join(' ');
+  }
+  return '';
 }
 
 /**
@@ -203,21 +229,36 @@ export async function runChatPlugins(env, storage, body, message, model) {
   const messageWords = message.toLowerCase().split(/[^a-z0-9]+/);
   const toolsLikelyNeeded = messageWords.some((w) => toolWords.has(w)) ||
     /\b(weather|forecast|temperature|rain|price|btc|eth|sol|crypto|bitcoin|who (is|was)|what is|tell me about|look up|lookup|search|wiki)\b/i.test(message);
-  for (let round = 0; round < 2 && pluginTools.length && toolsLikelyNeeded; round++) {
-    const choice = await planPluginCall(env, model, message, pluginTools, skillResults);
-    if (!choice) break;
-    const outcome = await runPluginTool(choice.tool, choice.params, choice.tool.permissions, fetch, executionRequestId);
+  const run = async (tool, params) => {
+    const outcome = await runPluginTool(tool, params, tool.permissions, fetch, executionRequestId);
     skillResults.push({
-      plugin: String(choice.tool.plugin_name || choice.tool.plugin || ''),
-      tool: String(choice.tool.name || ''),
-      params: choice.params,
+      plugin: String(tool.plugin_name || tool.plugin || ''),
+      tool: String(tool.name || ''),
+      params,
       ok: Boolean(outcome.ok),
       data: outcome.data ?? null,
       error: outcome.error || '',
       execution_receipt: outcome.execution_receipt,
     });
     await recordReceipt(storage, { ...outcome.execution_receipt, key: `execution:${outcome.execution_receipt.invocation_id}` });
-    if (!outcome.ok) break;
+    return outcome;
+  };
+  // A weather question that names a place runs the weather tools directly: find_place, then forecast with the
+  // coordinates it returned. A small planner model often answered NONE or failed to chain the two (run 19, ter-38).
+  const place = weatherPlace(message);
+  const weatherTool = (name) => pluginTools.find((t) => t.plugin === 'weather' && t.name === name);
+  if (place && weatherTool('find_place') && weatherTool('forecast')) {
+    const geo = await run(weatherTool('find_place'), { name: place });
+    const hit = geo.ok && Array.isArray(geo.data?.results) ? geo.data.results[0] : null;
+    if (hit && Number.isFinite(hit.latitude) && Number.isFinite(hit.longitude)) {
+      await run(weatherTool('forecast'), { latitude: hit.latitude, longitude: hit.longitude });
+    }
+    return { skillResults, executionRequestId };
+  }
+  for (let round = 0; round < 2 && pluginTools.length && toolsLikelyNeeded; round++) {
+    const choice = await planPluginCall(env, model, message, pluginTools, skillResults);
+    if (!choice) break;
+    if (!(await run(choice.tool, choice.params)).ok) break;
   }
   return { skillResults, executionRequestId };
 }

@@ -650,7 +650,7 @@ export const OWNER_LOCATION_NOT_VERIFIED =
 // weather conversation and verified city-based forecasts.
 export function guardLocationWeatherReply(message, reply, { forecastVerified = false } = {}) {
   const answer = String(reply || '');
-  const askedWeather = /\b(?:weather|forecast|temperatures?|highs?\s+and\s+lows?|rain|snow)\b/i.test(message || '');
+  const askedWeather = /\b(?:weather|forecast|temperatures?|highs?\s+and\s+lows?|rain|snow|umbrella)\b/i.test(message || '');
   const assertedForecast = /\b(?:forecast\s+(?:shows|says|predicts)|(?:will|going to)\s+be\s+(?:mostly\s+)?(?:sunny|cloudy|rainy|clear|warm|cold)|(?:high|low)\s+(?:of|around)\s+\d+|\d+\s*(?:degrees|°[fc]))\b/i.test(answer);
   if (askedWeather && assertedForecast && !forecastVerified) {
     return 'I do not have a verified live weather forecast for that request, sir. Tell me the city you want checked, or enable CHE’s Weather tool. Your iPhone time zone is not your GPS location.';

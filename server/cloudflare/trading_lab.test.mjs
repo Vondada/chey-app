@@ -324,7 +324,8 @@ test('candles come from Coinbase (crypto) and Yahoo (stocks) first; the old sour
   assert.equal(oil[0].l, -40.32);
   // Every source down: the reply says which ones and why.
   const down = await loadCandles('QQQZUSDT', { fetcher: async () => new Response('x', { status: 503 }) });
-  assert.match(down.error, /^The free data source did not answer \(Coinbase HTTP 503; Binance HTTP 503\)/);
+  // Daily crypto history also tries Yahoo Finance (BTC-USD and the like) before Binance.
+  assert.match(down.error, /^The free data source did not answer \(Coinbase HTTP 503; Yahoo HTTP 503; Binance HTTP 503\)/);
 });
 
 // Certification run 41242161747: Coinbase answered HTTP 429 to the paged history. One retry, then keep what was read.
