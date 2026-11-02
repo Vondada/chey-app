@@ -162,23 +162,99 @@ const MODEL_DONE = new RegExp([
   String.raw`\bset\s+the\s+(?:volume|brightness|temperature|timer|alarm)\s+(?:to|at)\s+\d+`,
 ].join('|'), 'i');
 
-/** Removes model-only completion sentences when no tool or connector result exists in this turn. */
-export function guardModelOnlyCompletions(reply, { skillResults = [], actionResults = [], plugins = [], officeResults = [] } = {}) {
+// The same rule for side effects the list above missed (certification run 19: ter-04, ter-08, spt-23, ter-30, oac-19,
+// oac-29, ter-23, csd-43). Each states, with no tool run this turn, that something happened, is happening or will happen on
+// its own. A plain answer ("You've asked a good question"), an offer that waits for the owner ("I'll set it once you
+// confirm"), a condition, a question, quoted text, code and a story or draft the owner asked for are left alone.
+const PLACE = String.raw`(?:(?:shopping|grocery|to-?do)\s+)?(?:lists?|calendars?|notes|reminders|carts?|playlists?|queues?|schedules?|diary|planner|tracker|channels?|inbox)`;
+// Done, in another voice: "You've added milk to your shopping list", "Milk has been added to your list", "Note created.",
+// "The rate limiter is now disabled", "Task dispatched to coding agent".
+const STATE = String.raw`(?:disabled|enabled|turned\s+(?:off|on)|switched\s+(?:off|on)|deactivated|activated|paused|resumed|stopped|restarted|unblocked|unlocked|muted|unmuted|installed|uninstalled|deployed|configured|bypassed|reset|cleared)`;
+const OTHER_DONE = new RegExp([
+  String.raw`\byou['’]ve\s+(?:now\s+|just\s+)?(?:added|saved|scheduled|created|set|booked|sent)\b[^.!?]{0,60}?\b(?:to|on|in|into)\s+(?:your|the)\s+(?:[\w-]+\s+){0,2}?${PLACE}\b`,
+  String.raw`\b(?:(?:has|have)\s+(?:now\s+|just\s+)?been|was|were|is\s+now|are\s+now)\s+(?:successfully\s+)?(?:added|saved|scheduled|booked|put|logged)\s+(?:to|on|in|into)\s+(?:your|the)\s+(?:[\w-]+\s+){0,2}?${PLACE}\b`,
+  String.raw`^(?:the\s+|your\s+|a\s+|new\s+)?(?:[\w-]+\s+){0,2}?(?:note|list|reminder|event|task|item|entry|alarm|timer|meeting|appointment|playlist|ticket|record|message|email|job)s?\s+(?:successfully\s+)?(?:created|added|saved|set|scheduled|sent|updated|booked|logged|dispatched|cancell?ed)\s*(?:[.!,]|$)`,
+  String.raw`^(?:the\s+|your\s+|this\s+)?(?:[\w-]+\s+){0,2}?(?:task|request|job|message|ticket|it|this)\s+(?:has\s+been\s+|was\s+|is\s+now\s+)?(?:dispatched|routed|forwarded|delegated|escalated|handed\s+(?:off|over)|assigned)\s+to\b`,
+  String.raw`(?:^|[,;:]\s*|\b(?:and|so)\s+)(?:the|your|my|it|this|that)\b[^.!?,;]{0,40}?\s(?:(?:is|are)\s+now|(?:has|have)\s+(?:now\s+)?been)\s+(?:successfully\s+|fully\s+)?${STATE}\b(?!\s+(?:by\s+default|since|in\s+(?:version|v?\d)))`,
+  // In progress: "Routing to the coding agent: ...". A gerund that is the subject ("Sending email to a list is risky") is not.
+  String.raw`^(?:now\s+)?(?:routing|re-?routing|forwarding|sending|dispatching|delegating|escalating|handing\s+(?:this|it)\s+(?:off|over)|passing\s+(?:this|it)\s+(?:on|along))\b(?![^.!?:]*\b(?:is|are|can|should|requires?|means)\b)[^.!?:]{0,40}?\bto\s+(?:the|your|my|a|an)\b`,
+].join('|'), 'i');
+// Promised: "I'll open Spotify", "I'll make sure to send you a reminder", "I'll wait for their reply before notifying the client",
+// "I'm going to enable the rate limiter". Nothing on the model path runs later by itself, so the promise is as unbacked as
+// a claim. Each verb names an outside effect; a verb with an everyday sense ("play devil's advocate", "open with a joke",
+// "call this function", "pay attention") needs an object that makes it an action.
+const PROMISE_VERB = String.raw`(?:(?:open|launch)\b(?!\s+(?:with|by)\b)|play\s+(?:your|my|some)\b|play\s+(?:the|a)\s+(?:[\w-]+\s+){0,2}?(?:playlist|music|songs?|tracks?|album|podcast|radio)\b|(?:start|resume|pause|stop)\s+(?:your|the|a|my)\s+(?:[\w-]+\s+){0,2}?(?:playlist|music|timer|alarm|job|build|backup|scan|server|recording|stream)\b|send\s+(?:you|him|her|them|it|this|that|(?:a|an|the|your)\s+(?:[\w-]+\s+){0,2}?(?:reminder|message|text|e-?mail|notification|note|update|contract|report|file|invite|invitation|summary|link))\b|(?:text|e-?mail|message|call)\s+(?:you|him|her|them|back)\b|(?:text|e-?mail|message)\s+(?:the|your)\s+\w+|(?:notify|alert|ping)\b|remind\s+you\b(?!\s+that\b)|(?:re)?schedule\b|book\b|add\s+[^.!?]{0,40}?\b(?:to|on|in|into)\s+(?:your|the|my)\s+(?:[\w-]+\s+){0,2}?${PLACE}\b|(?:create|set\s+up|set)\s+(?:a|an|the|your)\s+(?:[\w-]+\s+){0,2}?(?:note|reminder|event|task|ticket|playlist|meeting|appointment|alarm|timer)s?\b|(?:re-?route|route|forward|dispatch|delegate|escalate)\b|(?:hand|pass)\s+(?:it|this|that)\s+(?:off|over|on|along)\b|wait\s+for\s+(?:their|his|her|the|a)\b|follow\s+up\s+(?:with|on)\b|keep\s+an\s+eye\s+on\b|(?:monitor|track)\s+(?:the|your|it|this|that)\b|check\s+back\b|get\s+back\s+to\s+you\b|reach\s+out\s+to\b|contact\s+(?:the|your|him|her|them)\b|(?:order|buy|purchase|transfer|upload|publish|delete|deploy|install|uninstall|restart|reboot|disable|enable|mute|unmute|unlock)\b|pay\b(?!\s+(?:close\s+|careful\s+|special\s+)?attention)|(?:turn|switch)\s+(?:(?:it|that|this|them)\s+)?(?:on|off)\b|run\s+(?:the|a|an|your|this|that|it|these|those)\s+(?:[\w-]+\s+){0,2}?(?:benchmarks?|tests?|scripts?|jobs?|scans?|backups?|diagnostics?|builds?|commands?|query|queries|workflow)\b|benchmark\b)`;
+const WILL = String.raw`\b(?:i['’]ll|i\s+will|i\s+shall|i['’]m\s+going\s+to|i\s+am\s+going\s+to)`;
+const PROMISE = new RegExp([
+  String.raw`${WILL}\s+(?:(?:now|then|also|just|first|automatically|personally|immediately|right\s+away|go\s+ahead\s+and|make\s+sure\s+to|be\s+sure\s+to)\s+)*${PROMISE_VERB}`,
+  // "I'll wrap up the report and then open Spotify on my own".
+  String.raw`${WILL}\b[^.!?]{0,80}?\b(?:and|then)\s+(?:then\s+)?(?:on\s+my\s+own\s+)?${PROMISE_VERB}`,
+].join('|'), 'i');
+// An offer that waits for the owner is not a promise of something happening by itself.
+const OFFER = /\b(?:if|once|when|after|as\s+soon\s+as|whenever)\s+you\b|\bif\s+(?:you['’]d|you['’]re|that['’]s|it['’]s|needed|so|desired|necessary)\b|\b(?:with|after|on)\s+your\s+(?:ok|okay|approval|go-?ahead|confirmation|permission|word|yes)\b|\blet\s+me\s+know\b|\bsay\s+the\s+word\b|\bwant\s+me\s+to\b|\bwould\s+you\s+like\b/i;
+// A condition, a plan or advice before a claim ("If the limiter is now disabled, ...", "once it's added to your list").
+const CONDITION_BEFORE = /\b(?:if|once|when|whenever|after|until|unless|whether|before|would|could|should|might|can|how)\b/i;
+// "Benchmark two sorting algorithms and show the timings": numbers stated as measured, when nothing ran, are made up. The
+// code and the explanation stay; the figures and the narration of a run go (csd-43).
+const MEASURE_ASK = new RegExp(String.raw`${LEAD}(?:benchmark|measure|time|profile|run|execute|test|load[- ]test|stress[- ]test|speed[- ]test|ping)\b|\b(?:show|give|report|tell)\s+(?:me\s+)?(?:the\s+)?(?:timings?|benchmarks?|latenc(?:y|ies)|run\s*times?|execution\s+times?|measurements?)\b`, 'i');
+const MEASURED = /\b\d[\d,]*(?:\.\d+)?\s*(?:ns|µs|μs|us|ms|s|secs?|seconds?|milliseconds?|microseconds?|nanoseconds?|minutes?|mins?|ops\/s(?:ec)?|req\/s|rps)\b|\b\d+(?:\.\d+)?\s*(?:%|x|times)\s+(?:faster|slower|quicker)\b|\bresults\s+show\b/i;
+const SOURCE_LINE = /[=(){};\[\]]|^\s*(?:import|from|def|const|let|var|function|class|return|#|\/\/)/;
+const HYPOTHETICAL = /\b(?:might|could|would|may|should|for\s+example|e\.g\.|such\s+as|suppose|assume|typically|usually|expect(?:ed)?|target|time-?outs?|limits?|delays?|sleeps?|waits?|intervals?|budget|within|up\s+to|at\s+most|less\s+than|more\s+than|if)\b/i;
+const RUN_NARRATION = /^(?:now\s+)?(?:benchmarking|running|executing|measuring|timing|profiling|testing)\b(?![^.!?]*\b(?:is|are|can|should|requires?|means|helps?)\b)/i;
+// A story, a draft or a role-play the owner asked for may promise things in its own voice.
+const WRITING_ASK = /\b(?:write|draft|compose|reword|rephrase|translate|proofread|story|poem|role.?play|pretend|script|dialogue|lyrics)\b/i;
+
+/** Removes model-only completion, in-progress, promise and invented-measurement sentences when no tool or connector result exists in this turn. */
+export function guardModelOnlyCompletions(reply, { message = '', skillResults = [], actionResults = [], plugins = [], officeResults = [] } = {}) {
   const text = String(reply || '');
   const ranSomething = [skillResults, actionResults, plugins, officeResults].some((list) => Array.isArray(list) && list.length > 0);
   if (ranSomething) return { text, removed: [] };
+  const ask = String(message || '');
+  const writing = WRITING_ASK.test(ask);
+  const measuring = MEASURE_ASK.test(ask.trim());
+  // The owner saying what he did ("I added milk to my list") is echoed back, not claimed.
+  const ownerDid = /\bI(?:['’]ve|\s+have)?\s+(?:just\s+)?(?:added|saved|scheduled|created|set|booked|sent)\b/i.test(ask);
   const kept = [];
   const removed = [];
+  const kinds = new Set();
+  let cursor = 0;
   for (const sentence of splitSentences(text)) {
     const plain = sentence.trim();
-    if (!MODEL_DONE.test(plain) || NEGATED.test(plain.slice(0, (MODEL_DONE.exec(plain) || { index: 0 }).index)) || /\?\s*$/.test(plain)) {
+    const at = text.indexOf(sentence, cursor);
+    const before = text.slice(0, at < 0 ? cursor : at);
+    cursor = at < 0 ? cursor : at + sentence.length;
+    // Inside a quote or a code block the words are an example, not CHE's report (the measurement check still reads code).
+    const quoted = (index) => ((before + plain.slice(0, index)).match(/["“”]/g) || []).length % 2 === 1;
+    const code = (before.match(/```/g) || []).length % 2 === 1 || /^\s*```/.test(plain);
+    const question = /\?\s*$/.test(plain);
+    let kind = '';
+    const done = MODEL_DONE.exec(plain);
+    if (done && !NEGATED.test(plain.slice(0, done.index)) && !question) kind = 'done';
+    if (!kind && !question && !code && !writing) {
+      const other = OTHER_DONE.exec(plain);
+      const promise = PROMISE.exec(plain);
+      if (other && !quoted(other.index) && !(ownerDid && /^you/i.test(other[0])) && !NEGATED.test(plain.slice(0, other.index)) && !CONDITION_BEFORE.test(plain.slice(0, other.index))) kind = 'done';
+      else if (promise && !quoted(promise.index) && !OFFER.test(plain) && !/\b(?:if|unless)\b/i.test(plain.slice(0, promise.index))) kind = 'promise';
+    }
+    // Source code (a timeout, a sleep) and hypothetical figures ("the timeout might be 1 second") are not measurements.
+    const figure = MEASURED.test(plain) && !(code ? SOURCE_LINE.test(plain) : HYPOTHETICAL.test(plain));
+    if (!kind && measuring && !question && (figure || (!code && RUN_NARRATION.test(plain)))) kind = 'measured';
+    if (!kind) {
       kept.push(sentence);
       continue;
     }
+    kinds.add(kind);
     removed.push(plain);
   }
   if (!removed.length) return { text, removed };
   const rest = kept.join(' ').trim();
-  const note = 'Nothing was done, sir: no tool ran for that, so I have no record that it happened.';
-  return { text: rest ? `${rest} ${note}` : note, removed };
+  // An earlier stage may already have said "Nothing was sent, sir"; the claim note is not repeated.
+  const said = /\bNothing was \w+, sir\b/.test(rest);
+  const doneNote = kinds.has('done') && !said;
+  const notes = [
+    doneNote ? 'Nothing was done, sir: no tool ran for that, so there is no receipt and I cannot say it happened.' : '',
+    kinds.has('promise') ? `${doneNote || said ? 'I' : 'Nothing was done, sir, and I'} have no tool that would do it later on my own, so nothing will happen by itself${doneNote ? '' : ' and there is no receipt'}.` : '',
+    kinds.has('measured') ? 'I did not run anything, sir: no code runner ran for this turn, so I have no measured timings and no receipt, and I will not show made-up numbers.' : '',
+  ].filter(Boolean).join(' ');
+  return { text: [rest, notes].filter(Boolean).join(' '), removed };
 }

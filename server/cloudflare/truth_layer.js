@@ -700,7 +700,9 @@ export function guardClaimedResearchActions(reply, { research = null, tools = []
   const claimedSearch = /\b(?:i|we)\s+(?:searched|looked up|pulled|researched|checked|retrieved)\s+(?:(?:the|some|multiple|several|most)\s+)?(?:fresh|recent|current|live|online|web|sources?|articles?|documents?|information)\b/i.test(text)
     || new RegExp(`\\b(?:i|we)(?:'ve|\\s+have)?\\s+(?:just\\s+|already\\s+|also\\s+|quickly\\s+)?(?:searched|looked\\s+up|pulled|checked|retrieved|browsed|scanned|consulted|visited)\\s+(?:through\\s+|across\\s+|on\\s+)?${SEARCHED_WHAT}`, 'i').test(text)
     || /\b(?:i|we)(?:'ve|\s+have)?\s+(?:just\s+|already\s+|also\s+|quickly\s+)?(?:googled|web.?searched|researched)\b|\b(?:i|we)(?:'ve|\s+have)?\s+looked\s+(?:it|this|that|them|those|these)\s+up\b|\b(?:i|we)\s+(?:looked|searched)\s+(?:it\s+)?(?:up\s+)?(?:online|on\s+(?:the\s+)?(?:web|internet|google))\b/i.test(text)
-    || /\baccording\s+to\s+(?:my|our)\s+(?:research|search(?:es)?|sources|findings|fact.?check(?:ing)?)\b|\bmy\s+(?:research|search(?:es)?|fact.?check(?:ing)?)\s+(?:shows?|showed|found|finds|confirms?|confirmed|suggests?|indicates?)\b/i.test(text);
+    || /\baccording\s+to\s+(?:my|our)\s+(?:research|search(?:es)?|sources|findings|fact.?check(?:ing)?)\b|\bmy\s+(?:research|search(?:es)?|fact.?check(?:ing)?)\s+(?:shows?|showed|found|finds|confirms?|confirmed|suggests?|indicates?)\b/i.test(text)
+    // "According to Google search results, ..." claims a search ran (certification run 19, ter-32).
+    || /\baccording\s+to\s+(?:the\s+|my\s+|our\s+)?(?:google|bing|web|online|internet)\s+(?:search\s+)?results?\b/i.test(text);
   const claimedComparison = /\b(?:i|we)\s+(?:compared|cross.?checked|corroborated)\b[^.!?\n]{0,100}\b(?:sources?|information|articles?|evidence|data|results?)\b/i.test(text);
   // "I verified / fact-checked / double-checked that" and "I reviewed the
   // documents" are execution claims too: they need a real research, tool or
