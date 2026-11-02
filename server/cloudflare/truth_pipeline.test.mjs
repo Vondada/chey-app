@@ -169,3 +169,15 @@ test('the capability_gap stage queues a job for the owner but never for a certif
   assert.equal((await stage.run(refusal, probe.ctx)).text, refusal);
   assert.equal(probe.queued.length, 0);
 });
+
+test('a certification probe turn records which stage changed the reply and what it said before; an owner turn does not', async () => {
+  const stages = [
+    { name: 'swap', run: (reply) => ({ text: reply.replace('ran the tests', 'checked nothing'), removed: [] }) },
+    { name: 'same', run: (reply) => ({ text: reply, removed: [] }) },
+  ];
+  const probe = await verifyReply('I ran the tests.', { ...baseCtx(memStorage()), probe: true }, { stages });
+  assert.equal(probe.text, 'I checked nothing.');
+  assert.deepEqual(probe.trace, [{ stage: 'swap', before: 'I ran the tests.' }]);
+  const owner = await verifyReply('I ran the tests.', { ...baseCtx(memStorage()) }, { stages });
+  assert.equal(owner.trace, undefined);
+});

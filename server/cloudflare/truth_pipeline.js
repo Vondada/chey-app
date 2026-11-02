@@ -252,16 +252,20 @@ export function replySteps({ createdPartners = [], officeResults = [], officePee
 /**
  * Run every stage in order. `stages` defaults to TRUTH_STAGES; tests pass their own.
  * A stage that throws is logged and skipped, so the reply still reaches the auditor (fail closed, never fail open).
- * Returns { text, removals, audit, steps, answerReceipt, attributionRemoved, sourced, earlyResponse }.
+ * Returns { text, removals, audit, steps, answerReceipt, attributionRemoved, sourced, earlyResponse, trace }.
  */
 export async function verifyReply(reply, ctx, { stages = TRUTH_STAGES } = {}) {
   const requestId = ctx.requestId || crypto.randomUUID();
   const shared = { removals: [], pastedText: false, documentRead: false, sourced: { used: [], removed: [], disproven: [] }, answerReceipt: null, attributionRemoved: 0, audit: null };
   const run = { ...ctx, requestId, shared, storage: ctx.storage || ctx.self?.ctx?.storage, skillResults: ctx.skillResults || [], officeResults: ctx.officeResults || [], actionResults: ctx.actionResults || [], plugins: ctx.plugins || [], workerBrainHits: ctx.workerBrainHits || [], ownerHistory: ctx.ownerHistory || [], body: ctx.body || {}, data: ctx.data || {}, env: ctx.env || {}, helpers: ctx.helpers || {}, keys: ctx.keys || {} };
   let text = String(reply ?? '');
+  // Certification probe turns only: which stage changed the reply and what it said before, so a failing answer can be
+  // traced to a guard or to the model (run 20 kept only the guard's text). Owner turns never carry it.
+  const trace = ctx.probe ? [] : undefined;
   for (const stage of stages) {
     try {
       const out = await stage.run(text, run);
+      if (trace && typeof out?.text === 'string' && out.text !== text && trace.length < 6) trace.push({ stage: stage.name, before: text.slice(0, 600) });
       if (out?.removed?.length) shared.removals.push(...guardRemovalEntries(stage.name, out.removed, { requestId }));
       if (out?.earlyResponse) return { text, removals: shared.removals, audit: shared.audit, steps: replySteps(run), answerReceipt: shared.answerReceipt, attributionRemoved: shared.attributionRemoved, sourced: shared.sourced, earlyResponse: out.earlyResponse };
       if (typeof out?.text === 'string') text = out.text;
@@ -269,5 +273,5 @@ export async function verifyReply(reply, ctx, { stages = TRUTH_STAGES } = {}) {
       console.log(`CHE truth stage ${stage.name} failed`, error?.message || error);
     }
   }
-  return { text, removals: shared.removals, audit: shared.audit, steps: replySteps(run), answerReceipt: shared.answerReceipt, attributionRemoved: shared.attributionRemoved, sourced: shared.sourced, earlyResponse: null };
+  return { text, removals: shared.removals, audit: shared.audit, steps: replySteps(run), answerReceipt: shared.answerReceipt, attributionRemoved: shared.attributionRemoved, sourced: shared.sourced, earlyResponse: null, trace };
 }

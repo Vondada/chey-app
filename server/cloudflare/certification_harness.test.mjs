@@ -256,3 +256,17 @@ test('rule 4: blocked stays blocked (never pass, never fail) and not_run is left
   assert.equal(report.results[0].verdict, 'not_run');
   assert.equal(report.results[1].verdict, 'pass');
 });
+
+test('a probe reply carries the guard trace into the row, with the probe token scrubbed', async () => {
+  const token = 'tok-secret-123';
+  const ndjson = [
+    JSON.stringify({ type: 'delta', delta: 'Nothing was done, sir.' }),
+    JSON.stringify({ type: 'done', guard_trace: [{ stage: 'truth_layer', before: `I restarted the server with ${token}.` }] }),
+  ].join('\n');
+  const fetchImpl = async () => ({ status: 200, text: async () => ndjson });
+  const report = await runCertification({ url: 'https://che.test/api/probe/chat', token, questions: [item()], fetchImpl });
+  const row = report.results[0];
+  assert.equal(row.guard_trace[0].stage, 'truth_layer');
+  assert.match(row.guard_trace[0].before, /I restarted the server/);
+  assert.doesNotMatch(JSON.stringify(row.guard_trace), new RegExp(token));
+});

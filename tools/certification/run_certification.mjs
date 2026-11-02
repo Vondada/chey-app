@@ -492,6 +492,8 @@ export async function runCertification({
     const servedBy = sb && typeof sb === 'object'
       ? { provider: String(sb.provider || ''), model: String(sb.model || ''), route: sb.route ?? null, fallback: Boolean(sb.fallback) } : null;
     const modelCalls = parsed.done?.model_calls ?? null;
+    // Probe turns only: the guard stages that changed the reply and its text before each (truth_pipeline.js trace).
+    const guardTrace = Array.isArray(parsed.done?.guard_trace) ? JSON.parse(scrub(parsed.done.guard_trace.slice(0, 6))) : null;
     const action = VALID_ANSWER_CLASSES.has(verdict.classification)
       ? actionOutcome({ classification: verdict.classification, reason: verdict.reason, receipts, done: parsed.done, held: parsed.held }) : null;
     // An unseen question may name the outcome it needs (expected_action: "executed"): a passing reply with any other
@@ -499,7 +501,7 @@ export async function runCertification({
     if (verdict.verdict === 'pass' && item.expected_action && action !== item.expected_action) {
       Object.assign(verdict, outcome('incorrect', `action outcome ${action}, expected ${item.expected_action}`));
     }
-    const row = { ...base, verdict: verdict.verdict, classification: verdict.classification, reason: verdict.reason, http_status: status, latency_ms: latency, reply, receipts, error, source, route, served_by: servedBy, model_calls: modelCalls, action_outcome: action };
+    const row = { ...base, verdict: verdict.verdict, classification: verdict.classification, reason: verdict.reason, http_status: status, latency_ms: latency, reply, receipts, error, source, route, served_by: servedBy, model_calls: modelCalls, action_outcome: action, guard_trace: guardTrace };
     results.push(row);
     onProgress(row);
   }
@@ -577,9 +579,12 @@ async function main(argv) {
   const report = await runCertification({
     url, token, questions, select, reuse, questionsFile: opts.questions || QUESTIONS_PATH,
     // Every non-pass prints its class, its reason and the start of CHE's reply, so the failures can be audited from the log.
-    onProgress: (row) => console.log(row.verdict === 'pass'
+    onProgress: (row) => { console.log(row.verdict === 'pass'
       ? `${row.id} pass action=${row.action_outcome ?? "none"} source=${row.source ?? "none"} engine=${engineLabel(row)} ms=${row.latency_ms}`
-      : `${row.id} ${row.verdict} [${row.classification}] action=${row.action_outcome ?? "none"} (${row.reason}) source=${row.source ?? 'none'} route=${row.route ?? 'none'} engine=${engineLabel(row)} ms=${row.latency_ms} :: ${String(row.reply || '').replace(/\s+/g, ' ').slice(0, 600)}`),
+      : `${row.id} ${row.verdict} [${row.classification}] action=${row.action_outcome ?? "none"} (${row.reason}) source=${row.source ?? 'none'} route=${row.route ?? 'none'} engine=${engineLabel(row)} ms=${row.latency_ms} :: ${String(row.reply || '').replace(/\s+/g, ' ').slice(0, 600)}`);
+      // A failing answer a guard changed also prints what the reply said before that guard.
+      if (row.verdict !== 'pass') for (const t of row.guard_trace || []) console.log(`  guard ${row.id} ${t.stage} before :: ${String(t.before || '').replace(/\s+/g, ' ').slice(0, 400)}`);
+    },
   });
   const out = opts.out;
   await mkdir(dirname(out), { recursive: true });
