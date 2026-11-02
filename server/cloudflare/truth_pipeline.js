@@ -12,7 +12,7 @@
 import { ownVoiceReply } from './social_corrections.js';
 import { adRequest, adStatusLines, assetTruthReply } from './asset_truth.js';
 import { guardClaimedDeviceActions, guardModelOnlyCompletions, guardPretendedOrOverclaimed } from './device_action_claims.js';
-import { replyRepeatsAgentTask } from './agent_task_guard.js';
+import { guardAgentTaskReply } from './agent_task_guard.js';
 import { capabilityGap, capabilityReply } from './capability_gap.js';
 import { CHAT_IMAGE_SOURCE, chatImageInline, chatImageMedia, chatImageReply, makeChatImages, pretendToolCall } from './chat_images.js';
 import { sanitizeOwnerText } from './che_errors.js';
@@ -147,9 +147,10 @@ export const TRUTH_STAGES = Object.freeze([
     ctx.shared.rememberValidated = true;
     return { text, removed };
   } },
-  // An Office task is never shown as CHE's own reply; the owner finds it in the Office view.
+  // An Office task line is never shown as CHE's own words: only the sentences that repeat one are removed, and the
+  // whole reply becomes the Office-view notice only when nothing meaningful is left.
   { name: 'agent_task', run(reply, ctx) {
-    return { text: replyRepeatsAgentTask(reply, ctx.data.team_tasks || []) ? 'That is an internal Office task, sir, so I am not repeating it here. It is in the Office view.' : reply, removed: [] };
+    return guardAgentTaskReply(reply, ctx.data.team_tasks || []);
   } },
   // Persist the actual answer-provenance receipt, not a model-invented bibliography.
   { name: 'answer_receipt', async run(reply, ctx) {
