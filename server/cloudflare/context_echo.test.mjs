@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   NO_RECORD_FOLLOW_UP, NO_RECORD_QUESTION, contextEchoStage, copiedShare, guardContextEcho, historyRecordsStage,
-  historySummaryReply, longHistoryRequest, stripSpeakerLabels,
+  historySummaryReply, longHistoryRequest, readConversations, stripSpeakerLabels,
 } from './context_echo.js';
 
 const OLD_ASK = 'Book me a table at the Italian place on Friday for six people and ask for the window seats please.';
@@ -83,6 +83,13 @@ test('copiedShare measures word-for-word runs, not shared topics', () => {
 test('rule 3: only a summary of a long conversation history is a history request', () => {
   assert.deepEqual(longHistoryRequest('Give me a recap of all our chats over the past two years about the bakery.'), { topic: ['bakery'], days: 730 });
   assert.equal(longHistoryRequest('Summarize my sales history over the last 6 months.'), null);
+  // A possessive domain history is that record, not our talks (Codex review on #889).
+  for (const ask of ['Summarize our sales history over the last six months.', 'Give me an overview of our order history for the past two years.',
+    'Recap our project history over the whole year.', 'Summarise our medical history over the last five years.', 'Sum up our price history for three months.']) {
+    assert.equal(longHistoryRequest(ask), null, ask);
+  }
+  assert.ok(longHistoryRequest('Recap our chats about my medical history over the past two years.'));
+  assert.ok(longHistoryRequest('Summarise what we have discussed over the last four months about the garden.'));
   assert.equal(longHistoryRequest('Summarize this article about bakeries.'), null);
   assert.equal(longHistoryRequest('Recap what we just said.'), null);
 });
@@ -117,4 +124,42 @@ test('the stages: echo runs on the model text, history only on the owner device'
   assert.equal(guest.text, 'model text');
   const owner = await historyRecordsStage.run('model text', { ...ctx, ownerDevice: true, storage: brainStorage([]), rawMessage: 'Summarise our five-year history of chats.' });
   assert.match(owner.text, /don't have a record/);
+});
+
+// A storage that honours prefix, reverse, limit and end the way Durable Object storage does.
+const pagedStorage = (rows) => ({
+  get: async () => undefined,
+  list: async ({ prefix = '', reverse = false, limit = Infinity, end } = {}) => {
+    let keys = rows.map(([k]) => k).filter((k) => k.startsWith(prefix) && (end === undefined || k < end)).sort();
+    if (reverse) keys.reverse();
+    const map = new Map(rows);
+    return new Map(keys.slice(0, limit).map((k) => [k, map.get(k)]));
+  },
+});
+const talkRows = (n, startMs) => Array.from({ length: n }, (_, i) => {
+  const ms = startMs + i * 60_000;
+  return [`brainmem:${String(ms).padStart(15, '0')}_c${i}`, { id: `c${i}`, at: new Date(ms).toISOString(), title: `Note ${i}`, body: `You said: Note ${i}` }];
+});
+
+test('rule 3: older conversations are paged in; past the cap nothing is claimed absent (Codex review on #889)', async () => {
+  const rows = talkRows(25, Date.parse('2024-01-01T00:00:00Z'));
+  const all = await readConversations(pagedStorage(rows), { page: 10, pages: 5 });
+  assert.equal(all.talks.length, 25);
+  assert.equal(all.complete, true);
+  const capped = await readConversations(pagedStorage(rows), { page: 10, pages: 2 });
+  // Each page after the first repeats its boundary row (read one millisecond past it), and the ids drop the repeat.
+  assert.equal(capped.talks.length, 19);
+  assert.equal(capped.complete, false);
+  const ask = longHistoryRequest('Give me a recap of all our chats over the past two years about the bakery.');
+  const text = await historySummaryReply(ask, { data: {}, storage: pagedStorage(rows), pages: { page: 10, pages: 2 } });
+  assert.match(text, /searched only the newest 19 saved conversations; older ones were not searched/);
+  assert.match(text, /None of the ones I searched mention bakery/);
+  assert.doesNotMatch(text, /not recorded|no record/);
+});
+
+test('rule 3: a topic in the stored talk body counts, not only its short title (Codex review on #889)', async () => {
+  const long = 'Can you help me plan the opening weekend, the staff rota, the signage and the menu boards for the new bakery on Elm Street?';
+  const storage = pagedStorage([['brainmem:000001761955200000_x', { id: 'x', at: '2026-11-01T10:00:00Z', title: long.slice(0, 90), body: `You said: ${long}` }]]);
+  const text = await historySummaryReply(longHistoryRequest('Recap all our chats over the past year about the bakery.'), { data: {}, storage });
+  assert.match(text, /1 mention bakery: 2026-11-01 \(conversation\)/);
 });

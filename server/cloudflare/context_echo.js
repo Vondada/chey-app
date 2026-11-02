@@ -119,8 +119,12 @@ export async function guardContextEcho(reply, { message = '', data = {}, brainCo
 // ─── Rule 3: a long history, summarised from the records ─────────────────────
 
 const SUMMARY_VERB = /\b(?:summari[sz]e|summary|recap|overview|sum up|run (?:me )?through|go over|walk me through)\b/i;
-// Conversation history, not a sales or price history.
-const HISTORY_NOUN = /\b(?:conversations?|talks|chats|discussions)\b|\bour\s+(?:[\w-]+\s+){0,3}history\b|\bhistory\s+(?:with you|together|of (?:our|us))\b/i;
+// Only a conversational referent makes it our talk history: "our three-year history" alone could be sales, orders or a
+// project (Codex review on #889: "Summarize our sales history over the last six months" got conversation counts).
+const HISTORY_NOUN = /\b(?:conversations?|talks|chats?|discussions|messages)\b|\bwhat (?:we|you and i)(?:'ve| have)? (?:discussed|talked about|said|covered)\b|\bhistory\s+(?:with you|together|of (?:our|us))\b/i;
+// A named domain history (sales, orders, a project) is that record, unless the owner asks about chats on it.
+const DOMAIN_HISTORY = /\b(?:sales|orders?|price|pricing|medical|health|project|purchase|payment|trading|trade|work|credit|search|browsing|watch|listening)\s+history\b/i;
+const CHATS_ABOUT = /\b(?:conversations?|talks|chats?|discussions|messages)\s+(?:\w+\s+){0,4}(?:about|on|regarding)\b/i;
 const OURS = /\b(?:our|we|us)\b|\bwith you\b|\byou and (?:i|me)\b/i;
 const LONG_SPAN = /\b(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten|several|many)[-\s](?:years?|months?)\b|\b(?:years|months|all[- ]time|ever|since we (?:started|met)|whole|entire|long[- ]term|all (?:of )?our)\b/i;
 const NUMBER = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10 };
@@ -129,6 +133,7 @@ const NUMBER = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, e
 export function longHistoryRequest(message) {
   const text = String(message || '').replace(/[’‘`]/g, "'");
   if (!SUMMARY_VERB.test(text) || !HISTORY_NOUN.test(text) || !OURS.test(text) || !LONG_SPAN.test(text)) return null;
+  if (DOMAIN_HISTORY.test(text) && !CHATS_ABOUT.test(text)) return null;
   const span = /\b(\d+|one|two|three|four|five|six|seven|eight|nine|ten)[-\s](years?|months?)\b/i.exec(text);
   const n = span ? Number(span[1]) || NUMBER[span[1].toLowerCase()] : 0;
   const days = n ? n * (/^y/i.test(span[2]) ? 365 : 30) : 0;
@@ -138,35 +143,67 @@ export function longHistoryRequest(message) {
 
 const day = (value) => String(value || '').slice(0, 10);
 const clipQuote = (value) => { const s = String(value || '').replace(/\s+/g, ' ').trim(); return s.length > 140 ? `${s.slice(0, 137)}...` : s; };
+// Conversations are read in pages, newest first, up to a cap. Past the cap nothing is claimed absent: the reply says
+// only the newest ones were searched (Codex review on #889).
+const TALK_PAGE = 2000;
+const TALK_PAGES = 5;
+export async function readConversations(storage, { page = TALK_PAGE, pages = TALK_PAGES } = {}) {
+  const seen = new Set();
+  const talks = [];
+  let before;
+  for (let i = 0; i < pages; i++) {
+    const rows = await listConversationMemories(storage, { limit: page, before });
+    let added = 0;
+    for (const row of rows) {
+      const id = row.id || `${row.at}|${row.title}`;
+      if (seen.has(id)) continue;
+      seen.add(id);
+      talks.push(row);
+      added++;
+    }
+    if (rows.length < page || !added) return { talks, complete: true };
+    // One millisecond past the oldest row, so rows stored in that same millisecond are not skipped (the ids dedupe).
+    const oldest = Date.parse(rows[rows.length - 1]?.at || '');
+    if (!Number.isFinite(oldest)) return { talks, complete: false };
+    before = new Date(oldest + 1).toISOString();
+  }
+  return { talks, complete: false };
+}
 const mentions = (text, topic) => { const stems = new Set(words(text).map((w) => w.slice(0, 5))); return topic.some((t) => stems.has(t.slice(0, 5))); };
 
 /** Rule 3: what the records hold for a long-history summary, with counts and dates, and what they do not hold. */
-export async function historySummaryReply(ask, { data = {}, storage = null, message = '', now = Date.now() } = {}) {
+export async function historySummaryReply(ask, { data = {}, storage = null, message = '', now = Date.now(), pages = {} } = {}) {
   const records = (Array.isArray(data.memory_records) ? data.memory_records : []).filter((r) => r?.text && r.active !== false && !r.superseded_at);
   let talks = [];
-  try { talks = storage ? await listConversationMemories(storage, { limit: 2000 }) : []; } catch (_) { talks = []; }
+  let complete = true;
+  try { ({ talks, complete } = storage ? await readConversations(storage, pages) : { talks: [], complete: true }); } catch (_) { talks = []; complete = false; }
   const asked = String(message || '').trim().toLowerCase();
   // This same question, asked before, is not history about the topic.
   if (asked) talks = talks.filter((t) => String(t.title || '').trim().toLowerCase() !== asked && !String(t.body || '').toLowerCase().startsWith(`you said: ${asked}`));
   const dates = [...records.map((r) => day(r.created_at)), ...talks.map((t) => day(t.at))].filter(Boolean).sort();
   const topicName = ask.topic.join(' ');
-  if (!dates.length) {
+  if (!dates.length && complete) {
     return `I don't have a record of past conversations${topicName ? ` about ${topicName}` : ''}, sir. Nothing is stored yet, so there is no history I can summarise without inventing it.`;
   }
-  const parts = [`Here is what is stored, sir: ${talks.length} saved conversation${talks.length === 1 ? '' : 's'} and ${records.length} stored memor${records.length === 1 ? 'y' : 'ies'}, from ${dates[0]} to ${dates[dates.length - 1]}.`];
+  if (!dates.length) return 'I couldn\'t read my saved conversations just now, sir, so I can\'t say what they hold, and I won\'t summarise a history I can\'t see.';
+  const checked = complete ? '' : ` I searched only the newest ${talks.length} saved conversations; older ones were not searched, so I can't say what they hold.`;
+  const parts = [`Here is what is stored, sir: ${talks.length} saved conversation${talks.length === 1 ? '' : 's'} and ${records.length} stored memor${records.length === 1 ? 'y' : 'ies'}, from ${dates[0]} to ${dates[dates.length - 1]}.${checked}`];
   if (ask.topic.length) {
     const hits = [
       ...records.filter((r) => mentions(r.text, ask.topic)).map((r) => ({ at: day(r.created_at), text: r.text, kind: isOwnerAttested(r) ? 'owner-stated' : 'CHE inference' })),
-      ...talks.filter((t) => mentions(t.title, ask.topic)).map((t) => ({ at: day(t.at), text: t.title, kind: 'conversation' })),
+      // The whole stored talk, not only its 90-character title (Codex review on #889).
+      ...talks.filter((t) => mentions(`${t.title || ''} ${t.body || ''}`, ask.topic)).map((t) => ({ at: day(t.at), text: String(t.body || t.title || '').replace(/^You said:\s*/, '').split(/\nCHE answered:/)[0], kind: 'conversation' })),
     ].sort((a, b) => a.at.localeCompare(b.at));
     if (hits.length) {
       parts.push(`${hits.length} mention ${topicName}: ${hits.slice(-3).map((h) => `${h.at || 'undated'} (${h.kind}) "${clipQuote(h.text)}"`).join('; ')}.`);
     } else {
-      parts.push(`None of them mention ${topicName}, so I have no record of conversations about it.`);
+      parts.push(complete ? `None of them mention ${topicName}, so I have no record of conversations about it.` : `None of the ones I searched mention ${topicName}.`);
     }
   }
   const start = Date.parse(dates[0]);
-  if (ask.days && Number.isFinite(start) && now - start < ask.days * 86_400_000) {
+  if (!complete) {
+    parts.push('I won\'t fill in what I haven\'t read.');
+  } else if (ask.days && Number.isFinite(start) && now - start < ask.days * 86_400_000) {
     parts.push(`What is stored starts on ${dates[0]}; anything before that is not recorded, and I won't fill it in.`);
   } else {
     parts.push('Anything not listed here is not recorded, and I won\'t fill it in.');
