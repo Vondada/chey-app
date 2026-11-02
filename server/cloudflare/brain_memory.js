@@ -195,7 +195,15 @@ const KIND_HINTS = [
  * question about the War Room or Flagstaff also brings back the latest of
  * those threads even without shared words.
  */
-export async function recallMemories(storage, query, { limit = 6, scan = 1500 } = {}) {
+// A remembered talk with the owner holds his words and CHE's old answer. For a chat prompt only his words count, in the
+// match and in the text: an old answer (a job receipt, a template line, a dump of findings) was copied whole into
+// unrelated replies (certification run 19: ivg-49 got a coding-job receipt, vcc-09 "I'll ask Grok. grok: <his question>").
+// The Brain path already keeps only the owner's words (brain_store.js retrievalBody).
+const ANSWER_SPLIT = /\nCHE answered:/;
+const isOwnerTalk = (m) => (!m?.kind || m.kind === 'conversation') && /^You said:/.test(String(m?.body || ''));
+const ownerPart = (m) => String(m.body).split(ANSWER_SPLIT)[0];
+
+export async function recallMemories(storage, query, { limit = 6, scan = 1500, ownerWordsOnly = false } = {}) {
   const q = memoryTokens(query);
   const wanted = KIND_HINTS.filter(([, re]) => re.test(String(query || ''))).map(([k]) => k);
   const rows = await storage.list({ prefix: PREFIX, reverse: true, limit: scan });
@@ -204,14 +212,15 @@ export async function recallMemories(storage, query, { limit = 6, scan = 1500 } 
   for (const value of rows.values()) {
     rank++;
     if (!value?.body) continue;
-    let score = similarity(q, Array.isArray(value.tokens) ? value.tokens : []);
+    const owner = ownerWordsOnly && isOwnerTalk(value);
+    let score = similarity(q, owner ? memoryTokens(ownerPart(value).replace(/^You said:\s*/, '')) : Array.isArray(value.tokens) ? value.tokens : []);
     if (wanted.includes(value.kind)) score += .25 + Math.max(0, .15 - rank * .002);
     if (score >= .08) scored.push({ value, score });
   }
   scored.sort((a, b) => b.score - a.score);
   return scored.slice(0, limit).map(({ value }) => {
     const { tokens, ...rest } = value;
-    return rest;
+    return ownerWordsOnly && isOwnerTalk(rest) ? { ...rest, body: ownerPart(rest) } : rest;
   });
 }
 

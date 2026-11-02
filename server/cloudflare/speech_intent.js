@@ -46,6 +46,12 @@ const SLANG = [
 
 const YES_RE = /^(yes|yeah|yep|yup|sure|ok|okay|go ahead|do it|confirm|confirmed|yes please|yes do it|yes go ahead|please do it|go for it)$/;
 const NO_RE = /^(no|nope|cancel|stop|never mind|nevermind|don't|dont|forget it|no thanks|not that|wait no|hold on)$/;
+// A bare halt ("Stop.", "be quiet") with nothing held is a command to stop, not a statement for the model to weigh: the
+// model's reply to "Stop." was replaced by the memory-provenance notice (certification run 19, vcc-04).
+const HALT_RE = /^(?:(?:ok|okay|please|che|chey|chay)\s+)*(?:stop|stop it|stop that|stop talking|stop now|be quiet|quiet|hush|shush|enough|that's enough|thats enough)(?:\s+(?:please|now|sir|che|chey|chay))*$/;
+// An action on a bare pronoun ("put it in the list", "save that", "send them to me"). With no earlier turn, no screen and
+// no attachment there is nothing for the pronoun to name, so CHE asks instead of guessing (run 19, vcc-12).
+const PRONOUN_ACTION_RE = /^(?:(?:please|just|ok|okay|now|can you|could you|would you)\s+)*(?:put|add|save|store|send|move|copy|share|post|file|stick|attach|forward|keep|place|pin|drop)\s+(it|that|them|those)\b(?:\s+(?:in|into|on|onto|to|under|with|for|somewhere|away|there|please)\b|\s*$)/;
 const GREET_RE = /^(hi|hey|hello|yo|good (morning|afternoon|evening)|what's up|whats up|sup)\b/;
 const THANKS_RE = /^(thanks|thank you|cheers|appreciate it)\b/;
 const CORRECTION_RE = /\b(i meant|when i say|not what i (meant|mean))\b/;
@@ -368,17 +374,20 @@ function pendingMeaning(recent) {
 
 // Full reading of one owner turn: corrected words, the kind, the consequence, and
 // either the text to act on or one short question. Never approves an action.
-export function interpretOwnerTurn(rawText, { history = [], hasHeldAction = false } = {}) {
+export function interpretOwnerTurn(rawText, { history = [], hasHeldAction = false, hasContext = false } = {}) {
   const raw = String(rawText || '').trim();
   const { text: corrected, changes } = correctSpokenTerms(raw);
   const recent = recentTurns(history);
   const turn = classifyOwnerTurn(corrected, { hasHeldAction });
   // "Never mind that, what's on my calendar?": the new request is what is read and routed.
-  if (turn.rest) return interpretOwnerTurn(turn.rest, { history, hasHeldAction });
+  if (turn.rest) return interpretOwnerTurn(turn.rest, { history, hasHeldAction, hasContext });
   const base = { text: corrected, kind: turn.kind, consequential: turn.consequential, reference: turn.reference, changes, clarify: null, passthrough: false, referent: '' };
 
   // The owner called it off: nothing is run, and CHE says so plainly.
   if (turn.kind === 'cancel') return { ...base, passthrough: true, clarify: 'Okay, I have dropped that.' };
+  if (!hasHeldAction && HALT_RE.test(normalizeForKind(corrected))) {
+    return { ...base, passthrough: true, clarify: 'Okay, I have stopped, sir.' };
+  }
   if (turn.kind === 'yes' || turn.kind === 'no') {
     // A held request is released by the gate, which needs the owner's exact yes.
     if (hasHeldAction || turn.kind === 'no') return { ...base, passthrough: true };
@@ -389,6 +398,8 @@ export function interpretOwnerTurn(rawText, { history = [], hasHeldAction = fals
     return { ...base, passthrough: true };
   }
 
+  const pronoun = !recent.length && !hasContext && turn.kind === 'action' ? PRONOUN_ACTION_RE.exec(normalizeForKind(corrected)) : null;
+  if (pronoun) return { ...base, clarify: `What do you mean by "${pronoun[1]}", sir? There is nothing earlier in this conversation for it to point to, so nothing was done.` };
   if (turn.reference) {
     const lastUser = findUserTurn(recent, corrected, SUBSTANTIVE);
     if (!lastUser) {

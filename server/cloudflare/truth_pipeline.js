@@ -181,7 +181,7 @@ export const TRUTH_STAGES = Object.freeze([
   } },
   // Final owner-facing boundary: keep internal provider/model failover chatter out of chat and TTS.
   { name: 'execution_claims', run(reply, ctx) {
-    const original = sanitizeOwnerText(reply, { truncate: false });
+    const original = sanitizeOwnerText(reply, { truncate: false, message: ctx.rawMessage });
     const coding = validateCodingEvidence(original, { message: ctx.rawMessage, preserveRemember: ctx.shared.rememberValidated === true });
     // Reject model evidence while letting the trusted receipt renderer report the actual result.
     const guard = guardExecutionClaims(coding.ok === false ? original : coding.text, { message: ctx.rawMessage, receipts: ctx.skillResults.map((r) => r.execution_receipt), documentRead: ctx.shared.documentRead, verifiedText: ctx.brainContext, requireEvidence: coding.ok === false });

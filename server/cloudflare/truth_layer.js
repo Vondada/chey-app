@@ -74,8 +74,14 @@ export function guardExecutionClaims(reply, { message = '', receipts = [], docum
   // Output under a command ("$ git status" then "On branch main") is a transcript even without labels: the line right
   // after the command is neither another command, a blank line nor a code fence (Codex review on PR #813).
   const unlabeledOutput = /(?:^|\n)[ \t]*(?:[$>][ \t]*)?(?:git[ \t]|gh[ \t]+(?:api|pr)\b)[^\n]*\n(?![ \t]*(?:[$>][ \t]*)?(?:git[ \t]|gh[ \t]|```|\n|$))[ \t]*\S/i;
-  const ranClaim = execution.test(text) || transcript.test(text) || unlabeledOutput.test(text);
-  const repoClaim = requireEvidence || identifiers.test(text) || ranClaim || repoEvidence.test(text) || (commandLine.test(text) && ranClaim);
+  // A step in a design that opens with a condition ("When the workflow has completed, mark it done", "If call one
+  // succeeded, ...") describes what should happen, not what ran: it is not a claim unless CHE says she ran it or it
+  // carries an identifier (certification run 19, eer-25: a whole recovery design was replaced by the notice).
+  // Only when the request asks for no action: after "deploy it", "When I pushed it, the deployment succeeded" is a report.
+  const conditional = (s) => !RUN_ASK.test(String(message)) && CONDITION_OPENING.test(s) && !reported.test(s) && !identifiers.test(s);
+  const claimText = splitSentences(text).filter((s) => !conditional(s)).join('');
+  const ranClaim = execution.test(claimText) || transcript.test(text) || unlabeledOutput.test(text);
+  const repoClaim = requireEvidence || identifiers.test(text) || ranClaim || repoEvidence.test(claimText) || (commandLine.test(text) && ranClaim);
   const sourceClaim = sourceClaimIn(text, verifiedPaths);
   // Record claims are judged sentence by sentence, so one honest "not" elsewhere never covers a fabrication.
   const retrieval = guardRetrievalClaims(text, { documentRead, verifiedText });
@@ -90,10 +96,10 @@ export function guardExecutionClaims(reply, { message = '', receipts = [], docum
   // them; a kept line that reads as a report field ("Branch: ...") gets the whole notice too (Codex review on #853). A first-person report of a run ("I executed ..."),
   // a transcript, a coding-evidence failure, a command left beside a removed claim, or a reply with fewer than eight
   // words left besides an earlier guard's "Nothing was done" note, still gets the whole notice.
-  if ((repoClaim || sourceClaim) && /\?\s*$/.test(String(message).trim()) && !REPORT_ASK.test(String(message)) && !requireEvidence && !reported.test(text) && !transcript.test(text) && !unlabeledOutput.test(text)) {
+  if ((repoClaim || sourceClaim) && (/\?\s*$/.test(String(message).trim()) || explanationAsk(message)) && !REPORT_ASK.test(String(message)) && !requireEvidence && !reported.test(text) && !transcript.test(text) && !unlabeledOutput.test(text)) {
     const kept = [];
     const cut = [];
-    for (const s of splitSentences(text)) (identifiers.test(s) || execution.test(s) || repoEvidence.test(s) || sourceClaimIn(s, verifiedPaths) ? cut : kept).push(s);
+    for (const s of splitSentences(text)) (identifiers.test(s) || (!conditional(s) && (execution.test(s) || repoEvidence.test(s))) || sourceClaimIn(s, verifiedPaths) ? cut : kept).push(s);
     const rest = kept.join('').trim();
     if (cut.length && !kept.some((k) => commandLine.test(k.trimStart()) || REPORT_FIELD.test(k)) && (rest.replace(/Nothing was done, sir:[^.]*\./g, '').match(/[A-Za-z]+/g) || []).length >= 8) {
       const records = guardRetrievalClaims(rest, { documentRead, verifiedText });
@@ -134,6 +140,13 @@ const BRAIN_RECORD_ID = /\b(?:mem|conv|office|atlas|brain|flagstaff|record)[:#][
 const MEMORY_ID = /\b(?:memor(?:y|ies)|brain|stored|saved)\s+(?:records?\s+|entr(?:y|ies)\s+|notes?\s+|items?\s+)?(?:ids?|numbers?|nos?\.?|#)\s*[:#]?\s*\d{2,}|\b(?:memory|brain|stored|saved)\s+(?:records?|entr(?:y|ies)|notes?)\s*#?\s*\d{2,}\b|\brecords?\s+(?:ids?|numbers?|nos?\.?|#)\s*[:#]?\s*\d{2,}|^\s*(?:memory\s+(?:records?\s+|entr(?:y|ies)\s+)?|records?\s+|entr(?:y|ies)\s+)#?\d{3,}\b|\b(?:I|we|CHE)\b[^.!?\n]{0,60}\b(?:records?|entr(?:y|ies)|memor(?:y|ies))\s+#?\d{3,}\b/i;
 const RETRIEVAL_RULES = [['retrieval', RETRIEVAL_VERB], ['found_records', FOUND_RECORDS], ['memory_id', MEMORY_ID], ['brain_record_id', BRAIN_RECORD_ID], ['retrieval_source', RETRIEVAL_SOURCE], ['storage_key', STORAGE_KEY], ['record_id', RECORD_ID], ['tool_success', TOOL_SUCCESS], ['review_done', REVIEW_DONE]];
 export const RETRIEVAL_NOT_EVIDENCE = 'I cannot verify that from a real record, sir: no storage read, lookup, tool or review ran for this answer, and a model-written record, key, identifier, date, profit or result is not evidence. Ask for the record by its source and I will read it from storage.';
+// A sentence (or list item) that opens with a condition describes a plan, not a result.
+const CONDITION_OPENING = /^\s*(?:[-*•]\s*|\d+[.)]\s*)?(?:if|when|whenever|once|until|unless|in\s+case|suppose|assuming)\b/i;
+// "Design recovery for ...", "Explain how ...": a request for an explanation or a design, which asks for no run. A request
+// that also asks to run, deploy, push, merge or commit is not one (csd-42: "write a script ... and run it").
+const EXPLAIN_ASK = /^\s*(?:(?:please|now|ok|okay|che|chey|chay)[,\s]+)*(?:design|explain|describe|outline|sketch|propose|compare|define|summari[sz]e|walk\s+me\s+through|tell\s+me\s+(?:about|how|why|what)|help\s+me\s+understand)\b/i;
+const RUN_ASK = /\b(?:run|rerun|execute|deploy|push|merge|commit|apply|ship|release|install|restart|start|trigger|launch|fix|build|send|upload|publish|migrate)\b/i;
+const explanationAsk = (message) => EXPLAIN_ASK.test(String(message || '')) && !RUN_ASK.test(String(message || ''));
 // A question that asks for a report on work, and a reply line that reads as one of its fields (Codex review on #853).
 const REPORT_ASK = /\b(?:report|status|results?|update|log|logs|output|receipts?|job\s*ids?|branch(?:es)?|commits?|pull\s+requests?|PRs?|run\s*ids?)\b/i;
 const REPORT_FIELD = /^\s*(?:[-*•]\s*)?(?:job(?:\s*id)?|branch(?:\s+name)?|commit(?:\s+(?:sha|hash))?|sha|pr(?:\s+(?:number|link))?|pull\s+request(?:\s+link)?|run(?:\s*id)?|build|tests?|status|result|deploy(?:ment)?|invocation(?:\s*id)?)\s*[:=]\s*\S/i;
