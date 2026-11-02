@@ -48,12 +48,13 @@ function storageMap({ failPut = () => false, dropPut = () => false, failGet = ()
 
 const PROBE = 'probe-token-0123456789abcdef0123456789';
 
-// `onModel`: awaited inside every model call, in the calling turn's own async context.
-async function che(storageOptions, { onModel = null } = {}) {
+async function che(storageOptions) {
   const storage = storageMap(storageOptions);
   let modelCalls = 0;
+  // `pause(fn)`: the next model call awaits fn(storage), in the calling turn's own async context.
+  let onModel = null;
   const env = { CHE_PAIR_CODE: '123456', CHE_DISABLE_KEYLESS_AI: '1', CHE_TIMEZONE: 'UTC', CHE_VOICE_PROBE_TOKEN: PROBE,
-    AI: { run: async () => { modelCalls += 1; if (onModel) await onModel(storage); return { response: 'Sure thing, sir.' }; } } };
+    AI: { run: async () => { modelCalls += 1; const hook = onModel; onModel = null; if (hook) await hook(storage); return { response: 'Sure thing, sir.' }; } } };
   const state = new CheState({ storage, waitUntil: () => {} }, env);
   env.CHE_STATE = { getByName: () => state };
   const post = (path, body, token = '') => worker.fetch(new Request(`https://che.example${path}`, {
@@ -67,7 +68,7 @@ async function che(storageOptions, { onModel = null } = {}) {
     return { done, reply: frames.filter((f) => f.type === 'delta').map((f) => f.delta).join('') || done.reply || '' };
   };
   const probe = async (message) => (await post('/api/probe/chat', { message }, PROBE)).json();
-  return { say, probe, storage, models: () => modelCalls };
+  return { say, probe, storage, models: () => modelCalls, pause: (fn) => { onModel = fn; } };
 }
 
 const items = (storage, key, list) => (storage.saved.get(key)?.lists?.[list]?.items || []).map((i) => i.text);
@@ -350,63 +351,106 @@ test('a probe hold is never released by the owner\'s yes, and an owner hold neve
   assert.equal(c.storage.saved.get('che:pending_owner_action') ?? null, null, 'no hold left in the owner\'s key');
 });
 
-test('probe holds: a probe turn sees only its own holds, and every key is put back even when the turn throws', async () => {
+test('probe holds: a probe turn reads and writes only its own hold keys; owner keys are never touched', async () => {
   const { HOLD_KEYS, PROBE_HOLD_PREFIX, guardHolds, probeHolds } = await import('./probe_holds.js');
   const saved = new Map();
-  const storage = guardHolds({ get: async (k) => structuredClone(saved.get(k)), put: async (k, v) => { saved.set(k, structuredClone(v)); } });
+  const storage = guardHolds({
+    get: async (k) => (Array.isArray(k) ? new Map(k.filter((x) => saved.has(x)).map((x) => [x, structuredClone(saved.get(x))])) : structuredClone(saved.get(k))),
+    put: async (k, v) => { saved.set(k, structuredClone(v)); },
+    delete: async (k) => saved.delete(k),
+  });
   for (const key of HOLD_KEYS) saved.set(key, { owner: key });
   saved.set(PROBE_HOLD_PREFIX + HOLD_KEYS[0], { probe: 'old', probe_context: true });
-  // A probe yes sees the probe's own hold, and none of the owner's.
-  const [, raw] = await probeHolds(storage, async () => {
-    assert.deepEqual(await storage.get(HOLD_KEYS[0]), { probe: 'old', probe_context: true });
-    for (const key of HOLD_KEYS.slice(1)) assert.equal(await storage.get(key), null, key);
+  const [, raw] = await probeHolds(async () => {
+    assert.deepEqual(await storage.get(HOLD_KEYS[0]), { probe: 'old', probe_context: true }, 'the probe\'s own hold');
+    for (const key of HOLD_KEYS.slice(1)) assert.equal(await storage.get(key), undefined, `${key}: none of the owner's`);
+    assert.deepEqual([...(await storage.get(HOLD_KEYS)).keys()], [HOLD_KEYS[0]]);
     await storage.put(HOLD_KEYS[1], { probe: 'new' });
+    await storage.put(HOLD_KEYS[2], null);
+    await storage.delete(HOLD_KEYS[3]);
     return new Response('reply');
-  }, 'yes');
+  });
   assert.equal(raw, 'reply');
-  for (const key of HOLD_KEYS) assert.deepEqual(saved.get(key), { owner: key }, `${key} is the owner's again`);
-  assert.deepEqual(saved.get(PROBE_HOLD_PREFIX + HOLD_KEYS[1]), { probe: 'new', probe_context: true }, 'stamped as the probe\'s');
-  // Any other probe turn starts with no hold, like an owner turn that is not a yes.
-  await probeHolds(storage, async () => { assert.equal(await storage.get(HOLD_KEYS[1]), null); return new Response(''); }, 'tell me a joke');
-  await assert.rejects(probeHolds(storage, async () => { await storage.put(HOLD_KEYS[0], { probe: 'x' }); throw new Error('turn failed'); }));
-  assert.deepEqual(saved.get(HOLD_KEYS[0]), { owner: HOLD_KEYS[0] });
-  // Outside a probe turn, a probe-stamped hold in an owner key reads as no hold.
+  for (const key of HOLD_KEYS) assert.deepEqual(saved.get(key), { owner: key }, `${key} is untouched`);
+  assert.deepEqual(saved.get(PROBE_HOLD_PREFIX + HOLD_KEYS[1]), { probe: 'new', probe_context: true }, 'stamped, under the probe key');
+  assert.equal(saved.get(PROBE_HOLD_PREFIX + HOLD_KEYS[2]), null);
+  // Owner turns read the owner's keys, never the probe's.
+  assert.deepEqual(await storage.get(HOLD_KEYS[1]), { owner: HOLD_KEYS[1] });
+  // Defence in depth: a probe-stamped hold sitting in an owner key reads as no hold to an owner turn.
   saved.set(HOLD_KEYS[2], { probe: 'stray', probe_context: true });
   assert.equal(await storage.get(HOLD_KEYS[2]), undefined);
+  assert.equal((await storage.get([HOLD_KEYS[2]])).size, 0);
+  // Other keys pass through unchanged in either context.
+  await probeHolds(async () => { await storage.put('owner_lists:probe', { lists: {} }); return new Response(''); });
+  assert.deepEqual(saved.get('owner_lists:probe'), { lists: {} });
 });
 
-// The coordinator's follow-up to the Codex P1: an owner turn can run while a probe turn waits on the network. The stamp,
-// not the timing, keeps the owner's yes from releasing the probe's hold.
-test('an owner yes that runs in the middle of a probe turn never releases the probe\'s hold', async () => {
-  let pause = null;
-  const c = await che(undefined, { onModel: async (storage) => { if (pause) await pause(storage); } });
-  await c.say('Add milk to my shopping list.');
+// A probe turn paused in its model call while the owner chats, so both run at once.
+function pausedProbe(c, inside = async () => {}) {
   let reached;
   const atModel = new Promise((resolve) => { reached = resolve; });
   let release;
   const gate = new Promise((resolve) => { release = resolve; });
-  // Inside the probe turn's model call: the probe holds a removal of milk (the hold the probe would write), then waits.
-  pause = async (storage) => {
-    pause = null;
+  c.pause(async (storage) => { await inside(storage); reached(); await gate; });
+  const turn = c.probe('Tell me a joke.');
+  return { atModel, finish: async () => { release(); await turn; } };
+}
+
+// The coordinator's follow-up to the Codex P1: an owner turn can run while a probe turn waits on the network.
+test('an owner yes that runs in the middle of a probe turn never releases the probe\'s hold', async () => {
+  const c = await che();
+  await c.say('Add milk to my shopping list.');
+  // Inside the probe turn's model call: the probe holds a removal of milk, then waits.
+  const probe = pausedProbe(c, async (storage) => {
     await storage.put('che:pending_owner_action', { kinds: ['delete'], text: 'Take milk off my shopping list', at: Date.now() });
-    reached();
-    await gate;
-  };
-  const probeTurn = c.probe('Tell me a joke.');
-  await atModel;
-  assert.equal(c.storage.saved.get('che:pending_owner_action').probe_context, true, 'the probe\'s hold is in the owner key right now');
+  });
+  await probe.atModel;
+  assert.equal(c.storage.saved.get('che:pending_owner_action') ?? null, null, 'the probe\'s hold never enters the owner key');
+  assert.equal(c.storage.saved.get('probe_hold:che:pending_owner_action').probe_context, true);
   const ownerYes = await c.say('yes');
   assert.ok(!ownerYes.done.execution_receipt, JSON.stringify(ownerYes.done).slice(0, 300));
   assert.deepEqual(items(c.storage, LISTS_KEY, 'shopping'), ['milk'], 'the owner\'s milk is still there');
-  release();
-  await probeTurn;
+  await probe.finish();
   assert.deepEqual(items(c.storage, LISTS_KEY, 'shopping'), ['milk']);
-  assert.equal(c.storage.saved.get('che:pending_owner_action') ?? null, null, 'the owner key holds nothing of the probe\'s');
-  assert.equal(c.storage.saved.get('probe_hold:che:pending_owner_action').probe_context, true, 'the probe hold went to the probe key');
-  // And the owner's own hold, made while a probe turn is running, is still released only by the owner.
+  // The owner's own hold is released only by the owner.
   const ownerHold = await c.say('Take milk off my shopping list');
   assert.match(ownerHold.reply, /need your yes/);
   const done = await c.say('yes');
   assert.equal(done.done.execution_receipt.operation, 'remove');
+  assert.deepEqual(items(c.storage, LISTS_KEY, 'shopping'), []);
+});
+
+// Codex re-review on #887 (P1): the owner dropped his hold while a probe turn ran, and the probe turn's cleanup put the
+// old hold back, so a later "yes" deleted milk. Probe turns no longer move owner holds at all.
+test('an owner hold dropped while a probe turn runs stays dropped: a later yes deletes nothing', async () => {
+  const c = await che();
+  await c.say('Add milk to my shopping list.');
+  const held = await c.say('Take milk off my shopping list');
+  assert.match(held.reply, /need your yes/);
+  const probe = pausedProbe(c);
+  await probe.atModel;
+  await c.say('Never mind.');
+  assert.equal(c.storage.saved.get('che:pending_owner_action') ?? null, null, 'CHE dropped the hold');
+  await probe.finish();
+  assert.equal(c.storage.saved.get('che:pending_owner_action') ?? null, null, 'the probe turn did not bring it back');
+  const yes = await c.say('yes');
+  assert.ok(!yes.done.execution_receipt, JSON.stringify(yes.done).slice(0, 300));
+  assert.deepEqual(items(c.storage, LISTS_KEY, 'shopping'), ['milk'], 'milk is not deleted');
+});
+
+// An owner hold made while a probe turn runs is untouched by it, and still the owner's to release.
+test('an owner hold made while a probe turn runs is kept and released only by the owner', async () => {
+  const c = await che();
+  await c.say('Add milk to my shopping list.');
+  const probe = pausedProbe(c);
+  await probe.atModel;
+  await c.say('Take milk off my shopping list');
+  await probe.finish();
+  assert.ok(c.storage.saved.get('che:pending_owner_action'), 'the owner\'s hold is still waiting');
+  const probeYes = await c.probe('yes');
+  assert.ok(!probeYes.execution_receipts?.length);
+  assert.deepEqual(items(c.storage, LISTS_KEY, 'shopping'), ['milk']);
+  const ownerYes = await c.say('yes');
+  assert.equal(ownerYes.done.execution_receipt.operation, 'remove');
   assert.deepEqual(items(c.storage, LISTS_KEY, 'shopping'), []);
 });

@@ -4114,7 +4114,7 @@ export class CheState extends DurableObject {
     // The stream's delta frames are the owner's reply; a single JSON body (a queued or refused turn) is read as its
     // reply or detail, so the probe grades what the owner sees (probe_reply.js). An error frame (for example
     // empty_after_checks) names its category and rules.
-    const [response, raw] = await probeHolds(this.ctx.storage, () => this.fetch(request), message);
+    const [response, raw] = await probeHolds(() => this.fetch(request));
     const { reply, done, receipts, error } = parseProbeChatBody(raw);
     return { ok: response.ok, status: response.status, reply, done, execution_receipts: receipts, error };
   }
