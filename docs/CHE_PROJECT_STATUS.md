@@ -33,6 +33,8 @@ changes them. Do not delete the old values: the change is recorded in `docs/CHE_
 
 | Fact | State | Time | Evidence |
 |---|---|---|---|
+| Full 600 certification, fresh, on `91f61359` (with #870, #871): 483 pass, 117 fail, 0 blocked; +6 against run 18 | verified | 2026-11-02 03:22 UTC | run `41379642353` |
+| Worker deploys of #870 `b7f97967` and #871 `91f61359`: live commit verified; memory probe failed only on a GitHub API rate limit (403) | verified (deploy) / failed (probe, external) | 2026-11-02 01:48 UTC | deploy runs `41373497127`, `41374022540` |
 | Full 600 certification, fresh, on `953a4e4e` (all eight stable-failure fixes): 477 pass, 122 fail, 1 blocked (cre-12); +47 against run 17; 52 of the 101 always-failing questions now pass | verified | 2026-11-02 01:01 UTC | run `41367267850` |
 | Worker deploy of `953a4e4e` (#865): live commit verified, every probe passed (study check passed; it had failed with HTTP 500 on the #867 and #866 deploys, which still verified their live commits) | verified | 2026-11-01 23:36 UTC | deploy runs `41362315321`, `41360902534`, `41361387551` |
 | Full 600 certification, fresh, on `c19823ff` (temperature 0.3): 430 pass, 170 fail, 0 blocked; +1 against run 16, 70 rows flipped | verified | 2026-11-01 22:38 UTC | run `41354289425` |
