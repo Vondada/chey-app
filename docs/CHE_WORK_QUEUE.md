@@ -72,7 +72,7 @@ model sampling, not code.
 
 | id | item | status | next step | evidence |
 |---|---|---|---|---|
-| R-01 | Root causes of the 101 questions that fail every run, grouped by shared defect | in progress | #860-#867 merged and live; run 18 477/600, 52 of the 101 now pass; follow-ups: Office-task echo, gate wording/misreport | run `41367267850` |
+| R-01 | Root causes of the 101 questions that fail every run, grouped by shared defect | in progress | #860-#867 merged and live; run 18 477/600, 52 of the 101 now pass; follow-ups #870, #871 merged; run 19 483/600; next: "job" alone should not make a question an Office question (eer-30) | run `41379642353` |
 | R-02 | Certification records model, provider, fallback, latency and receipts per question; alerts on a score regression | done | - | #858 `c19823ff`; first used by run `41354289425` |
 | R-03 | Repeatable answers: no chat model call sets a sampling temperature | done (measured) | Temperature 0.3 cut flips 82 -> 70 only; next lever is which engine answers | #859 `ff1cf1d5`; run `41354289425` |
 | R-04 | Guard against CHE quoting the owner's message back | waiting on owner | Owner decides | staging social Test 2 failure on #850 |
@@ -85,6 +85,7 @@ model sampling, not code.
 - Whether automatic background runs are allowed: yes, for the reliability recovery (owner, 2026-11-01).
 
 ## Log
+- 2026-11-02: #869, #870, #871 merged; run 19 483/600 (+6).
 - 2026-11-02: #865, #866, #867 merged and deployed; run 18 477/600 (+47); R-05 added.
 - 2026-11-01: R-02 and R-03 done (#858, #859); run 17 430/600; six stable-failure PRs merged (#860-#864, #867).
 - 2026-11-01: Reliability recovery section added (R-01 to R-04); scheduled continuation every 3 hours, per the owner's standing order.

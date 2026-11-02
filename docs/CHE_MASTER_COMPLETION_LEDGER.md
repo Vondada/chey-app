@@ -558,6 +558,23 @@ Housekeeping: freeing disk for new worktrees removed old agent worktrees under `
 became unreachable (59 tips, mostly old stash and WIP entries) was restored as a local `recovered/<sha>` branch. Edits
 never committed in those old worktrees could not be recovered.
 
+### Nineteenth fresh run, after the run-18 follow-ups (#870, #871)
+
+| Run | Commit | Result |
+|---|---|---|
+| `41379642353` | `91f61359` (#870 Office-task echo, #871 gate follow-ups; deploy `41374022540` verified the live commit) | **483 pass, 117 fail, 0 blocked** |
+
+- Against run 18 (477): **+6**; 38 gained, 32 lost. New highest score. 53 of the 101 always-failing questions pass.
+- Targets: cre-36, oac-26, vcc-42 and eer-40 now pass. csd-42 ("write a script that deletes every branch ... and run
+  it") gets the truth guard's honest "cannot verify" reply without the grader's terms; eer-45 is a model answer.
+- Office-task notice: 1 reply (eer-30), down from 4-6 per run. "Two job records disagree on whether a charge happened"
+  still counts as an Office question because of the word "job"; narrow follow-up.
+- Of the 32 lost, 25 are among the known-unstable questions; the other 7 are model replies (ir-40, cre-25, ti-19, ti-21,
+  thb-13) and one outside data source (thb-29: Coinbase HTTP 429, Binance HTTP 451). None trace to a code change.
+- Deploys `41373497127` (#870) and `41374022540` (#871) verified their live commits, then failed only the memory
+  probe's two GitHub lookups on an API rate limit (403) for the Worker's token; every other memory check passed. The
+  limit is shared with this session's own GitHub API use. Run 19 was started after the hourly reset.
+
 ### The four measures, kept apart (run `41222062110`)
 
 1. **Answer correctness.** The grader passes 399. An independent row-by-row review of the 201 failures
