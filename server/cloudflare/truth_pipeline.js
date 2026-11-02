@@ -54,7 +54,13 @@ export const TRUTH_STAGES = Object.freeze([
         note = 'I read my own source from GitHub myself; you never need to paste code for me.';
       }
     }
-    const statusNow = verifiedStatusText(await self.currentVerifiedState(data));
+    // A removed claim about another AI is answered with what was sent to the AIs, not with every queued job (run 20,
+    // vcc-09: "Can you hear me?" got a list of coding jobs).
+    const now = await self.currentVerifiedState(data);
+    const peerOnly = guarded.removed.every((r) => r.rule === 'peer_collaboration');
+    const statusNow = peerOnly
+      ? (Object.keys(now.peers || {}).length ? verifiedStatusText({ peers: now.peers, active_jobs: [], finished_jobs: [] }) : 'No message to another AI is on record, sir, so I have asked no one.')
+      : verifiedStatusText(now);
     const text = [guarded.text, note, guarded.text.length < 40 || guarded.removed.some((r) => r.rule !== 'owner_homework') ? statusNow : ''].filter(Boolean).join(' ').trim();
     return { text, removed: guarded.removed };
   } },

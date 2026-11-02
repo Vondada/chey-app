@@ -20,6 +20,7 @@ const PAST = String.raw`(?:have\s+|just\s+|already\s+|successfully\s+)*`;
 // every guard with nothing written).
 const SUBJECT = String.raw`(?:I|CHE|she|we)(?:'ve|’ve)?\s+`;
 const AUDIO = String.raw`(?:tracks?|songs?|beats?|music|audio(?:\s+(?:clips?|files?|tracks?))?|recordings?|vocals?|mix(?:es)?|masters?)\b(?!\s+(?:(?:production|creative)\s+)?(?:brief|outline|plan|prompt|description|script|lyrics|notes)\b)`;
+const LIVE_LABEL = String.raw`(?:\b(?:live|real[- ]time|current|latest)\s+(?:price|quote|bid|ask)\b|\bLIVE\b[^.!?\n]{0,20}\bprice\b)`;
 // A claim is a completed, real action stated as fact. Questions, denials and hedges are judged separately.
 export const CLAIMS = Object.freeze([
   { kind: 'audio_made', re: new RegExp(String.raw`\b${SUBJECT}${PAST}(?:created|made|generated|rendered|produced|exported|mixed|mastered|finished)\b(?!\s+(?:(?:a|an|the|your|my|our|this|that)\s+)?(?:[\w-]+\s+){0,2}(?:brief|outline|plan|prompt|description|script|lyrics|notes)\b)[^.!?\n]{0,100}\b${AUDIO}|\b(?:the|your|my|our|this|that)\s+(?:[\w-]+\s+){0,3}${AUDIO}\s+(?:is|was|has\s+been)\s+(?:now\s+)?(?:complete|finished|done|ready|generated|rendered|exported|produced|mixed|mastered)\b|\bhere(?:'s|’s|\s+is)\s+(?:(?:your|the|a)\s+)?(?:(?:finished|generated|completed)\s+)?${AUDIO}`, 'i') },
@@ -31,7 +32,8 @@ export const CLAIMS = Object.freeze([
   { kind: 'iphone_installed', re: /\b(?:installed|updated)\b[^.!?\n]{0,40}\b(?:on\s+(?:your|the|my)\s+)?(?:iPhone|phone|IPA)\b|\b(?:iPhone|phone)\b[^.!?\n]{0,30}\b(?:now\s+has|has)\b[^.!?\n]{0,20}\b(?:the\s+)?(?:new\s+)?(?:update|build)\b/i },
   { kind: 'video_made', re: new RegExp(String.raw`\b${SUBJECT}${PAST}(?:created|made|generated|rendered|finished|produced)\b[^.!?\n]{0,50}\b(?:video|MP4|movie|film|clip)\b|\b(?:the|your)\s+(?:\w+\s+)?(?:video|MP4|film|clip)\s+(?:is\s+|was\s+)?(?:now\s+)?(?:ready|finished|done|rendered|in\s+(?:your\s+)?Projects)\b`, 'i') },
   { kind: 'trade_placed', re: new RegExp(String.raw`\b${SUBJECT}${PAST}(?:placed|executed|filled|sent|opened|closed)\b[^.!?\n]{0,30}\b(?:trades?|orders?|positions?)\b`, 'i') },
-  { kind: 'live_price', re: /\b(?:live|real[- ]time|current|latest)\s+(?:price|quote|bid|ask)\b|\bLIVE\b[^.!?\n]{0,20}\bprice\b/i },
+  // A live price claim quotes a figure, before or after the label in the same clause. "the futures price is the current price plus carry" explains, it quotes nothing (run 20, ti-38).
+  { kind: 'live_price', re: new RegExp(String.raw`\d[^.!?\n,;]{0,40}${LIVE_LABEL}|${LIVE_LABEL}[^!?\n,;]{0,40}\d`, 'i') },
   { kind: 'task_finished', re: new RegExp(String.raw`\b(?:${SUBJECT}|[A-Z][a-z]+\s+|the\s+agent\s+|it\s+)${PAST}(?:finished|completed)\b[^.!?\n]{0,40}\b(?:task|job|assignment|research|study)\b`, 'i') },
   { kind: 'code_executed', re: new RegExp(String.raw`\b${SUBJECT}${PAST}(?:ran|executed)\b[^.!?\n]{0,40}\b(?:code|script|tests?|command|query|pytest|node|flutter)\b`, 'i') },
   // An office agent's research, analysis or test is a claim about a task run by a named agent. It needs its own verified task.

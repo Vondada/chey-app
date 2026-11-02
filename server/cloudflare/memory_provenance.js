@@ -221,11 +221,12 @@ function quoteRecord(record) {
 // "What did I want you to change", "how often have I asked you about tax" are about his words too. "What did I ask you
 // to set" is not: the timer or music store answers that.
 const OWNER_ACT = '\\b(?:confirm(?:ed)?|verif(?:ied|y)|t(?:old|ell) you|sa(?:id|y)|mention(?:ed)?|stat(?:ed|e)|approv(?:ed|e)|test(?:ed)?|'
-  + 'witness(?:ed)?|experienc(?:ed|e)|decid(?:ed|e)|agree(?:d)?|shar(?:ed|e)(?: with you)?|taught you|let you know|ask(?:ed)? you to remember|want(?:ed)? you to|ask(?:ed)? you about)';
+  + 'witness(?:ed)?|experienc(?:ed|e)|decid(?:ed|e)|agree(?:d)?|shar(?:ed|e)(?: with you)?|taught you|let you know|ask(?:ed)? you to remember|want(?:ed)? you to|ask(?:ed)? you about|lik(?:ed|e)|lov(?:ed|e)|enjoy(?:ed)?|visit(?:ed)?)';
 const OWNER_ADVERBS = '(?:(?:personally|previously|already|ever|just|once|actually|really|recently|myself|before|explicitly|directly) )*';
 // "I confirmed", "I have personally verified": past forms only, so a request
-// in the present tense ("a story where I test a lock") is not a memory question.
-const OWNER_ACT_PAST = '\\b(?:confirmed|verified|told you|said|mentioned|stated|approved|tested|witnessed|experienced|decided|agreed|shared(?: with you)?|taught you|let you know|asked you to remember|wanted you to|asked you about)';
+// in the present tense ("a story where I test a lock") is not a memory question. "The restaurant I liked in Lisbon" is his
+// own past too, which only a record can hold (run 20: a model named a restaurant).
+const OWNER_ACT_PAST = '\\b(?:confirmed|verified|told you|said|mentioned|stated|approved|tested|witnessed|experienced|decided|agreed|shared(?: with you)?|taught you|let you know|asked you to remember|wanted you to|asked you about|liked|loved|enjoyed|visited)';
 const OWNER_SUBJECT_ACT = new RegExp(`\\bi (?:have |had )?${OWNER_ADVERBS}${OWNER_ACT_PAST}\\b|\\bi did ${OWNER_ADVERBS}${OWNER_ACT}\\b`);
 const OWNER_INVERTED_ACT = new RegExp(`\\b(?:have|did|had) i ${OWNER_ADVERBS}${OWNER_ACT}\\b`);
 // A bare "remember" is a command to save ("Remember I said my meeting is
@@ -284,13 +285,19 @@ export function ownerMemoryQuestion(message, history = null) {
 }
 
 function parseOwnerMemoryQuestion(message) {
-  const q = plainWords(splitAsk(message).ask);
+  // "What did the owner tell you ...?" is the owner asking about himself in the third person (run 20, a model invented
+  // the answer). "The owner of the shop" is someone else.
+  const q = plainWords(splitAsk(message).ask).replace(/\bthe owner\b(?! of\b)/g, 'i');
   if (!q || q.split(' ').length > 30 || FICTION_REQUEST.test(q)) return null;
   if (DISCUSSING.test(q.replace(/\b(?:che|chay|chey|shay)\b ?/g, '').trim())) return { topic: '', discussion: true };
   // The question itself must ask about memory: "I confirmed the order, what
   // is next?" is a statement followed by an unrelated question.
   if (!ASK_FORM.test(q) && !/^(?:anything|something|one thing)\b/.test(q)) return null;
   if (!OWNER_SUBJECT_ACT.test(q) && !OWNER_INVERTED_ACT.test(q)) return null;
+  // "liked/enjoyed/visited" recovers his past only in a plain recall question: "Which city should I visit next if I
+  // enjoyed Vienna?" asks for advice and stays with the model.
+  const told = q.replace(/\b(?:lik|lov|enjoy|visit)(?:e|ed|s)?\b/g, 'x');
+  if (!OWNER_SUBJECT_ACT.test(told) && !OWNER_INVERTED_ACT.test(told) && /\b(?:should|could|would|can|might|recommend\w*|suggest\w*|if|next|why|how)\b/.test(q)) return null;
   // "What did I just say?" asks for the owner's last words in this
   // conversation, not for his stored memories.
   if (/\b(?:just|a (?:moment|second|minute) ago|right now)\b/.test(q) && /\b(?:say|said|ask|asked|tell you|told you)\b/.test(q)) return { topic: '', recent: true };
