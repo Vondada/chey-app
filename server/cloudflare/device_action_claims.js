@@ -278,7 +278,8 @@ export function guardModelOnlyCompletions(reply, { message = '', skillResults = 
     if (done && !NEGATED.test(plain.slice(0, done.index)) && !question) kind = 'done';
     if (!kind && !question && !code && FALSIFY.test(plain)) kind = 'falsify';
     if (!kind && handoff && (ATTRIBUTED.test(plain) || quoted(0))) kind = 'done';
-    if (!kind && consulted && ATTRIBUTED.test(plain) && !consultedName(plain.replace(/^\**/, '').split(/[*:]/)[0], officeResults)) kind = 'done';
+    // A story or dialogue the owner asked for (WRITING_ASK) and code keep their speakers (Codex on #897).
+    if (!kind && consulted && !writing && !code && ATTRIBUTED.test(plain) && !consultedName(plain.replace(/^\**/, '').split(/[*:]/)[0], officeResults)) kind = 'done';
     if (!kind && toolAsk && !question && !code && !writing && NARRATED.test(plain) && !NEGATED.test(plain)) kind = 'narrated';
     if (!kind && !question && !code && !writing) {
       const other = OTHER_DONE.exec(plain) || (labelClaims ? LABEL_DONE.exec(plain) : null);

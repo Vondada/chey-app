@@ -106,4 +106,6 @@ test('R-07: a consultation backs a handoff only to the coworker who answered', (
   assert.deepEqual(other.removed, ['I have forwarded this to Nova.', 'Nova: "Ship it today."']);
   assert.equal(guard('I have delegated this to the coding agent.', 'Route this to the coding agent.', { officeResults: panel }).removed.length, 1);
   assert.equal(guard('Nova: "Ship it today."', 'What does Nova think?', { officeResults: panel }).removed.length, 1);
+  // A dialogue the owner asked a coworker to draft keeps its characters' lines (Codex on #897).
+  assert.deepEqual(guard('Nova: "Hello there." Mira: "Hi."', 'Ask Atlas to draft a dialogue between Nova and Mira.', { officeResults: panel }).removed, []);
 });
