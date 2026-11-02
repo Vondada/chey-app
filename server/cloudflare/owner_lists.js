@@ -349,10 +349,11 @@ export async function listChatTurn(storage, message, { probe = false, grant = {}
     const already = intent.items.filter((i) => !fresh.includes(i));
     if (!fresh.length) {
       // Nothing to write, but "it is already there" is still a checked outcome: read the list back and, when every item is
-      // on it, receipt that (change: none). If the read-back fails or disagrees, no receipt is sent.
+      // on it, receipt that (change: none). The read-back drops expired probe items, as the next read would. If it fails or
+      // disagrees, no receipt is sent.
       const said = `${preview(already.map((text) => ({ text })))} ${already.length === 1 ? 'is' : 'are'} already on your ${called(name)}, sir. Nothing changed.`;
       let back = null;
-      try { back = (await load(storage, key)).lists[name]?.items || []; } catch (_) { /* no receipt */ }
+      try { back = (await loadFor(storage, key, now)).lists[name]?.items || []; } catch (_) { /* no receipt */ }
       if (!back || !already.every((i) => back.some((e) => norm(e.text) === norm(i)))) return { text: said, meta: meta({ ok: true, list: name, unchanged: true }) };
       const receipt = { tool: 'che_lists', operation: intent.action, list: name, status: 'success', change: 'none: already present', id: `${name}:${now}`, at: new Date(now).toISOString(), items: already, before_count: back.length, after_count: back.length, verified: 'read_back', stored: back.slice(0, 50).map((i) => i.text) };
       return { text: `${said} I read it back: it has ${plural(back.length, 'item')}.`, meta: meta({ ok: true, list: name, unchanged: true, execution_receipt: receipt }) };

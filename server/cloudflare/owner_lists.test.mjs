@@ -501,3 +501,21 @@ test('probe list items from an earlier certification run (over an hour ago) are 
   assert.equal(later.meta.execution_receipt.before_count, 0);
   assert.equal(later.meta.execution_receipt.change, undefined, 'a real add');
 });
+
+// Codex review on #891 (P2): the duplicate-add read-back counted expired probe items the next read would hide.
+test('a duplicate probe add receipts only the items that have not expired', async () => {
+  const saved = new Map();
+  const storage = { get: async (k) => structuredClone(saved.get(k)), put: async (k, v) => { saved.set(k, structuredClone(v)); } };
+  const t0 = Date.parse('2026-11-02T08:00:00Z');
+  await listChatTurn(storage, 'Put lightbulbs on my errands list', { probe: true, now: t0 });
+  await listChatTurn(storage, 'Put stamps on my errands list', { probe: true, now: t0 + 50 * 60_000 });
+  const dup = await listChatTurn(storage, 'Could you put stamps on my errands list?', { probe: true, now: t0 + 70 * 60_000 });
+  const r = dup.meta.execution_receipt;
+  assert.equal(r.change, 'none: already present');
+  assert.deepEqual(r.stored, ['stamps']);
+  assert.equal(r.before_count, 1);
+  assert.equal(r.after_count, 1);
+  assert.match(dup.text, /I read it back: it has 1 item\.$/);
+  const read = await listChatTurn(storage, "What's on my errands list?", { probe: true, now: t0 + 71 * 60_000 });
+  assert.deepEqual(read.meta.execution_receipt.stored, r.stored, 'the receipt matches the next read');
+});
