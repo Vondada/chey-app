@@ -184,6 +184,7 @@ import { ndjsonReply } from './ndjson_reply.js';
 import { receiptGate } from './action_connectors.js';
 import { PROBE_TIMERS_KEY, TIMERS_KEY, TIMER_KEYS, fireDueTimers, nextTimerAt, takeTimerAnnouncement, timerChatTurn } from './owner_timers.js';
 import { listChatTurn } from './owner_lists.js';
+import { guardHolds, probeHolds } from './probe_holds.js';
 import { brainTruthSummary, brainTruthView, truthScreenAsk } from './brain_truth.js';
 import { CLOUD_JOB_KIND, CLOUD_SOURCE, approveCloudJob, cancelCloudJob, cloudIntent, cloudJobs, cloudView, latestCloudJob, openPullRequests, parseControl, providerStatuses, requestCloudWork, retryCloudJob, runCloudTask, runFileJob, selectProvider, speakAgentWork, speakBlocked, speakCloudSummary, speakControl, speakInstall, speakPullRequests, speakRender, speakRequest, speakStartResult, startCloudTask, stopCloudJob } from './cloud_computer.js';
 import { auditLedger, knowVsGuessQuestion, knowVsGuessReply, MEMORY_CLAIM_MS, memorySavedQuestion, memorySavedReply } from './hallucination_auditor.js';
@@ -3476,6 +3477,7 @@ export class CheState extends DurableObject {
     try { installBrainLedger(state.storage); } catch (error) { console.error('Brain ledger hook not installed:', error?.message || error); }
     // Performance (owner, 2026-10-22): counts writes to `che` so peekData() can share one read per request.
     this.cheWrites = 0;
+    guardHolds(state.storage);
     try { watchCheWrites(state.storage, () => { this.cheWrites += 1; }); } catch (_) { /* a storage without methods to wrap */ }
     // Every text model call goes through CHE's free-engine router. Persist
     // per-engine daily usage estimates in this owner's Durable Object.
@@ -4109,11 +4111,10 @@ export class CheState extends DurableObject {
       body: JSON.stringify({ message, history, client: { platform: 'web' } }),
     });
     PROBE_CHAT_REQUESTS.add(request);
-    const response = await this.fetch(request);
     // The stream's delta frames are the owner's reply; a single JSON body (a queued or refused turn) is read as its
     // reply or detail, so the probe grades what the owner sees (probe_reply.js). An error frame (for example
     // empty_after_checks) names its category and rules.
-    const raw = await response.text().catch(() => '');
+    const [response, raw] = await probeHolds(this.ctx.storage, () => this.fetch(request), message);
     const { reply, done, receipts, error } = parseProbeChatBody(raw);
     return { ok: response.ok, status: response.status, reply, done, execution_receipts: receipts, error };
   }
