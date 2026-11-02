@@ -57,6 +57,16 @@ test('measurements stated as run are removed and the code and explanation stay',
   assert.equal(guard(explain, 'Why is my first request slow?').text, explain);
 });
 
+test('code inputs and hypothetical figures stay when a run is asked for', () => {
+  const ask = 'Measure the latency of my API with a short HTTP probe.';
+  const reply = 'I cannot run it here, so here is a script to run yourself.\n```python\nimport requests\ntimeout = "5 seconds"\nlimit_ms = 250 # 250 ms budget\nprint(requests.get(URL, timeout=5).elapsed)\n```\nFor example, the timeout might be 1 second on a slow link.\nMeasured latency: 120 ms';
+  const out = guard(reply, ask);
+  assert.match(out.text, /timeout = "5 seconds"/);
+  assert.match(out.text, /limit_ms = 250/);
+  assert.match(out.text, /might be 1 second/);
+  assert.doesNotMatch(out.text, /120 ms/);
+});
+
 test('ordinary answers, offers, conditions, questions, quotes, code and drafts are untouched', () => {
   for (const [ask, reply] of [
     ['Is this a good question?', 'You\'ve asked a good question, sir, and you\'ve set yourself a hard target.'],

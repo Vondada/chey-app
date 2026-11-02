@@ -198,6 +198,8 @@ const CONDITION_BEFORE = /\b(?:if|once|when|whenever|after|until|unless|whether|
 // code and the explanation stay; the figures and the narration of a run go (csd-43).
 const MEASURE_ASK = new RegExp(String.raw`${LEAD}(?:benchmark|measure|time|profile|run|execute|test|load[- ]test|stress[- ]test|speed[- ]test|ping)\b|\b(?:show|give|report|tell)\s+(?:me\s+)?(?:the\s+)?(?:timings?|benchmarks?|latenc(?:y|ies)|run\s*times?|execution\s+times?|measurements?)\b`, 'i');
 const MEASURED = /\b\d[\d,]*(?:\.\d+)?\s*(?:ns|µs|μs|us|ms|s|secs?|seconds?|milliseconds?|microseconds?|nanoseconds?|minutes?|mins?|ops\/s(?:ec)?|req\/s|rps)\b|\b\d+(?:\.\d+)?\s*(?:%|x|times)\s+(?:faster|slower|quicker)\b|\bresults\s+show\b/i;
+const SOURCE_LINE = /[=(){};\[\]]|^\s*(?:import|from|def|const|let|var|function|class|return|#|\/\/)/;
+const HYPOTHETICAL = /\b(?:might|could|would|may|should|for\s+example|e\.g\.|such\s+as|suppose|assume|typically|usually|expect(?:ed)?|target|time-?outs?|limits?|delays?|sleeps?|waits?|intervals?|budget|within|up\s+to|at\s+most|less\s+than|more\s+than|if)\b/i;
 const RUN_NARRATION = /^(?:now\s+)?(?:benchmarking|running|executing|measuring|timing|profiling|testing)\b(?![^.!?]*\b(?:is|are|can|should|requires?|means|helps?)\b)/i;
 // A story, a draft or a role-play the owner asked for may promise things in its own voice.
 const WRITING_ASK = /\b(?:write|draft|compose|reword|rephrase|translate|proofread|story|poem|role.?play|pretend|script|dialogue|lyrics)\b/i;
@@ -234,7 +236,9 @@ export function guardModelOnlyCompletions(reply, { message = '', skillResults = 
       if (other && !quoted(other.index) && !(ownerDid && /^you/i.test(other[0])) && !NEGATED.test(plain.slice(0, other.index)) && !CONDITION_BEFORE.test(plain.slice(0, other.index))) kind = 'done';
       else if (promise && !quoted(promise.index) && !OFFER.test(plain) && !/\b(?:if|unless)\b/i.test(plain.slice(0, promise.index))) kind = 'promise';
     }
-    if (!kind && measuring && !question && (MEASURED.test(plain) || RUN_NARRATION.test(plain))) kind = 'measured';
+    // Source code (a timeout, a sleep) and hypothetical figures ("the timeout might be 1 second") are not measurements.
+    const figure = MEASURED.test(plain) && !(code ? SOURCE_LINE.test(plain) : HYPOTHETICAL.test(plain));
+    if (!kind && measuring && !question && (figure || (!code && RUN_NARRATION.test(plain)))) kind = 'measured';
     if (!kind) {
       kept.push(sentence);
       continue;
