@@ -283,8 +283,11 @@ export function newsQuestion(message, now = Date.now()) {
   const week = /\bthis week|last week|latest|recent(?:ly)?|so far this\b/i.test(text);
   const center = days.length ? Date.parse(`${days[0]}T12:00:00Z`) : now;
   // US time zones: a calendar day runs from about 04:00 to 08:00 UTC the next day.
-  const from = days.length ? center - 12 * 3600_000 + 4 * 3600_000 : now - (week ? 7 : 1.5) * DAY_MS;
-  const to = days.length ? center + 12 * 3600_000 + 8 * 3600_000 : now;
+  let from = days.length ? center - 12 * 3600_000 + 4 * 3600_000 : now - (week ? 7 : 1.5) * DAY_MS;
+  let to = days.length ? center + 12 * 3600_000 + 8 * 3600_000 : now;
+  // Today's news is the last day up to now. Before 04:00 UTC the calendar-day window starts in the future and no
+  // listing has anything in it (run 19 at 03:22 UTC: "today's top headline" found no listings).
+  if (days.length === 1 && days[0] === isoDay(now)) { from = Math.min(from, now - DAY_MS); to = Math.min(to, now); }
   const searched = SEARCH_VERB.test(text);
   const topic = text.replace(COMMAND_LEAD, ' ').replace(searched ? WEB_PLACE : /(?!)/, ' ').toLowerCase().replace(/['’]s\b/g, '').replace(TOPIC_DROP, ' ').replace(/[^a-z0-9.+# -]+/g, ' ')
     .replace(/\s+/g, ' ').trim().split(' ').filter((w) => w.length > 1 || w === 'ai').slice(0, 5).join(' ');
@@ -392,6 +395,9 @@ export async function newsResearch(message, { fetcher = fetch, now = Date.now(),
   const summary = articles.map((a, i) => `${i + 1}. ${a.publisher}${a.author ? ` (${a.author})` : ''}, "${a.title}", published ${spokenDay(a.published)} (date from the article page${a.listed_at ? `; ${a.listing} listed it ${spokenDay(a.listed_at)}` : ''}): ${clip(a.description || a.text, 320)}`).join('\n');
   return {
     ...base,
+    // The articles were opened and checked this turn: that is the receipt.
+    execution_receipt: { kind: 'tool_execution', tool: 'news_research', operation: 'GET', status: 'success', at: new Date(now).toISOString(),
+      source: articles[0].final_url || articles[0].url, verified_response: { articles: articles.length, sources: articles.map((a) => a.final_url || a.url) }, error: '' },
     summary: `Articles CHE opened and checked for ${q.topic || 'news'} on ${q.label}:\n${summary}`,
     sources: articles.map((a) => a.final_url || a.url),
     articles,

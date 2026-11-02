@@ -26,7 +26,7 @@ import {
   steerAgentTask,
   handoffAgentTask,
 } from './agent_runtime.js';
-import { pluginManifests, runChatPlugins, runPluginTool } from './plugin_runtime.js';
+import { pluginManifests, runChatPlugins, runPluginTool, withForecastPlace } from './plugin_runtime.js';
 import { contextItemsFrom, routingForAgent } from './agent_runtime.js';
 import {
   aiOverview, evaluateOne, handleAiVoiceIntent, privacyPermissionsMap, syncRoutingSnapshot, watchModels,
@@ -13371,7 +13371,7 @@ export class CheState extends DurableObject {
             await recordReceipt(this.ctx.storage, { ...receipt, key: `execution:${receipt.invocation_id}` }).catch(() => null);
             if (receipt.status !== 'success') {
               const why = run?.data?.error || 'The backtest could not run.';
-              return ndjsonReply(`${why} Try a ticker like AAPL or a coin like bitcoin, sir.${trade.note || ''}`, { source: 'che_trading', ok: false, execution_receipts: [receipt] });
+              return ndjsonReply(`The backtest did not run, sir. ${why} Try a ticker like AAPL or a coin like bitcoin.${trade.note || ''}`, { source: 'che_trading', ok: false, execution_receipts: [receipt] });
             }
             const note = backtestScopeNote(rawMessage, run.data.candles, { defaulted: trade.defaulted, label: run.data.label });
             return ndjsonReply([note, speakBacktest(run.data.label, candleSpan(run.data.candles, interval), run.results)].filter(Boolean).join('\n'),
@@ -14410,8 +14410,9 @@ export class CheState extends DurableObject {
         // completed weather tool receipt for specific weather predictions.
         reply = guardLocationWeatherReply(message, reply, {
           forecastVerified: skillResults.some((result) =>
-            result.ok === true && result.plugin === 'weather' && result.tool === 'forecast'),
+            result.ok === true && /^weather$/i.test(result.plugin) && result.tool === 'forecast'),
         });
+        reply = withForecastPlace(reply, skillResults);
         // Reject unrelated diagnostics or model/template scaffolding before
         // it can become the owner's answer or enter the cache.
         if (replyHijacksOwnerRequest(message, reply)) {
@@ -14502,7 +14503,7 @@ export class CheState extends DurableObject {
             route: needsStrongModel ? 'quality' : 'fast',
             engine: model,
             request_id: executionRequestId,
-            execution_receipts: skillResults.map((r) => r.execution_receipt),
+            execution_receipts: skillResults.map((r) => r.execution_receipt).concat(research?.cached ? [] : research?.execution_receipt || []),
             // The model repeated a swear word on a clean turn; the swap above replaced it. The social probe fails on this.
             clean_swapped: cleanSwapped,
             // What the source check did: articles opened by research, pages

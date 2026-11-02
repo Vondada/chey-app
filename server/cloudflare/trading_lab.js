@@ -167,6 +167,15 @@ export async function loadCandles(input, { interval = '1d', fetcher = fetch } = 
     if (sym.source === 'binance') {
       let candles = await attempt('Coinbase', () => coinbaseCandles(sym, interval, fetcher));
       if (candles.length) return { ...sym, interval, candles, live: true, data: 'Coinbase Exchange public candles (live)' };
+      // Daily crypto history from Yahoo Finance (BTC-USD and the like, keyless, back to 2014), the same chart API the
+      // stock backtests use: Coinbase rate-limits the paged history (HTTP 429) and Binance refuses the Worker (HTTP 451).
+      // Only days that have closed are kept, as with Coinbase.
+      if (interval === '1d') {
+        const now = Date.now();
+        candles = (await attempt('Yahoo', () => yahooDaily({ symbol: `${sym.symbol.replace(/USDT$/, '')}-USD` }, fetcher)))
+          .filter((k) => Date.parse(k.t) + 86_400_000 <= now);
+        if (candles.length) return { ...sym, interval, candles, live: false, data: 'Yahoo Finance daily history (delayed)' };
+      }
       candles = await attempt('Binance', async () => parseBinance(JSON.parse(await getText(`https://api.binance.com/api/v3/klines?symbol=${sym.symbol}&interval=${interval}&limit=1000`, fetcher))));
       if (candles.length) return { ...sym, interval, candles, live: true, data: 'Binance public candles (live)' };
     } else {

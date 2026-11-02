@@ -2,8 +2,9 @@
 // self-development job (the path the owner already has for code changes), and she says so. That job only opens a
 // pull request: nothing is merged or deployed by it (AGENTS.md). Money, deletion and secrets are never queued.
 
-// A reply that refuses an ability: "I don't have anywhere to store that", "I cannot make videos".
-const REFUSAL = /\b(?:I|CHE)\s+(?:do\s+not|don['’]t|cannot|can['’]t|can\s+not|am\s+unable\s+to|am\s+not\s+able\s+to)\s+(?:have|store|hold|keep|save|add|create|make|build|do|reach|access|open|find|send|book|render)\b/i;
+// A reply that refuses an ability: "I don't have anywhere to store that", "I cannot make videos". "I do not have a
+// verified forecast" is a missing result, not a missing ability (the weather tool exists), so it is not queued.
+const REFUSAL = /\b(?:I|CHE)\s+(?:do\s+not|don['’]t|cannot|can['’]t|can\s+not|am\s+unable\s+to|am\s+not\s+able\s+to)\s+(?:have(?!\s+(?:a\s+)?verified\b)|store|hold|keep|save|add|create|make|build|do|reach|access|open|find|send|book|render)\b/i;
 // An answer about a stored record or memory is a memory answer, never a missing ability. ("notes" is left out: a
 // refusal often repeats the owner's own word for the file, and that is not a memory answer.)
 const RECORD = /\b(?:records?|memor(?:y|ies)|confirm(?:ed|ation)?)\b/i;
