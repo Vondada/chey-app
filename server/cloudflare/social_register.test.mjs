@@ -103,10 +103,13 @@ test('Tests 1, 5 and 2 through /api/chat: clean after "by my mama", for five tur
     const turn = await say(message);
     assert.equal(turn.register?.clean, true, message);
     if (turn.prompt) assert.ok(turn.prompt.includes(CLEAN) && !turn.prompt.includes(SWEAR), message);
+    // The owner's earlier swearing is cleaned out of the turns the model sees (staging run 41485431905 quoted it back).
+    if (turn.prompt) assert.ok(!/fucking|lost my shit/i.test(turn.prompt), `earlier swear words reach the model: ${message}`);
   }
   const lifted = await say('Alright, you can talk normal again.');
   assert.equal(lifted.register, null);
   assert.ok(lifted.prompt.includes(SWEAR) && !lifted.prompt.includes(CLEAN));
+  assert.match(lifted.prompt, /lost my shit/, 'normal talk sees the owner\'s own words again');
 });
 
 test('Tests 3 and 4: "I\'m around kids right now", and a voice "chill chill" after a reply that swore', async () => {

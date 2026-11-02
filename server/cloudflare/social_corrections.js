@@ -64,6 +64,18 @@ export function cleanLanguageReply(text) {
     return swap ? swap[1] : 'darn';
   });
 }
+// While the owner wants it clean, the model never sees his earlier swear words: an 8B model quoted "I almost lost my shit"
+// back in clean mode even though CLEAN_LINE says never to repeat them (staging run 41485431905, Test 5 turn 2). The
+// stored chat is untouched; only the copy of earlier turns sent to the model is cleaned.
+export function cleanTurns(history, social) {
+  if (!social?.clean || !Array.isArray(history)) return history;
+  return history.map((turn) => {
+    if (!turn || typeof turn !== 'object') return turn;
+    const out = { ...turn };
+    for (const key of ['content', 'text']) if (typeof out[key] === 'string') out[key] = cleanLanguageReply(out[key]);
+    return out;
+  });
+}
 // Stock assistant phrasing the owner does not want from CHE (soul.js SOUL_VOICE).
 const GENERIC = /\b(?:as an ai\b|i'?m (?:just )?an ai\b|great question|i'?d be (?:happy|glad) to help|certainly!|i hope this helps|let me know if (?:you need|there'?s) anything else|how (?:can|may) i (?:help|assist) you today)/i;
 export const soundsGeneric = (text) => GENERIC.test(String(text || ''));
