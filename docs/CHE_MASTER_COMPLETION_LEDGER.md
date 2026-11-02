@@ -621,6 +621,17 @@ full reply is in the run's `certification-results` artifact, which this session'
 | 21 | `530296d9` (#880-#885) | 501/600, 1 infrastructure | 43 / 27 (17 flaky) | `41420922829` |
 | 22 | `d9062d9d` (#887) | 509/600, 1 infrastructure | 29 / 21 (18 flaky) | `41438024028` |
 | 23 | `9788151a` (#889) | 497/600, 4 infrastructure | 24 / 33 (24 flaky) | `41458252827` |
+| 24 | `24d06f7a` (#891, #892, #894) | 506/600, 2 infrastructure | 36 / 27 (16 flaky) | `41491194768` |
+
+Run 24 (`41491194768`, live commit `24d06f7a` verified by deploy `41489886991`): 506/600. Of 94 not passing, 61
+are incorrect answers, 31 are actions without an execution receipt and 2 are infrastructure (HTTP 502 and 500).
+48 of the 61 incorrect answers came from the fast route (`@cf/meta/llama-3.2-3b-instruct`): reasoning and arithmetic
+(ir-12 said 27 apples for 3 - 1 + 24), code writing (csd-25, csd-45), trading terms (ti-13, ti-32) and recovery
+questions (eer-12 to eer-47). The strong-model test (`worker.js` needsStrongModel, `personal_recall.js`
+needsStrongEngine) catches "write code" but not "write a function" or "how many". Routing those to the 8B model
+would use more of the free Workers AI allowance, so it waits on the owner (R-09). All 31 receipt failures already
+failed in run 23: missing connectors (app, smart home, file, media, GPU queue) and the Google sign-in, each
+answered with "Nothing was done". The four run-23 code regressions under fix (ter-04, eer-22, vcc-24, spt-23) pass.
 
 Verified live in run 21 (execution receipts, not wording): weather for a named city ran the forecast (ter-38), both
 backtests ran on the Yahoo fallback (thb-11, thb-29), the deploy question returned this commit's run (spt-25), and
