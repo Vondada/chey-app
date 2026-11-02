@@ -41,7 +41,7 @@ export function classifySocialCorrection(message) {
 // change it: CHE never guesses who is nearby. Stored as one small owner-only value in CHE's storage.
 export const SOCIAL_REGISTER_KEY = 'social_register';
 const SITUATIONAL_MS = 3 * 60 * 60_000;
-const PROFANITY = /\b(?:fuck\w*|motherf\w*|shit\w*|bullshit|bitch\w*|damn\w*|goddamn|ass(?:hole|es)?|dick\w*|pussy|bastard|crap)\b/i;
+const PROFANITY = /\b(?:fuck\w*|motherf\w*|shit\w*|bullshit|bitch\w*|damn\w*|goddamn|ass(?:hole|es)?|dick(?:s|heads?)?|pussy|bastard|crap)\b/i;
 const BARE_CHILL = /^\W*(?:(?:yo|ay|ayy|whoa|woah|hey|chay|che|chey)\W+)?chill(?:\W+chill)*(?:\W+(?:out|bro|sis|che|chay|chey))?\W*$/i;
 // What lifts clean language: the owner saying so, or that the people have gone. A bare "relax" or "we're good" does not.
 const LIFT = /\bjust us\b|\bwe(?:'re| are)? good now\b|\b(?:he|she|they|mama|my mom|the kids)(?:'s| is| are)? (?:left|gone)\b|\byou can (?:talk|speak) normal|\btalk (?:normal(?:ly)?|regular) again\b|\bback to normal\b|\byou can (?:curse|cuss|swear)|(?:'s|'re| is| are) (?:gone|asleep|not here)\b|\b(?:left|went (?:home|to bed|to sleep))\b|\b(?:alone|by myself) (?:now|again)\b/i;
@@ -58,8 +58,13 @@ const CLEAN_SWAPS = [
   [/^bitch\w*$/i, 'jerk'], [/^goddamn$/i, 'darn'], [/^damn\w*$/i, 'darn'], [/^asshole$/i, 'jerk'], [/^asses$/i, 'butts'],
   [/^ass$/i, 'butt'], [/^dick\w*$/i, 'jerk'], [/^pussy$/i, 'wimp'], [/^bastard$/i, 'jerk'], [/^crap$/i, 'junk'],
 ];
-export function cleanLanguageReply(text) {
-  return String(text ?? '').replace(new RegExp(PROFANITY.source, 'gi'), (word) => {
+// keepNames: a capitalised word that does not start a sentence is a name ("Philip K. Dick"), kept as it is in history
+// (Codex on #895). An all-caps swear word and one that starts a sentence are still swapped.
+export function cleanLanguageReply(text, { keepNames = false } = {}) {
+  return String(text ?? '').replace(new RegExp(PROFANITY.source, 'gi'), (word, at, all) => {
+    const before = all.slice(Math.max(0, at - 5), at);
+    const starts = at === 0 || (/(?:[.!?]\s+|\n\s*)$/.test(before) && !/(?:^|\s)[A-Z]\.\s+$/.test(before));
+    if (keepNames && /^[A-Z][a-z]/.test(word) && !starts) return word;
     const swap = CLEAN_SWAPS.find(([pattern]) => pattern.test(word));
     return swap ? swap[1] : 'darn';
   });
@@ -72,7 +77,7 @@ export function cleanTurns(history, social) {
   return history.map((turn) => {
     if (!turn || typeof turn !== 'object') return turn;
     const out = { ...turn };
-    for (const key of ['content', 'text']) if (typeof out[key] === 'string') out[key] = cleanLanguageReply(out[key]);
+    for (const key of ['content', 'text']) if (typeof out[key] === 'string') out[key] = cleanLanguageReply(out[key], { keepNames: true });
     return out;
   });
 }
