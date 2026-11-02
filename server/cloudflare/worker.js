@@ -2584,7 +2584,9 @@ function normalizePeerKey(name) {
 
 function runtimeVersion(env) {
   const meta = env?.CF_VERSION_METADATA || {};
-  return { version_id: String(meta.id || ''), version_tag: String(meta.tag || '') };
+  // A secret change (the certification probe token) makes an untagged version of the same code; the deploy's commit var stays.
+  const commit = /^[0-9a-f]{40}$/.test(env?.CHE_POOL_COMMIT || '') ? env.CHE_POOL_COMMIT.slice(0, 12) : '';
+  return { version_id: String(meta.id || ''), version_tag: String(meta.tag || commit), version_source: meta.tag ? 'tag' : commit ? 'deploy_var' : 'none' };
 }
 
 function ownerPrFailure(result, action) {
