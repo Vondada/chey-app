@@ -224,6 +224,19 @@ const HANDOFF = /\b(?:dispatch|rout|forward|delegat|escalat|handed|coming\s+in|a
 // the same sentence (a sent email, a set timer) is not. This finds such a claim once the handoff words are taken out.
 const otherClaimIn = (s) => { const t = s.replace(/\b(?:dispatched|re-?routed|routed|forwarded|delegated|escalated|handed|coming\s+in|arriving)\b/gi, 'X'); return MODEL_DONE.test(t) || OTHER_DONE.test(t); };
 const ATTRIBUTED = /^\**[A-Z][\w-]*\**\s*:\s*["“]/;
+// R-07: a consultation backs a handoff only to the coworker who answered. The recipient a handoff names ("to Atlas",
+// "to the coding agent") and the speaker of a quoted line ('Nova: "..."') must be one of the consulted partners.
+const HANDOFF_TO = /\b(?:to|with)\s+(?:the\s+|our\s+|your\s+|my\s+)?([A-Z][\w-]+(?:\s+[A-Z][\w-]+)?|[\w-]+\s+(?:agent|partner|team|coworker|department))\b/;
+const consultedName = (name, officeResults) => {
+  const want = String(name || '').toLowerCase().replace(/^(?:the|our|your|my)\s+/, '').replace(/\s*\b(?:agent|partner|team|coworker|department)$/, '').trim();
+  // A handoff to no one in particular ("to the team", "to the office") names no other coworker.
+  if (!want || /^(?:the|our|your|my|office|whole|entire|other)$/.test(want)) return true;
+  return officeResults.some((r) => r && r.result && [r.partner_name, r.role].some((v) => {
+    const have = String(v || '').toLowerCase();
+    return have && (have === want || have.split(/\s+/).includes(want) || want.split(/\s+/).includes(have));
+  }));
+};
+const namedRecipient = (s) => { const m = HANDOFF.exec(s); const to = m ? HANDOFF_TO.exec(s.slice(m.index)) : null; return to ? to[1] : ''; };
 // A story, a draft or a role-play the owner asked for may promise things in its own voice.
 const WRITING_ASK = /\b(?:write|draft|compose|reword|rephrase|translate|proofread|story|poem|role.?play|pretend|script|dialogue|lyrics)\b/i;
 
@@ -265,6 +278,7 @@ export function guardModelOnlyCompletions(reply, { message = '', skillResults = 
     if (done && !NEGATED.test(plain.slice(0, done.index)) && !question) kind = 'done';
     if (!kind && !question && !code && FALSIFY.test(plain)) kind = 'falsify';
     if (!kind && handoff && (ATTRIBUTED.test(plain) || quoted(0))) kind = 'done';
+    if (!kind && consulted && ATTRIBUTED.test(plain) && !consultedName(plain.replace(/^\**/, '').split(/[*:]/)[0], officeResults)) kind = 'done';
     if (!kind && toolAsk && !question && !code && !writing && NARRATED.test(plain) && !NEGATED.test(plain)) kind = 'narrated';
     if (!kind && !question && !code && !writing) {
       const other = OTHER_DONE.exec(plain) || (labelClaims ? LABEL_DONE.exec(plain) : null);
@@ -275,7 +289,7 @@ export function guardModelOnlyCompletions(reply, { message = '', skillResults = 
     // Source code (a timeout, a sleep) and hypothetical figures ("the timeout might be 1 second") are not measurements.
     const figure = MEASURED.test(plain) && !(code ? SOURCE_LINE.test(plain) : HYPOTHETICAL.test(plain));
     if (!kind && measuring && !question && (figure || (!code && RUN_NARRATION.test(plain)))) kind = 'measured';
-    if (consulted && kind === 'done' && HANDOFF.test(plain) && !otherClaimIn(plain)) kind = '';
+    if (consulted && kind === 'done' && HANDOFF.test(plain) && !otherClaimIn(plain) && consultedName(namedRecipient(plain), officeResults)) kind = '';
     if (!kind) {
       kept.push(sentence);
       continue;

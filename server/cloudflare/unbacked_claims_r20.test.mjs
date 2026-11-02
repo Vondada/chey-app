@@ -94,3 +94,16 @@ test('a real Office consultation backs the handoff and the advice, but not an ou
   assert.equal(guard(honest, 'Ask Atlas how to stop double processing.').removed.length, 2);
   assert.deepEqual(guard('I have sent the email.', 'Email the client.', { officeResults: [{ ...panel[0], job_id: 'job-1' }] }).removed, []);
 });
+
+test('R-07: a consultation backs a handoff only to the coworker who answered', () => {
+  const panel = [{ partner_id: 'a1b2', partner_name: 'Atlas', role: 'Engineering Partner', result: 'Use a queue with one consumer.' }];
+  const kept = (reply) => assert.deepEqual(guard(reply, 'Ask the office.', { officeResults: panel }).removed, [], reply);
+  kept('I have forwarded your question to Atlas.');
+  kept('I have forwarded your question to the engineering partner.');
+  kept('I have forwarded your question to the team and Atlas replied.');
+  kept('**Atlas**: "Use a queue with one consumer."');
+  const other = guard('I have forwarded this to Nova. Nova: "Ship it today."', 'Ask Nova.', { officeResults: panel });
+  assert.deepEqual(other.removed, ['I have forwarded this to Nova.', 'Nova: "Ship it today."']);
+  assert.equal(guard('I have delegated this to the coding agent.', 'Route this to the coding agent.', { officeResults: panel }).removed.length, 1);
+  assert.equal(guard('Nova: "Ship it today."', 'What does Nova think?', { officeResults: panel }).removed.length, 1);
+});
