@@ -71,6 +71,7 @@ test('Office work records are grounding only when the owner asks about the Offic
   assert.equal(asksAboutOffice('Is a background job the same thing as a cron task?'), false);
   assert.equal(asksAboutOffice('What jobs are running right now?'), true);
   assert.equal(asksAboutOffice('Show me my tasks'), true);
+  assert.equal(asksAboutOffice('How is my quarterly newsletter task going?'), true);
   assert.equal(asksAboutOffice('How long is the job queue?'), true);
   assert.equal(asksAboutOffice('Have the research desk take this'), true);
   assert.deepEqual([task, note].filter(chatBrainHit('How do I check the figures in a survey before I quote them?')), [note]);

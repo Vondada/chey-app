@@ -78,7 +78,7 @@ const OFFICE_TOPIC = new RegExp(`\\b(?:office|agents?|desks?|handoffs?|delegat\\
 // progress or the owner's list ("the open tasks", "your jobs", "what jobs are running"), not in a general question such
 // as "two job records disagree on whether a charge happened" (certification run 19, eer-30).
 const WORK_NOUN = '(?:tasks?|to-?dos?|jobs?|queues?|workers?)';
-const OFFICE_WORK = new RegExp(`\\b(?:open|queued|running|pending|active|current|your|my|our|the\\s+(?:open|queued|team|office))\\s+(?:\\w+\\s+)?${WORK_NOUN}\\b|\\b${WORK_NOUN}\\s+(?:are|is)\\s+(?:running|queued|open|pending|left|waiting|done|in\\s+progress)\\b|\\b${WORK_NOUN}\\s+(?:queue|board|list|backlog|status)\\b|\\b(?:what|which)\\s+${WORK_NOUN}\\b`, 'i');
+const OFFICE_WORK = new RegExp(`\\b(?:open|queued|running|pending|active|current|your|my|our|the\\s+(?:open|queued|team|office))\\s+(?:[\\w'-]+\\s+){0,3}${WORK_NOUN}\\b|\\b${WORK_NOUN}\\s+(?:are|is)\\s+(?:running|queued|open|pending|left|waiting|done|in\\s+progress)\\b|\\b${WORK_NOUN}\\s+(?:queue|board|list|backlog|status)\\b|\\b(?:what|which)\\s+${WORK_NOUN}\\b`, 'i');
 
 export function isOfficeWorkRecord(record = {}) {
   return OFFICE_KINDS.has(record.kind) || OFFICE_SOURCES.has(record.source?.kind) || record.region === BRAIN_REGIONS.tasks;
