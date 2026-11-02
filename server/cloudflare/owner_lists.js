@@ -41,6 +41,16 @@ const READ = [
   new RegExp(String.raw`^(?:show|read|list|tell|give|open|display|pull\s+up|check)\s+(?:me\s+|out\s+)?(?:what(?:['’]s|\s+is)\s+(?:on|in)\s+)?${TARGET}${TAIL}`, 'i'),
   new RegExp(String.raw`^(?:do\s+i\s+have|is\s+there)\s+anything\s+(?:on|in)\s+${TARGET}${TAIL}`, 'i'),
 ];
+// Long reads are paged for voice: "show all my notes" or "read my whole shopping list" reads everything; "read note 12"
+// or "the first note" reads one note; "older notes", "the rest of my list" or (right after a paged read) "more" goes on.
+const ALL_BEFORE = /\b(?:all\s+(?:of\s+)?|everything\s+(?:on|in)\s+)(?=(?:my|our|the)\s)/i;
+const ALL_INSIDE = /\b(my|our|the)\s+(?:whole|entire|full|complete)\s+/i;
+const ORDINALS = ['first', 'second', 'third', 'fourth', 'fifth', 'sixth', 'seventh', 'eighth', 'ninth', 'tenth'];
+const NOTE_AT = new RegExp(String.raw`^(?:(?:read|show|give|tell)\s+(?:me\s+)?|what(?:['’]s|\s+is|s)\s+)?(?:my\s+|the\s+)?(?:note\s+(?:number\s+|#\s*)?(\d{1,4})|(${ORDINALS.join('|')}|last|latest|newest|oldest|\d{1,4}(?:st|nd|rd|th))\s+note)(?:\s+(?:please|sir))?\s*[.!?]*$`, 'i');
+const MORE_NAMED = /^(?:(?:read|show|give|tell|list)\s+(?:me\s+)?)?(?:the\s+)?(?:next|more|older|earlier|remaining|other)\s+(notes|items|ones)(?:\s+(?:please|sir))?\s*[.!?]*$/i;
+const MORE_REST = new RegExp(String.raw`^(?:(?:read|show|give|tell)\s+(?:me\s+)?)?the\s+rest(?:\s+of\s+${TARGET})?(?:\s+(?:please|sir))?\s*[.!?]*$`, 'i');
+// Only "more": "next", "continue" and "keep going" mean other things (a song, a story) too often.
+const MORE_BARE = /^(?:(?:read|show)\s+(?:me\s+)?)?more(?:\s+(?:please|sir))?\s*[.!?]*$/i;
 const READ_NOTES = /^(?:what|which)\s+notes\s+(?:do\s+i\s+have|have\s+i\s+(?:got|saved|made))\b[^.?!]*[.?!]*$/i;
 const READ_LISTS = /^(?:what|which)\s+lists\s+(?:do\s+i\s+have|have\s+i\s+(?:got|made))\b[^.?!]*[.?!]*$/i;
 const REMOVE = new RegExp(String.raw`^(?:remove|delete|take|cross|strike|scratch|tick|erase|drop)\s+(.+?)\s+(?:off|from|out\s+of)\s+(?:of\s+)?${TARGET}${TAIL}`, 'i');
@@ -100,12 +110,26 @@ export function listIntent(message = '') {
       return { action: 'note', list: 'notes', unnamed: false, mine: true, items: [note] };
     }
   }
-  if (READ_NOTES.test(text)) return { action: 'read', list: 'notes', unnamed: false, mine: true };
+  if ((m = NOTE_AT.exec(text))) {
+    const word = (m[2] || '').toLowerCase();
+    const at = m[1] ? Number(m[1]) : ORDINALS.includes(word) ? ORDINALS.indexOf(word) + 1 : /^\d/.test(word) ? parseInt(word, 10) : word === 'oldest' ? 1 : -1;
+    return { action: 'read', list: 'notes', unnamed: false, mine: true, at };
+  }
+  if ((m = MORE_NAMED.exec(text))) return { action: 'more', notes: /^notes$/i.test(m[1]) };
+  if ((m = MORE_REST.exec(text))) {
+    if (!m[1]) return { action: 'more' };
+    const t = target(m[1], m[2], m[3]);
+    return t ? { action: 'more', ...t, named: true } : null;
+  }
+  if (MORE_BARE.test(text)) return { action: 'more', bare: true };
+  const whole = text.replace(ALL_BEFORE, '').replace(ALL_INSIDE, '$1 ');
+  const all = whole !== text;
+  if (READ_NOTES.test(whole)) return { action: 'read', list: 'notes', unnamed: false, mine: true, ...(all ? { all } : {}) };
   if (READ_LISTS.test(text)) return { action: 'lists' };
   for (const re of READ) {
-    if ((m = re.exec(text))) {
+    if ((m = re.exec(whole))) {
       const t = target(m[1], m[2], m[3]);
-      return t ? { action: 'read', ...t } : null;
+      return t ? { action: 'read', ...t, ...(all ? { all } : {}) } : null;
     }
   }
   if ((m = REMOVE_NOTE.exec(text))) return { action: 'remove', list: 'notes', unnamed: false, mine: true, items: [clean(m[1])] };
@@ -131,6 +155,7 @@ async function load(storage, key) {
 
 // Probe items expire after six hours, so each certification run starts from empty lists and its "add milk" is a real add,
 // not "already on your list". The owner's items never expire.
+const CURSOR_MS = 10 * 60_000;
 const PROBE_TTL_MS = 6 * 3600_000;
 async function loadFor(storage, key, now) {
   const store = await load(storage, key);
@@ -182,18 +207,40 @@ function preview(list, n = 10) {
 }
 const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
-function readText(name, list) {
+// A read is kept short for voice: the latest 10 notes, or the first 25 items of a list. The reply says how many are left
+// and how to hear them, and the page read is remembered so "more" goes on from it.
+const NOTES_PAGE = 10;
+const ITEMS_PAGE = 25;
+const numbered = (list, from) => list.map((i, k) => `${from + k + 1}. ${i.text}`).join(' ');
+
+/** One page of a list or of the notes. Notes page backwards (newest first), lists forwards. Returns { text, start, end }. */
+function readPage(name, list, { start = null, all = false } = {}) {
   if (name === 'notes') {
-    if (!list.length) return 'You have no notes saved, sir.';
-    return `You have ${plural(list.length, 'note')}, sir: ${list.slice(-10).map((i, k) => `${k + 1}. ${i.text}`).join(' ')}${list.length > 10 ? ` (the latest 10 of ${list.length})` : ''}`;
+    if (!list.length) return { text: 'You have no notes saved, sir.' };
+    if (all) return { text: `You have ${plural(list.length, 'note')}, sir, all of them: ${numbered(list, 0)}`, start: 0, end: list.length };
+    const end = start === null ? list.length : start;
+    const from = Math.max(0, end - NOTES_PAGE);
+    const page = numbered(list.slice(from, end), from);
+    const head = start === null ? `You have ${plural(list.length, 'note')}, sir${from ? `. The latest ${end - from}` : ''}: ` : `Notes ${from + 1} to ${end}, sir: `;
+    const rest = from ? ` ${plural(from, 'older note')} not read; say "older notes", "read note 1", or "show all my notes".` : '';
+    return { text: `${head}${page}${rest}`, start: from, end };
   }
-  if (!list.length) return `Your ${called(name)} is empty, sir.`;
-  return `Your ${called(name)} has ${plural(list.length, 'item')}, sir: ${preview(list, 25)}.`;
+  if (!list.length) return { text: `Your ${called(name)} is empty, sir.` };
+  if (all) return { text: `Your ${called(name)} has ${plural(list.length, 'item')}, sir, all of them: ${preview(list, list.length)}.`, start: 0, end: list.length };
+  const from = start === null ? 0 : start;
+  const end = Math.min(list.length, from + ITEMS_PAGE);
+  const shown = preview(list.slice(from, end), ITEMS_PAGE);
+  const head = from ? `Items ${from + 1} to ${end} of your ${called(name)}, sir: ` : `Your ${called(name)} has ${plural(list.length, 'item')}, sir: `;
+  const rest = end < list.length ? ` ${list.length - end} more not read; say "more items" or "read my whole ${called(name)}".` : '';
+  return { text: `${head}${shown}.${rest}`, start: from, end };
 }
 
 /**
- * Writes the change, reads the list back and builds the receipt from what storage now holds. Returns { ok, receipt, after }.
- * A storage error or a read-back that does not show the change gives a failed receipt, and the reply says nothing changed.
+ * Writes the change, reads the list back and builds the receipt from what storage now holds. Returns { ok, written, receipt,
+ * after }. A write that throws gives a failed receipt: nothing changed. A write that went through but cannot be read back
+ * (the read throws or shows something else) is `written` but not `ok`: the change may be stored, so the reply says it could
+ * not be confirmed, never that nothing changed. Its receipt has status 'unverified' and is not sent as an execution receipt,
+ * so an unconfirmed change is never counted as an executed one.
  */
 async function commit(storage, key, store, name, change, operation, now) {
   const before = (store.lists[name]?.items || []).slice();
@@ -205,13 +252,29 @@ async function commit(storage, key, store, name, change, operation, now) {
     if (next.length || name === 'notes' || operation !== 'clear') store.lists[name] = { items: next, created_at: store.lists[name]?.created_at || at, updated_at: at };
     else delete store.lists[name];
     await storage.put(key, store);
-    const back = (await load(storage, key)).lists[name]?.items || [];
-    const same = back.length === next.length && back.every((i, k) => i.id === next[k].id && i.text === next[k].text);
-    if (!same) return { ok: false, receipt: { ...base, status: 'failed', error: 'not_verified', id: `${name}:${now}` } };
-    return { ok: true, after: back, receipt: { ...base, status: 'success', id: `${name}:${now}`, after_count: back.length, verified: 'read_back', stored: back.slice(0, 50).map((i) => i.text) } };
   } catch (error) {
-    return { ok: false, receipt: { ...base, status: 'failed', error: 'write_failed', detail: String(error?.message || error).slice(0, 120), id: `${name}:${now}` } };
+    return { ok: false, written: false, receipt: { ...base, status: 'failed', error: 'write_failed', detail: String(error?.message || error).slice(0, 120), id: `${name}:${now}` } };
   }
+  const unconfirmed = (error, detail = '') => ({ ok: false, written: true, receipt: { ...base, status: 'unverified', error, ...(detail ? { detail } : {}), id: `${name}:${now}` } });
+  let back;
+  try { back = (await load(storage, key)).lists[name]?.items || []; } catch (error) {
+    return unconfirmed('read_back_failed', String(error?.message || error).slice(0, 120));
+  }
+  const same = back.length === next.length && back.every((i, k) => i.id === next[k].id && i.text === next[k].text);
+  if (!same) return unconfirmed('read_back_mismatch');
+  return { ok: true, written: true, after: back, receipt: { ...base, status: 'success', id: `${name}:${now}`, after_count: back.length, verified: 'read_back', stored: back.slice(0, 50).map((i) => i.text) } };
+}
+
+// The reply for a change that did not finish. A refused write changed nothing and carries a failed execution receipt. A
+// write that went through but could not be read back is reported as unconfirmed, with how to check.
+function notDone(done, name, verb, meta) {
+  const extra = done.written ? { unconfirmed_receipt: done.receipt } : { execution_receipt: done.receipt };
+  const text = done.written
+    ? `I wrote that ${verb === 'add' ? 'addition' : 'change'} to CHE's server, sir, but could not read your ${called(name)} back to confirm it, so I can't say for sure it ${verb === 'add' ? 'is saved' : 'took effect'}. Ask me "what's on my ${called(name)}?" to check.`
+    : verb === 'add'
+      ? `I did not save it, sir: the write to CHE's server failed. Nothing was added to your ${called(name)}.`
+      : `I did not remove it, sir: the write to CHE's server failed. Your ${called(name)} is unchanged.`;
+  return { text, meta: meta({ ok: false, list: name, ...extra }) };
 }
 
 /**
@@ -220,7 +283,7 @@ async function commit(storage, key, store, name, change, operation, now) {
  * `owner`: the paired owner device; anyone else is told the lists are the owner's.
  */
 export async function listChatTurn(storage, message, { probe = false, grant = {}, owner = true, now = Date.now() } = {}) {
-  const intent = listIntent(message);
+  let intent = listIntent(message);
   if (!intent) return null;
   const meta = (extra = {}) => ({ source: 'che_lists', model_calls: 0, ...extra });
   if (!owner && !probe) return { text: 'Notes and lists are the owner\'s, sir. Nothing was read or saved.', meta: meta({ ok: false }) };
@@ -236,13 +299,47 @@ export async function listChatTurn(storage, message, { probe = false, grant = {}
     return { text, meta: meta({ ok: true, lists: names, execution_receipt: { tool: 'che_lists', operation: 'read', status: 'success', id: `lists:${now}`, lists: names } }) };
   }
 
+  const cursorKey = `${key}:cursor`;
+  let page = {};
+  if (intent.action === 'more') {
+    let cursor = null;
+    try { cursor = await storage.get(cursorKey); } catch (_) { cursor = null; }
+    const fresh = cursor && now - Number(cursor.at || 0) < CURSOR_MS && store.lists[cursor.list] ? cursor : null;
+    // A bare "more" or "next" belongs to the lists only right after a paged read; otherwise it is ordinary chat.
+    if (intent.bare && !fresh) return null;
+    const list = intent.named ? resolve(store, intent) : intent.notes ? 'notes' : fresh?.list || 'notes';
+    if (!list) return null;
+    const same = fresh && fresh.list === list;
+    const length = (store.lists[list]?.items || []).length;
+    // Where the next page starts: after the page last read, or else after the first page a plain read gives.
+    const start = list === 'notes' ? (same ? fresh.start : Math.max(0, length - NOTES_PAGE)) : (same ? fresh.end : Math.min(length, ITEMS_PAGE));
+    if (list === 'notes' ? start <= 0 : start >= length) {
+      return { text: `That was everything in your ${called(list)}, sir. Nothing more to read.`, meta: meta({ ok: true, list }) };
+    }
+    page = { start };
+    intent = { action: 'read', list, unnamed: false, mine: true };
+  }
   const name = resolve(store, intent);
   if (!name) return null;
+
+  if (intent.action === 'read' && intent.at) {
+    const notes = store.lists.notes?.items || [];
+    const n = intent.at === -1 ? notes.length : intent.at;
+    if (!notes.length) return { text: 'You have no notes saved, sir.', meta: meta({ ok: true, list: 'notes' }) };
+    if (!notes[n - 1]) return { text: `You have ${plural(notes.length, 'note')}, sir, so there is no note ${n}. Say "read note 1" up to "read note ${notes.length}".`, meta: meta({ ok: true, list: 'notes' }) };
+    return { text: `Note ${n} of ${notes.length}, sir: ${notes[n - 1].text}`, meta: meta({ ok: true, list: 'notes', execution_receipt: { tool: 'che_lists', operation: 'read', status: 'success', id: `notes:${now}`, list: 'notes', count: notes.length, note_number: n, stored: [notes[n - 1].text] } }) };
+  }
 
   if (intent.action === 'read') {
     const list = store.lists[name]?.items || [];
     if (!store.lists[name] && name !== 'notes') return { text: `You have no ${called(name)} yet, sir. Nothing is saved under that name.${Object.keys(store.lists).length ? ` Your lists: ${Object.keys(store.lists).map(called).join(', ')}.` : ''}`, meta: meta({ ok: true, list: name, items: [] }) };
-    return { text: readText(name, list), meta: meta({ ok: true, list: name, items: list.map((i) => i.text), execution_receipt: { tool: 'che_lists', operation: 'read', status: 'success', id: `${name}:${now}`, list: name, count: list.length, stored: list.slice(0, 50).map((i) => i.text) } }) };
+    const read = readPage(name, list, { ...page, all: intent.all === true });
+    // A page with more left is remembered so "more" goes on from it; a read that reached the end forgets it, so a later
+    // "more" is ordinary chat again. If it cannot be saved, "more" starts over.
+    const left = read.end !== undefined && (name === 'notes' ? read.start > 0 : read.end < list.length);
+    try { await storage.put(cursorKey, left ? { list: name, start: read.start, end: read.end, at: now } : null); } catch (_) { /* paging only */ }
+    const shown = read.end === undefined ? [] : list.slice(read.start, read.end);
+    return { text: read.text, meta: meta({ ok: true, list: name, items: shown.map((i) => i.text), total: list.length, execution_receipt: { tool: 'che_lists', operation: 'read', status: 'success', id: `${name}:${now}`, list: name, count: list.length, shown: shown.length, stored: shown.map((i) => i.text) } }) };
   }
 
   if (intent.action === 'add' || intent.action === 'note') {
@@ -255,7 +352,7 @@ export async function listChatTurn(storage, message, { probe = false, grant = {}
     const added = fresh.map((text, k) => ({ id: makeId(now + k), text, added_at: new Date(now).toISOString() }));
     const done = await commit(storage, key, store, name, (list) => [...list, ...added], intent.action, now);
     done.receipt.items = added.map((i) => i.text);
-    if (!done.ok) return { text: `I did not save it, sir: ${done.receipt.error === 'write_failed' ? 'the write to CHE\'s server failed' : 'I could not read it back from CHE\'s server'}. Nothing was added to your ${called(name)}.`, meta: meta({ ok: false, list: name, execution_receipt: done.receipt }) };
+    if (!done.ok) return notDone(done, name, 'add', meta);
     if (!probe) await recordReceipt(storage, { kind: 'list_changed', key: `list_changed:${done.receipt.id}`, list: name, operation: intent.action, items: done.receipt.items, after_count: done.receipt.after_count }).catch(() => null);
     const also = already.length ? ` ${preview(already.map((text) => ({ text })))} ${already.length === 1 ? 'was' : 'were'} already on it.` : '';
     const text = intent.action === 'note'
@@ -281,7 +378,7 @@ export async function listChatTurn(storage, message, { probe = false, grant = {}
   const ids = new Set(picked.map((i) => i.id));
   const done = await commit(storage, key, store, name, (items) => items.filter((i) => !ids.has(i.id)), intent.action === 'clear' ? 'clear' : 'remove', now);
   done.receipt.items = picked.map((i) => i.text);
-  if (!done.ok) return { text: `I did not remove it, sir: ${done.receipt.error === 'write_failed' ? 'the write to CHE\'s server failed' : 'I could not read the list back from CHE\'s server'}. Your ${called(name)} is unchanged.`, meta: meta({ ok: false, list: name, execution_receipt: done.receipt }) };
+  if (!done.ok) return notDone(done, name, 'remove', meta);
   if (!probe) await recordReceipt(storage, { kind: 'list_changed', key: `list_changed:${done.receipt.id}`, list: name, operation: done.receipt.operation, items: done.receipt.items, after_count: done.receipt.after_count }).catch(() => null);
   const left = done.after.length ? `${plural(done.after.length, name === 'notes' ? 'note' : 'item')} left (${preview(done.after)})` : 'it is empty now';
   const text = intent.action === 'clear'
