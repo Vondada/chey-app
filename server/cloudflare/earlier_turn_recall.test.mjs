@@ -136,3 +136,47 @@ test('/api/chat: an earlier-turn reference with an empty conversation gets no gu
   assert.ok(general.modelCalls >= 1, 'a general question still reaches the model');
   assert.notEqual(general.meta.source, 'che_memory_provenance');
 });
+
+test('an explicit memory write that mentions an earlier turn or a count is a save, not a recall (Codex, #876)', () => {
+  for (const say of [
+    'Remember that my last question was about my car insurance',
+    'Remember that my most mentioned contact is Priya.',
+    'Keep in mind that my earlier sentence was a joke.',
+    'Please remember my most mentioned client is Rafael.',
+    'Note that my previous message was about the garage.',
+    'My most mentioned contact is Priya.',
+  ]) {
+    assert.equal(ownerMemoryQuestion(say, []), null, say);
+  }
+  // A question that starts with "remember" still asks.
+  assert.equal(ownerMemoryQuestion('Can you remember the last question I asked?', [])?.noHistory, true);
+  assert.equal(ownerMemoryQuestion('Remember what I said at the start of the call?', [])?.noHistory, true);
+});
+
+test('/api/chat: those writes are saved and read back; the recall questions still get "no record"', async () => {
+  const che = await owner();
+  for (const say of [
+    'Remember that my last question was about my car insurance',
+    'Remember that my most mentioned contact is Priya.',
+    'Keep in mind that my earlier sentence was a joke.',
+    'Please remember my most mentioned client is Rafael.',
+  ]) {
+    const out = await che.say(say);
+    assert.equal(out.meta.source, 'che_memory', say);
+    assert.equal(out.modelCalls, 0, say);
+    assert.match(out.reply, /Saved ".+" as record/, say);
+    assert.doesNotMatch(out.reply, /don't have our earlier messages|don't have a count/, say);
+  }
+  const contact = await che.say('What did I tell you about my most mentioned contact?');
+  assert.equal(contact.meta.source, 'che_memory_provenance');
+  assert.match(contact.reply, /Priya/);
+  const insurance = await che.say('What did I tell you about my car insurance?');
+  assert.match(insurance.reply, /my last question was about my car insurance/);
+  for (const ask of ['Say my last question again.', 'Who are my most mentioned friends?', 'How often did I bring up my car insurance?']) {
+    const out = await che.say(ask);
+    assert.equal(out.meta.source, 'che_memory_provenance', ask);
+    assert.equal(out.modelCalls, 0, ask);
+    assert.match(out.reply, /don't have/, ask);
+    assert.doesNotMatch(out.reply, /Marcus|Atlas|Nova/, ask);
+  }
+});

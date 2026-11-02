@@ -258,15 +258,32 @@ const EARLIER_TURN = new RegExp([
 // mentions. CHE keeps no such tally, so it says so instead of inventing numbers (run 19: mr-23, mr-28).
 const TALLY = /\b(?:my|i) (?:\w+ ){0,3}?(?:most|least) (?:often |frequently |commonly )?(?:mentioned|asked about|talked about|discussed)\b|\bhow (?:many times|often) (?:have|did|do) i (?:\w+ )?(?:ask(?:ed)?|told|tell|mention(?:ed)?|said|say|talk(?:ed)?|brought up|bring up)\b/;
 
+// "Remember that my last question was about insurance", "keep in mind my most mentioned contact is Priya": the owner
+// gives CHE something to keep. That is a save, never a recall, so the save path further on handles it (Codex, #876).
+// "Remember what I said...", "can you remember my last question?" still ask.
+const MEMORY_WRITE = /^(?:(?:please|hey|ok|okay|now|and|also) )*(?:(?:can|could|would|will) you (?:please )?)?(?:remember|memori[sz]e|keep (?:this |that )?in mind|save|store|note(?: down)?|make a note|write down|don ?t forget|do not forget|log|record)\b(?! (?:what|which|when|who|whom|where|how|whether|if)\b)/;
+// "My most mentioned contact is Priya." states a fact; it asks for no count.
+const OWNER_STATEMENT = /^my\b.*\b(?:is|are|was|were)\b/;
+
 export function ownerMemoryQuestion(message, history = null) {
   const whole = plainWords(message);
+  const asks = /\?\s*$/.test(String(message || ''));
+  if (whole && !asks && MEMORY_WRITE.test(whole)) return null;
   // "How did you handle my last question?" asks about CHE's own work, which its answer evidence records: not this route.
   if (whole && EARLIER_TURN.test(whole) && !/\b(?:how|why) (?:did |do )?you (?:handle|handled|answer|answered|approach|approached|deal|dealt|process|processed|work|worked|arrive|arrived|get|got)\b/.test(whole)) {
     // Only an empty conversation is answered here; with earlier turns the model can see them.
     const earlier = (Array.isArray(history) ? history : []).some((turn) => turn?.role === 'user' && String(turn.content ?? turn.text ?? '').trim());
     return earlier ? null : { topic: '', noHistory: true };
   }
-  if (whole && TALLY.test(whole) && !FICTION_REQUEST.test(whole)) return { topic: '', tally: true };
+  const parsed = parseOwnerMemoryQuestion(message);
+  // A count question gets the tally answer. "What did I tell you about my most mentioned contact?" asks for a saved
+  // statement, which the topic answer finds; only a count ("how many times", "how often") outranks it.
+  if (whole && TALLY.test(whole) && !FICTION_REQUEST.test(whole) && (asks || !OWNER_STATEMENT.test(whole))
+    && (!parsed || /\bhow (?:many times|often)\b/.test(whole))) return { topic: '', tally: true };
+  return parsed;
+}
+
+function parseOwnerMemoryQuestion(message) {
   const q = plainWords(splitAsk(message).ask);
   if (!q || q.split(' ').length > 30 || FICTION_REQUEST.test(q)) return null;
   if (DISCUSSING.test(q.replace(/\b(?:che|chay|chey|shay)\b ?/g, '').trim())) return { topic: '', discussion: true };
