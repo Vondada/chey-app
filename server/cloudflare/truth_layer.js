@@ -99,7 +99,7 @@ export function guardExecutionClaims(reply, { message = '', receipts = [], docum
   // a transcript, a coding-evidence failure, a command left beside a removed claim, or a reply with fewer than eight
   // words left besides an earlier guard's "Nothing was done" note, still gets the whole notice.
   // A request that asks for no run ("Set a rule ...", "List my tasks") loses only its claim sentences too (run 20).
-  if ((repoClaim || sourceClaim) && (/\?\s*$/.test(String(message).trim()) || explanationAsk(message) || !RUN_ASK.test(String(message))) && !REPORT_ASK.test(String(message)) && !requireEvidence && !reported.test(text) && !transcript.test(text) && !unlabeledOutput.test(text)) {
+  if ((repoClaim || sourceClaim) && (/\?\s*$/.test(String(message).trim()) || explanationAsk(message) || !askedToAct(message)) && !REPORT_ASK.test(String(message)) && !requireEvidence && !reported.test(text) && !transcript.test(text) && !unlabeledOutput.test(text)) {
     const kept = [];
     const cut = [];
     for (const s of splitSentences(text)) {
@@ -155,17 +155,34 @@ const CONDITION_OPENING = /^\s*(?:[-*•]\s*|\d+[.)]\s*)?(?:if|when|whenever|onc
 const EXPLAIN_ASK = /^\s*(?:(?:please|now|ok|okay|che|chey|chay)[,\s]+)*(?:design|explain|describe|outline|sketch|propose|compare|define|summari[sz]e|walk\s+me\s+through|tell\s+me\s+(?:about|how|why|what)|help\s+me\s+understand)\b/i;
 const RUN_ASK = /\b(?:run|rerun|execute|deploy|push|merge|commit|apply|ship|release|install|restart|start|trigger|launch|fix|build|send|upload|publish|migrate)\b/i;
 const explanationAsk = (message) => EXPLAIN_ASK.test(String(message || '')) && !RUN_ASK.test(String(message || ''));
+// A request for CHE to act. "Explain a safe release process" and "How should we deploy?" name an action without asking for
+// one; "Explain the fix and then deploy it" asks.
+const askedToAct = (message) => {
+  const m = String(message || '');
+  if (/\b(?:and|then)\s+(?:then\s+)?(?:please\s+)?(?:run|rerun|execute|deploy|push|merge|commit|apply|ship|release|install|restart|start|trigger|launch|build|send|upload|publish|migrate)\b/i.test(m)) return true;
+  return RUN_ASK.test(m) && !EXPLAIN_ASK.test(m) && !/^\s*(?:how|what|why|which|should\s+(?:I|we)|is|are|can\s+(?:I|we))\b/i.test(m);
+};
 // Advice, a rule or a plan in the abstract is not a run claim: "Verify the deployment completed", "No action counts as done
 // until its receipt shows the job completed", "You need the fix deployment completed and health checks green", "The task
 // tool only shows what was dispatched". Certification run 20 (eer-28, eer-34, mr-24, oac-34): such answers were replaced
 // whole by the notice. A report stays a claim: "When you asked earlier, the workflow completed", "Deploy 4821 succeeded",
 // "I can confirm the job completed".
 const LEAD_IN = String.raw`^\s*(?:[-*•]\s*|\d+[.)]\s*|step\s+\d+\s*[:.]\s*)?(?:(?:sir|then|first|next|finally|also|now|and|so|always|just|please)[,:\s]+)*`;
-const IMPERATIVE = String.raw`(?:verify|check|confirm|ensure|make\s+sure|wait|watch|monitor|require|log|record|mark|treat|declare|roll\s+back|look|see|test|retry|keep|use|set|add|include|note|compare|review|restart|redeploy|alert|notify|stop|store|track|do\s+not|don['’]t|never|only|reject|refuse|block|count|consider|validate|prove|show|list|rerun)\b`;
-const IMPERATIVE_OPENING = new RegExp(LEAD_IN + IMPERATIVE, 'i');
+const IMPERATIVE = String.raw`(?:verify|check|confirm|ensure|make\s+sure|wait|watch|monitor|require|log|record|mark|treat|declare|roll\s+back|look|see|test|retry|keep|use|set|add|include|note|compare|review|alert|notify|stop|store|track|do\s+not|don['’]t|never|only|reject|refuse|block|count|consider|validate|prove|show|list)\b`;
+// "Run the tests and verify they passed": an instruction to act, which is advice only when the owner did not ask CHE to act
+// (Codex review on #883).
+const ACTION_IMPERATIVE = String.raw`(?:run|rerun|execute|build|rebuild|deploy|redeploy|ship|push|merge|release|restart|start|trigger|launch|migrate|apply|install|promote)\b`;
+// The same word as a noun is a report: "Deploy 4821 succeeded", "Build 12 passed", "Test run is green".
+const NOT_A_NOUN = String.raw`(?!\s*#?\d|\s+(?:[\w-]+\s+)?(?:succeeded|completed|passed|failed|finished|is|was|were|has|had)\b)`;
+const IMPERATIVE_OPENING = new RegExp(LEAD_IN + IMPERATIVE + NOT_A_NOUN, 'i');
+const ACTION_OPENING = new RegExp(LEAD_IN + ACTION_IMPERATIVE + NOT_A_NOUN, 'i');
 const IMPERATIVE_MAIN = new RegExp(String.raw`^[^,]*,\s*(?:then\s+|you\s+(?:should|must|can)\s+)?` + IMPERATIVE, 'i');
-// Words before the result that make it hypothetical, required or described: "if", "until", "whether", "what", "must", "need".
-const NOT_ASSERTED = /\b(?:if|unless|until|whether|in\s+case|assuming|suppose|what|which|whatever|must|should|shall|needs?|has\s+to|have\s+to|ought|can|could|would|may|might|will|won['’]t|requires?|required)\b/i;
+// Words that make the result hypothetical or described: a condition anywhere before it ("until its receipt shows the job
+// completed"), "what" as the object of a verb ("shows what was dispatched"), or a modal or "need" that governs the result
+// ("you need the fix build passed"). A word inside a relative clause of the subject ("The command which processes requests
+// completed", "The job that should retry completed") governs nothing (Codex review on #883).
+const HYPOTHETICAL_BEFORE = /\b(?:if|unless|until|whether|once|in\s+case|assuming|suppose)\b|\b(?:shows?|records?|says?|lists?|logs?|tells?|checks?|tracks?|notes?|sees?|knows?)\s+what(?:ever)?\b/i;
+const MODAL_GOVERNS = /(?<!\b(?:which|that|who|whose)\s+(?:[\w'’]+\s+){0,3})\b(?:must|should|shall|needs?|has\s+to|have\s+to|ought\s+to|can|could|would|may|might|will|won['’]t|requires?|required)\b(?:\s+[\w:,'’-]+){0,8}\s*$/i;
 // "When you asked earlier", "Once you logged off", "yesterday": a condition that tells of the past is a report.
 const NARRATIVE = /^\W*(?:\d+[.)]\s*)?(?:when|once|after|before|as\s+soon\s+as)\s+(?:you|I|we|CHE|he|she|they|it)\s+(?:\w+ed|did|went|said|told|ran|sent|left|got|made|came|saw|began|took|was|were)\b|\b(?:earlier|yesterday|ago|overnight|last\s+(?:night|time|week|month|run)|this\s+morning)\b/i;
 const FIRST_PERSON_CHECK = /\b(?:I|we|CHE)\s+(?:\w+\s+){0,2}(?:confirm(?:ed)?|checked|verified|saw|watched|made\s+sure|ensured|know|knew|tested|ran|executed|deployed|restarted)\b/i;
@@ -174,11 +191,12 @@ const FIRST_PERSON_CHECK = /\b(?:I|we|CHE)\s+(?:\w+\s+){0,2}(?:confirm(?:ed)?|ch
 const PAST_ASK = /\b(?:happen(?:ed|ing)?|went|did\s+(?:it|the|you|we|that)|earlier|yesterday|overnight|last\s+(?:night|time|week|run)|so\s+far|ago)\b/i;
 function adviceSentence(s, message, execution) {
   if (NARRATIVE.test(s) || FIRST_PERSON_CHECK.test(s)) return false;
-  if (IMPERATIVE_OPENING.test(s)) return true;
-  const m = execution.exec(s);
-  if (m && NOT_ASSERTED.test(s.slice(0, m.index + m[0].length))) return true;
-  if (!CONDITION_OPENING.test(s) && !/^\W*(?:\d+[.)]\s*)?(?:after|before|as\s+soon\s+as)\b/i.test(s)) return false;
   const ask = String(message || '');
+  if (IMPERATIVE_OPENING.test(s) || (ACTION_OPENING.test(s) && !askedToAct(ask))) return true;
+  const m = execution.exec(s);
+  const before = m ? s.slice(0, m.index + m[0].length) : '';
+  if (m && (HYPOTHETICAL_BEFORE.test(before) || MODAL_GOVERNS.test(before))) return true;
+  if (!CONDITION_OPENING.test(s) && !/^\W*(?:\d+[.)]\s*)?(?:after|before|as\s+soon\s+as)\b/i.test(s)) return false;
   return explanationAsk(ask) || IMPERATIVE_MAIN.test(s) || !(RUN_ASK.test(ask) || REPORT_ASK.test(ask) || PAST_ASK.test(ask));
 }
 // A question that asks for a report on work, and a reply line that reads as one of its fields (Codex review on #853).

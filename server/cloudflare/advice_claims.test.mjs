@@ -43,3 +43,17 @@ test('a request that asks for no run loses only its claim sentences', () => {
   assert.doesNotMatch(list, /require: 1\./);
   assert.match(list, /Probes pass/);
 });
+
+test('a word inside the subject does not make a result hypothetical (Codex review on #883)', () => {
+  notice('The command which processes requests completed successfully.', 'Is the queue OK?');
+  notice('The job that should retry on failure completed successfully.', 'Look at the queue.');
+  notice('The deployment which you said would fail succeeded on the first try.', 'Tell me about the rollout.');
+});
+
+test('an instruction to act is advice when the owner asked for none (Codex review on #883)', () => {
+  keep('Run the tests and verify that they passed before shipping.', 'Explain a safe release process.');
+  keep('Build the branch, then deploy it to staging and check the deployment succeeded.', 'How should we roll out a risky change?');
+  // Asked to act, the same words read as a report; a first-person run is always one.
+  notice('Run the tests and verify that they passed before shipping.', 'Release the new version now.');
+  notice('I ran the tests and the build passed.', 'Explain a safe release process.');
+});
