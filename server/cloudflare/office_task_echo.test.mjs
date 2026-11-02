@@ -66,6 +66,13 @@ test('Office work records are grounding only when the owner asks about the Offic
   assert.equal(asksAboutOffice('How do I check the figures in a survey before I quote them?'), false);
   assert.equal(asksAboutOffice('What is Iris working on?'), true);
   assert.equal(asksAboutOffice('Recap the open tasks in the office'), true);
+  // A generic work noun alone is not the Office (certification run 19, eer-30); work in progress or the owner's list is.
+  assert.equal(asksAboutOffice('Two invoice records disagree on whether a refund job ran. How should I reconcile them?'), false);
+  assert.equal(asksAboutOffice('Is a background job the same thing as a cron task?'), false);
+  assert.equal(asksAboutOffice('What jobs are running right now?'), true);
+  assert.equal(asksAboutOffice('Show me my tasks'), true);
+  assert.equal(asksAboutOffice('How long is the job queue?'), true);
+  assert.equal(asksAboutOffice('Have the research desk take this'), true);
   assert.deepEqual([task, note].filter(chatBrainHit('How do I check the figures in a survey before I quote them?')), [note]);
   assert.deepEqual([task, note].filter(chatBrainHit('What tasks are open in the office?')), [task, note]);
 });
