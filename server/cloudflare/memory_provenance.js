@@ -218,17 +218,19 @@ function quoteRecord(record) {
 
 // ─── 1. Questions about what the owner confirmed ───────────────────────────
 
+// "What did I want you to change", "how often have I asked you about tax" are about his words too. "What did I ask you
+// to set" is not: the timer or music store answers that.
 const OWNER_ACT = '\\b(?:confirm(?:ed)?|verif(?:ied|y)|t(?:old|ell) you|sa(?:id|y)|mention(?:ed)?|stat(?:ed|e)|approv(?:ed|e)|test(?:ed)?|'
-  + 'witness(?:ed)?|experienc(?:ed|e)|decid(?:ed|e)|agree(?:d)?|shar(?:ed|e)(?: with you)?|taught you|let you know|ask(?:ed)? you to remember)';
+  + 'witness(?:ed)?|experienc(?:ed|e)|decid(?:ed|e)|agree(?:d)?|shar(?:ed|e)(?: with you)?|taught you|let you know|ask(?:ed)? you to remember|want(?:ed)? you to|ask(?:ed)? you about)';
 const OWNER_ADVERBS = '(?:(?:personally|previously|already|ever|just|once|actually|really|recently|myself|before|explicitly|directly) )*';
 // "I confirmed", "I have personally verified": past forms only, so a request
 // in the present tense ("a story where I test a lock") is not a memory question.
-const OWNER_ACT_PAST = '\\b(?:confirmed|verified|told you|said|mentioned|stated|approved|tested|witnessed|experienced|decided|agreed|shared(?: with you)?|taught you|let you know|asked you to remember)';
+const OWNER_ACT_PAST = '\\b(?:confirmed|verified|told you|said|mentioned|stated|approved|tested|witnessed|experienced|decided|agreed|shared(?: with you)?|taught you|let you know|asked you to remember|wanted you to|asked you about)';
 const OWNER_SUBJECT_ACT = new RegExp(`\\bi (?:have |had )?${OWNER_ADVERBS}${OWNER_ACT_PAST}\\b|\\bi did ${OWNER_ADVERBS}${OWNER_ACT}\\b`);
 const OWNER_INVERTED_ACT = new RegExp(`\\b(?:have|did|had) i ${OWNER_ADVERBS}${OWNER_ACT}\\b`);
 // A bare "remember" is a command to save ("Remember I said my meeting is
 // Friday"); it asks only when a question word follows ("remember what I said").
-const ASK_FORM = /^(?:(?:can|could|would|will) you (?:please )?)?(?:tell me|name|give me|share|list|remind me|what|which|(?:do )?you (?:remember|recall|know)|(?:remember|recall) (?:when|what|whether|if|anything|something|the time|which|how)|say|have i|did i|is there|are there|anything|something)\b/;
+const ASK_FORM = /^(?:(?:can|could|would|will) you (?:please )?)?(?:tell me|name|give me|share|list|remind me|what|which|who|when|where|how (?:many|much|often)|(?:do )?you (?:remember|recall|know)|(?:remember|recall) (?:when|what|whether|if|anything|something|the time|which|how)|say|have i|did i|is there|are there|anything|something)\b/;
 
 /**
  * A question about what the owner personally said, confirmed, approved or did.
@@ -238,7 +240,33 @@ const ASK_FORM = /^(?:(?:can|could|would|will) you (?:please )?)?(?:tell me|name
 // "What were we just discussing?", "what was that about?": the subject of the last exchange, from the conversation.
 const DISCUSSING = /^(?:what (?:were|are) we (?:just )?(?:talking about|discussing|on about)|what was (?:that|this|it|the last thing) (?:all )?about|what did we (?:just )?(?:talk about|discuss)|what (?:were|was) we (?:just )?(?:discussing|talking about)|where were we|what was i (?:just )?(?:asking|saying|talking about))$/;
 
-export function ownerMemoryQuestion(message) {
+// A turn that leans on an earlier turn of this conversation: "the last question I asked you", "my earlier sentence",
+// "the name I said at the start of the call", "same as last time", "earlier you said", "where we stopped". Only the
+// conversation can answer it. With no earlier turns sent, CHE says so instead of letting a model guess (run 19: mr-06,
+// vcc-20, vcc-25, vcc-31, vcc-36, vcc-37); with them, the model reads them as before.
+const EARLIER_TURN = new RegExp([
+  '\\b(?:last|previous|prior|earlier|first) (?:question|message|sentence|thing|request|words?|name|answer|reply|story|draft|version)s? (?:that )?(?:i|you) (?:just )?(?:asked|said|told|sent|wrote|gave|typed|mentioned|wanted|made|used)\\b',
+  '\\bmy (?:last|previous|prior|earlier) (?:question|message|sentence|request|point|words?)\\b',
+  '\\b(?:i|you) (?:said|told you|told me|asked|used|gave) (?:\\w+ )?(?:at|in) the (?:start|beginning) of (?:the|this|our) (?:call|conversation|chat)\\b',
+  '\\bwhere (?:we|you|i) (?:stopped|left off|left it)\\b',
+  '^(?:\\w+ ){0,2}(?:the )?same (?:as|thing as) (?:last time|before)\\b',
+  '\\b(?:earlier|before|last time) you (?:said|told me|suggested|thought|called)\\b|\\byou (?:said|told me) (?:earlier|before|last time)\\b',
+  // "What did I want you to change in the last draft?": a question about the owner's own words that points at a turn.
+  '\\b(?:did|have) i\\b.*\\b(?:the|my|your|our) (?:last|previous|prior|earlier) (?:draft|version|message|question|answer|reply)\\b',
+].join('|'));
+// "Rank my five most mentioned contacts", "how many times have I asked you about tax": a count of the owner's own
+// mentions. CHE keeps no such tally, so it says so instead of inventing numbers (run 19: mr-23, mr-28).
+const TALLY = /\b(?:my|i) (?:\w+ ){0,3}?(?:most|least) (?:often |frequently |commonly )?(?:mentioned|asked about|talked about|discussed)\b|\bhow (?:many times|often) (?:have|did|do) i (?:\w+ )?(?:ask(?:ed)?|told|tell|mention(?:ed)?|said|say|talk(?:ed)?|brought up|bring up)\b/;
+
+export function ownerMemoryQuestion(message, history = null) {
+  const whole = plainWords(message);
+  // "How did you handle my last question?" asks about CHE's own work, which its answer evidence records: not this route.
+  if (whole && EARLIER_TURN.test(whole) && !/\b(?:how|why) (?:did |do )?you (?:handle|handled|answer|answered|approach|approached|deal|dealt|process|processed|work|worked|arrive|arrived|get|got)\b/.test(whole)) {
+    // Only an empty conversation is answered here; with earlier turns the model can see them.
+    const earlier = (Array.isArray(history) ? history : []).some((turn) => turn?.role === 'user' && String(turn.content ?? turn.text ?? '').trim());
+    return earlier ? null : { topic: '', noHistory: true };
+  }
+  if (whole && TALLY.test(whole) && !FICTION_REQUEST.test(whole)) return { topic: '', tally: true };
   const q = plainWords(splitAsk(message).ask);
   if (!q || q.split(' ').length > 30 || FICTION_REQUEST.test(q)) return null;
   if (DISCUSSING.test(q.replace(/\b(?:che|chay|chey|shay)\b ?/g, '').trim())) return { topic: '', discussion: true };
@@ -260,7 +288,9 @@ export function ownerMemoryQuestion(message) {
     const tail = new RegExp(`${OWNER_ACT}\\b(?: (?:that|to you|me))? (.+)$`).exec(q);
     topic = tail ? tail[1] : '';
   }
-  topic = topic.replace(/\b(?:to you|with you|before|already|so far|yet|ever|recently|lately|earlier)\b/g, ' ').replace(/\s+/g, ' ').trim();
+  // "Who did I say I was meeting" → "meeting on friday": the owner's "I" is not part of the subject.
+  topic = topic.replace(/\b(?:to you|with you|before|already|so far|yet|ever|recently|lately|earlier)\b/g, ' ').replace(/\s+/g, ' ').trim()
+    .replace(/^i (?:was |am |were |had |have |would |will )?/, '');
   if (!contentWords(topic).length) topic = '';
   // "Earlier I gave you two meeting times. Which one did I confirm?": "one" points back to the sentence before.
   const pointsBack = /\b(?:which|that|this|the other|the) ones?\b|\b(?:it|that|them|those|these|which)$/.test(q);
@@ -299,6 +329,12 @@ export function answerOwnerMemoryQuestion(data = {}, question = {}, history = []
     const asked = clip(String(lastUser.content ?? lastUser.text).replace(/```[\s\S]*?```/g, ' ').trim(), 200);
     const replied = lastReply ? clip(String(lastReply.content ?? lastReply.text).replace(/```[\s\S]*?```/g, ' ').trim(), 240) : '';
     return { kind: 'owner_attested', records: [], answer: `We were just on this, sir. You said: "${asked}"${replied ? ` and I answered: "${replied}"` : ', and I had not answered yet'}.` };
+  }
+  if (question.noHistory) {
+    return { kind: 'none', records: [], answer: "I don't have our earlier messages in this conversation, sir, so I have no record of what you're referring to, and I won't guess it. Tell me again, or say which one you mean, and I'll pick it up from there." };
+  }
+  if (question.tally) {
+    return { kind: 'none', records: [], answer: "I don't have a count of how often you've mentioned or asked about things, sir, so I can't rank or total them, and I won't make up numbers. Name a person or topic and I'll search my memory for the records I do have." };
   }
   if (question.recent) {
     const last = [...(Array.isArray(history) ? history : [])].reverse().find((turn) => turn?.role === 'user' && String(turn.content ?? turn.text ?? '').trim());

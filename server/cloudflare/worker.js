@@ -10906,7 +10906,7 @@ export class CheState extends DurableObject {
         // A question about the owner's own memories or about the evidence for
         // an earlier answer is answered from records further down, in his own
         // words: no interpreter rewrite, clarifying question or model read.
-        const memoryRoute = ownerDevice && !body.attachment && !!(asksForEvidence || ownerMemoryQuestion(rawMessage) ||
+        const memoryRoute = ownerDevice && !body.attachment && !!(asksForEvidence || ownerMemoryQuestion(rawMessage, ownerHistory) ||
           factTurn || ownerMemorySearchIntent(rawMessage) || outsideCorrespondenceIntent(rawMessage, { history: ownerHistory }));
         // Voice Studio: the owner's spoken requests about his voice library are answered
         // from the provider's account, with no model call. Anything else goes on below.
@@ -12108,7 +12108,7 @@ export class CheState extends DurableObject {
         // record, every line computed from the day's Brain records. No model.
         // A question about what the owner himself said ("what have I told you about my brain
         // review") is his memory question, below, never the review.
-        const memoryQuestion = ownerDevice && !body.attachment ? ownerMemoryQuestion(rawMessage) : null;
+        const memoryQuestion = ownerDevice && !body.attachment ? ownerMemoryQuestion(rawMessage, ownerHistory) : null;
         // "Are you lagging?" / "performance report" / /che-performance: measured timings, never an estimate (perf_watch.js).
         if (ownerDevice && !body.attachment && performanceIntent(rawMessage)) {
           const report = await performanceReport(this.ctx.storage);
