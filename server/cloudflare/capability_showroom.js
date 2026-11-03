@@ -180,7 +180,10 @@ export function showroomView(connectors = {}, { recent = {}, hasProofFile = () =
 
 // The owner asks CHE what she can do, shows an example, or which features need setup. These match the words of
 // those questions to the showroom, so the answer comes from the same states the cards show.
-const OVERVIEW = /\b(?:what\s+(?:can|could)\s+you\s+(?:create|make|build|design)|show\s+(?:me\s+)?(?:what\s+you\s+can|your\s+capabilit|everything)|capabilit(?:y|ies)|showroom)\b/i;
+// "Capability" asks for the showroom only as a question about CHE's own ("what are your capabilities?", "list
+// capabilities", "capabilities?"), never as a word inside a task: the owner's challenge "backtest a pairs-trading
+// strategy ... implement the capability" (2026-11-03, run 41715942921) got the showroom summary instead of the work.
+const OVERVIEW = /\b(?:what\s+(?:can|could)\s+you\s+(?:create|make|build|design)|show\s+(?:me\s+)?(?:what\s+you\s+can|your\s+capabilit|everything)|(?:your|che['’]?s|her)\s+capabilit(?:y|ies)|(?:what|which)\s+capabilit(?:y|ies)\s+(?:do|does|are|have)|(?:list|show)\s+(?:me\s+)?(?:all\s+)?(?:the\s+)?capabilit(?:y|ies)|showroom)\b|^\s*capabilit(?:y|ies)\s*[?.!]?\s*$/i;
 const NEEDS_SETUP = /\b(?:which|what)\s+(?:features?|capabilit(?:y|ies)|things?)\s+(?:need|still\s+need)\s+(?:setup|set\s+up|connect\w*)|needs?\s+setup\b/i;
 const EXAMPLE = /\b(?:show|give|see)\s+(?:me\s+)?(?:an?\s+|the\s+)?(?:example|sample|demo)\s+(?:of|for)\s+(?:an?\s+|the\s+)?(.{3,60})/i;
 const CAN_RENDER = /\bcan\s+you\s+(?:actually\s+)?(?:render|make|build|design|create|model)\s+(?:this\s+|it\s+|that\s+)?(?:in\s+)?(?:3d|three\s*d|3-d|a\s+video|a\s+game|an?\s+app|a\s+website)\s*[?.!]?\s*$/i;
