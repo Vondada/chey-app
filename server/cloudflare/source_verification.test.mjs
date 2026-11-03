@@ -1181,3 +1181,30 @@ test('Google stays the topic unless it is the search command (Codex, #861)', () 
   assert.equal(newsQuestion('Can you google the latest Tesla news?', AT).topic, 'tesla');
   assert.equal(newsQuestion('Search for Nvidia news on Google today', AT).topic, 'nvidia');
 });
+
+// Certification run 24, ti-36: "Why can news-driven price moves be hard to trade consistently?" is general knowledge.
+// Checked as today's news, every sentence became "no article I retrieved says this about News-driven; ... Information;
+// ... Herding". A general explanation is not a news claim; a question about current news still is.
+const TI36 = 'News-driven price moves can be challenging to trade consistently due to several factors. Information asymmetry, where not all market participants have equal access to the same information, can lead to unequal market reactions, making it difficult for traders to anticipate and react to news-driven price moves. Herding behavior, where traders follow the crowd and react to market sentiment rather than fundamentals, makes those moves fast and hard to time.';
+test('a general question about how news moves markets is answered, not checked as a news story', async () => {
+  for (const q of ['Why can news-driven price moves be hard to trade consistently?', 'How does news trading work?', 'How do markets react to an earnings announcement?']) {
+    assert.equal(newsQuestion(q), null, q);
+  }
+  const offline = async () => { throw new TypeError('offline'); };
+  const out = await guardCitations(TI36, { message: 'Why can news-driven price moves be hard to trade consistently?', fetcher: offline });
+  assert.equal(out.text, TI36);
+  assert.deepEqual(out.removed, []);
+  const calls = useWeb({ down: true });
+  const said = await (await owner({ model: () => TI36 })).say('Why can news-driven price moves be hard to trade consistently?');
+  assert.doesNotMatch(said.reply, /no article I retrieved|I can't verify that/);
+  assert.match(said.reply, /Information asymmetry/);
+  assert.equal(calls.filter((u) => /gdeltproject|algolia/.test(u)).length, 0, 'no news listing was searched');
+  // Current news is still news, and its unbacked story is still removed.
+  // Codex review on #902: coverage of a named subject is a news question, asked "why" or not.
+  for (const q of ["Search the web for today's top headline.", 'What is the news?', 'Any news on Tesla?', 'Why is the news about Tesla so bad today?',
+    'Why is Tesla in the news?', 'Why are Nvidia shares making headlines?', 'Why does the news say Apple announced a recall?','How do the headlines about Apple look?']) {
+    assert.ok(newsQuestion(q), q);
+  }
+  const headline = await guardCitations('The top headline today is that Donald Trump announced his cabinet picks.', { message: "Search the web for today's top headline.", fetcher: offline });
+  assert.equal(headline.removed.length, 1);
+});

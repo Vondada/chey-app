@@ -82,7 +82,12 @@ export function guardExecutionClaims(reply, { message = '', receipts = [], docum
   // Run 20 widened this to advice in general (eer-28, eer-34, mr-24, oac-34): see adviceSentence below.
   const conditional = (s) => !reported.test(s) && !identifiers.test(s) && adviceSentence(s, message, execution);
   const claimText = splitSentences(text).filter((s) => !conditional(s)).join('');
-  const ranClaim = execution.test(claimText) || transcript.test(text) || unlabeledOutput.test(text);
+  // In answer to a how-to question, a fenced block the reply introduces as an example ("For example, store it like this:")
+  // is example code ({"job_id": ...} in "how do you prevent a double run?"), not a transcript of a run (certification run
+  // 24, eer-26). A block introduced as output ("Here is the actual tool output:") and every block anywhere else is checked.
+  const advice = adviceAsk(message);
+  const scanned = advice ? withoutExampleFences(text) : text;
+  const ranClaim = execution.test(claimText) || transcript.test(scanned) || unlabeledOutput.test(scanned);
   const repoClaim = requireEvidence || identifiers.test(text) || ranClaim || repoEvidence.test(claimText) || (commandLine.test(text) && ranClaim);
   const sourceClaim = sourceClaimIn(text, verifiedPaths);
   // Record claims are judged sentence by sentence, so one honest "not" elsewhere never covers a fabrication.
@@ -99,17 +104,26 @@ export function guardExecutionClaims(reply, { message = '', receipts = [], docum
   // a transcript, a coding-evidence failure, a command left beside a removed claim, or a reply with fewer than eight
   // words left besides an earlier guard's "Nothing was done" note, still gets the whole notice.
   // A request that asks for no run ("Set a rule ...", "List my tasks") loses only its claim sentences too (run 20).
-  if ((repoClaim || sourceClaim) && (/\?\s*$/.test(String(message).trim()) || explanationAsk(message) || !askedToAct(message)) && !REPORT_ASK.test(String(message)) && !requireEvidence && !reported.test(text) && !transcript.test(text) && !unlabeledOutput.test(text)) {
+  if ((repoClaim || sourceClaim) && (/\?\s*$/.test(String(message).trim()) || explanationAsk(message) || !askedToAct(message)) && !REPORT_ASK.test(String(message)) && !requireEvidence && !reported.test(text) && !transcript.test(scanned) && !unlabeledOutput.test(scanned)) {
     const kept = [];
     const cut = [];
+    const claimSentence = (s) => identifiers.test(s) || (!conditional(s) && (execution.test(s) || repoEvidence.test(s))) || sourceClaimIn(s, verifiedPaths);
     for (const s of splitSentences(text)) {
-      const claim = identifiers.test(s) || (!conditional(s) && (execution.test(s) || repoEvidence.test(s))) || sourceClaimIn(s, verifiedPaths);
+      // A how-to answer's example field with a number in it ("Job ID: 1234") is an invented specific: it goes alone.
+      const field = advice && REPORT_FIELD.test(s) && /\d/.test(s);
+      const claim = field || claimSentence(s);
+      // Advice that lists an invented identifier among general items ("read back the current main, the handoff and PR
+      // #153/#154") loses that item, not the advice (run 24, eer-16). A sentence that is a claim without it still goes.
+      if (claim && !field) {
+        const trimmed = withoutListedIdentifiers(s);
+        if (trimmed !== s && !claimSentence(trimmed) && (trimmed.match(/[A-Za-z]+/g) || []).length >= 4) { cut.push(s); kept.push(trimmed); continue; }
+      }
       // A list number left behind by a removed item ("1.") goes with it.
       if (claim && kept.length) kept.push(kept.pop().replace(/(^|\s)\d+[.)]\s*$/, '$1'));
       (claim ? cut : kept).push(s);
     }
     const rest = kept.join('').trim();
-    if (cut.length && !kept.some((k) => commandLine.test(k.trimStart()) || REPORT_FIELD.test(k)) && (rest.replace(/Nothing was done, sir:[^.]*\./g, '').match(/[A-Za-z]+/g) || []).length >= 8) {
+    if (cut.length && !kept.some((k) => commandLine.test(k.trimStart()) || (!advice && REPORT_FIELD.test(k))) && (rest.replace(/Nothing was done, sir:[^.]*\./g, '').match(/[A-Za-z]+/g) || []).length >= 8) {
       const records = guardRetrievalClaims(rest, { documentRead, verifiedText });
       const body = records.text === RETRIEVAL_NOT_EVIDENCE ? '' : records.text;
       if (body) return { text: `${body} ${EXECUTION_NOTE}`, removed: [...cut.map((s) => s.trim()), ...records.removed.map((r) => r.sentence)] };
@@ -155,6 +169,29 @@ const CONDITION_OPENING = /^\s*(?:[-*•]\s*|\d+[.)]\s*)?(?:if|when|whenever|onc
 const EXPLAIN_ASK = /^\s*(?:(?:please|now|ok|okay|che|chey|chay)[,\s]+)*(?:design|explain|describe|outline|sketch|propose|compare|define|summari[sz]e|walk\s+me\s+through|tell\s+me\s+(?:about|how|why|what)|help\s+me\s+understand)\b/i;
 const RUN_ASK = /\b(?:run|rerun|execute|deploy|push|merge|commit|apply|ship|release|install|restart|start|trigger|launch|fix|build|send|upload|publish|migrate)\b/i;
 const explanationAsk = (message) => EXPLAIN_ASK.test(String(message || '')) && !RUN_ASK.test(String(message || ''));
+// "How do you prevent that next time?", "What must be read back first?", "Why does a retry run twice?": the message's last
+// sentence asks how, what or why in general. With no request to act, no report and no past event asked about, the answer
+// is advice (certification run 24, eer-16 and eer-26).
+const ADVICE_QUESTION = /(?:^|[.!?:;]\s+)(?:(?:so|and|but|ok(?:ay)?|sir|che|chey)[,\s]+)*(?:how\s+(?:do|does|can|could|should|would|might|to)|what\s+(?:is|are|should|must|would|could|can|do|does|makes|causes)|why|which|should\s+(?:I|we|you)|can\s+(?:I|we|you))\b[^.!?]*\?\s*$/i;
+const adviceAsk = (message) => {
+  const m = String(message || '');
+  return (explanationAsk(m) || ADVICE_QUESTION.test(m)) && !askedToAct(m) && !REPORT_ASK.test(m) && !PAST_ASK.test(m);
+};
+// An identifier listed as one item of a list or in brackets (", and PR #153/#154", " (commit 1a2b3c4)") at the end of its
+// clause. "PR #153 merged", with the identifier as the subject of a claim, is never trimmed.
+const LISTED_IDENTIFIER = /(,\s*(?:and\s+|or\s+)?|\s+(?:and|or)\s+|\s*\()(?:the\s+)?(?:(?:PRs?|pull\s+requests?)\s*(?:numbers?\s*)?(?:#\s*)?\d+|commit\s+[0-9a-f]{7,64}|[0-9a-f]{16,64})(?:\s*(?:[/&,]|and|or)\s*(?:#\s*)?\d+)*\)?(?=\s*(?:[,;:.!?)]|$))/i;
+function withoutListedIdentifiers(sentence) {
+  let out = sentence;
+  for (let m = LISTED_IDENTIFIER.exec(out); m; m = LISTED_IDENTIFIER.exec(out)) {
+    let head = out.slice(0, m.index);
+    // "the current main, Flagstaff claims, and PR #153" -> "the current main and Flagstaff claims".
+    const word = /\b(and|or)\b/i.exec(m[1]);
+    const comma = head.lastIndexOf(', ');
+    if (word && comma >= 0) head = `${head.slice(0, comma)} ${word[1]} ${head.slice(comma + 2)}`;
+    out = head + out.slice(m.index + m[0].length);
+  }
+  return out;
+}
 // A request for CHE to act. "Explain a safe release process" and "How should we deploy?" name an action without asking for
 // one; "Explain the fix and then deploy it" asks.
 const askedToAct = (message) => {
@@ -180,7 +217,29 @@ const IMPERATIVE_MAIN = new RegExp(String.raw`^[^,]*,\s*(?:then\s+|you\s+(?:shou
 // Words that make the result hypothetical or described: a condition anywhere before it ("until its receipt shows the job
 // completed"), "what" as the object of a verb ("shows what was dispatched"), or a modal or "need" that governs the result
 // ("you need the fix build passed"). A word inside a relative clause of the subject ("The command which processes requests
-// completed", "The job that should retry completed") governs nothing (Codex review on #883).
+// completed", "The job that should retry completed") governs nothing (Codex review on #883). A purpose ("a lock to ensure
+// that the job is executed only once", "this prevents the job being executed twice") describes what should happen
+// (certification run 24, eer-26), but only in the result's own clause: "The configuration ensures reliability, and the
+// tests passed" reports a run (Codex review on #902), and so does "The patch which prevents it was deployed".
+const PURPOSE = /(?<!\b(?:which|that|who)\s+(?:[\w'’]+\s+){0,3})\b(?:ensures?|ensuring|make\s+sure|makes\s+sure|so\s+that|in\s+order\s+(?:to|that)|prevents?|preventing|guarantees?|guaranteeing)\b/i;
+// Where a new clause starts: a semicolon, colon or dash, a comma before a conjunction, or a conjunction before a new subject.
+const CLAUSE_BREAK = /[;:—–]|,\s*(?:and|but|so|yet|then|while|whereas)\b|\s(?:and|but|yet|while|whereas)\s+(?=(?:the|a|an|it|its|this|that|these|those|our|my|your|their|all|every|each|[A-Z]\w*)\b)/g;
+const resultClause = (before) => {
+  let start = 0;
+  for (const m of before.matchAll(CLAUSE_BREAK)) start = m.index + m[0].length;
+  return before.slice(start);
+};
+// A fenced block counts as an example only when the words just before it present one; output words make it a transcript.
+const EXAMPLE_INTRO = /\b(?:for\s+(?:example|instance)|e\.g\.|such\s+as|like\s+(?:this|so)|(?:an?\s+)?(?:example|sample)s?|something\s+like|(?:might|would|could)\s+look\s+like|here(?:['’]s|\s+is)\s+how|you\s+(?:could|can|might|would)\s+\w+)\b/i;
+const OUTPUT_INTRO = /\b(?:actual|real|outputs?|results?|returned|came\s+back|got\s+back|printed|produced|(?:I|we|CHE)\s+(?:\w+\s+){0,2}(?:ran|executed|got|saw)|logs?\s+show(?:ed)?)\b/i;
+function withoutExampleFences(text) {
+  let last = 0;
+  return text.replace(/```[\s\S]*?(?:```|$)/g, (block, offset) => {
+    const intro = text.slice(last, offset).split(/(?<=[.!?])\s+/).filter((part) => part.trim()).slice(-1)[0] || '';
+    last = offset + block.length;
+    return EXAMPLE_INTRO.test(intro) && !OUTPUT_INTRO.test(intro) ? '\n' : block;
+  });
+}
 const HYPOTHETICAL_BEFORE = /\b(?:if|unless|until|whether|once|in\s+case|assuming|suppose)\b|\b(?:shows?|records?|says?|lists?|logs?|tells?|checks?|tracks?|notes?|sees?|knows?)\s+what(?:ever)?\b/i;
 const MODAL_GOVERNS = /(?<!\b(?:which|that|who|whose)\s+(?:[\w'’]+\s+){0,3})\b(?:must|should|shall|needs?|has\s+to|have\s+to|ought\s+to|can|could|would|may|might|will|won['’]t|requires?|required)\b(?:\s+[\w:,'’-]+){0,8}\s*$/i;
 // "When you asked earlier", "Once you logged off", "yesterday": a condition that tells of the past is a report.
@@ -195,7 +254,7 @@ function adviceSentence(s, message, execution) {
   if (IMPERATIVE_OPENING.test(s) || (ACTION_OPENING.test(s) && !askedToAct(ask))) return true;
   const m = execution.exec(s);
   const before = m ? s.slice(0, m.index + m[0].length) : '';
-  if (m && (HYPOTHETICAL_BEFORE.test(before) || MODAL_GOVERNS.test(before))) return true;
+  if (m && (HYPOTHETICAL_BEFORE.test(before) || MODAL_GOVERNS.test(before) || PURPOSE.test(resultClause(before)))) return true;
   if (!CONDITION_OPENING.test(s) && !/^\W*(?:\d+[.)]\s*)?(?:after|before|as\s+soon\s+as)\b/i.test(s)) return false;
   return explanationAsk(ask) || IMPERATIVE_MAIN.test(s) || !(RUN_ASK.test(ask) || REPORT_ASK.test(ask) || PAST_ASK.test(ask));
 }

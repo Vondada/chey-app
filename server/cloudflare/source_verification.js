@@ -256,6 +256,14 @@ const SEARCH_VERB = /\b(?:search\w*|look(?:ing)? (?:up|for)|find|check|browse|go
 const WEB_PLACE = /\b(?:on|across|via|using|in)\s+(?:the\s+)?(?:web|internet|net|google|online)\b|\bonline\b/gi;
 // An explicit ask for current news keeps the news handling even when a quoted claim is judged in the same breath.
 const CURRENT_NEWS = /\b(?:latest|recent|current|breaking|new)\s+(?:news|headlines?|updates?|developments?|stor(?:y|ies))\b|\b(?:news|headlines?|updates?)\s+(?:on|about|regarding|from|for|today)\b|\bwhat(?:'s| is| has)?\s+(?:happen\w*|going on)\b|\bany (?:news|updates?)\b/i;
+// "Why can ...", "How does ...": a question about how something works in general. "Why did ..." and "How did ..." ask about
+// an event and stay news questions.
+const GENERAL_ASK = /^\s*(?:(?:hey[, ]*)?(?:che|chay|chey|shay)[,!:]?\s*)?(?:please\s+)?(?:why\s+(?:can|could|do|does|would|might|should|is|are|will)|how\s+(?:do|does|can|could|should|would|might|to))\b/i;
+// "News" as a modifier ("news-driven moves", "news trading") names a kind of thing, not today's news.
+// Coverage of a subject ("Why is Tesla in the news?", "Why are Nvidia shares making headlines?", "Why was the recall
+// announced?") asks about the stories themselves, so it stays a news question (Codex review on #902).
+const COVERAGE = /\b(?:in\s+the\s+news|making\s+(?:the\s+)?(?:news|headlines?)|headlines?|top\s+stor(?:y|ies)|breaking|reported|announced|unveiled|launched|released)\b/i;
+const NEWS_MODIFIER =/\bnews[- ](?:driven|based|related|sensitive|moving|trading|traders?|sentiment|cycles?|shocks?|catalysts?)\b/gi;
 const TOPIC_DROP = new RegExp(`\\b(?:what|whats|what's|is|was|were|are|the|a|an|biggest|big|top|main|most|important|latest|recent|recently|breaking|news|story|stories|headline|headlines|today|tonight|yesterday|this|last|week|month|morning|night|right|now|so|far|on|in|of|for|about|tell|me|give|show|any|some|happening|happened|going|announced|announcements?|released|releases|launched|launches|unveiled|che|chay|hey|please|sir|can|you|i|my|there|been|has|have|did|do|from|around|world|day|${MONTH_RE}|\\d{1,4}(?:st|nd|rd|th)?)\\b`, 'gi');
 
 /**
@@ -271,6 +279,10 @@ export function newsQuestion(message, now = Date.now()) {
   const quotesClaim = outsideQuotes !== text && [...text.matchAll(QUOTED_TEXT)].some((m) => (m[1] || m[2] || m[3] || m[4]).trim().split(/\s+/).length >= 3);
   const currentAsk = CURRENT_NEWS.test(outsideQuotes) || WHEN_WORDS.test(outsideQuotes);
   if (!currentAsk && (quotesClaim || GIVEN_HEADLINE.test(outsideQuotes)) && EVALUATE.test(outsideQuotes)) return null;
+  // A general question about how news works ("Why can news-driven price moves be hard to trade consistently?", "How does a
+  // product launch move a stock?") asks for an explanation, not for stories: with no day and no current news named, its
+  // answer is not checked as reported news (certification run 24, ti-36: every sentence was removed as an unsourced story).
+  if (!currentAsk && !datesIn(text, now).length && !COVERAGE.test(outsideQuotes) && (GENERAL_ASK.test(outsideQuotes) || !NEWS_WORDS.test(text.replace(NEWS_MODIFIER, ' ')))) return null;
   // Personal announcements containing "news" do not request research.
   // Short spoken questions, imperatives and news-command phrases do.
   const request = /\?\s*$/.test(text) || NEWS_ASK.test(text) || NEWS_PHRASE.test(text);
