@@ -277,6 +277,45 @@ export function promptScaffolding(prompt, own = []) {
   return { labels: [...labels].sort((a, b) => b.length - a.length), examples: [...examples] };
 }
 
+/**
+ * Quoted lines of [prompt] with no placeholder and at least four words: sample lines the prompt gives the model to say
+ * now and then (the flirting line's "you're lucky you're cute, sir"). Saying one is personality; a reply that is nothing
+ * but one is not an answer (run 25 csd-01 and thb-33: the 8B model's whole reply to a code and a backtest question).
+ */
+export function promptPhrases(prompt, own = []) {
+  const mineLower = flat(own.map((l) => String(l ?? '')).join('\n')).toLowerCase();
+  const phrases = new Set();
+  for (const m of String(prompt || '').matchAll(QUOTED)) {
+    const phrase = flat(m[1]).replace(/[.!?,;:]+$/, '').replace(/,?\s+sir$/i, ''); // the address is CHE's own, not the line's
+    if (!TEMPLATE_MARK.test(phrase) && words(phrase).length >= 4 && !mineLower.includes(phrase.toLowerCase())) phrases.add(phrase);
+  }
+  return [...phrases];
+}
+
+/** The text of [reply] left once the prompt's sample lines are taken out. */
+function besidesPhrases(reply, phrases) {
+  let text = flat(reply).replace(/[’‘`]/g, "'");
+  for (const phrase of phrases) text = text.replace(new RegExp(escapeRe(phrase.replace(/[’‘`]/g, "'")).replace(/ /g, '\\s+'), 'gi'), ' ');
+  return text;
+}
+
+const ANSWER_WORDS = 12;
+const ANSWER_MARK = /\d|[{}()=;<>\[\]]|```/;
+const STOP = new Set(['about', 'after', 'again', 'also', 'because', 'been', 'could', 'does', 'from', 'have', 'here', 'into', 'just', 'like', 'more', 'only', 'should', 'some', 'such', 'than', 'that', 'their', 'them', 'then', 'there', 'they', 'this', 'very', 'what', 'when', 'where', 'which', 'while', 'will', 'with', 'would', 'your']);
+const contentWords = (text) => words(text).filter((w) => w.length >= 4 && !STOP.has(w));
+
+/**
+ * Whether [reply], besides the sample lines, answers [message]: twelve words or more, a figure or code, or a content word
+ * of the question ("const max = (a, b) => Math.max(a, b);" answers; "when you ask such a smart question" does not).
+ */
+function answersBesidesPhrases(reply, phrases, message) {
+  const rest = besidesPhrases(reply, phrases);
+  const restWords = words(rest).filter((w) => w !== 'sir');
+  if (restWords.length >= ANSWER_WORDS || ANSWER_MARK.test(rest)) return true;
+  const asked = new Set(contentWords(message));
+  return contentWords(rest).some((w) => asked.has(w));
+}
+
 const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const SENTENCES = /[\s\S]+?(?:[.!?]+["”']?(?=\s|$)\s*|\n+|$)/g;
 
@@ -371,7 +410,7 @@ export async function guardPromptEcho(reply, ctx = {}, { ask = plainAnswer } = {
   if (!ctx.systemPrompt) return { text: original, removed: [] };
   const scaffolding = promptScaffolding(ctx.systemPrompt, ownText(ctx));
   const first = stripPromptScaffolding(original, scaffolding);
-  if (!first.labels.length && !first.examples.length) return { text: original, removed: [] };
+  if (!first.labels.length && !first.examples.length) return phraseOnly(original, ctx, ask);
   const removed = [{ rule: first.examples.length ? 'prompt_example_echo' : 'prompt_label_echo', sentence: original.slice(0, 200) }];
   const enough = (r) => r.labels.length < 2 && r.words >= 8 && r.words >= words(original).length / 2;
   if (enough(first)) return { text: first.text, removed };
@@ -381,6 +420,23 @@ export async function guardPromptEcho(reply, ctx = {}, { ask = plainAnswer } = {
   const second = stripPromptScaffolding(again, scaffolding);
   if (again && second.words >= 3 && second.labels.length < 2) return { text: second.text, removed, served_by: (asked && typeof asked === 'object' && asked.served_by) || null };
   return { text: first.words >= 8 ? first.text : ECHO_FALLBACK, removed };
+}
+
+/**
+ * A reply that is one of the prompt's sample lines and no answer besides (answersBesidesPhrases), to a message that asked
+ * for something (six words or more), is asked again; the re-ask must answer by the same test. The line stays whenever an
+ * answer comes with it, and short chat ("Thanks.") keeps it too.
+ */
+async function phraseOnly(original, ctx, ask) {
+  const message = String(ctx.rawMessage || ctx.message || '');
+  const asked = words(message).length >= 6;
+  const phrases = asked ? promptPhrases(ctx.systemPrompt, ownText(ctx)).filter((p) => flat(original).replace(/[’‘`]/g, "'").toLowerCase().includes(p.replace(/[’‘`]/g, "'").toLowerCase())) : [];
+  if (!phrases.length || answersBesidesPhrases(original, phrases, message)) return { text: original, removed: [] };
+  const removed = [{ rule: 'prompt_phrase_only', sentence: original.slice(0, 200) }];
+  const reply = await Promise.resolve().then(() => ask(ctx)).catch(() => '');
+  const again = String((reply && typeof reply === 'object' ? reply.text : reply) || '');
+  if (again && answersBesidesPhrases(again, phrases, message)) return { text: again, removed, served_by: (reply && typeof reply === 'object' && reply.served_by) || null };
+  return { text: ECHO_FALLBACK, removed };
 }
 
 /** Truth-pipeline stage for rule 4: right after rules 1 and 2, on the model's own text. */

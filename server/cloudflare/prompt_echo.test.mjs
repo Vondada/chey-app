@@ -216,3 +216,34 @@ test('a peer-claim re-ask records its own engine too', async () => {
   assert.equal(answer.served_by.provider, 'groq');
   assert.equal(answer.model, 'llama-3.3-70b-versatile');
 });
+
+// Run 25 (41657004307) csd-01 and thb-33: the 8B model's whole reply was the flirting rule's sample line. The prompt
+// below is the real languageLine with flirting on, so the line is the one the model was shown.
+import { languageLine } from './social_corrections.js';
+import { promptPhrases } from './context_echo.js';
+const SOCIAL_PROMPT = `You are CHE, the owner's private AI.${languageLine({ flirt: true })}`;
+const LINE = /lucky you're cute/i;
+
+test('a reply that is only the prompt\'s sample line is asked again; with an answer, the line stays', async () => {
+  assert.ok(promptPhrases(SOCIAL_PROMPT).some((p) => LINE.test(p)), 'the sample line is read from the prompt');
+  const code = 'Write me a JavaScript function that adds up an array of numbers.';
+  const answer = 'Here you go, sir: function total(xs) { return xs.reduce((a, b) => a + b, 0); } It starts at zero, so an empty array gives 0.';
+  for (const reply of ['Sir, you\'re lucky you\'re cute, sir.', 'Sir, you\'re lucky you\'re cute when you ask such a smart question.']) {
+    const out = await guardPromptEcho(reply, { systemPrompt: SOCIAL_PROMPT, rawMessage: code }, { ask: async () => answer });
+    assert.equal(out.text, answer, reply);
+    assert.equal(out.removed[0].rule, 'prompt_phrase_only');
+  }
+  // Personality kept: the line followed by a real answer is untouched, and short chat may get the line on its own.
+  const both = `Sir, you're lucky you're cute. ${answer}`;
+  assert.deepEqual(await guardPromptEcho(both, { systemPrompt: SOCIAL_PROMPT, rawMessage: code }, { ask: async () => 'unused' }), { text: both, removed: [] });
+  const chat = 'You\'re lucky you\'re cute, sir.';
+  assert.deepEqual(await guardPromptEcho(chat, { systemPrompt: SOCIAL_PROMPT, rawMessage: 'Oops, I locked myself out.' }, { ask: async () => 'unused' }), { text: chat, removed: [] });
+  // Codex review: a short real answer next to the line is an answer (code, a figure, a word of the question).
+  const short = 'Sir, you\'re lucky you\'re cute. const max = (a, b) => Math.max(a, b);';
+  assert.deepEqual(await guardPromptEcho(short, { systemPrompt: SOCIAL_PROMPT, rawMessage: 'Write a JavaScript function returning the larger of two numbers.' }, { ask: async () => 'unused' }), { text: short, removed: [] });
+  // A re-ask that is still only the line is not used.
+  const stillLine = await guardPromptEcho('Sir, you\'re lucky you\'re cute, sir.', { systemPrompt: SOCIAL_PROMPT, rawMessage: code }, { ask: async () => 'Sir, you\'re lucky you\'re cute when you ask such a smart question.' });
+  assert.equal(stillLine.text, ECHO_FALLBACK);
+  // No model to ask again: say so rather than send only the line.
+  assert.equal((await guardPromptEcho('Sir, you\'re lucky you\'re cute, sir.', { systemPrompt: SOCIAL_PROMPT, rawMessage: code }, { ask: async () => '' })).text, ECHO_FALLBACK);
+});
