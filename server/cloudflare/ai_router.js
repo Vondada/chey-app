@@ -996,7 +996,8 @@ export async function routeText(env, model, input, fetcher = fetch, usageStorage
           const detail = String(error?.message || error).slice(0, 700);
           providerLastError.set(provider.id, detail);
           errors.push(`${provider.id}: ${detail}`);
-          providerCooldownUntil.set(provider.id, now + geminiQuotaRestMs(error));
+          // From when the 429 arrived (Codex review): routing time before it must not shorten Google's delay.
+          providerCooldownUntil.set(provider.id, Date.now() + geminiQuotaRestMs(error));
           noteHealth(provider.id, { ok: false, status: error?.status || 429, quota: true, error: detail });
           continue;
         }

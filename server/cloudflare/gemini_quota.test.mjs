@@ -21,21 +21,26 @@ test('the 429 body says how long to wait and whether the quota is daily', () => 
   assert.equal(geminiQuotaRestMs({ retryAfterMs: 7_200_000 }), 15 * 60_000, 'capped at 15 minutes');
 });
 
-async function twoTurns(quotaId) {
+async function twoTurns(quotaId, { slowMs = 0, laterMs = 25_000 } = {}) {
   resetRouterForTests();
   const env = { GEMINI_API_KEY: 'test-key', CHE_DISABLE_KEYLESS_AI: '1', AI: { run: async () => ({ response: 'Cloudflare answer.' }) } };
   // Turn 1: every Gemini model answers 429 (each has its own limit). Turn 2: Gemini answers.
   let turn = 1;
+  const realNow = Date.now;
+  let skew = 0;
+  Date.now = () => realNow() + skew;
   const fetcher = async (url) => {
     if (!String(url).includes('generativelanguage')) return json({ error: 'offline test' }, 503);
-    return turn === 1 ? limited(quotaId, '20.5s') : chat('Gemini answer.');
+    if (turn === 1) { skew += slowMs; return limited(quotaId, '20.5s'); } // a slow 429: the clock moves while it is in flight
+    return chat('Gemini answer.');
   };
   const ask = () => routeText(env, '@cf/meta/llama-3.1-8b-instruct-fp8', { che_route: 'quality', messages: [{ role: 'user', content: 'Why do retries need backoff?' }] }, fetcher);
-  const first = await ask();
-  turn = 2;
-  const realNow = Date.now;
-  Date.now = () => realNow() + 25_000;
-  try { return { first: first.engine, second: (await ask()).engine }; } finally { Date.now = realNow; }
+  try {
+    const first = await ask();
+    turn = 2;
+    skew = laterMs;
+    return { first: first.engine, second: (await ask()).engine };
+  } finally { Date.now = realNow; }
 }
 
 test('after a per-minute 429, the next quality answer 25 seconds later comes from Gemini again', async () => {
@@ -49,4 +54,12 @@ test('after a daily-quota 429, that Gemini model stays rested for the hour', asy
   assert.equal(out.first, 'cloudflare');
   // Each Gemini model has its own daily quota, so another one may answer; the limited one does not.
   assert.notEqual(out.second, 'gemini');
+});
+
+test('the rest starts when the 429 arrives, not when routing began (Codex review)', async () => {
+  // The 429 took 15 seconds to arrive; 25 seconds after routing began is only 10 after it, inside the 20-second delay.
+  const out = await twoTurns('GenerateRequestsPerMinutePerProjectPerModel-FreeTier', { slowMs: 15_000 });
+  assert.notEqual(out.second, 'gemini');
+  const later = await twoTurns('GenerateRequestsPerMinutePerProjectPerModel-FreeTier', { slowMs: 15_000, laterMs: 40_000 });
+  assert.equal(later.second, 'gemini');
 });
