@@ -80,7 +80,10 @@ model sampling, not code.
 | R-06 | Saved owner facts appear in unrelated answers ("The owner's favorite drink is Sprite.", run 20 cre-45) | waiting on owner | The OWNER-STATED MEMORIES list goes into every prompt by design (#354 test); filtering by relevance changes that design | `worker.test.mjs` eighth-review test |
 | R-08 | Live code-switching probe does not say which reply rule failed (deploy `41448895778`) | done | #894 `5847d7dd` prints `why:`; the first `clean_swapped` it named was fixed in #895 `92f8f5ec` (clean mode cleans earlier turns sent to the model) | `social_corrections.js` socialProbe, cleanTurns |
 | R-07 | An Office consultation backs handoff text without checking the named agent was the one consulted | done | #897 `699ea027`: a named recipient or quoted speaker must be a consulted partner; requested stories and dialogue keep their lines (Codex finding) | `device_action_claims.js` guardModelOnlyCompletions |
-| R-09 | 48 of 61 incorrect run-24 answers came from the 3B fast model (reasoning, arithmetic, code, trading terms) | waiting on owner | Widen the strong-model test to these question kinds; it uses more of the free Workers AI allowance (the 8B model was chosen to stretch it) | run 24 `41491194768` |
+| R-09 | 48 of 61 incorrect run-24 answers came from the 3B fast model (reasoning, arithmetic, code, trading terms) | in progress | #900 `7a89116b` routes reasoning to the quality route, #906 `1598930d` adds clock arithmetic; run 25 `41657004307` 501/600, no gain: the 8B answered 102 of 176 quality-route rows at 84%. Next: prefer the free keyed engines over the 8B for reasoning, close the routing gaps (ir-15, ir-27, ir-48, cre-12/14/48) | run 25 `41657004307` |
+| R-10 | Staging jobs that overlap fail on the shared pairing code ("Incorrect pairing code", #904 and #902 staging) | open | The staging wait step lets two runs use the one staging Worker at once; serialise staging runs | #904 staging re-run passed |
+| R-11 | The 8B model opens with a persona line and can lose the answer ("Sir, you're lucky you're cute", run 25 csd-01, thb-33) | open | Keep the personality; an opener with no answer content must not stand as the reply | run 25 `41657004307` |
+| R-12 | The execution-claims stage replaces numbered design advice (run 25 eer-31) | open | Advice steps are not action claims (#902 covered prose, not numbered steps) | run 25 `41657004307` |
 
 ## Owner decisions needed
 - Office swipe (Q-02).
@@ -89,6 +92,7 @@ model sampling, not code.
 - Whether automatic background runs are allowed: yes, for the reliability recovery (owner, 2026-11-01).
 
 ## Log
+- 2026-11-03: #900-#905 merged (reasoning route, grader equivalents, advice claims, prompt echo, receipts logged, run-24 audit); run 25 501/600 (-5, no measurable gain); #906 merged and live; R-10 to R-12 added.
 - 2026-11-02: #897 merged (R-07 done: handoffs backed only to the consulted coworker); deploy `41504425451` verified live commit `699ea027`.
 - 2026-11-02: #891, #892, #894, #895 merged (probe state, Office notice and security refusals, staging deploy check, clean history); run 24 506/600 (+9); R-08 done, R-09 added.
 - 2026-11-02: #889 merged (context echo, history records); run 23 497/600 (-12; probe-state carry-over, Office notice, one claim slip under fix).
