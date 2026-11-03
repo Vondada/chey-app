@@ -15,6 +15,20 @@ const TRADING = /\b(?:drawdown|sharpe|sortino|risk[\/ -]?reward|r[- ]multiple|ex
 const ANALYSIS = /(?:^|[.?!]\s+)(?:(?:so|ok(?:ay)?|and|but|then)[,\s]+)?(?:how\s+(?:do|would|should|can|could|does|did)\s+(?:you|i|we|one|it|they)\b|why\s+(?:does|do|is|are|would|should|keep|can|did|might)\b|what\s+(?:decides|determines|causes|happens\s+(?:if|when)|is\s+the\s+difference|are\s+the\s+(?:risks|trade-?offs))\b|plan\s+(?:a|an|the|how)\b|compare\b|explain\s+(?:why|how)\b)/i;
 // Judging a source or a claim: independence, bias, reliability, cause.
 const SOURCE_CRITIQUE = /\b(?:independent|biased?|reliab(?:le|ility)|credib(?:le|ility)|primary\s+source|cited|citation|confound|causation|cherry-?pick|sample\s+size|peer[- ]review)\b/i;
+// Clock arithmetic: a time of day combined with a duration or a second time ("leaves at 2:40 pm, the trip takes 1 hour 35
+// minutes"). The unseen set (run 41656059143) sent that to the 3B model because it has no "how many" or operator; it got
+// it right, but time sums are the carrying arithmetic the 3B model fumbles. Timers, alarms and reminders are commands, not
+// questions, and stay fast.
+const CLOCK = /\b(?:[01]?\d|2[0-3])[:.][0-5]\d(?:\s*[ap]\.?m\b\.?)?|\b(?:1[0-2]|0?[1-9])\s*[ap]\.?m\b\.?|\b(?:noon|midnight)\b/gi;
+const DURATION = /\b(?:\d+(?:\.\d+)?|an?|one|two|three|four|five|six|seven|eight|nine|ten|twelve|fifteen|twenty|thirty|forty|forty-five|fifty|half\s+an?)\s*(?:hours?|hrs?|minutes?|mins?)\b|\b\d+\s*h\s*\d+\s*m?\b|\b\d+\s*(?:h|m)\b(?=[\s,.?!]|$)/i;
+const TIME_ASK = /\?|\b(?:what\s+time|how\s+long|when\b|arriv|land|finish|end|done|ready|elapsed|between)/i;
+const COMMAND = /^\s*(?:please\s+)?(?:remind|set|start|wake|schedule|alarm|book|add|cancel|snooze)\b/i;
+function clockArithmetic(text) {
+  const clocks = text.match(CLOCK) || [];
+  if (!clocks.length || !TIME_ASK.test(text)) return false;
+  if (COMMAND.test(text) && !/\?\s*$/.test(text)) return false;
+  return DURATION.test(text) || clocks.length >= 2;
+}
 // Creative and casual asks stay on the fast route even when they mention numbers or code words.
 const CREATIVE = /\b(?:poem|story|joke|song|lyrics|haiku|rap|limerick|roast|pick-?up\s+line|flirt)\b/i;
 
@@ -22,7 +36,7 @@ const CREATIVE = /\b(?:poem|story|joke|song|lyrics|haiku|rap|limerick|roast|pick
 export function needsReasoning(message = '') {
   const text = String(message || '').trim();
   if (text.length < 12 || CREATIVE.test(text)) return false;
-  if (ARITHMETIC.test(text) || LOGIC.test(text) || TRADING.test(text) || CODE_MARK.test(text)) return true;
+  if (ARITHMETIC.test(text) || clockArithmetic(text) || LOGIC.test(text) || TRADING.test(text) || CODE_MARK.test(text)) return true;
   if (QUANTITY.test(text) && /\d|\b(?:one|two|three|four|five|six|seven|eight|nine|ten|dozen|hundred|thousand|half|twice)\b/i.test(text)) return true;
   if (CODE_VERB.test(text) && CODE_NOUN.test(text)) return true;
   if (SOURCE_CRITIQUE.test(text) && /\?\s*$/.test(text)) return true;
