@@ -96,9 +96,15 @@ const asksPretendData = (text) => PRETEND_FRAME.test(text) && OWN_DATA.test(text
 // Copy written to sell or promote that promises an investment return. Writing about such promises ("a post warning people
 // about guaranteed-return scams") is the opposite and still reaches the model.
 const PROMO_ASK = /\b(?:write|draft|compose|create|make|craft|generate|give\s+me)\b[^.?!]{0,40}\b(?:sales|marketing|promo(?:tional)?|ad(?:vert(?:isement)?)?s?|posts?|tweets?|captions?|emails?|landing\s+page|copy|flyers?|brochures?|pitch|newsletter|announcement|testimonials?)\b/i;
-const PROMISED_RETURN = /\b(?:guarantee\w*|promised?|risk[\s-]?free|can['’]?t\s+lose|no\s+risk|zero\s+risk|certain)\b[^.?!]{0,40}\b(?:returns?|profits?|income|yields?|gains?|roi|payouts?|\d+\s*%)|\b(?:returns?|profits?|yields?|gains?|roi|payouts?|\d+\s*%)\b[^.?!]{0,30}\b(?:guaranteed|risk[\s-]?free|with\s+no\s+risk)\b/i;
+// The gain must be an investment's: a return with a rate, a period or "on investment", a profit, yield, ROI, payout or
+// dividend, or a percentage per period. A shop's "money-back guarantee and free returns" is a retail promise, not this
+// (Codex on #903), so retail guarantees are taken out before the check.
+const PROMISE_WORD = String.raw`(?:guarantee\w*|promised?|promising|assured|risk[\s-]?free|can['’]?t\s+lose|no\s+risk|zero\s+risk|certain)`;
+const INVEST_GAIN = String.raw`(?:(?:\d+(?:\.\d+)?\s*%|investment|monthly|annual(?:i[sz]ed)?|yearly|weekly|daily)\s+(?:[\w-]+\s+){0,2}?returns?|returns?\s+(?:on\s+(?:your\s+|the\s+)?investment|of\s+\d+(?:\.\d+)?\s*%)|(?:to\s+)?(?:return|earn|make|pay|yield)\s+\d+(?:\.\d+)?\s*%|profits?|yields?|gains?|roi|payouts?|dividends?|passive\s+income|\d+(?:\.\d+)?\s*%\s*(?:a|per|each|every)?\s*(?:month|year|week|day|annum))`;
+const PROMISED_RETURN = new RegExp(String.raw`\b${PROMISE_WORD}\b[^.?!]{0,40}?\b${INVEST_GAIN}\b|\b${INVEST_GAIN}\b[^.?!]{0,30}?\b(?:guaranteed|risk[\s-]?free|with\s+no\s+risk)\b`, 'i');
+const RETAIL_GUARANTEE = /\b(?:money[\s-]?back(?:\s+guarantee\w*)?|satisfaction\s+guarantee\w*|guarantee\w*\s+satisfaction|(?:free|easy|hassle[\s-]?free|\d+[\s-]?days?)\s+returns?|returns?\s+(?:policy|window|label|shipping)|refunds?|warrant(?:y|ies)|price[\s-]?match(?:\s+guarantee\w*)?|guaranteed\s+(?:delivery|shipping|fit|fresh\w*))\b/gi;
 const ABOUT_SCAMS = /\b(?:warn\w*|scams?|red\s+flags?|fraud\w*|avoid|beware|spot|explain|why|illegal|misleading|deceptive)\b/i;
-const asksGuaranteedReturn = (text) => PROMO_ASK.test(text) && PROMISED_RETURN.test(text) && !ABOUT_SCAMS.test(text);
+const asksGuaranteedReturn = (text) => PROMO_ASK.test(text) && PROMISED_RETURN.test(text.replace(RETAIL_GUARANTEE, ' ')) && !ABOUT_SCAMS.test(text);
 function uncheckedReportText(message = '') {
   const recover = /\b(?:recover|restore|retrieve)/i.test(message);
   return (failedButReported(message) ? 'I won\'t report a failure as a success, sir: when a tool fails, I say it failed. ' : 'I won\'t report it as done without checking, sir. ') + 'I cannot call a result complete when nobody checked or verified it: '

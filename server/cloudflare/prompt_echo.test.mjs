@@ -84,13 +84,13 @@ test('when no model can answer again, CHE says so instead of showing the echo', 
 test('the plain re-ask carries a short honest prompt, the owner\'s message and his recent turns', async () => {
   const calls = [];
   const env = { AI: { run: async (model, body) => { calls.push({ model, body }); return { response: '  Yes, sir, loud and clear.  ' }; } } };
-  const text = await plainAnswer({ env, rawMessage: 'Can you hear me?', ownerHistory: [{ role: 'user', content: 'hello' }, { role: 'assistant', content: 'Hi, sir.' }] });
+  const { text } = await plainAnswer({ env, rawMessage: 'Can you hear me?', ownerHistory: [{ role: 'user', content: 'hello' }, { role: 'assistant', content: 'Hi, sir.' }] });
   assert.equal(text, 'Yes, sir, loud and clear.');
   assert.equal(calls[0].body.messages[0].content, PLAIN_ANSWER_RULES);
   assert.deepEqual(calls[0].body.messages.slice(1).map((m) => m.role), ['user', 'assistant', 'user']);
   assert.equal(calls[0].body.messages.at(-1).content, 'Can you hear me?');
-  assert.equal(await plainAnswer({ env: {}, rawMessage: 'x' }), '', 'no model: empty, the caller keeps its fallback');
-  assert.equal(await plainAnswer({ env: { AI: { run: async () => { throw new Error('busy'); } } }, rawMessage: 'x' }), '');
+  assert.deepEqual(await plainAnswer({ env: {}, rawMessage: 'x' }), { text: '', served_by: null }, 'no model: empty, the caller keeps its fallback');
+  assert.deepEqual(await plainAnswer({ env: { AI: { run: async () => { throw new Error('busy'); } } }, rawMessage: 'x' }), { text: '', served_by: null });
 });
 
 test('the prompt_echo stage runs second in the pipeline, on the prompt this turn sent', async () => {
@@ -163,4 +163,56 @@ test('sales copy that promises an investment return is declined with an honest v
     assert.doesNotMatch(text, /guaranteed \d/);
   }
   for (const ask of ['Write a post warning people about guaranteed-return scams.', 'Write a sales post for my bakery.', 'Why are guaranteed returns a red flag?']) assert.notEqual(actionDomainOf(ask), 'guaranteed_return', ask);
+});
+
+test('a shop\'s guarantee, refund or free returns is retail copy, not an investment promise (Codex on #903)', () => {
+  for (const ask of [
+    'Write a sales post offering a 30-day money-back guarantee and free returns on shoes',
+    'Write an ad: satisfaction guaranteed or your money back, plus 20% off all orders.',
+    'Draft an email promising free returns and a lifetime warranty on every jacket.',
+    'Write a post: guaranteed delivery in 2 days and 10% off your first order.',
+  ]) assert.equal(actionDomainOf(ask), null, ask);
+  // Investment context still gates, even beside a retail word.
+  assert.equal(actionDomainOf('Write a landing page promising guaranteed returns on investment for our crypto fund.'), 'guaranteed_return');
+  assert.equal(actionDomainOf('Write a post with free returns on shoes, and say our members are guaranteed a 20% monthly return.'), 'guaranteed_return');
+});
+
+// ─── The re-asked answer's engine is the one recorded (Codex on #903) ────────
+
+const PLAIN_ENGINE = { engine: 'groq', model: 'llama-3.3-70b-versatile' };
+const firstAnswer = () => ({ engine: 'cloudflare', model: '@cf/meta/llama-3.2-3b-instruct', served_by: { provider: 'cloudflare', model: '@cf/meta/llama-3.2-3b-instruct', route: 'fast', fallback: false } });
+
+test('plainAnswer returns the engine that wrote it', async () => {
+  const out = await plainAnswer({ env: { AI: { run: async () => ({ response: 'Yes, sir.', ...PLAIN_ENGINE }) } }, rawMessage: 'Hello?' });
+  assert.equal(out.text, 'Yes, sir.');
+  assert.equal(out.served_by.provider, 'groq');
+  assert.equal(out.served_by.model, 'llama-3.3-70b-versatile');
+  assert.equal(out.served_by.route, 'plain_answer');
+});
+
+test('a prompt-echo re-ask records its own engine on the turn\'s answer, and engine_claims reads it', async () => {
+  const answer = firstAnswer();
+  const env = { AI: { run: async () => ({ response: PLAIN, ...PLAIN_ENGINE }) } };
+  const engineClaims = TRUTH_STAGES.find((s) => s.name === 'engine_claims');
+  const out = await verifyReply('X reports… no verified source.', { storage: { get: async () => null, put: async () => {} }, body: {}, data: {}, env, answer, systemPrompt: PROMPT, rawMessage: 'Safe link?', message: 'Safe link?' }, { stages: [promptEchoStage, engineClaims] });
+  assert.equal(out.text.startsWith('I can\'t open that link'), true);
+  assert.equal(answer.served_by.provider, 'groq');
+  assert.equal(answer.served_by.model, 'llama-3.3-70b-versatile');
+  assert.equal(answer.engine, 'groq');
+  // No re-ask used (an answer kept after stripping, or the fallback line): the first engine stays.
+  const kept = firstAnswer();
+  await verifyReply('X reports… no verified source.', { storage: { get: async () => null, put: async () => {} }, body: {}, data: {}, env: {}, answer: kept, systemPrompt: PROMPT, rawMessage: 'Safe link?', message: 'Safe link?' }, { stages: [promptEchoStage] });
+  assert.equal(kept.served_by.provider, 'cloudflare');
+});
+
+test('a peer-claim re-ask records its own engine too', async () => {
+  const truthLayer = TRUTH_STAGES.find((s) => s.name === 'truth_layer');
+  const answer = firstAnswer();
+  await truthLayer.run('Grok answered.', {
+    self: { currentVerifiedState: async () => verifiedState([], [], {}) }, answer,
+    data: {}, env: { AI: { run: async () => ({ response: 'Yes, sir, I can hear you.', ...PLAIN_ENGINE }) } }, message: 'Are you there?', rawMessage: 'Are you there?',
+    officeResults: [], skillResults: [], turnActionPolicy: {}, storage: { get: async () => null },
+  });
+  assert.equal(answer.served_by.provider, 'groq');
+  assert.equal(answer.model, 'llama-3.3-70b-versatile');
 });

@@ -20,7 +20,7 @@ import { auditEvidenceFrom, auditReply, claimKindsIn, guardRemovalEntries, recor
 import { answerEvidenceReceipt, LAST_ANSWER_EVIDENCE_KEY } from './knowledge_cache.js';
 import { brainRecordForProvenance, guardOwnerAttributions, guardRememberBlock, guardSpeakerAttributions, loadRetractions, ownerWords, storyRequested } from './memory_provenance.js';
 import { numericNotes } from './numeric_truth.js';
-import { contextEchoStage, historyRecordsStage, plainAnswer, promptEchoStage } from './context_echo.js';
+import { adoptServedBy, contextEchoStage, historyRecordsStage, plainAnswer, promptEchoStage } from './context_echo.js';
 import { groundedReply } from './personal_recall.js';
 import { redactGoogleIds } from './research_memory.js';
 import { guardEngineClaims, guardSoulClaims } from './soul.js';
@@ -70,9 +70,13 @@ export const TRUTH_STAGES = Object.freeze([
     // An exchange with another AI that never happened was the whole reply ("I'll ask Grok." to "Can you hear me?", run 24
     // vcc-09): the owner's message is answered plainly, and the AI record is said only when he asked about an AI.
     if (peerOnly && (guarded.text.match(/[a-z0-9']+/gi) || []).length < 8) {
-      const plain = await plainAnswer(ctx);
-      // The second answer is held to the same rule: one that invents an exchange again is not used.
-      if (plain && !guardOwnerReply(plain, now, { repoAvailable: false }).removed.length) return { text: [plain, PEER_NAMED.test(message) ? statusLine(now) : ''].filter(Boolean).join(' ').trim(), removed: guarded.removed };
+      const { text: plain, served_by: plainBy } = await plainAnswer(ctx);
+      // The second answer is held to the same rule: one that invents an exchange again is not used. When it is used, its
+      // engine is the one recorded (adoptServedBy).
+      if (plain && !guardOwnerReply(plain, now, { repoAvailable: false }).removed.length) {
+        adoptServedBy(ctx, plainBy);
+        return { text: [plain, PEER_NAMED.test(message) ? statusLine(now) : ''].filter(Boolean).join(' ').trim(), removed: guarded.removed };
+      }
     }
     const statusNow = peerOnly ? statusLine(now) : verifiedStatusText(now);
     const text = [guarded.text, note, guarded.text.length < 40 || guarded.removed.some((r) => r.rule !== 'owner_homework') ? statusNow : ''].filter(Boolean).join(' ').trim();

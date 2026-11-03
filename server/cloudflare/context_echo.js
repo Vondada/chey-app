@@ -311,26 +311,42 @@ const PLAIN_MODEL = '@cf/meta/llama-3.1-8b-instruct-fp8';
 
 /**
  * Asks the model once more, with a short prompt, for a plain answer to the owner's message. Used when a guard took out
- * everything the first reply said. Returns '' when no model is reachable or it fails; the caller keeps its own fallback.
+ * everything the first reply said. Returns { text, served_by }: served_by is the engine that wrote this answer, in the
+ * shape runChatModel records. text is '' when no model is reachable or it fails; the caller keeps its own fallback.
  */
 export async function plainAnswer(ctx = {}, { soul = '' } = {}) {
   const env = ctx.keyEnv?.AI ? ctx.keyEnv : ctx.env;
-  if (typeof env?.AI?.run !== 'function') return '';
+  if (typeof env?.AI?.run !== 'function') return { text: '', served_by: null };
   const message = String(ctx.rawMessage || ctx.message || '');
   const turns = (Array.isArray(ctx.ownerHistory) ? ctx.ownerHistory : []).slice(-6)
     .map((t) => ({ role: t?.role === 'user' ? 'user' : 'assistant', content: String(t?.content ?? t?.text ?? '').slice(0, 1200) }))
     .filter((t) => t.content.trim());
+  const model = env.CHE_STRONG_MODEL || PLAIN_MODEL;
   try {
-    const out = await env.AI.run(env.CHE_STRONG_MODEL || PLAIN_MODEL, {
+    const out = await env.AI.run(model, {
       messages: [{ role: 'system', content: [PLAIN_ANSWER_RULES, soul].filter(Boolean).join('\n') }, ...turns, { role: 'user', content: message }],
       max_tokens: 700,
       che_audit: { task: message.slice(0, 160), agent: 'CHE', route: 'owner_answer_plain' },
     });
-    return String(out?.response || out?.choices?.[0]?.message?.content || '').trim();
+    const text = String(out?.response || out?.choices?.[0]?.message?.content || '').trim();
+    const part = { provider: String(out?.engine || ''), model: String(out?.model || model) };
+    return { text, served_by: text ? { ...part, route: 'plain_answer', fallback: true, parts: [part] } : null };
   } catch (error) {
     console.log('CHE plain answer failed', error?.message || error);
-    return '';
+    return { text: '', served_by: null };
   }
+}
+
+/**
+ * The re-asked answer is the one the owner reads, so its engine is the one recorded: the turn's answer object (which
+ * worker.js reads for served_by and the Soul provenance after the pipeline, and engine_claims reads for "which engine
+ * answered?") is updated in place. A cached answer that was replaced is no longer a cache hit.
+ */
+export function adoptServedBy(ctx = {}, servedBy = null) {
+  if (!servedBy || !ctx.answer || typeof ctx.answer !== 'object') return;
+  ctx.answer.served_by = servedBy;
+  ctx.answer.engine = servedBy.provider;
+  ctx.answer.model = servedBy.model;
 }
 
 export const ECHO_FALLBACK = 'That came out as my own instructions instead of an answer, sir. Ask me again and I will answer it directly.';
@@ -359,10 +375,12 @@ export async function guardPromptEcho(reply, ctx = {}, { ask = plainAnswer } = {
   const removed = [{ rule: first.examples.length ? 'prompt_example_echo' : 'prompt_label_echo', sentence: original.slice(0, 200) }];
   const enough = (r) => r.labels.length < 2 && r.words >= 8 && r.words >= words(original).length / 2;
   if (enough(first)) return { text: first.text, removed };
-  const again = String(await Promise.resolve().then(() => ask(ctx)).catch(() => '') || '');
+  // `ask` returns plainAnswer's { text, served_by }, or a bare string (tests).
+  const asked = await Promise.resolve().then(() => ask(ctx)).catch(() => '');
+  const again = String((asked && typeof asked === 'object' ? asked.text : asked) || '');
   const second = stripPromptScaffolding(again, scaffolding);
-  const text = again && second.words >= 3 && second.labels.length < 2 ? second.text : (first.words >= 8 ? first.text : ECHO_FALLBACK);
-  return { text, removed };
+  if (again && second.words >= 3 && second.labels.length < 2) return { text: second.text, removed, served_by: (asked && typeof asked === 'object' && asked.served_by) || null };
+  return { text: first.words >= 8 ? first.text : ECHO_FALLBACK, removed };
 }
 
 /** Truth-pipeline stage for rule 4: right after rules 1 and 2, on the model's own text. */
@@ -371,6 +389,7 @@ export const promptEchoStage = {
   async run(reply, ctx) {
     const out = await guardPromptEcho(reply, ctx, { ask: (c) => plainAnswer(c, { soul: c.soulProfile ? soulPromptBlock(c.soulProfile) : '' }) });
     if (out.removed.length) console.log('CHE prompt echo', JSON.stringify(out.removed.map((r) => r.rule)));
-    return out;
+    adoptServedBy(ctx, out.served_by);
+    return { text: out.text, removed: out.removed };
   },
 };
