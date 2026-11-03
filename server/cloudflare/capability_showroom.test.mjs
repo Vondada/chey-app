@@ -104,6 +104,9 @@ test('CHE’s showroom questions are recognised; ordinary questions are not', ()
   assert.equal(showroomIntent('Which rendering engines are connected, and can you make a video about bees?'), null);
   assert.equal(showroomIntent('What can you do with my email?'), null);
   assert.equal(showroomIntent('What can you do?'), null);
+  // Questions about CHE's capabilities are the showroom; a task that mentions "capability" is not (run 41715942921).
+  for (const q of ['What are your capabilities?', 'List capabilities.', 'Capabilities?', 'Which capabilities do you have?', 'Show me the showroom.']) assert.equal(showroomIntent(q)?.kind, 'overview', q);
+  for (const q of ['Jay, backtest a pairs-trading strategy on two ETFs. If you cannot, find what is missing and implement the capability.', 'Add a capability that exports my notes to PDF.', 'Does the new caching capability slow the app down?']) assert.equal(showroomIntent(q), null, q);
 });
 
 test('the answers repeat the states the view holds, and claim nothing the view does not', () => {
