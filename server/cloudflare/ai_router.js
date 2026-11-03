@@ -556,6 +556,7 @@ async function callProvider(env, provider, strongModel, input, fetcher, modelOve
       const error = new Error(`${provider.id} ${response.status}: ${String(data?.error?.message || data?.error || '').slice(0, 160)}`);
       error.status = response.status;
       error.retryAfterMs = parseRetryAfter(response.headers?.get?.('retry-after'));
+      if (response.status === 429) Object.assign(error, quotaHint(data, error.retryAfterMs));
       error.category = classifyHttpStatus(response.status, error.message);
       throw error;
     }
@@ -672,6 +673,22 @@ async function routePrivate(env, model, input, usageStorage) {
   return out && typeof out === 'object'
     ? { ...out, engine: 'cloudflare', model: cfModel, private: true }
     : { response: String(out), engine: 'cloudflare', model: cfModel, private: true };
+}
+
+// A 429 says how long to wait. Gemini's body names the quota (a per-minute or a per-day one) and carries a retry
+// delay ("retryDelay": "37s", or "Please retry in 37.2s." in the message); a Retry-After header wins when present.
+// Run 25 (41657004307): every Gemini 429 benched Gemini for an hour, so the 8B model wrote 102 of 176 quality answers.
+export function quotaHint(data, headerMs = 0) {
+  const body = (() => { try { return JSON.stringify(data ?? ''); } catch (_) { return String(data ?? ''); } })();
+  const delay = /retryDelay\\?"\s*:\s*\\?"(\d+(?:\.\d+)?)s/i.exec(body) || /retry in (\d+(?:\.\d+)?)\s*s/i.exec(body);
+  const daily = /per[_ ]?day|PerDay|daily/i.test(body);
+  return { retryAfterMs: headerMs > 0 ? headerMs : (delay ? Math.round(Number(delay[1]) * 1000) : 0), quotaDaily: daily };
+}
+
+/** How long Gemini rests after a 429: an hour for a daily quota or no hint; otherwise the delay it asked for. */
+export function geminiQuotaRestMs(error) {
+  if (error?.quotaDaily || !(Number(error?.retryAfterMs) > 0)) return 3_600_000;
+  return Math.min(Math.max(Number(error.retryAfterMs), 1_000), 15 * 60_000);
 }
 
 // Runs a text model through the best engine that can answer.
@@ -979,7 +996,7 @@ export async function routeText(env, model, input, fetcher = fetch, usageStorage
           const detail = String(error?.message || error).slice(0, 700);
           providerLastError.set(provider.id, detail);
           errors.push(`${provider.id}: ${detail}`);
-          providerCooldownUntil.set(provider.id, now + 3_600_000);
+          providerCooldownUntil.set(provider.id, now + geminiQuotaRestMs(error));
           noteHealth(provider.id, { ok: false, status: error?.status || 429, quota: true, error: detail });
           continue;
         }
