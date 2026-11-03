@@ -43,3 +43,11 @@ test('a failed receipt does not pass a question that needs a receipt', async () 
   const held = grade(item, { status: 200, reply, receipts: [{ status: 'blocked' }] });
   assert.equal(held.classification, 'pass');
 });
+
+test('every logged row names its receipts (tool and status), so an execution grade can be audited from the log', async () => {
+  const { receiptLabel, SUCCESS_STATUSES } = await import('../../tools/certification/run_certification.mjs');
+  assert.equal(receiptLabel([]), '[]');
+  assert.equal(receiptLabel([{ tool: 'che_lists', status: 'success' }, { kind: 'backtest', status: 'failed' }, { id: 'r1' }]), '[che_lists:success,backtest:failed,receipt:no-status]');
+  assert.equal(receiptLabel([1, 2, 3, 4, 5].map((n) => ({ tool: `t${n}`, status: 'ok' }))), '[t1:ok,t2:ok,t3:ok,t4:ok,+1]');
+  assert.ok(SUCCESS_STATUSES.includes('success'));
+});

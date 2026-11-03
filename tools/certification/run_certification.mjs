@@ -307,16 +307,24 @@ export function grade(item, { status, reply = '', receipts = [], networkError = 
 //   missing_capability  the connector gate answered: no connector can run it
 //   false_completion    the reply claims an action and no receipt came back
 //   no_action           none of the above (an answer, a question back, a model reply with no action)
+export const SUCCESS_STATUSES = ['success', 'succeeded', 'completed', 'done', 'ok'];
 export const ACTION_OUTCOMES = ['executed', 'failed_execution', 'awaiting_approval', 'missing_capability', 'false_completion', 'no_action'];
 export function actionOutcome({ classification = '', reason = '', receipts = [], done = null, held = false } = {}) {
   const list = (Array.isArray(receipts) ? receipts : []).filter((r) => r && typeof r === 'object');
   const status = (r) => String(r.status || '').toLowerCase();
   if (classification === 'incorrect' && String(reason).startsWith('claims an action')) return 'false_completion';
   if (list.some((r) => ['failed', 'failure', 'error', 'timeout'].includes(status(r)))) return 'failed_execution';
-  if (list.some((r) => ['success', 'succeeded', 'completed', 'done', 'ok'].includes(status(r)))) return 'executed';
+  if (list.some((r) => SUCCESS_STATUSES.includes(status(r)))) return 'executed';
   if (held) return 'awaiting_approval';
   if (done?.source === 'che_connector_gate') return 'missing_capability';
   return 'no_action';
+}
+
+/** Short receipt list for the log: tool or kind, and status, for up to four receipts. */
+export function receiptLabel(receipts) {
+  const list = (Array.isArray(receipts) ? receipts : []).filter((r) => r && typeof r === 'object');
+  if (!list.length) return '[]';
+  return `[${list.slice(0, 4).map((r) => `${String(r.tool || r.connector || r.kind || r.type || 'receipt').slice(0, 30)}:${String(r.status || 'no-status').slice(0, 20)}`).join(',')}${list.length > 4 ? `,+${list.length - 4}` : ''}]`;
 }
 
 // ---- running --------------------------------------------------------------------------------------------------------
@@ -578,10 +586,11 @@ async function main(argv) {
   }
   const report = await runCertification({
     url, token, questions, select, reuse, questionsFile: opts.questions || QUESTIONS_PATH,
-    // Every non-pass prints its class, its reason and the start of CHE's reply, so the failures can be audited from the log.
+    // Every row prints its receipts and the start of CHE's reply, passes included, so any grade can be audited from the log
+    // (the results artifact cannot always be downloaded; the run-24 audit had no reply text for its 506 passes).
     onProgress: (row) => { console.log(row.verdict === 'pass'
-      ? `${row.id} pass action=${row.action_outcome ?? "none"} source=${row.source ?? "none"} engine=${engineLabel(row)} ms=${row.latency_ms}`
-      : `${row.id} ${row.verdict} [${row.classification}] action=${row.action_outcome ?? "none"} (${row.reason}) source=${row.source ?? 'none'} route=${row.route ?? 'none'} engine=${engineLabel(row)} ms=${row.latency_ms} :: ${String(row.reply || '').replace(/\s+/g, ' ').slice(0, 600)}`);
+      ? `${row.id} pass action=${row.action_outcome ?? "none"} source=${row.source ?? "none"} route=${row.route ?? 'none'} engine=${engineLabel(row)} ms=${row.latency_ms} receipts=${receiptLabel(row.receipts)} :: ${String(row.reply || '').replace(/\s+/g, ' ').slice(0, 600)}`
+      : `${row.id} ${row.verdict} [${row.classification}] action=${row.action_outcome ?? "none"} (${row.reason}) source=${row.source ?? 'none'} route=${row.route ?? 'none'} engine=${engineLabel(row)} ms=${row.latency_ms} receipts=${receiptLabel(row.receipts)} :: ${String(row.reply || '').replace(/\s+/g, ' ').slice(0, 600)}`);
       // A failing answer a guard changed also prints what the reply said before that guard.
       if (row.verdict !== 'pass') for (const t of row.guard_trace || []) console.log(`  guard ${row.id} ${t.stage} before :: ${String(t.before || '').replace(/\s+/g, ' ').slice(0, 400)}`);
     },
