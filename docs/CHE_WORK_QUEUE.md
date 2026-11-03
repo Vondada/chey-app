@@ -72,7 +72,7 @@ model sampling, not code.
 
 | id | item | status | next step | evidence |
 |---|---|---|---|---|
-| R-01 | Root causes of the 101 questions that fail every run, grouped by shared defect | in progress | #860-#867 merged and live; run 18 477/600, 52 of the 101 now pass; follow-ups #870, #871 merged; run 19 483/600; next: "job" alone should not make a question an Office question (eer-30) | run `41379642353` |
+| R-01 | Root causes of the 101 questions that fail every run, grouped by shared defect | in progress | #860-#867 merged and live; run 18 477/600, 52 of the 101 now pass; follow-ups #870, #871 merged; run 19 483/600; eer-30 fixed in #873 `0fa7fd7b`; run 24 `41491194768` 506/600. What still fails every run is the 3B fast model's wrong answers (R-09) and actions with no connector or the Google sign-in (owner decisions) | run `41379642353` |
 | R-02 | Certification records model, provider, fallback, latency and receipts per question; alerts on a score regression | done | - | #858 `c19823ff`; first used by run `41354289425` |
 | R-03 | Repeatable answers: no chat model call sets a sampling temperature | done (measured) | Temperature 0.3 cut flips 82 -> 70 only; next lever is which engine answers | #859 `ff1cf1d5`; run `41354289425` |
 | R-04 | Guard against CHE quoting the owner's message back | waiting on owner | Owner decides | staging social Test 2 failure on #850 |
