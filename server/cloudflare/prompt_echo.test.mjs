@@ -238,6 +238,12 @@ test('a reply that is only the prompt\'s sample line is asked again; with an ans
   assert.deepEqual(await guardPromptEcho(both, { systemPrompt: SOCIAL_PROMPT, rawMessage: code }, { ask: async () => 'unused' }), { text: both, removed: [] });
   const chat = 'You\'re lucky you\'re cute, sir.';
   assert.deepEqual(await guardPromptEcho(chat, { systemPrompt: SOCIAL_PROMPT, rawMessage: 'Oops, I locked myself out.' }, { ask: async () => 'unused' }), { text: chat, removed: [] });
+  // Codex review: a short real answer next to the line is an answer (code, a figure, a word of the question).
+  const short = 'Sir, you\'re lucky you\'re cute. const max = (a, b) => Math.max(a, b);';
+  assert.deepEqual(await guardPromptEcho(short, { systemPrompt: SOCIAL_PROMPT, rawMessage: 'Write a JavaScript function returning the larger of two numbers.' }, { ask: async () => 'unused' }), { text: short, removed: [] });
+  // A re-ask that is still only the line is not used.
+  const stillLine = await guardPromptEcho('Sir, you\'re lucky you\'re cute, sir.', { systemPrompt: SOCIAL_PROMPT, rawMessage: code }, { ask: async () => 'Sir, you\'re lucky you\'re cute when you ask such a smart question.' });
+  assert.equal(stillLine.text, ECHO_FALLBACK);
   // No model to ask again: say so rather than send only the line.
   assert.equal((await guardPromptEcho('Sir, you\'re lucky you\'re cute, sir.', { systemPrompt: SOCIAL_PROMPT, rawMessage: code }, { ask: async () => '' })).text, ECHO_FALLBACK);
 });

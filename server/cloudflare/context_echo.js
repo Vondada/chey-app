@@ -292,12 +292,28 @@ export function promptPhrases(prompt, own = []) {
   return [...phrases];
 }
 
-/** Words of [reply] left once the prompt's sample lines and the bare address ("sir") are taken out. */
-const ANSWER_WORDS = 12;
-function wordsBesidesPhrases(reply, phrases) {
+/** The text of [reply] left once the prompt's sample lines are taken out. */
+function besidesPhrases(reply, phrases) {
   let text = flat(reply).replace(/[’‘`]/g, "'");
   for (const phrase of phrases) text = text.replace(new RegExp(escapeRe(phrase.replace(/[’‘`]/g, "'")).replace(/ /g, '\\s+'), 'gi'), ' ');
-  return words(text).filter((w) => w !== 'sir');
+  return text;
+}
+
+const ANSWER_WORDS = 12;
+const ANSWER_MARK = /\d|[{}()=;<>\[\]]|```/;
+const STOP = new Set(['about', 'after', 'again', 'also', 'because', 'been', 'could', 'does', 'from', 'have', 'here', 'into', 'just', 'like', 'more', 'only', 'should', 'some', 'such', 'than', 'that', 'their', 'them', 'then', 'there', 'they', 'this', 'very', 'what', 'when', 'where', 'which', 'while', 'will', 'with', 'would', 'your']);
+const contentWords = (text) => words(text).filter((w) => w.length >= 4 && !STOP.has(w));
+
+/**
+ * Whether [reply], besides the sample lines, answers [message]: twelve words or more, a figure or code, or a content word
+ * of the question ("const max = (a, b) => Math.max(a, b);" answers; "when you ask such a smart question" does not).
+ */
+function answersBesidesPhrases(reply, phrases, message) {
+  const rest = besidesPhrases(reply, phrases);
+  const restWords = words(rest).filter((w) => w !== 'sir');
+  if (restWords.length >= ANSWER_WORDS || ANSWER_MARK.test(rest)) return true;
+  const asked = new Set(contentWords(message));
+  return contentWords(rest).some((w) => asked.has(w));
 }
 
 const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -407,17 +423,19 @@ export async function guardPromptEcho(reply, ctx = {}, { ask = plainAnswer } = {
 }
 
 /**
- * A reply that is one of the prompt's sample lines and under 12 words besides, to a message that asked for something (six
- * words or more), is asked again; the line stays whenever an answer comes with it, and short chat ("Thanks.") keeps it too.
+ * A reply that is one of the prompt's sample lines and no answer besides (answersBesidesPhrases), to a message that asked
+ * for something (six words or more), is asked again; the re-ask must answer by the same test. The line stays whenever an
+ * answer comes with it, and short chat ("Thanks.") keeps it too.
  */
 async function phraseOnly(original, ctx, ask) {
-  const asked = words(ctx.rawMessage || ctx.message || '').length >= 6;
+  const message = String(ctx.rawMessage || ctx.message || '');
+  const asked = words(message).length >= 6;
   const phrases = asked ? promptPhrases(ctx.systemPrompt, ownText(ctx)).filter((p) => flat(original).replace(/[’‘`]/g, "'").toLowerCase().includes(p.replace(/[’‘`]/g, "'").toLowerCase())) : [];
-  if (!phrases.length || wordsBesidesPhrases(original, phrases).length >= ANSWER_WORDS) return { text: original, removed: [] };
+  if (!phrases.length || answersBesidesPhrases(original, phrases, message)) return { text: original, removed: [] };
   const removed = [{ rule: 'prompt_phrase_only', sentence: original.slice(0, 200) }];
   const reply = await Promise.resolve().then(() => ask(ctx)).catch(() => '');
   const again = String((reply && typeof reply === 'object' ? reply.text : reply) || '');
-  if (again && wordsBesidesPhrases(again, phrases).length >= 3) return { text: again, removed, served_by: (reply && typeof reply === 'object' && reply.served_by) || null };
+  if (again && answersBesidesPhrases(again, phrases, message)) return { text: again, removed, served_by: (reply && typeof reply === 'object' && reply.served_by) || null };
   return { text: ECHO_FALLBACK, removed };
 }
 
