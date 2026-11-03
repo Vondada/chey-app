@@ -14478,11 +14478,11 @@ export class CheState extends DurableObject {
           }, 503);
         }
 
-        // Truth pipeline (truth_pipeline.js): every owner-facing guard, in one ordered list, one request id and one
-        // audit ledger write. A stage that throws fails closed: the reply still reaches the later stages and the auditor.
+        // Truth pipeline (truth_pipeline.js): every owner-facing guard, in order, one request id and one
+        // audit ledger write. A stage that throws fails closed: the reply still reaches the later stages.
         const verified = await verifyReply(reply, {
           self: this, storage: this.ctx.storage, env: this.env, keyEnv: this.keyEnv, data, request, body, answer,
-          message, rawMessage, ownerHistory, research, multimodal, disproven, soulProfile, brainContext,
+          message, rawMessage, ownerHistory, research, multimodal, disproven, soulProfile, brainContext, systemPrompt,
           skillResults, actionResults, plugins, officeResults, createdPartners, officePeerReview, workerBrainHits,
           ownerDevice, turnActionPolicy, chatOnlyEvaluation, probe: PROBE_CHAT_REQUESTS.has(request),
           helpers: { ndjsonReply, enqueueJob }, keys: { LAST_ENGINEERING_REQUEST_KEY },

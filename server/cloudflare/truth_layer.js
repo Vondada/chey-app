@@ -519,10 +519,13 @@ const RULES = [
   },
 ];
 
+// Reported speech: "Here's what he said: ...", "She replied that ...", a line that is only a quote, or 'Grok: "..."'.
+const PEER_SPEECH = new RegExp(`^(?:here(?:'s|’s|\\s+is)\\s+what\\b|["“]|\\**${PEER_RE}\\**\\s*:)|\\b(?:he|she|they|it|${PEER_RE})\\s+(?:said|says|replied|wrote|answered|told\\s+me)\\b`, 'i');
+
 function splitSentences(text) {
   // Sentence ends are punctuation followed by whitespace/end, so file names
   // like self_development.js stay inside their sentence.
-  return String(text || '').match(/[\s\S]+?(?:[.!?]+(?=\s|$)\s*|\n+|$)/g)?.filter((part) => part.length) || [];
+  return String(text || '').match(/[\s\S]+?(?:[.!?]+["”]?(?=\s|$)\s*|\n+|$)/g)?.filter((part) => part.length) || [];
 }
 
 // Returns { text, removed: [{rule, sentence}], homework: boolean }.
@@ -530,6 +533,7 @@ export function guardOwnerReply(reply, state, ctx = {}) {
   const removed = [];
   let homework = false;
   const kept = [];
+  let keptAtRemoval = -1;
   for (const sentence of splitSentences(reply)) {
     const plain = sentence.trim();
     if (!plain) { kept.push(sentence); continue; }
@@ -539,8 +543,12 @@ export function guardOwnerReply(reply, state, ctx = {}) {
       continue;
     }
     const broken = RULES.find((rule) => rule.test(plain) && !rule.supported(plain, state, ctx));
-    if (broken) {
-      removed.push({ rule: broken.name, sentence: plain });
+    // What the AI "said" right after an exchange that never happened is invented too ("Grok answered. Here's what he
+    // said: '...'", run 24 vcc-17).
+    const reported = !broken && removed.at(-1)?.rule === 'peer_collaboration' && kept.length === keptAtRemoval && PEER_SPEECH.test(plain);
+    if (broken || reported) {
+      removed.push({ rule: broken ? broken.name : 'peer_collaboration', sentence: plain });
+      keptAtRemoval = kept.length;
       continue;
     }
     kept.push(sentence);

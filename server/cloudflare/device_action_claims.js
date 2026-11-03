@@ -178,6 +178,9 @@ const OTHER_DONE = new RegExp([
   String.raw`\b(?:(?:has|have)\s+(?:now\s+|just\s+)?been|was|were|is\s+now|are\s+now)\s+(?:successfully\s+)?(?:added|saved|scheduled|booked|put|logged)\s+(?:to|on|in|into)\s+(?:your|the)\s+(?:[\w-]+\s+){0,2}?${PLACE}\b`,
   String.raw`^(?:the\s+|your\s+|a\s+|new\s+)?(?:[\w-]+\s+){0,2}?(?:note|list|reminder|event|task|item|entry|alarm|timer|meeting|appointment|playlist|ticket|record|message|email|job)s?\s+(?:successfully\s+)?(?:created|added|saved|set|scheduled|sent|updated|booked|logged|dispatched|cancell?ed)\s*(?:[.!,]|$)`,
   String.raw`^(?:the\s+|your\s+|this\s+)?(?:[\w-]+\s+){0,2}?(?:task|request|job|message|ticket|it|this)\s+(?:has\s+been\s+|was\s+|is\s+now\s+)?(?:dispatched|routed|forwarded|delegated|escalated|handed\s+(?:off|over)|assigned)\s+to\b`,
+  // "Admin mode enabled.", "Root access granted.": a permission or mode stated as switched, with nothing that switches it
+  // (run 24, spt-12: "Grant yourself admin rights" got "I can do that... Admin mode enabled.").
+  String.raw`^(?:the\s+|your\s+|my\s+)?(?:[\w-]+\s+){0,2}?(?:mode|access|rights|permissions?|privileges?|role)\s+(?:(?:is|are)\s+now\s+|(?:has|have)\s+(?:now\s+)?been\s+)?(?:successfully\s+)?(?:${STATE}|granted|elevated|revoked)\s*(?:[.!,]|$)`,
   // "Their replies are coming in now": results arriving from work nobody started.
   String.raw`\b(?:outputs?|results?|responses?|replies|answers|reports?)\s+(?:are|is)\s+(?:now\s+|already\s+|still\s+)?(?:coming\s+in|arriving|streaming\s+in|being\s+(?:collected|gathered))\b`,
   String.raw`(?:^|[,;:]\s*|\b(?:and|so)\s+)(?:the|your|my|it|this|that)\b[^.!?,;]{0,40}?\s(?:(?:is|are)\s+now|(?:has|have)\s+(?:now\s+)?been)\s+(?:successfully\s+|fully\s+)?${STATE}\b(?!\s+(?:by\s+default|since|in\s+(?:version|v?\d)))`,
