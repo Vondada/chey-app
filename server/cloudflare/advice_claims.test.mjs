@@ -65,8 +65,8 @@ test('how-to advice about a double run stays; a purpose is not a run claim', () 
   const advice = 'To prevent a job from completing twice because of a retry, you can implement a mechanism to check if the job has already been completed before retrying it. One approach is to add a unique identifier or a flag to the job that indicates whether it has been completed or not. When the job is retried, you can check this identifier or flag to determine if the job has already been completed. ';
   keep(`${advice}Another approach is to use a distributed lock to ensure that the job is executed only once.`, message);
   keep(`${advice}This prevents the job from being executed twice.`, message);
-  // An example in a fence is example code, not a transcript.
-  keep(`${advice}Store the result with an idempotency key:\n\`\`\`json\n{"job_id": "123", "status": "completed"}\n\`\`\``, message);
+  // A fence introduced as an example is example code, not a transcript.
+  keep(`${advice}For example, you could store each job's idempotency key like this:\n\`\`\`json\n{"job_id": "123", "status": "completed"}\n\`\`\``, message);
   // An example field with an invented number goes alone; the explanation stays.
   const field = guardExecutionClaims(`${advice}Example:\n- Job ID: 1234\n- Status: completed`, { message }).text;
   assert.match(field, /^To prevent a job from completing twice/);
@@ -76,6 +76,21 @@ test('how-to advice about a double run stays; a purpose is not a run claim', () 
   notice('The build which prevents double runs passed and the deployment completed.', 'Is the fix out?');
   notice('$ git log\ncommit 1a2b3c4d\nAuthor: CHE', 'Give a short technical update.');
   notice('```json\n{"job_id": "abc", "status": "completed"}\n```', 'Did the retry job work?');
+});
+
+// Codex review on #902: a purpose word governs only its own clause, and a fence presented as real output is a transcript.
+test('a purpose in another clause or a fence presented as output still counts as a run claim', () => {
+  const message = 'How do you prevent duplicate jobs?';
+  const passed = guardExecutionClaims('The configuration ensures reliability, and the tests passed.', { message });
+  assert.doesNotMatch(passed.text, /tests passed/);
+  assert.doesNotMatch(guardExecutionClaims('The configuration ensures reliability and the tests passed.', { message }).text, /tests passed/);
+  assert.doesNotMatch(guardExecutionClaims('This prevents duplicates; the deployment completed.', { message }).text, /deployment completed/);
+  for (const intro of ['Here is the actual tool output:', 'I ran it and the output was:', 'Result:', 'The job returned:']) {
+    notice(`Use an idempotency key so each job runs only once, even when a retry fires. ${intro}\n\`\`\`json\n{"job_id": "abc", "status": "completed"}\n\`\`\``, message);
+  }
+  for (const intro of ['For example, you could log it like this:', 'A sample record might look like this:', 'Such as:']) {
+    keep(`Use an idempotency key so each job runs only once, even when a retry fires. ${intro}\n\`\`\`json\n{"job_id": "abc", "status": "completed"}\n\`\`\``, message);
+  }
 });
 
 test('advice that lists an invented PR loses that item, not the advice', () => {

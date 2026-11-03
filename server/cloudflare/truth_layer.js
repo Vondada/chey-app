@@ -82,10 +82,11 @@ export function guardExecutionClaims(reply, { message = '', receipts = [], docum
   // Run 20 widened this to advice in general (eer-28, eer-34, mr-24, oac-34): see adviceSentence below.
   const conditional = (s) => !reported.test(s) && !identifiers.test(s) && adviceSentence(s, message, execution);
   const claimText = splitSentences(text).filter((s) => !conditional(s)).join('');
-  // In answer to a how-to question, a fenced block is example code ({"job_id": ...} in "how do you prevent a double
-  // run?"), not a transcript of a run (certification run 24, eer-26). Anywhere else a fence is still checked.
+  // In answer to a how-to question, a fenced block the reply introduces as an example ("For example, store it like this:")
+  // is example code ({"job_id": ...} in "how do you prevent a double run?"), not a transcript of a run (certification run
+  // 24, eer-26). A block introduced as output ("Here is the actual tool output:") and every block anywhere else is checked.
   const advice = adviceAsk(message);
-  const scanned = advice ? text.replace(/```[\s\S]*?(?:```|$)/g, '\n') : text;
+  const scanned = advice ? withoutExampleFences(text) : text;
   const ranClaim = execution.test(claimText) || transcript.test(scanned) || unlabeledOutput.test(scanned);
   const repoClaim = requireEvidence || identifiers.test(text) || ranClaim || repoEvidence.test(claimText) || (commandLine.test(text) && ranClaim);
   const sourceClaim = sourceClaimIn(text, verifiedPaths);
@@ -218,8 +219,28 @@ const IMPERATIVE_MAIN = new RegExp(String.raw`^[^,]*,\s*(?:then\s+|you\s+(?:shou
 // ("you need the fix build passed"). A word inside a relative clause of the subject ("The command which processes requests
 // completed", "The job that should retry completed") governs nothing (Codex review on #883). A purpose ("a lock to ensure
 // that the job is executed only once", "this prevents the job being executed twice") describes what should happen
-// (certification run 24, eer-26), unless it sits in a relative clause ("The patch which prevents it was deployed").
-const HYPOTHETICAL_BEFORE = /\b(?:if|unless|until|whether|once|in\s+case|assuming|suppose)\b|(?<!\b(?:which|that|who)\s+(?:[\w'’]+\s+){0,3})\b(?:ensures?|ensuring|make\s+sure|makes\s+sure|so\s+that|in\s+order\s+(?:to|that)|prevents?|preventing|guarantees?|guaranteeing)\b|\b(?:shows?|records?|says?|lists?|logs?|tells?|checks?|tracks?|notes?|sees?|knows?)\s+what(?:ever)?\b/i;
+// (certification run 24, eer-26), but only in the result's own clause: "The configuration ensures reliability, and the
+// tests passed" reports a run (Codex review on #902), and so does "The patch which prevents it was deployed".
+const PURPOSE = /(?<!\b(?:which|that|who)\s+(?:[\w'’]+\s+){0,3})\b(?:ensures?|ensuring|make\s+sure|makes\s+sure|so\s+that|in\s+order\s+(?:to|that)|prevents?|preventing|guarantees?|guaranteeing)\b/i;
+// Where a new clause starts: a semicolon, colon or dash, a comma before a conjunction, or a conjunction before a new subject.
+const CLAUSE_BREAK = /[;:—–]|,\s*(?:and|but|so|yet|then|while|whereas)\b|\s(?:and|but|yet|while|whereas)\s+(?=(?:the|a|an|it|its|this|that|these|those|our|my|your|their|all|every|each|[A-Z]\w*)\b)/g;
+const resultClause = (before) => {
+  let start = 0;
+  for (const m of before.matchAll(CLAUSE_BREAK)) start = m.index + m[0].length;
+  return before.slice(start);
+};
+// A fenced block counts as an example only when the words just before it present one; output words make it a transcript.
+const EXAMPLE_INTRO = /\b(?:for\s+(?:example|instance)|e\.g\.|such\s+as|like\s+(?:this|so)|(?:an?\s+)?(?:example|sample)s?|something\s+like|(?:might|would|could)\s+look\s+like|here(?:['’]s|\s+is)\s+how|you\s+(?:could|can|might|would)\s+\w+)\b/i;
+const OUTPUT_INTRO = /\b(?:actual|real|outputs?|results?|returned|came\s+back|got\s+back|printed|produced|(?:I|we|CHE)\s+(?:\w+\s+){0,2}(?:ran|executed|got|saw)|logs?\s+show(?:ed)?)\b/i;
+function withoutExampleFences(text) {
+  let last = 0;
+  return text.replace(/```[\s\S]*?(?:```|$)/g, (block, offset) => {
+    const intro = text.slice(last, offset).split(/(?<=[.!?])\s+/).filter((part) => part.trim()).slice(-1)[0] || '';
+    last = offset + block.length;
+    return EXAMPLE_INTRO.test(intro) && !OUTPUT_INTRO.test(intro) ? '\n' : block;
+  });
+}
+const HYPOTHETICAL_BEFORE = /\b(?:if|unless|until|whether|once|in\s+case|assuming|suppose)\b|\b(?:shows?|records?|says?|lists?|logs?|tells?|checks?|tracks?|notes?|sees?|knows?)\s+what(?:ever)?\b/i;
 const MODAL_GOVERNS = /(?<!\b(?:which|that|who|whose)\s+(?:[\w'’]+\s+){0,3})\b(?:must|should|shall|needs?|has\s+to|have\s+to|ought\s+to|can|could|would|may|might|will|won['’]t|requires?|required)\b(?:\s+[\w:,'’-]+){0,8}\s*$/i;
 // "When you asked earlier", "Once you logged off", "yesterday": a condition that tells of the past is a report.
 const NARRATIVE = /^\W*(?:\d+[.)]\s*)?(?:when|once|after|before|as\s+soon\s+as)\s+(?:you|I|we|CHE|he|she|they|it)\s+(?:\w+ed|did|went|said|told|ran|sent|left|got|made|came|saw|began|took|was|were)\b|\b(?:earlier|yesterday|ago|overnight|last\s+(?:night|time|week|month|run)|this\s+morning)\b/i;
@@ -233,7 +254,7 @@ function adviceSentence(s, message, execution) {
   if (IMPERATIVE_OPENING.test(s) || (ACTION_OPENING.test(s) && !askedToAct(ask))) return true;
   const m = execution.exec(s);
   const before = m ? s.slice(0, m.index + m[0].length) : '';
-  if (m && (HYPOTHETICAL_BEFORE.test(before) || MODAL_GOVERNS.test(before))) return true;
+  if (m && (HYPOTHETICAL_BEFORE.test(before) || MODAL_GOVERNS.test(before) || PURPOSE.test(resultClause(before)))) return true;
   if (!CONDITION_OPENING.test(s) && !/^\W*(?:\d+[.)]\s*)?(?:after|before|as\s+soon\s+as)\b/i.test(s)) return false;
   return explanationAsk(ask) || IMPERATIVE_MAIN.test(s) || !(RUN_ASK.test(ask) || REPORT_ASK.test(ask) || PAST_ASK.test(ask));
 }

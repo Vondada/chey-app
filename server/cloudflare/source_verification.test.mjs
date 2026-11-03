@@ -1200,7 +1200,9 @@ test('a general question about how news moves markets is answered, not checked a
   assert.match(said.reply, /Information asymmetry/);
   assert.equal(calls.filter((u) => /gdeltproject|algolia/.test(u)).length, 0, 'no news listing was searched');
   // Current news is still news, and its unbacked story is still removed.
-  for (const q of ["Search the web for today's top headline.", 'What is the news?', 'Any news on Tesla?', 'Why is the news about Tesla so bad today?']) {
+  // Codex review on #902: coverage of a named subject is a news question, asked "why" or not.
+  for (const q of ["Search the web for today's top headline.", 'What is the news?', 'Any news on Tesla?', 'Why is the news about Tesla so bad today?',
+    'Why is Tesla in the news?', 'Why are Nvidia shares making headlines?', 'Why does the news say Apple announced a recall?','How do the headlines about Apple look?']) {
     assert.ok(newsQuestion(q), q);
   }
   const headline = await guardCitations('The top headline today is that Donald Trump announced his cabinet picks.', { message: "Search the web for today's top headline.", fetcher: offline });
