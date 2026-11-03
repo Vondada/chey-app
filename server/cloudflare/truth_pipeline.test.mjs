@@ -16,6 +16,8 @@ test('the stage order is exactly the order worker.js ran before the pipeline exi
   assert.deepEqual([...TRUTH_STAGE_ORDER], [
     // added run 22: a stored line copied as the reply is caught on the model's own text, before any guard edits it
     'context_echo',
+    // added run 24: the prompt's own section labels and rule examples are never the reply (context_echo.js rule 4)
+    'prompt_echo',
     'truth_layer', 'research_actions', 'owner_actions',
     // added with device_action_claims.js: a timer, app or device claim needs a completed connector receipt this turn
     'device_actions',

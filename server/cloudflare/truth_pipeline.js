@@ -20,19 +20,24 @@ import { auditEvidenceFrom, auditReply, claimKindsIn, guardRemovalEntries, recor
 import { answerEvidenceReceipt, LAST_ANSWER_EVIDENCE_KEY } from './knowledge_cache.js';
 import { brainRecordForProvenance, guardOwnerAttributions, guardRememberBlock, guardSpeakerAttributions, loadRetractions, ownerWords, storyRequested } from './memory_provenance.js';
 import { numericNotes } from './numeric_truth.js';
-import { contextEchoStage, historyRecordsStage } from './context_echo.js';
+import { adoptServedBy, contextEchoStage, historyRecordsStage, plainAnswer, promptEchoStage } from './context_echo.js';
 import { groundedReply } from './personal_recall.js';
 import { redactGoogleIds } from './research_memory.js';
 import { guardEngineClaims, guardSoulClaims } from './soul.js';
 import { guardCitations } from './source_verification.js';
 import { guardClaimedOwnerActions, guardClaimedResearchActions, guardExecutionClaims, validateCodingEvidence, guardOwnerReply, recordReceipt, verifiedStatusText } from './truth_layer.js';
 
+const PEER_NAMED = /\b(?:claude|chat\s?gpt|codex|gemini|grok|groq|copilot|cursor|another ai|other ais?)\b/i;
+const statusLine = (now) => (Object.keys(now.peers || {}).length ? verifiedStatusText({ peers: now.peers, active_jobs: [], finished_jobs: [] }) : 'No message to another AI is on record, sir, so I have asked no one.');
 const userTurns = (history, n) => (Array.isArray(history) ? history : []).filter((turn) => turn?.role === 'user').slice(-n).map((turn) => String(turn.content ?? turn.text ?? ''));
 
 export const TRUTH_STAGES = Object.freeze([
   // A stored line is never the reply: speaker labels go, and a word-for-word copy of injected memory that does not
   // take up the message becomes an honest "no record" (context_echo.js). First, on the model's own text.
   contextEchoStage,
+  // The prompt's own section labels and rule examples ("SOURCE RULES:", "X reports…") are never the reply; a reply built
+  // on them is asked again plainly (context_echo.js rule 4, run 24).
+  promptEchoStage,
   // Truth layer: a model sentence can never promote execution state. Unsupported action claims and owner
   // "homework" are removed and replaced with what the receipts actually show.
   { name: 'truth_layer', async run(reply, ctx) {
@@ -62,9 +67,18 @@ export const TRUTH_STAGES = Object.freeze([
     // vcc-09: "Can you hear me?" got a list of coding jobs).
     const now = await self.currentVerifiedState(data);
     const peerOnly = guarded.removed.every((r) => r.rule === 'peer_collaboration');
-    const statusNow = peerOnly
-      ? (Object.keys(now.peers || {}).length ? verifiedStatusText({ peers: now.peers, active_jobs: [], finished_jobs: [] }) : 'No message to another AI is on record, sir, so I have asked no one.')
-      : verifiedStatusText(now);
+    // An exchange with another AI that never happened was the whole reply ("I'll ask Grok." to "Can you hear me?", run 24
+    // vcc-09): the owner's message is answered plainly, and the AI record is said only when he asked about an AI.
+    if (peerOnly && (guarded.text.match(/[a-z0-9']+/gi) || []).length < 8) {
+      const { text: plain, served_by: plainBy } = await plainAnswer(ctx);
+      // The second answer is held to the same rule: one that invents an exchange again is not used. When it is used, its
+      // engine is the one recorded (adoptServedBy).
+      if (plain && !guardOwnerReply(plain, now, { repoAvailable: false }).removed.length) {
+        adoptServedBy(ctx, plainBy);
+        return { text: [plain, PEER_NAMED.test(message) ? statusLine(now) : ''].filter(Boolean).join(' ').trim(), removed: guarded.removed };
+      }
+    }
+    const statusNow = peerOnly ? statusLine(now) : verifiedStatusText(now);
     const text = [guarded.text, note, guarded.text.length < 40 || guarded.removed.some((r) => r.rule !== 'owner_homework') ? statusNow : ''].filter(Boolean).join(' ').trim();
     return { text, removed: guarded.removed };
   } },
