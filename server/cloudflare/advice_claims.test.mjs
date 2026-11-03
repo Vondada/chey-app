@@ -57,3 +57,35 @@ test('an instruction to act is advice when the owner asked for none (Codex revie
   notice('Run the tests and verify that they passed before shipping.', 'Release the new version now.');
   notice('I ran the tests and the build passed.', 'Explain a safe release process.');
 });
+
+// Certification run 24 (eer-26, eer-16): sound advice was replaced whole by the not-evidence notice. Advice keeps its
+// words; only an invented identifier goes; reports of runs are still claims.
+test('how-to advice about a double run stays; a purpose is not a run claim', () => {
+  const message = 'A job completed twice because of a retry. How do you prevent that next time?';
+  const advice = 'To prevent a job from completing twice because of a retry, you can implement a mechanism to check if the job has already been completed before retrying it. One approach is to add a unique identifier or a flag to the job that indicates whether it has been completed or not. When the job is retried, you can check this identifier or flag to determine if the job has already been completed. ';
+  keep(`${advice}Another approach is to use a distributed lock to ensure that the job is executed only once.`, message);
+  keep(`${advice}This prevents the job from being executed twice.`, message);
+  // An example in a fence is example code, not a transcript.
+  keep(`${advice}Store the result with an idempotency key:\n\`\`\`json\n{"job_id": "123", "status": "completed"}\n\`\`\``, message);
+  // An example field with an invented number goes alone; the explanation stays.
+  const field = guardExecutionClaims(`${advice}Example:\n- Job ID: 1234\n- Status: completed`, { message }).text;
+  assert.match(field, /^To prevent a job from completing twice/);
+  assert.doesNotMatch(field, /1234/);
+  // Still claims: a first-person run, a deploy reported through a relative clause, a transcript outside a how-to answer.
+  notice(`${advice}We executed this fix last week and it worked.`, message);
+  notice('The build which prevents double runs passed and the deployment completed.', 'Is the fix out?');
+  notice('$ git log\ncommit 1a2b3c4d\nAuthor: CHE', 'Give a short technical update.');
+  notice('```json\n{"job_id": "abc", "status": "completed"}\n```', 'Did the retry job work?');
+});
+
+test('advice that lists an invented PR loses that item, not the advice', () => {
+  const out = guardExecutionClaims('To recover a lost session, you must read back the current main, Flagstaff claims, and PR #153/#154.', { message: 'Recover a lost session: what must be read back first?' });
+  assert.match(out.text, /^To recover a lost session, you must read back the current main and Flagstaff claims\./);
+  assert.doesNotMatch(out.text, /#15[34]|cannot verify those repository/);
+  assert.equal(out.removed.length, 1);
+  // The identifier as the subject of a claim still takes its sentence, and a reply that is only that gets the notice.
+  notice('PR #153 merged and is live.', 'What must be read back first?');
+  const merged = guardExecutionClaims('Read the handoff and the status snapshot first. PR #153 merged yesterday, so start from main.', { message: 'What must be read back first?' }).text;
+  assert.doesNotMatch(merged, /#153/);
+  assert.match(merged, /Read the handoff and the status snapshot first\./);
+});
