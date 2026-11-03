@@ -259,7 +259,9 @@ function adviceSentence(s, message, execution) {
   return explanationAsk(ask) || IMPERATIVE_MAIN.test(s) || !(RUN_ASK.test(ask) || REPORT_ASK.test(ask) || PAST_ASK.test(ask));
 }
 // A question that asks for a report on work, and a reply line that reads as one of its fields (Codex review on #853).
-const REPORT_ASK = /\b(?:report|status|results?|update|log|logs|output|receipts?|job\s*ids?|branch(?:es)?|commits?|pull\s+requests?|PRs?|run\s*ids?)\b/i;
+// "log" as in logs, not the maths in "O(n log n)", "log base 2" or "log(x)" (certification run 26, csd-25: a coding answer
+// was replaced whole because "n log n" read as a request for a log report).
+const REPORT_ASK = /\b(?:report|status|results?|update|(?<!\bn\s)logs?(?!\s*(?:n\b|\d|\(|base\b|of\s+\d))|output|receipts?|job\s*ids?|branch(?:es)?|commits?|pull\s+requests?|PRs?|run\s*ids?)\b/i;
 const REPORT_FIELD = /^\s*(?:[-*•]\s*)?(?:job(?:\s*id)?|branch(?:\s+name)?|commit(?:\s+(?:sha|hash))?|sha|pr(?:\s+(?:number|link))?|pull\s+request(?:\s+link)?|run(?:\s*id)?|build|tests?|status|result|deploy(?:ment)?|invocation(?:\s*id)?)\s*[:=]\s*\S/i;
 export const EXECUTION_NOTE = 'I took out a claim about files, commands or results I cannot verify, sir: no repository file was read and nothing ran for this answer.';
 export const RETRIEVAL_NOTE ='I took out a record claim I cannot back, sir: no storage read or tool ran for this answer. Ask for the record by its source and I will read it from storage.';
