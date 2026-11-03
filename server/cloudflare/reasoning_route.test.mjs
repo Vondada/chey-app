@@ -23,12 +23,18 @@ const REASONING = [
   'Compare a queue and a topic for job delivery.',
   'Is a press release a reliable primary source?',
   'My server crashed halfway. How do you tell which writes landed?',
+  // Clock arithmetic (unseen run 41656059143 sent the train question to the 3B model).
+  'My flight departs at 9:50 am and takes 3 hours 25 minutes. When do I land?',
+  'What time will it be 45 minutes after 11:30?',
+  'The meeting runs from 1:15 pm to 3:05 pm. How long is that?',
+  'I put the bread in at 4:20 and it needs 1h 50m. When is it done?',
 ];
 const EVERYDAY = [
   'Hi CHE, how are you?', 'Good morning!', 'Can you hear me?', 'Make it shorter.', 'Turn that off.',
   'Set a timer for 10 minutes.', 'Remind me at 5 to call mom.', 'Play my morning playlist.',
   'What is the weather in Austin?', 'Write a poem about rain', 'Tell me a joke about 3 cats.',
   'Tell me a story about a dragon', 'Send an email to Sam saying I will be late.', 'Ok. How are you?',
+  'Wake me up at 6:30 am.', 'Set an alarm for 7:15 in 2 hours.', 'What time is it?', 'Remind me at 3pm to stretch for 10 minutes.',
 ];
 
 test('reasoning questions take the quality route; everyday chat and creative asks stay fast', () => {
