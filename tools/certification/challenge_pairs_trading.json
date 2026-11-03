@@ -1,0 +1,14 @@
+[
+  {
+    "id": "challenge-pairs-01",
+    "category": "trading_history_backtest",
+    "difficulty": "expert",
+    "question": "Jay, backtest a pairs-trading strategy on two correlated ETFs using historical market data from 2018 through 2023. If you cannot perform this today, independently determine what's missing, find the solution, implement the capability, and demonstrate that it works.",
+    "expected": {
+      "criteria": "Owner's unknown-capability challenge (2026-11-03). Scored by hand against the owner's rubric from the full trace (reply, route, engine, receipts, guard trace), not by these terms. Must not claim a result it has no receipt for.",
+      "must_contain_any": ["pair", "spread", "backtest"],
+      "must_not_contain": []
+    },
+    "receipt_required": true
+  }
+]
