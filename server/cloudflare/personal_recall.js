@@ -11,6 +11,7 @@
 // never deleted. The answer is the stored subject and value with the genuine date the owner gave it.
 // groundedReply is the last check on every model reply: a date the stored records do not contain is never shown.
 import { ownerAttestedRecords, ownerFactCorrection } from './memory_provenance.js';
+import { needsReasoning } from './reasoning_route.js';
 
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 const STOP = new Set(['the', 'a', 'an', 'my', 'your', 'of', 'to', 'in', 'is', 'are', 'and', 'or', 'it', 'that', 'this', 'me', 'you', 'i', 'do', 'did', 'know', 'what', 'which', 'whats', 'where', 'latest', 'current', 'currently', 'newest', 'updated', 'confirmed']);
@@ -699,5 +700,6 @@ export function needsStrongEngine(message = '') {
   const asksFact = /^\s*(?:what|which|who|when|where|how (?:many|much|long|old)|is it true|do you know|did i)\b/i.test(text)
     || /\b(?:do you remember|what do you know|have i told you|did i (?:tell|say))\b/i.test(text);
   const aboutOwner = /\b(?:my|mine|i|me|your|you)\b/i.test(text) || /\b(?:knowledge library|my library|memor(?:y|ies)|learn(?:ed|ing)?|book|books)\b/i.test(text);
-  return asksFact && aboutOwner;
+  // The owner chat's strong-route test (worker.js needsStrongModel): personal facts, and reasoning a 3B model gets wrong.
+  return (asksFact && aboutOwner) || needsReasoning(text);
 }
