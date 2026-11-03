@@ -180,8 +180,9 @@ export function parseReplyBody(text) {
   }
 }
 
-// Curly apostrophes (U+2019, U+2018) read as straight ones, so "don’t" matches a term written "don't".
-const apostrophes = (s) => String(s).replace(/[‘’]/g, "'");
+// Curly apostrophes (U+2019, U+2018) read as straight ones, so "don’t" matches a term written "don't". Any run of
+// whitespace (a line break, two spaces, a no-break space) reads as one space, so "no\nrecord" matches "no record".
+const apostrophes = (s) => String(s).replace(/[‘’]/g, "'").replace(/\s+/g, ' ');
 
 // Contractions read as their full form, in the reply and in the term alike, so "can't" and "cannot", "won't" and
 // "will not", "haven't said" and "have not said" are the same words to the grader. It applies to forbidden terms and
