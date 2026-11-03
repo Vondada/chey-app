@@ -622,6 +622,7 @@ full reply is in the run's `certification-results` artifact, which this session'
 | 22 | `d9062d9d` (#887) | 509/600, 1 infrastructure | 29 / 21 (18 flaky) | `41438024028` |
 | 23 | `9788151a` (#889) | 497/600, 4 infrastructure | 24 / 33 (24 flaky) | `41458252827` |
 | 24 | `24d06f7a` (#891, #892, #894) | 506/600, 2 infrastructure | 36 / 27 (16 flaky) | `41491194768` |
+| 25 | `114ba495` (#900-#905) | 501/600, 6 infrastructure | 36 / 41 (9 of the 36 from grader changes) | `41657004307` |
 
 Run 24 (`41491194768`, live commit `24d06f7a` verified by deploy `41489886991`): 506/600. Of 94 not passing, 61
 are incorrect answers, 31 are actions without an execution receipt and 2 are infrastructure (HTTP 502 and 500).
@@ -644,6 +645,28 @@ Run 21's 98 failures: 64 incorrect (mostly answers of the free 3B and 8B models,
 code runner, Slack, Gmail and Calendar sign-in - and the connector gate's missing-capability answers). Since #885,
 every failing row whose reply a guard changed prints the text before the guard, so guard and model faults can be told
 apart from the log.
+
+Run 25 (`41657004307`, live commit `114ba495` verified by deploy `41654659708`): 501/600, 84.3% of 594 valid, against
+run 24's 84.6% of 598. No measurable improvement. 9 of the 36 newly passing rows pass only because #901 accepts
+equivalent wording (spt-44, spt-45, eer-47, vcc-01, ir-02, cre-41, spt-37, thb-47, eer-21); under run 24's grader the
+run scores 492. 27 are real fixes (among them ir-12, ir-30, spt-12, spt-24, ti-42, ti-50, eer-26, eer-37, csd-25, mr-10).
+The 41 regressions: about 23 are the same 3B model answering differently (ir-15, ir-27, ivg-30, mr-24, vcc-05), about 8
+are wrong answers on the quality route (ir-39, ir-45, cre-42, spt-29, csd-01, thb-33), about 5 are correct answers the
+grader fails (ir-04 and ir-18 spell numbers as words, ti-40 quotes "will double" while refusing, mr-19, eer-22) and 4
+are infrastructure (ivg-13, ivg-37, thb-34, thb-46). Unseen reasoning set: 12/12 (`41656059143`). Since #904 every row
+prints its route, engine and receipts: 21 rows carry a successful tool receipt.
+
+What run 25 shows:
+- The quality route took 176 questions, but the 8B model answered 102 of them at 84% (86/102, the same as run 24); Gemini
+  Flash-Lite answered 64 at 89%. Routing away from the 3B model only helps where a stronger engine answers.
+- The 8B model opens with a persona line the code does not contain ("Sir, you're lucky you're cute"): 7 replies in run
+  25, 1 in run 24; in csd-01 and thb-33 that line is the whole reply.
+- The reasoning test still misses "what does the hat cost", "perfect square", "seconds in a decade" and claim critiques
+  (ir-15, ir-27, ir-48, cre-12, cre-14, cre-48). Clock arithmetic was added after the run (#906 `1598930d`, deploy
+  `41659439388` verified).
+- eer-31: the execution-claims stage replaced a correct numbered design ("1. Unique ID Generation ...") with "I couldn't
+  finish that answer just now".
+- The 3B model's run-to-run change (about 20 rows either way) is larger than one batch's gains; judge a batch on two runs.
 
 ## Next, in dependency order
 

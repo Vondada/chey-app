@@ -14,7 +14,7 @@ changes them. Do not delete the old values: the change is recorded in `docs/CHE_
 
 | Fact | State | Time | Evidence |
 |---|---|---|---|
-| `main` is `699ea027` (#897, R-07); live commit verified by deploy `41504425451` (live code-switching step passed); last certification is run 24 `41491194768`, 506/600 | verified | 2026-11-02 18:58 UTC | merge receipt, deploy run |
+| `main` is `1598930d` (#906, clock arithmetic to the reasoning route); live commit verified by deploy `41659439388` (live code-switching step passed); last certification is run 25 `41657004307`, 501/600 (run 24 506/600) | verified | 2026-11-03 16:10 UTC | merge receipt, deploy run |
 | `main` is `92f8f5ec` (#895, after #892 `24d06f7a`, #891 `ad55a989`, #894 `5847d7dd`); run 24 `41491194768` scored 506/600 on live commit `24d06f7a` (deploy `41489886991`); #895 deploy `41491527262` verified live commit `92f8f5ec`, live code-switching step passed | reported (superseded above) | 2026-11-02 18:05 UTC | merge receipts, deploy and certification runs |
 | `main` is `9788151a` (#889, after #888 `cd3fd386`); live commit verified by deploy `41448895778` (live code-switching probe failed); run 23 `41458252827` scored 497/600 | reported (superseded above) | 2026-11-02 15:25 UTC | merge receipts, deploy and certification runs |
 | `main` is `d9062d9d` (#887); live Worker verified by deploy `41435754424`; run 22 `41438024028` scored 509/600 | reported (superseded above) | 2026-11-02 12:25 UTC | merge receipt, deploy and certification runs |
