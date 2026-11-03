@@ -104,3 +104,18 @@ test('advice that lists an invented PR loses that item, not the advice', () => {
   assert.doesNotMatch(merged, /#153/);
   assert.match(merged, /Read the handoff and the status snapshot first\./);
 });
+
+// Certification run 26 (41703244090) csd-25: "Write a function ... in O(n log n)." read "log" as a request for a log
+// report, so a correct binary-search answer that named a file was replaced whole by the not-evidence notice. The file
+// sentence goes; the answer stays. A real request for logs is still a report ask.
+test('the maths "log" in O(n log n) is not a request for a log report', async () => {
+  const { guardExecutionClaims } = await import('./truth_layer.js');
+  const answer = 'You can find the length of the longest increasing subsequence in O(n log n) time by keeping the smallest tail of every increasing run. As you go you use binary search to extend the run or replace a tail. Save this as lis/solve.py.';
+  for (const message of ['Write a function that returns the length of the longest increasing subsequence in O(n log n).', 'Write a function that sorts in n log n time.', 'Compute log base 2 of 1024 in a function.']) {
+    const out = guardExecutionClaims(answer, { message, receipts: [] });
+    assert.match(out.text, /^You can find the length[\s\S]*binary search/, message);
+    assert.doesNotMatch(out.text, /lis\/solve\.py/, message);
+  }
+  const logs = guardExecutionClaims('The deploy log shows it passed. Save this as lis/solve.py.', { message: 'Show me the deploy logs.', receipts: [] });
+  assert.match(logs.text, /^I cannot verify/);
+});
