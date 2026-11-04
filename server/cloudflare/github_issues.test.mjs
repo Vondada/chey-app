@@ -6,6 +6,13 @@ import assert from 'node:assert/strict';
 import { readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import test from 'node:test';
 import { issueBody, issueRequest, issueTurn } from './github_issues.js';
+import { COMMANDS, dispatchPrompt } from './command_catalog.js';
+
+test('the Command Center has the GitHub issue command, and its prompt is one this tool files (Codex review on #921)', () => {
+  const command = COMMANDS.find((c) => c.id === 'github-issue');
+  assert.equal(command.route, 'che_github_issue');
+  assert.equal(issueRequest(dispatchPrompt(command, "Owner's login fails")).title, "Owner's login fails");
+});
 
 const ENV = { CHE_GITHUB_TOKEN: 'test-token', CHE_GITHUB_REPO: 'owner/repo' };
 function fakeGitHub(open = []) {
@@ -24,7 +31,10 @@ test('issue requests are recognised with their title; questions, negations and o
   assert.equal(issueRequest('Open a new GitHub issue called Voice cuts out on long replies').title, 'Voice cuts out on long replies');
   assert.equal(issueRequest('File an issue on GitHub titled "Gallery crash" steps: 1. open Gallery 2. scroll fast').steps, '1. open Gallery 2. scroll fast');
   assert.deepEqual(issueRequest('Create a GitHub issue.'), { title: '', steps: '', wantsSteps: false });
-  for (const q of ['How do I create a GitHub issue?', "Don't open a GitHub issue for that.", 'Explain how to file a GitHub issue.', 'Book a ticket to Paris.', 'What is a GitHub issue?']) assert.equal(issueRequest(q), null, q);
+  // Codex review on #921: a double-quoted title keeps its apostrophe; every creation verb can be negated.
+  assert.equal(issueRequest('Create a GitHub issue titled "Owner\'s login fails".').title, "Owner's login fails");
+  assert.equal(issueRequest("Create a GitHub issue titled 'Owner's login fails' please").title, "Owner's login fails");
+  for (const q of ["Don't add a GitHub issue titled 'Flaky login test'.", "Don't start a GitHub issue for this.", 'Never log a GitHub issue for this.', 'How do I create a GitHub issue?', "Don't open a GitHub issue for that.", 'Explain how to file a GitHub issue.', 'Book a ticket to Paris.', 'What is a GitHub issue?']) assert.equal(issueRequest(q), null, q);
 });
 
 test('the body keeps the owner\'s words and never invents reproduction steps', () => {

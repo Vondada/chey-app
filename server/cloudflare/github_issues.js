@@ -6,8 +6,10 @@
 
 const ASK = /\b(?:create|open|file|make|raise|log|add|submit|start)\s+(?:a\s+|an\s+|one\s+)?(?:new\s+)?(?:github\s+|git\s*hub\s+)?(?:issue|bug\s+report|ticket)\b/i;
 const GITHUB = /\bgit\s*hub\b|\bissue\b/i;
-const NOT_A_REQUEST = /\b(?:do\s+not|don['’]t|never|no\s+need\s+to)\b[^.?!]{0,30}\b(?:create|open|file|make|raise|log|submit)\b|^(?:how\s+(?:do|can|would|should)\s+(?:i|we|you|one)|how\s+to|what\s+(?:is|are)|why|should\s+i|can\s+i)\b|\b(?:explain|describe|teach|tell\s+me)\s+how\b/i;
-const TITLE = /\b(?:titled|title(?:d)?\s*:|called|named|with\s+(?:the\s+)?title)\s*["“'‘]([^"”'’]{2,200})["”'’]|\b(?:titled|called|named)\s+([^,.;]{2,120}?)(?=\s+(?:with|and|about|for)\b|[,.;]|$)/i;
+const VERBS = String.raw`(?:create|open|file|make|raise|log|add|submit|start)`;
+const NOT_A_REQUEST = new RegExp(String.raw`\b(?:do\s+not|don['’]t|never|no\s+need\s+to|stop)\b[^.?!]{0,30}\b${VERBS}\b|^(?:how\s+(?:do|can|would|should)\s+(?:i|we|you|one)|how\s+to|what\s+(?:is|are)|why|should\s+i|can\s+i)\b|\b(?:explain|describe|teach|tell\s+me)\s+how\b`, 'i');
+// A quoted title ends at its own closing mark: "Owner's login fails" keeps its apostrophe (Codex review on #921).
+const TITLE = /\b(?:titled|title(?:d)?\s*:|called|named|with\s+(?:the\s+)?title)\s*(?:"([^"]{2,200})"|“([^”]{2,200})”|'((?:[^']|'(?=\w)){2,200})'|‘([^’]{2,200})’)|\b(?:titled|called|named)\s+([^,.;"“'‘]{2,120}?)(?=\s+(?:with|and|about|for|steps?)\b|[,.;]|$)/i;
 const STEPS = /\b(?:steps?(?:\s+to\s+reproduce)?|repro(?:duction)?(?:\s+steps)?)\s*:\s*([\s\S]{3,3000})$/i;
 const WANTS_STEPS = /\brepro(?:duction|duce)?\b|\bsteps\b/i;
 
@@ -16,7 +18,7 @@ export function issueRequest(message = '') {
   const text = String(message || '').replace(/\s+/g, ' ').trim();
   if (!text || text.length > 4000 || !ASK.test(text) || !GITHUB.test(text) || NOT_A_REQUEST.test(text)) return null;
   const m = TITLE.exec(text);
-  const title = String((m && (m[1] || m[2])) || '').trim().replace(/[.!?]+$/, '');
+  const title = String((m && (m[1] || m[2] || m[3] || m[4] || m[5])) || '').trim().replace(/[.!?]+$/, '');
   const steps = (STEPS.exec(text)?.[1] || '').trim();
   return { title: title.slice(0, 200), steps, wantsSteps: WANTS_STEPS.test(text) };
 }
