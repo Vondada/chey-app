@@ -268,6 +268,16 @@ export function requestCloudWork(data, { agent = 'CHE', kind = '', params = {}, 
   return { ok: true, job, plan, needs_approval: plan.approval_required, deduplicated };
 }
 
+/**
+ * The execution receipt for a cloud job request (certification run 24, ter-15: the chat answer carried a job id but no
+ * receipt). Its status is the job's: awaiting_approval until the owner approves the GitHub minutes, then queued.
+ */
+export function cloudReceipt(out, operation) {
+  const job = out?.job;
+  if (!job) return undefined;
+  return { tool: 'che_cloud_computer', operation, status: out.needs_approval ? 'awaiting_approval' : String(job.status || 'queued'), job_id: job.id, at: new Date().toISOString(), deduplicated: Boolean(out.deduplicated) };
+}
+
 // Template parameters are typed and bounded; nothing from chat reaches a shell.
 function sanitizeParams(kind, params = {}) {
   if (kind === 'repo_tests') return { ref: 'main' };
@@ -830,7 +840,10 @@ const plain = (m) => String(m || '').trim().replace(/[’‘]/g, "'").replace(/^
 const OPEN = /^(?:open|show(?: me)?|go to|take me to|bring up)\s+(?:the\s+|your\s+|my\s+)?cloud\s+computer(?:\s+(?:room|screen|page|manager))?$/i;
 const BLENDER = /^(?:create|make|render|build|animate)\s+(?:a\s+|an\s+|me\s+a\s+)?(?:\d+[- ]second\s+)?blender\s+(?:animation|render|video|scene|film)(?:\s+(?:of|about|with|showing)\s+.{1,120})?$/i;
 const RENDER = /^render\s+(?:my|the|our)\s+(?:latest\s+|last\s+|new\s+)?(?:youtube|yt)\s+video$/i;
-const TESTS = /^(?:run|start|kick off|launch)\s+(?:the\s+|your\s+|my\s+)?(?:coding|repo(?:sitory)?|unit|flutter|app)\s+tests(?:\s+(?:on|in)\s+(?:the\s+|your\s+)?cloud(?:\s+computer)?)?$/i;
+// "Run the unit tests for the Worker" (certification run 24, ter-15, got "Nothing was done" from the connector gate): what
+// is tested may be named after "tests" ("for the Worker", "of CHE", "on the app"); the run is flutter-check.yml, which
+// holds the Worker syntax and unit test job as well as the Flutter ones.
+const TESTS = /^(?:run|start|kick off|launch|execute)\s+(?:the\s+|your\s+|my\s+|che's\s+)?(?:(?:coding|repo(?:sitory)?|unit|flutter|app|worker|server|ci|full)\s+)?(?:tests|test\s+suite|unit\s+tests|ci(?=\s+(?:for|of|on|in)\s))(?:\s+(?:for|of|on|in)\s+(?:the\s+|your\s+|my\s+|che's\s+)?(?:cloudflare\s+)?(?:worker|server|backend|che|app|code|codebase|repo(?:sitory)?|project))?(?:\s+(?:on|in)\s+(?:the\s+|your\s+)?cloud(?:\s+computer)?)?$/i;
 const PRS = /^(?:check|show(?: me)?|list|read(?: me)?)\s+(?:the\s+|your\s+|my\s+|our\s+)?open\s+(?:pull\s+requests|prs|pull-requests)$/i;
 const AGENT_WORK = /^(?:show(?: me)?|tell me|list|read(?: me)?)\s+what\s+(?:your|the|my)\s+agents\s+are\s+(?:working on|doing)(?:\s+(?:on|in)\s+(?:the\s+|your\s+)?cloud(?:\s+computer)?)?$/i;
 const INSTALL = /^(?:install|add|set up)\s+(?:a\s+|an\s+|some\s+)?(?:(?:compatible|free|open[- ]source)\s+){1,3}(?:[a-z][a-z0-9.+-]{0,30}\s+)?(?:tool|tools|software|program|package)(?:\s+.{1,80})?$/i;
