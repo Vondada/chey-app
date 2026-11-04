@@ -30,6 +30,17 @@ test('the reply comes from the records: a job\'s latest messages, a running job 
   assert.match(crewThreadReply({ jobId: '09b806cc' }, { jobs, threads: [{ ...threads[0], job_id: undefined }] }), /^Here are the last 2 messages/);
 });
 
+test('Codex on #932: the thread linked to the job wins over a later unlinked thread with the same request', () => {
+  const jobs = [{ id: '09b806cc-bbbb', status: 'failed', request: 'Owner task: older' }];
+  const threads = [
+    { id: 't1', job_id: '09b806cc-bbbb', title: 'Owner task: older', at: '2026-11-04T10:40:00.000Z', messages: [{ from: 'Atlas', text: 'The job\'s own plan.' }] },
+    { id: 't2', title: 'Owner task: older', at: '2026-11-04T11:00:00.000Z', messages: [{ from: 'Atlas', text: 'A foreground run.' }] },
+  ];
+  const reply = crewThreadReply({ jobId: '09b806cc' }, { jobs, threads });
+  assert.match(reply, /The job's own plan\./);
+  assert.doesNotMatch(reply, /A foreground run/);
+});
+
 test('Codex on #932: an older thread with a request over 90 characters is found by the title as it was saved', async () => {
   const request = 'Owner task: Jay, backtest a pairs-trading strategy on two correlated ETFs using historical market data from 2018 through 2023.';
   const saved = new Map();

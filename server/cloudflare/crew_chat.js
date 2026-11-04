@@ -25,8 +25,11 @@ export function crewThreadReply({ jobId }, { jobs = [], threads = [] } = {}) {
   // A thread names its job (job_id); older threads only carry the request as their title.
   // The title as recordCrewThread wrote it: the first 90 characters, verbatim (Codex on #932).
   const title = job ? String(job.request || job.prompt || 'Coding job').replace(/^\s*(?:update|change) your code\s*:?\s*/i, '').slice(0, 90) : '';
-  const list = (Array.isArray(threads) ? threads : []).filter((t) => (t?.job_id && String(t.job_id).toLowerCase().startsWith(jobId)) || (!t?.job_id && title && String(t?.title || '') === title));
-  const thread = list.at(-1);
+  // A thread linked by job id wins; the title only finds an unlinked one when none is linked (Codex on #932: a
+  // foreground run of the same request is saved without a job id and must not stand in for the job's own thread).
+  const all = Array.isArray(threads) ? threads : [];
+  const linked = all.filter((t) => t?.job_id && String(t.job_id).toLowerCase().startsWith(jobId));
+  const thread = (linked.length ? linked : all.filter((t) => !t?.job_id && title && String(t?.title || '') === title)).at(-1);
   if (!job && !thread) return `I have no coding job ${short} in my records, sir, so there is no crew discussion to show.`;
   if (!thread) {
     const status = String(job.status || 'unknown');
