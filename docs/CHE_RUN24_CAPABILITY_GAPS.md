@@ -12,7 +12,7 @@ Blocker kinds: **routing** (a tool exists but the message never reaches it), **m
 | ID | Question (short) | Run 24 answer came from | Root cause | Blocker | Plan / status |
 |---|---|---|---|---|---|
 | thb-35 | Pair trading on two ETFs, 2018-2023, losing trades | `che_trading` decline (trading_lab.js MULTI_MARKET) | Backtests run one market at a time | missing capability | Owner's unknown-capability challenge: CHE must build it through her self-development path (#912 routes the challenge there). Not written by hand. |
-| csd-38 | Create a GitHub issue | model | No create-issue code (`gh()` in coding_runtime.js can) | missing capability, approval | Issue draft held for the owner's yes, then created with the issue URL as receipt |
+| csd-38 | Create a GitHub issue | model | No create-issue code (`gh()` in coding_runtime.js can) | missing capability | Create the issue in CHE's own repository with the issue URL as receipt (not spending, deletion or an outside message, so no hold) |
 | csd-43 | Benchmark two sorting algorithms | model | Workers cannot time code (frozen clock, no eval); no runner wired to chat | missing capability, approval | Run in CI (cloud_computer.js runCloudTask pattern); GitHub minutes need the owner's yes |
 | ter-03 | Open the calendar app | connector gate (`app_open`) | The iPhone client opens apps itself from a fixed URI map that lacks `calshow:`; the Worker cannot open iPhone apps | permission (device) | Client URI map; verifiable only on the owner's iPhone |
 | ter-06 | Read my latest email aloud | `che_google` | Gmail sign-in expired (`needs_reconnect`) | account | Owner reconnects Gmail on Connections |
@@ -51,6 +51,15 @@ Blocker kinds: **routing** (a tool exists but the message never reaches it), **m
   letters, recovery of jobs cut off by a restart, driven by the Durable Object alarm. Dependencies: objective_graph.js.
 - Owner approval: Gmail send holds (google_services.js), action approvals (`/api/action/approval`), the Cloud Computer's
   approval for GitHub minutes (cloud_computer.js).
+
+## Which actions wait for the owner
+
+AGENTS.md (owner rule, 2026-09-28) gives CHE standing permission to act, including sending messages and emails, and asks
+first only before spending money or deleting. The owner's instruction of 2026-11-03 for this work asks to preserve owner
+approval for spending, account changes, external messages, sensitive actions and live trading, and the live Gmail code
+already holds every send for a yes (google_services.js WRITE_KINDS). Until the owner settles the difference, messages to
+other people (ter-11, oac-29's client notice) keep the existing hold; actions inside CHE's own systems (a GitHub issue in
+her repository, a queue restart, a reminder) do not wait.
 - Deterministic owner tools: `owner_tools.js` (#913) is where new ones are added, one call in worker.js.
 
 ## Grading note
