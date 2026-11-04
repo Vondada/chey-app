@@ -1315,3 +1315,35 @@ test('sourceWindow numbers source lines, keeps a named function and a matching c
   assert.equal(isTestPath('server/cloudflare/x.js'), false);
 });
 
+
+// The owner's unknown-capability challenge (run 41764002449): coding job 98238043 was cut off by the 15-minute alarm
+// limit four times and dead-lettered, because an interrupted run saved nothing. A run past its deadline now stops
+// between rounds with a checkpoint (continuation), and the next run continues from it instead of restarting.
+test('a run past its time limit stops between rounds with a checkpoint, and the next run continues from it', async () => {
+  let implementationCalls = 0;
+  const env = {
+    CHE_GITHUB_TOKEN: 't',
+    CHE_GITHUB_REPO: 'o/r',
+    AI: {
+      run: async (_model, input) => {
+        const system = input.messages[0].content;
+        if (system.includes('Architect')) return { response: JSON.stringify({ plan: 'change banner', search_terms: ['Ready. Type or speak a request.'], paths: ['lib/main.dart'] }) };
+        if (system.includes('Review')) return { response: JSON.stringify({ approved: false, target_correct: true, notes: ['not yet'], repair_instructions: 'try again', lesson: '' }) };
+        implementationCalls++;
+        // A find text that is not in the file: the round produces no applicable change.
+        return { response: JSON.stringify({ summary: 'Ready banner', edits: [{ path: 'lib/main.dart', find: `'no such text ${implementationCalls}'`, replace: "'Ready, sir.'" }] }) };
+      },
+    },
+  };
+  const first = await prepareSelfUpdate(env, 'make the Ready banner say Ready, sir', fakeGitHub(), memoryStore(), { deadline: Date.now() - 1 });
+  assert.equal(first.status, 503, first.detail);
+  assert.equal(first.continuation, true);
+  assert.match(first.detail, /reached its time limit after \d implementation pass\(es\); the job saved a checkpoint and continues in its next run/);
+  assert.ok(first.checkpoint && first.checkpoint.round_offset >= 1, 'the next run starts after the round already done');
+  const callsInFirstRun = implementationCalls;
+  assert.ok(callsInFirstRun > 0, 'round one ran before the deadline was checked');
+  // The next run, with time left, continues on later rounds; it does not restart the round already done.
+  const next = await prepareSelfUpdate(env, 'make the Ready banner say Ready, sir', fakeGitHub(), memoryStore(), { checkpoint: first.checkpoint, deadline: Date.now() + 60_000 });
+  assert.notEqual(next.continuation, true);
+  assert.ok(implementationCalls > callsInFirstRun);
+});

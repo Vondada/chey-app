@@ -2665,7 +2665,12 @@ export async function prepareSelfUpdate(env, request, fetcher = fetch, memory = 
       }
     }
 
+    // One background run has a wall-time limit (a Durable Object alarm stops at 15 minutes). A run past its deadline
+    // stops between rounds and saves a checkpoint, and the next run continues from it instead of restarting (the
+    // owner's unknown-capability challenge, run 41764002449: job 98238043 dead-lettered after four interrupted runs).
+    let deadlineStop = false;
     for (let round = 0; genuinePasses < maxRounds && !result; round++) {
+      if (round > 0 && Number(options.deadline) > 0 && Date.now() > Number(options.deadline)) { deadlineStop = true; break; }
       lastRound = round;
       // A resumed job continues on the NEXT engine pair, not the one that went empty.
       const roundEngineers = CREW.engineers.map((member, i) => engineerForRound(member, i, round + roundOffset));
@@ -2849,6 +2854,17 @@ export async function prepareSelfUpdate(env, request, fetcher = fetch, memory = 
         ...(pendingReviewFits() ? { pending_review: pendingReview } : {}),
         saved_at: new Date().toISOString(),
       });
+      if (deadlineStop && !budgetStop) {
+        return finish({
+          status: 503,
+          failure_class: FAILURE_CLASS.TEMPORARY_EXTERNAL,
+          retryable: true,
+          continuation: true,
+          checkpoint: saveCheckpoint(),
+          detail: `This run reached its time limit after ${genuinePasses} implementation pass(es); the job saved a checkpoint and continues in its next run with ${maxRounds - genuinePasses} pass(es) left. Nothing was changed yet.`,
+          owner_message: 'My coding team is still working on it, sir: one run reached its time limit, so it saved its progress and continues in the next run. Nothing was changed yet.',
+        });
+      }
       if (enginesFailed && !budgetStop && genuinePasses > 0 && genuinePasses < maxRounds && resumes < 3) {
         return finish({
           status: 503,
