@@ -3649,6 +3649,54 @@
    "optional_missing": []
   },
   {
+   "id": "github-issue",
+   "category": "build",
+   "title": "GitHub issue",
+   "summary": "File a GitHub issue in CHE's repository.",
+   "does": "Files an issue with your title in CHE's own GitHub repository and gives you GitHub's issue number and link. An open issue with the same title is reported instead of filed twice; reproduction steps you did not give are left to fill in, never invented.",
+   "mode": "BUILD",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": {
+    "name": "title",
+    "required": true,
+    "hint": "the issue title, then \"steps:\" and the steps if you have them"
+   },
+   "examples": [
+    "Create a GitHub issue titled 'Flaky login test'",
+    "File an issue called Gallery crash steps: 1. open Gallery 2. scroll fast"
+   ],
+   "needs": [
+    "github"
+   ],
+   "optional": [],
+   "handler": "owner_tools.ownerToolTurn → github_issues.issueTurn",
+   "route": "che_github_issue",
+   "produces": "status",
+   "evidence": "The issue number and link GitHub returned.",
+   "cost": "Free.",
+   "keywords": [
+    "github issue",
+    "file an issue",
+    "open an issue",
+    "bug report",
+    "create issue"
+   ],
+   "status": "setup_required",
+   "missing": [
+    {
+     "id": "github",
+     "label": "GitHub connection",
+     "state": "not_connected",
+     "setup": "Add CHE_GITHUB_TOKEN and CHE_GITHUB_REPO as Worker secrets.",
+     "detail": "GitHub is not connected."
+    }
+   ],
+   "optional_missing": []
+  },
+  {
    "id": "money-dashboard",
    "category": "money",
    "title": "Money Dashboard",
