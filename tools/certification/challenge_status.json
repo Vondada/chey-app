@@ -44,5 +44,20 @@
       "must_not_contain": []
     },
     "receipt_required": false
+  },
+  {
+    "id": "challenge-status-04",
+    "category": "self_development",
+    "difficulty": "easy",
+    "question": "What is my coding team discussing for coding job 6407f0b8? Show the crew's latest messages.",
+    "expected": {
+      "criteria": "Read-only crew thread.",
+      "must_contain_any": [
+        "job",
+        "crew"
+      ],
+      "must_not_contain": []
+    },
+    "receipt_required": false
   }
 ]
