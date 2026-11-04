@@ -4,7 +4,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import test from 'node:test';
-import { retailPriceReply, retailPriceRequest } from './retail_prices.js';
+import { retailPriceReply, retailPriceRequest, retailPriceTurn } from './retail_prices.js';
 
 const TER32 = 'Look up the price of coffee in three shops and compare them.';
 
@@ -19,7 +19,15 @@ test('a shop price lookup is recognised, with its item; market prices and other 
     "Don't look up the price of coffee in three shops.",
     'Add coffee to my shopping list.',
     'Tell me a story about three shops.',
+    // Codex on #928: an explicit research ask goes to the research route, which can cite published prices.
+    'Research and compare current coffee prices at three shops in Seattle: Starbucks, Dunkin and Peets. Use web sources.',
+    'Search the web for the price of coffee at three cafes in Seattle.',
   ]) assert.equal(retailPriceRequest(q), null, q);
+});
+
+test('Codex on #928: a turn with an attachment (menus) goes on to the attachment reader', () => {
+  assert.equal(retailPriceTurn('Compare coffee prices at three shops using the attached menus.', { attachment: { type: 'image/jpeg', data: 'x' } }), null);
+  assert.ok(retailPriceTurn(TER32, {}));
 });
 
 test('the reply names the item, says nothing was looked up, and contains no price figure', () => {

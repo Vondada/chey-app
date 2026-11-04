@@ -7,16 +7,19 @@ import { ndjsonReply } from './ndjson_reply.js';
 
 const SHOPS = String.raw`(?:shops?|stores?|caf(?:e|é)s?|coffee\s+shops?|restaurants?|supermarkets?|grocers?|grocery\s+stores?|retailers?|chains?|outlets?|places|bakeries|pharmacies|gas\s+stations?|petrol\s+stations?)`;
 const MANY = String.raw`(?:two|three|four|five|six|several|a\s+few|a\s+couple\s+of|different|local|nearby|\d+)`;
-const LOOKUP = /\b(?:look\s*up|find|check|get|pull\s+up|search(?:\s+for)?|compare|what(?:'s|\s+is|\s+are)|how\s+much\s+(?:is|are|does|do))\b/i;
+const LOOKUP = /\b(?:look\s*up|find|check|get|pull\s+up|compare|what(?:'s|\s+is|\s+are)|how\s+much\s+(?:is|are|does|do))\b/i;
 const PRICE = /\b(?:prices?|cost(?:s)?|how\s+much)\b/i;
 const AT_SHOPS = new RegExp(String.raw`\b(?:at|in|across|from|between|among)\s+(?:the\s+)?${MANY}\s+(?:different\s+|local\s+|nearby\s+)?${SHOPS}\b`, 'i');
 const NOT_NOW = /\b(?:don['’]t|do\s+not|never|no\s+need\s+to|stop)\s+(?:look|find|check|search|compare|get)\b/i;
+// An explicit research ask ("research…", "use web sources", "search the web") goes to the research route, which can
+// cite published prices; this file only answers a plain lookup that no tool would serve (Codex on #928).
+const RESEARCH = /\b(?:research|search|web|online|internet|sources?|cite|citations?|google)\b/i;
 const MARKET = /\b(?:stocks?|shares?|futures?|crypto|bitcoin|btc|eth|etf|index|ticker|options?|MNQ|NQ|MES|ES|SPY|QQQ)\b/;
 
 /** The item whose shop price the owner asked for, or null when this is not a shop price lookup. */
 export function retailPriceRequest(message) {
   const text = String(message || '').trim();
-  if (!text || text.length > 400 || NOT_NOW.test(text) || MARKET.test(text)) return null;
+  if (!text || text.length > 400 || NOT_NOW.test(text) || MARKET.test(text) || RESEARCH.test(text)) return null;
   if (!LOOKUP.test(text) || !PRICE.test(text) || !AT_SHOPS.test(text)) return null;
   const item = text.match(/\b(?:price|cost)s?\s+of\s+(?:an?\s+|the\s+)?([a-z][a-z\s'-]{1,40}?)\s+(?:at|in|across|from|between|among)\b/i)?.[1]
     || text.match(/\b(?:compare|check)\s+(?:the\s+)?([a-z][a-z\s'-]{1,40}?)\s+prices?\b/i)?.[1]
@@ -30,8 +33,9 @@ export function retailPriceReply({ item } = {}) {
   return `I can't look up ${what} at shops, sir: I don't have a tool that reads a shop's or a menu's prices, so I looked nothing up and I won't guess figures. Prices also differ by location. If you tell me the shops and your area, I can search the web for prices they publish, and I'll only quote ones I can show you a source for.`;
 }
 
-/** The whole turn for /api/chat, or null when the message is not a shop price lookup. */
-export function retailPriceTurn(message) {
-  const ask = retailPriceRequest(message);
+/** The whole turn for /api/chat, or null when the message is not a shop price lookup. An attachment (menus, receipts)
+ * is evidence the attachment reader can use, so that turn goes on to it (Codex on #928). */
+export function retailPriceTurn(message, body = {}) {
+  const ask = body?.attachment ? null : retailPriceRequest(message);
   return ask ? ndjsonReply(retailPriceReply(ask), { source: 'che_retail_prices', ok: false, capability: 'missing', model_calls: 0 }) : null;
 }

@@ -11794,7 +11794,7 @@ export class CheState extends DurableObject {
         if (acquire) return this.acquireCapability(request, body, acquire, turnActionPolicy.prCreationAllowed);
         const chain = ownerDevice && !ACQUIRE_TRIES.has(request) ? multiToolRequest(message) : null;
         if (chain) return multiToolTurn(chain, { runTurn: (text) => this.innerTurn(request, body, text) });
-        const shopPrice = retailPriceTurn(message);
+        const shopPrice = retailPriceTurn(message, body);
         if (shopPrice) return shopPrice;
         // "Diagnose/recover the failed coding job": goes to the coding
         // pipeline, which builds on the retained failure evidence.
