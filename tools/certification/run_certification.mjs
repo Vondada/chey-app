@@ -587,13 +587,16 @@ async function main(argv) {
     reuse = reuseFrom(earlier.results || [], opts.rerun);
     console.log(`resuming: ${reuse.size} graded answers kept from ${opts.resume}`);
   }
+  // A targeted run (--questions=, a handful of rows) prints each reply in full, up to 4000 characters: a coding job's
+  // error and its crew's messages run past 600, and the results artifact cannot always be downloaded.
+  const replyChars = opts.questions ? 4000 : 600;
   const report = await runCertification({
     url, token, questions, select, reuse, questionsFile: opts.questions || QUESTIONS_PATH,
     // Every row prints its receipts and the start of CHE's reply, passes included, so any grade can be audited from the log
     // (the results artifact cannot always be downloaded; the run-24 audit had no reply text for its 506 passes).
     onProgress: (row) => { console.log(row.verdict === 'pass'
-      ? `${row.id} pass action=${row.action_outcome ?? "none"} source=${row.source ?? "none"} route=${row.route ?? 'none'} engine=${engineLabel(row)} ms=${row.latency_ms} receipts=${receiptLabel(row.receipts)} :: ${String(row.reply || '').replace(/\s+/g, ' ').slice(0, 600)}`
-      : `${row.id} ${row.verdict} [${row.classification}] action=${row.action_outcome ?? "none"} (${row.reason}) source=${row.source ?? 'none'} route=${row.route ?? 'none'} engine=${engineLabel(row)} ms=${row.latency_ms} receipts=${receiptLabel(row.receipts)} :: ${String(row.reply || '').replace(/\s+/g, ' ').slice(0, 600)}`);
+      ? `${row.id} pass action=${row.action_outcome ?? "none"} source=${row.source ?? "none"} route=${row.route ?? 'none'} engine=${engineLabel(row)} ms=${row.latency_ms} receipts=${receiptLabel(row.receipts)} :: ${String(row.reply || '').replace(/\s+/g, ' ').slice(0, replyChars)}`
+      : `${row.id} ${row.verdict} [${row.classification}] action=${row.action_outcome ?? "none"} (${row.reason}) source=${row.source ?? 'none'} route=${row.route ?? 'none'} engine=${engineLabel(row)} ms=${row.latency_ms} receipts=${receiptLabel(row.receipts)} :: ${String(row.reply || '').replace(/\s+/g, ' ').slice(0, replyChars)}`);
       // A failing answer a guard changed also prints what the reply said before that guard.
       if (row.verdict !== 'pass') for (const t of row.guard_trace || []) console.log(`  guard ${row.id} ${t.stage} before :: ${String(t.before || '').replace(/\s+/g, ' ').slice(0, 400)}`);
     },
