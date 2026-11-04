@@ -53,6 +53,7 @@ import { mediaHoldAnswer, mediaHoldIntent, mediaKeepFor, mediaLatestReply, media
 import { capabilityGap, capabilityReply } from './capability_gap.js';
 import { acquireCapability as acquireAbility, acquisitionRequest } from './capability_acquisition.js';
 import { multiToolRequest, multiToolTurn } from './multi_tool.js';
+import { retailPriceTurn } from './retail_prices.js';
 import { futuresPaperApi, futuresPaperBusy, futuresPaperChat, futuresPaperTick } from './futures_paper_desk.js';
 import { INTERNAL_SOURCE, LAST_RENDER_KEY, internalSceneIntent, internalSceneTurn } from './internal_studio.js';
 import { CHAT_IMAGE_SOURCE, chatImageInline, chatImageMedia, chatImageReply, makeChatImages, pretendToolCall, requestedImageCount } from './chat_images.js';
@@ -11793,6 +11794,8 @@ export class CheState extends DurableObject {
         if (acquire) return this.acquireCapability(request, body, acquire, turnActionPolicy.prCreationAllowed);
         const chain = ownerDevice && !ACQUIRE_TRIES.has(request) ? multiToolRequest(message) : null;
         if (chain) return multiToolTurn(chain, { runTurn: (text) => this.innerTurn(request, body, text) });
+        const shopPrice = retailPriceTurn(message);
+        if (shopPrice) return shopPrice;
         // "Diagnose/recover the failed coding job": goes to the coding
         // pipeline, which builds on the retained failure evidence.
         // A command about the existing change ("Create the PR. Then fix the
