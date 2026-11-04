@@ -18,6 +18,18 @@ test('a hand-off chain names its desks in the owner\'s order; other "route ... t
   for (const q of ['Route traffic to the left lane then turn right.', 'Send this to Sam.', 'Send it to the coding agent.']) assert.equal(handoffChain(q), null, q);
 });
 
+test('Codex review on #923: named agents are their roster departments, only a summary ask closes a chain, conditions wait', () => {
+  assert.deepEqual(handoffChain('Send this to Sage, then Nova.').disciplines, ['intelligence', 'operations']);
+  assert.deepEqual(handoffChain('Send this to Iris, then Lyra, then report back to me.').disciplines, ['experience', 'creative']);
+  assert.equal(handoffChain('Send this to Iris, then Lyra, then report back to me.').summary, true);
+  const legal = handoffChain('Send this to the coding agent, then the office agent, then send it to the legal agent.');
+  assert.equal(legal.type, 'unknownDesk');
+  assert.deepEqual(legal.departments, ['engineering', 'operations', null]);
+  const later = handoffChain('Send the login bug report to the coding agent, then the office agent after I approve it.');
+  assert.deepEqual([later.type, later.conditional], ['unknownDesk', true]);
+  assert.match(handoffUnknownReply(later), /I routed nothing rather than start it now/);
+});
+
 test('the owner\'s order is kept, security follows engineering, verification is last', () => {
   assert.deepEqual(disciplinesFor('x', ['engineering', 'operations'], { ordered: true }), ['engineering', 'security', 'operations', 'qa']);
   assert.deepEqual(disciplinesFor('x', ['security', 'engineering'], { ordered: true }), ['security', 'engineering', 'qa']);

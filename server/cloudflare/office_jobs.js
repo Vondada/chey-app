@@ -390,7 +390,7 @@ export function speakOfficeJob(job) {
 }
 
 // ─── Hand-off chains from chat (office_phrases.js handoffChain; certification run 24, ter-30) ───
-const DEPARTMENT_NAMES = { engineering: 'engineering', operations: 'operations', research: 'research', security: 'security', experience: 'design', creative: 'creative', markets: 'markets', qa: 'testing' };
+const DEPARTMENT_NAMES = { engineering: 'engineering', operations: 'operations', research: 'research', security: 'security', intelligence: 'intelligence', experience: 'design', creative: 'creative', markets: 'markets', qa: 'testing' };
 
 /** The work a chain hands off: its own words, or for "this" the owner's previous message; '' when there is none. */
 export function handoffWork(phrase, history = []) {
@@ -411,6 +411,7 @@ export function handoffAskReply(phrase) {
 
 /** A chain naming a desk the Office does not have: say which, name the real ones, route nothing. */
 export function handoffUnknownReply(phrase) {
+  if (phrase.conditional) return 'That hand-off depends on a condition or a "don\'t", sir, and I cannot hold an Office hand-off until something happens yet, so I routed nothing rather than start it now. Say the hand-off when it should start.';
   const missing = phrase.legs.filter((_, i) => !phrase.departments[i]);
   const desks = Object.values(LA_AGENCIA_ROLES).map((r) => r.department?.id).filter(Boolean).map((d) => DEPARTMENT_NAMES[d] || d);
   return `My Office has no ${missing.map((leg) => leg.replace(/^the\s+/i, '')).join(' or ')}, sir, so I routed nothing rather than hand it to the wrong desk. The departments are ${[...new Set(desks)].join(', ')}. Tell me which of those should take it.`;
