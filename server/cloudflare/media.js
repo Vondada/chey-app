@@ -329,6 +329,17 @@ export async function saveRenderedImage(env, storage, { bytes, title = 'Scene', 
   return item;
 }
 
+/** A file CHE made herself in the Worker (an animated GIF from gif_encoder.js): stored like any picture, labelled made. */
+export async function saveMadeImage(env, storage, { bytes, mime = 'image/gif', title = 'Animation', prompt = '', width = 0, height = 0, source = 'che_gif_encoder', recipe = null } = {}) {
+  const id = crypto.randomUUID();
+  let text = '';
+  for (let i = 0; i < bytes.length; i += 0x8000) text += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  const stored = await storeBlob(env, storage, id, btoa(text), mime, 'image');
+  const item = { id, root_id: id, parent_id: null, kind: 'image', mode: 'procedural', mime_type: mime, title: String(title).slice(0, 120), prompt: String(prompt).slice(0, 500), width, height, provenance: 'made in the Worker by CHE\'s own code; no model or outside service', engine: source, recipe, created_at: now(), source, ...stored };
+  await saveIndex(storage, [item, ...(await listMedia(storage))]);
+  return item;
+}
+
 /** A Film Studio film already stored in R2 and verified from the file (film_render.verifyFilmObject). */
 // [blob] is the store that holds the bytes: mediaStore(env).provider ('r2' with a bucket bound, else 'che_store').
 export async function saveFilmVideo(storage, { key, title = 'Film', prompt = '', seconds = 0, width = 0, height = 0, bytes = 0, film_id = '', blob = 'r2' } = {}) {
