@@ -15,6 +15,8 @@ test('queue requests are recognised; other talk about queues and restarts is not
   assert.equal(queueIntent("What's in my job queue?")?.action, 'read');
   assert.equal(queueIntent('Restart the failed worker now and report the new PID.')?.action, 'restart');
   assert.equal(queueIntent('Retry the last failed job.')?.action, 'restart');
+  // Codex review on #913: a negated, quoted or advice-seeking restart is not a restart request.
+  for (const q of ['Do not restart the failed worker.', "Don't retry the failed job yet.", 'Should I restart the failed worker?', 'He said "restart the failed worker" but ignore that.']) assert.notEqual(queueIntent(q)?.action, 'restart', q);
   for (const q of ['What is a message queue?', 'Explain how a priority queue works.', 'Restart my phone.', 'The queue at the bank was long.']) assert.equal(queueIntent(q), null, q);
 });
 
@@ -44,6 +46,15 @@ test('a restart queues the newest failed job again under a new id; no failed job
   const none = restartFailedJob({ jobs: [job('ok', 'completed', 1)] });
   assert.equal(none.changed, false);
   assert.match(none.text, /nothing was restarted/);
+  // A cloud task restarts from a fresh dispatch: the old GitHub run is not polled again (Codex review on #913).
+  const cloud = { jobs: [job('c1', 'failed', 2, { kind: 'cloud_task', cloud: { phase: 'failed', run_id: 99, dispatch_id: 'd-1', dispatched_at: 'x', log: ['old'] } })] };
+  const again = restartFailedJob(cloud);
+  const nextCloud = cloud.jobs.at(-1);
+  assert.equal(again.changed, true);
+  assert.equal(nextCloud.retried_from, 'c1');
+  assert.equal(nextCloud.cloud.phase, 'requested');
+  assert.equal(nextCloud.cloud.run_id, undefined);
+  assert.equal(nextCloud.cloud.dispatch_id, undefined);
   // A certification probe turn never changes the owner's queue.
   const probe = { jobs: [job('f', 'failed', 1)] };
   const held = restartFailedJob(probe, { probe: true });
@@ -109,6 +120,11 @@ test('/api/chat: the queue read lists the stored job ids with a receipt; a resta
   assert.match(restart.text, new RegExp(fresh.id));
   assert.match(restart.text, /no process ID \(PID\)/);
   assert.ok(storage.alarm(), 'the job alarm was woken');
+  // "Do not restart" changes nothing (Codex review on #913).
+  const count = (await storage.get('che')).jobs.length;
+  const dont = await ask('Do not restart the failed worker.');
+  assert.notEqual(dont.done.source, 'che_job_queue');
+  assert.equal((await storage.get('che')).jobs.length, count);
   // Lists still answer first.
   const lists = await ask('What lists do I have?');
   assert.equal(lists.done.source, 'che_lists');

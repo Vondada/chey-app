@@ -1201,6 +1201,21 @@ export const COMMANDS = Object.freeze([
     prompt: 'Cloud job control: {input}', produces: 'status', evidence: 'The job record read back after the change.',
     cost: 'Free; an approved test run uses GitHub Actions minutes.', keywords: ['approve cloud job', 'stop cloud job', 'retry cloud job'],
   }),
+  // CHE's background job queue (data.jobs), read and restarted from chat by owner_tools.js (certification run 24: eer-35, eer-36).
+  C('job-queue', 'office', 'BUILD', 'List the jobs in CHE\'s background queue with their IDs.', {
+    does: 'Reads CHE\'s background job queue and lists the newest jobs (up to 100) with each job\'s ID, kind and status, and how many are queued, running, failed or dead-lettered. Nothing is changed.',
+    needs: [], route: 'che_job_queue', handler: 'owner_tools.queueChatTurn → readQueue',
+    input: null, examples: ["What's in my job queue?", 'Recover the last 100 messages from the queue and show their IDs'],
+    prompt: "What's in my job queue?", produces: 'job list', evidence: 'The stored job records, read back; the receipt names every ID.',
+    cost: 'Free: no AI engine is used.', keywords: ['job queue', 'queue ids', 'queued jobs', 'background jobs'],
+  }),
+  C('job-restart', 'office', 'BUILD', 'Restart the newest failed background job.', {
+    does: 'Queues the newest failed or dead-lettered job again as a new job (the Cloud Computer retry) and wakes the queue. A Worker has no process ID; the new job ID is the evidence.',
+    needs: [], route: 'che_job_queue', handler: 'owner_tools.queueChatTurn → restartFailedJob → cloud_computer.retryCloudJob',
+    input: null, examples: ['Restart the failed worker', 'Retry the last failed job'],
+    prompt: 'Restart the last failed job.', produces: 'status', evidence: 'The new job record stored, with its ID in the receipt.',
+    cost: 'Free; a restarted cloud test run uses GitHub Actions minutes.', keywords: ['restart failed job', 'retry failed job', 'restart worker'],
+  }),
   // Master profile form fill (owner, 2026-10-25): runs ONLY on the iPhone (lib/browser/che_form_filler.dart).
   // The Worker routes the command name; profile values and passwords never come here.
   C('master-profile', 'office', 'BUILD', 'Fill the open form from your approved profiles.', {

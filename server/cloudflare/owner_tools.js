@@ -5,6 +5,7 @@
 // Certification run 24 (41491194768): "Recover the last 100 messages from the queue and show their IDs" (eer-36) and
 // "Restart the failed worker now and report the new PID" (eer-35) were answered "Nothing was done" by the connector gate,
 // though the background job queue (data.jobs, worker.js enqueueJob/processJobs) holds exactly those records.
+import { retryCloudJob } from './cloud_computer.js';
 import { listChatTurn } from './owner_lists.js';
 
 const DATA_KEY = 'che';
@@ -24,7 +25,12 @@ const COUNT = /\b(?:last|latest|recent|first|top)\s+(\d{1,4})\b/i;
 export function queueIntent(message = '') {
   const text = String(message || '').replace(/\s+/g, ' ').trim();
   if (!text || text.length > 400) return null;
-  if (RESTART.test(text)) return { action: 'restart' };
+  // A restart changes the queue, so it must be asked for: not "do not restart the failed worker", not a quoted line and
+  // not a question about whether to (Codex review on #913).
+  const unquoted = text.replace(/["“][^"”]*["”]|'[^']{3,}'/g, ' ');
+  const negated = /\b(?:do\s+not|don['’]t|never|no\s+need\s+to|stop|without|instead\s+of|rather\s+than)\b[^.?!]{0,40}\b(?:restart|retry|re-?run|resume|relaunch)/i.test(unquoted);
+  const advice = /^(?:should|why|how|when|what\s+happens|is\s+it|would\s+it)\b/i.test(unquoted);
+  if (RESTART.test(unquoted) && !negated && !advice) return { action: 'restart' };
   if (QUEUE_READ.test(text)) {
     const asked = Number(COUNT.exec(text)?.[1] || 0);
     return { action: 'read', limit: Math.max(1, Math.min(READ_LIMIT, asked || 20)), asked: asked || null };
@@ -70,16 +76,19 @@ export function restartFailedJob(data, { probe = false, now = Date.now() } = {})
     const r = receipt('restart', 'not_run', { failed_job: job.id, reason: 'certification probe: the owner\'s queue is not changed' }, now);
     return { text: `The newest failed job is ${job.id} (${job.kind || 'job'}). This is a test turn, so I did not restart it. Receipt ${r.id}.`, receipt: r, changed: false };
   }
-  const iso = new Date(now).toISOString();
-  const keep = { ...job };
-  for (const k of ['id', 'status', 'attempts', 'retry_count', 'retry_at', 'result', 'error', 'dead_letter', 'dead_letter_at', 'created_at', 'updated_at', 'activity', 'cancelled_at', 'cancelled_by', 'cancelled_via', 'started_at', 'owner_message', 'failure_class', 'verification', 'checkpoint']) delete keep[k];
-  const next = {
-    ...keep,
-    id: crypto.randomUUID(), status: 'queued', attempts: 0, retry_count: 0, retry_at: now, result: '', error: '', dead_letter: false,
-    dead_letter_at: null, idempotency_key: `retry:${job.id}:${now}`, retried_from: job.id, created_at: iso, updated_at: iso,
-    activity: [{ at: iso, text: `Restart of failed job ${short(job.id)} requested by the owner in chat.` }],
-  };
-  data.jobs = [...jobs, next];
+  // The Cloud Computer's retry: it keeps the job's work and resets what must start over, a cloud task's GitHub run
+  // included (Codex review on #913: copied dispatch state would poll the old failed run).
+  const out = retryCloudJob(data, job.id, (store, fields) => {
+    const iso = new Date(now).toISOString();
+    const next = { ...fields, id: crypto.randomUUID(), kind: fields.kind || job.kind, status: 'queued', attempts: 0, retry_count: 0, retry_at: now, result: '', error: '', dead_letter: false, dead_letter_at: null, created_at: iso, updated_at: iso, activity: [] };
+    store.jobs = [...(Array.isArray(store.jobs) ? store.jobs : []), next];
+    return { job: next };
+  });
+  if (!out.ok) {
+    const r = receipt('restart', 'failure', { failed_job: job.id, error: out.reason }, now);
+    return { text: `I could not restart job ${job.id}, sir: ${out.reason} Receipt ${r.id}.`, receipt: r, changed: false };
+  }
+  const next = out.job;
   const r = receipt('restart', 'success', { failed_job: job.id, new_job: next.id, kind: next.kind, verified: 'queued' }, now);
   return {
     text: `Restarted, sir: failed job ${job.id} (${job.kind || 'job'}) is queued again as new job ${next.id}. A Worker has no process ID (PID); that new job ID is what to watch. Ask "what's in my job queue" to see it run. Receipt ${r.id}.`,
