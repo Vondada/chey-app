@@ -7,7 +7,8 @@
 // though the background job queue (data.jobs, worker.js enqueueJob/processJobs) holds exactly those records.
 import { retryCloudJob } from './cloud_computer.js';
 import { listChatTurn } from './owner_lists.js';
-import { listMedia, readBlob, verifyMediaFile } from './media.js';
+import { listMedia, readBlob, saveMadeImage, verifyMediaFile } from './media.js';
+import { ANIMATION_MOTIONS, ANIMATION_SHAPES, animationSpec, inspectGif, makeAnimation } from './gif_encoder.js';
 import { dayRange, mediaChatFields, mediaSearchIntent, searchMedia } from './media_library.js';
 export { dayRange, mediaSearchIntent, searchMedia };
 
@@ -204,12 +205,52 @@ export async function mediaSearchTurn(storage, message, { owner = true, probe = 
   return { text: `I found ${found.length} ${found.length === 1 ? what.replace(/s$/, '') : what} ${asked}, sir:\n${list}\n${where}.${choose} Receipt ${receipt.id}.`, meta: meta({ ok: true, execution_receipt: receipt }) };
 }
 
+// ─── Animated GIFs made in the Worker (gif_encoder.js; certification run 24, ivg-35) ───
+const MAKE_VERB = /\b(?:make|produce|create|generate|draw|render|build|give\s+me|send\s+me)\b/i;
+
+/** One chat turn that makes an animated GIF, or null when the message does not ask for one this can draw. */
+// A request to make one, not "do not make a GIF", "how do I make a GIF?" or a quoted line (Codex review on #917).
+const NOT_A_REQUEST = /\b(?:do\s+not|don['’]t|never|stop|no\s+need\s+to|instead\s+of|rather\s+than)\b[^.?!]{0,30}\b(?:make|produce|create|generate|draw|render|send|give)\b|^(?:how\s+(?:do|can|would|should|could)\s+(?:i|we|one|you)|how\s+to|what\s+(?:is|are|does)|why|can\s+i|should\s+i|is\s+it)\b/i;
+
+/** Whether [message] asks CHE to make an animated GIF she can draw (also used by the picture route). */
+export function gifRequest(message) {
+  const text = String(message || '').replace(/["“][^"”]*["”]/g, ' ').trim();
+  return text.length <= 300 && MAKE_VERB.test(text) && !NOT_A_REQUEST.test(text) && Boolean(animationSpec(text));
+}
+
+export async function gifTurn(storage, message, { owner = true, probe = false, env = {}, request = null, origin = '', now = Date.now() } = {}) {
+  const text = String(message || '');
+  if (!gifRequest(text)) return null;
+  const spec = animationSpec(text);
+  if (!spec) return null;
+  const meta = (extra = {}) => ({ source: 'che_gif', model_calls: 0, ...extra });
+  if (!owner && !probe) return { text: 'Making pictures is for the owner, sir. Nothing was made.', meta: meta({ ok: false }) };
+  const made = makeAnimation(spec);
+  const check = inspectGif(made.bytes);
+  const what = `a ${made.seconds.toFixed(1)}-second looping GIF of a ${spec.colour} ${spec.shape === 'ball' ? 'ball' : 'square'} ${spec.motion === 'bounce' ? 'bouncing' : spec.motion === 'slide' ? 'sliding' : spec.motion === 'pulse' ? 'pulsing' : 'spinning'}`;
+  const receipt = { tool: 'che_gif', operation: 'make', status: check.ok ? 'success' : 'failure', at: new Date(now).toISOString(), id: `gif:${now}`, spec, width: check.width, height: check.height, frames: check.frames, bytes: check.bytes, verified: check.ok ? 'decoded' : check.reason };
+  if (!check.ok) return { text: `I could not make that GIF, sir: the file did not read back as a GIF (${check.reason}). Nothing was saved.`, meta: meta({ ok: false, execution_receipt: receipt }) };
+  const how = `${made.width} by ${made.height} pixels, ${check.frames} frames, ${check.bytes} bytes, drawn by CHE's own code in the Worker with no model or outside service. I can draw a ${ANIMATION_SHAPES.join(' or ')} that will ${ANIMATION_MOTIONS.join(', ')}`;
+  // A certification probe turn makes and checks the file but does not fill the owner's media store with test files.
+  const base = origin || (request ? new URL(request.url).origin : '');
+  if (probe || !base) return { text: `I made ${what} and read it back as a valid GIF, sir: ${how}. This is a test turn, so it was not saved or attached. Receipt ${receipt.id}.`, meta: meta({ ok: true, execution_receipt: { ...receipt, stored: false } }) };
+  const item = await saveMadeImage(env, storage, { bytes: made.bytes, mime: 'image/gif', title: `${spec.colour} ${spec.shape} ${spec.motion} GIF`, prompt: text.slice(0, 300), width: made.width, height: made.height, recipe: spec });
+  const stored = await verifyMediaFile(env, storage, item).catch(() => ({ ok: false, reason: 'its file could not be read' }));
+  if (!stored.ok) return { text: `I made the GIF, sir, but it did not read back from storage (${stored.reason}), so it is not attached. Receipt ${receipt.id}.`, meta: meta({ ok: false, execution_receipt: { ...receipt, status: 'failure', stored: false, error: stored.reason } }) };
+  const fields = mediaChatFields(item, { origin: base, items: [item] });
+  return {
+    text: `Here it is, sir: ${what}, attached. ${how}. It is saved as picture ${item.id}. Receipt ${receipt.id}.`,
+    meta: meta({ ok: true, ...fields, media_retrieval: 'verified', execution_receipt: { ...receipt, stored: true, media_id: item.id } }),
+  };
+}
+
 // The deterministic owner tools, in the order they are tried. Each turn(storage, message, opts) returns a chat answer
 // with its receipt, or null when the message is not for it.
 export const OWNER_TOOLS = [
   { id: 'che_lists', turn: (storage, message, opts) => listChatTurn(storage, message, opts) },
   { id: 'che_job_queue', turn: (storage, message, opts) => queueChatTurn(storage, message, opts) },
   { id: 'che_media_search', turn: (storage, message, opts) => mediaSearchTurn(storage, message, opts) },
+  { id: 'che_gif', turn: (storage, message, opts) => gifTurn(storage, message, opts) },
 ];
 
 /** The first owner tool that answers [message], or null. */
