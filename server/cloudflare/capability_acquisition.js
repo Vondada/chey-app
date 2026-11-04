@@ -33,24 +33,27 @@ export function acquisitionRequest(message) {
 }
 
 const OK_STATUS = new Set(['success', 'succeeded', 'complete', 'completed', 'ok', 'done']);
+// The tool said it is unable: only this is a missing ability. A handler that worked without a receipt, asked a question
+// or failed for a passing reason is not (Codex review on #920: "Paper trade SPY" adds SPY with no receipt).
+const UNABLE = /\b(?:I|CHE)\s+(?:can(?:not|['’]t|\s+not)|am\s+(?:unable|not\s+able)\s+to|do\s+not\s+(?:have|support)|don['’]t\s+(?:have|support)|have\s+no\s+(?:way|tool|ability|capability))\b|\bnot\s+something\s+I\s+can\b|\bnot\s+(?:supported|available)\s+yet\b/i;
 
-/** What the try showed: done (a success receipt), or the tool's own refusal as the diagnosis. */
+/** What the try showed: done (a success receipt), declined (the tool's own refusal, the diagnosis), or neither. */
 export function attemptOutcome(attempt = {}) {
   const receipts = Array.isArray(attempt.receipts) ? attempt.receipts : [];
   const succeeded = receipts.filter((r) => OK_STATUS.has(String(r?.status || '').toLowerCase()));
   const route = String(attempt.done?.source || '') || 'model';
   const reply = String(attempt.reply || '').replace(/\s+/g, ' ').trim();
-  if (attempt.ok !== false && succeeded.length) return { done: true, route, reply, receipts };
-  return { done: false, route, reply: reply || '(no answer)', receipts };
+  if (attempt.ok !== false && succeeded.length) return { done: true, declined: false, route, reply, receipts };
+  return { done: false, declined: UNABLE.test(reply), route, reply: reply || '(no answer)', receipts };
 }
 
 /** The self-development request: the owner's task, what the try showed, and the owner's own acquisition words. */
-export function acquisitionJobRequest({ task, clause }, outcome) {
+export function acquisitionJobRequest({ task, clause }, outcome, { openPr = true } = {}) {
   return [
     `Owner task: ${task}`,
     `When CHE tried this task just now through her own chat route, the ${outcome.route} route answered: "${outcome.reply.slice(0, 800)}" It returned no success receipt, so CHE cannot do this today.`,
     `The owner asked: "${clause}"`,
-    'Find in the repository why the route above cannot do the task and which existing modules (data sources, engines, tests) can be reused. Implement the smallest working ability in the Worker so the owner\'s task, asked again in chat, runs for real and answers with an execution receipt; use real data where the task names it, never invented numbers. Add regression tests. Open a pull request only: do not merge, deploy, spend money, place any live trade, delete anything, or read or store a secret.',
+    `Find in the repository why the route above cannot do the task and which existing modules (data sources, engines, tests) can be reused. Implement the smallest working ability in the Worker so the owner\'s task, asked again in chat, runs for real and answers with an execution receipt; use real data where the task names it, never invented numbers. Add regression tests. ${openPr ? 'Open a pull request only' : 'Prepare the change for the owner\'s review; do not open a pull request, because the owner said not to'}: do not merge, deploy, spend money, place any live trade, delete anything, or read or store a secret.`,
   ].join('\n');
 }
 
@@ -62,7 +65,7 @@ export function acquisitionReply(outcome, queued) {
     const id = String(queued.job.id).slice(0, 8);
     lines.push(queued.deduplicated
       ? `Coding job ${id} for it is already ${queued.job.status}; I did not start a second one.`
-      : `I queued coding job ${id} to build it: my coding team reads that route's code, finds what to reuse, implements the missing part with tests and opens a pull request.${queued.held ? ' It will not run until you say "resume", because autonomy is paused.' : ''} Nothing merges or deploys until you approve it. When it is live, ask me again and I will run it and show you the result.`);
+      : `I queued coding job ${id} to build it: my coding team reads that route's code, finds what to reuse, implements the missing part with tests${queued.no_pr ? ' and holds it for your review without a pull request, as you asked' : ' and opens a pull request'}.${queued.held ? ' It will not run until you say "resume", because autonomy is paused.' : ''} Nothing merges or deploys until you approve it. When it is live, ask me again and I will run it and show you the result.`);
   } else if (queued?.not_run) {
     lines.push(`I did not start a coding job: ${queued.not_run}`);
   } else {
@@ -103,14 +106,16 @@ export async function recordGap(storage, acquire, outcome, jobId, now = new Date
  * The whole turn. tryTurn(task) runs the task as a fresh chat turn and returns {ok, reply, done, receipts}; queue(text)
  * saves the self-development job ({job, deduplicated, held}), or is null when this turn may not start code work.
  */
-export async function acquireCapability(acquire, { tryTurn, queue, storage = null }) {
+export async function acquireCapability(acquire, { tryTurn, queue, storage = null, openPr = true }) {
   const tried = await tryTurn(acquire.task);
   const outcome = attemptOutcome(tried);
-  if (outcome.done) {
-    return ndjsonReply(tried.reply, { source: 'che_capability_acquisition', attempt_route: outcome.route, execution_receipts: outcome.receipts });
+  if (!outcome.declined) {
+    // Done, or handled without saying it is unable: the try's own answer stands and nothing is built.
+    const note = outcome.done ? '' : ` I did not start a coding job: my ${outcome.route.replace(/^che_/, '').replace(/_/g, ' ')} route handled it and did not say it was unable.`;
+    return ndjsonReply(`${tried.reply}${note}`, { source: 'che_capability_acquisition', attempt_route: outcome.route, execution_receipts: outcome.receipts });
   }
   const queued = queue
-    ? await Promise.resolve(queue(acquisitionJobRequest(acquire, outcome))).catch(() => null)
+    ? await Promise.resolve(queue(acquisitionJobRequest(acquire, outcome, { openPr }), { openPr })).catch(() => null)
     : { not_run: 'this is a certification turn, and certification starts real code work only in a run you authorized.' };
   if (queued?.job?.id && storage) await recordGap(storage, acquire, outcome, queued.job.id).catch(() => null);
   return ndjsonReply(acquisitionReply(outcome, queued), {

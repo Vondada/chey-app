@@ -32,7 +32,9 @@ test('an acquisition request splits into the task and the owner\'s "if you canno
 test('the try decides: a success receipt is done; anything else is the diagnosis, in the tool\'s own words', () => {
   assert.equal(attemptOutcome({ ok: true, reply: 'Done.', done: { source: 'che_lists' }, receipts: [{ status: 'success' }] }).done, true);
   const declined = attemptOutcome({ ok: true, reply: "I can't run that backtest, sir: one market at a time.", done: { source: 'che_trading' }, receipts: [] });
-  assert.deepEqual([declined.done, declined.route], [false, 'che_trading']);
+  assert.deepEqual([declined.done, declined.declined, declined.route], [false, true, 'che_trading']);
+  // Handled with no receipt and no refusal (Codex review on #920: "Paper trade SPY" adds SPY without a receipt): not a gap.
+  assert.equal(attemptOutcome({ ok: true, reply: 'Added SPY to your paper watchlist, sir.', done: { source: 'che_trading' }, receipts: [] }).declined, false);
   // Queued, awaiting approval or not run is not a result.
   assert.equal(attemptOutcome({ reply: 'Queued.', done: { source: 'x' }, receipts: [{ status: 'queued' }] }).done, false);
   assert.equal(attemptOutcome({ reply: '', done: {}, receipts: [] }).route, 'model');
@@ -40,6 +42,8 @@ test('the try decides: a success receipt is done; anything else is the diagnosis
   assert.match(prompt, /^Owner task: Jay, backtest a pairs-trading strategy/);
   assert.match(prompt, /the che_trading route answered: "I can't run that backtest, sir: one market at a time\."/);
   assert.match(prompt, /Open a pull request only: do not merge, deploy, spend money, place any live trade/);
+  // The owner's "do not open a PR" reaches the job's own instructions (Codex review on #920).
+  assert.match(acquisitionJobRequest(acquisitionRequest(CHALLENGE), declined, { openPr: false }), /do not open a pull request, because the owner said not to/);
 });
 
 test('one turn: try, diagnose, queue; nothing is queued when the try worked or the turn may not build', async () => {
@@ -58,6 +62,9 @@ test('one turn: try, diagnose, queue; nothing is queued when the try worked or t
   const done = await frames(await acquireCapability(acquire, { tryTurn: async () => ({ ok: true, reply: 'Backtest done.', done: { source: 'che_trading_lab' }, receipts: [{ tool: 'backtest', status: 'success' }] }), queue: async () => assert.fail('nothing to build') }));
   assert.equal(done[0].delta, 'Backtest done.');
   assert.equal(done[1].source, 'che_capability_acquisition');
+  // Handled without a refusal: the try's answer stands, nothing is built.
+  const handled = await frames(await acquireCapability(acquire, { tryTurn: async () => ({ ok: true, reply: 'Added SPY, sir.', done: { source: 'che_trading' }, receipts: [] }), queue: async () => assert.fail('nothing to build') }));
+  assert.match(handled[0].delta, /^Added SPY, sir\. I did not start a coding job: my trading route handled it and did not say it was unable\./);
   // No build allowed (a certification turn the owner did not authorize): the diagnosis, and a not_run job receipt.
   const probe = await frames(await acquireCapability(acquire, { tryTurn: async () => declined, queue: null }));
   assert.match(probe[0].delta, /I did not start a coding job: this is a certification turn/);
@@ -139,6 +146,22 @@ test('/api/chat: the owner\'s challenge is tried through the trading route, diag
   assert.match(jobs[0].request, /^Owner task: Jay, backtest a pairs-trading strategy/);
   assert.doesNotMatch(text, /autonomy is paused/, 'the owner\'s own request is not held by the Office pause');
   assert.equal((await storage.get(CAPABILITY_REGISTRY_KEY)).capabilities[gapId(TASK)].status, 'DISCOVERED');
+});
+
+test('/api/chat: "do not open a PR" is kept on the job, and a task that already works starts no coding job', async () => {
+  const { storage, post } = setup();
+  const token = (await (await post('/api/pair', { code: '123456' })).json()).device_token;
+  const ask = async (message) => (await (await post('/api/chat', { message, history: [] }, token)).text()).split('\n').filter(Boolean).map((l) => JSON.parse(l));
+  await ask(`${CHALLENGE} Do not open a PR.`);
+  const jobs = (await storage.get('che')).jobs.filter((j) => j.kind === 'self_development');
+  assert.equal(jobs.length, 1);
+  assert.equal(jobs[0].no_pr, true);
+  assert.match(jobs[0].request, /do not open a pull request, because the owner said not to/);
+  const before = (await storage.get('che')).jobs.length;
+  const frames = await ask('Paper trade SPY for me. If you cannot, implement the capability in your code.');
+  assert.equal(frames.find((f) => f.type === 'done').source, 'che_capability_acquisition');
+  assert.equal((await storage.get('che')).jobs.filter((j) => j.kind === 'self_development').length, 1, 'no coding job for a task the route handled');
+  assert.ok((await storage.get('che')).jobs.length >= before);
 });
 
 test('probe: a certification turn diagnoses but queues nothing, unless the owner authorized the run', async () => {

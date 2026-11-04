@@ -11768,7 +11768,7 @@ export class CheState extends DurableObject {
         }
         // "Do X; if you can't, build it" (capability_acquisition.js).
         const acquire = ownerDevice && turnActionPolicy.codingJobAllowed && !ACQUIRE_TRIES.has(request) ? acquisitionRequest(message) : null;
-        if (acquire) return this.acquireCapability(request, body, acquire);
+        if (acquire) return this.acquireCapability(request, body, acquire, turnActionPolicy.prCreationAllowed);
         // "Diagnose/recover the failed coding job": goes to the coding
         // pipeline, which builds on the retained failure evidence.
         // A command about the existing change ("Create the PR. Then fix the
@@ -15358,7 +15358,7 @@ export class CheState extends DurableObject {
   }
 
   // The try is a fresh turn of this route; a certification turn builds only in a run the owner authorized.
-  async acquireCapability(request, body, acquire) {
+  async acquireCapability(request, body, acquire, openPr) {
     const probe = PROBE_CHAT_REQUESTS.has(request);
     return acquireAbility(acquire, {
       tryTurn: async (message) => {
@@ -15368,14 +15368,15 @@ export class CheState extends DurableObject {
         const res = await this.handleRequest(inner);
         return { ok: res.ok, ...parseProbeChatBody(await res.text()) };
       },
-      queue: probe && !PROBE_BUILD_REQUESTS.has(request) ? null : (text) => this.queueSelfDevelopment({ request: text, immediate: true, ownerRequested: true }),
+      queue: probe && !PROBE_BUILD_REQUESTS.has(request) ? null : (text) => this.queueSelfDevelopment({ request: text, immediate: true, ownerRequested: true, noPr: !openPr }),
       storage: this.ctx.storage,
+      openPr,
     });
   }
 
   // Saves an owner coding request as an idempotent background job when the
   // engines/GitHub are temporarily unavailable (class B).
-  async queueSelfDevelopment({ request, groundedRequest, immediate = false, fixThis = false, ownerRequested = false }) {
+  async queueSelfDevelopment({ request, groundedRequest, immediate = false, fixThis = false, ownerRequested = false, noPr = false }) {
     const data = await this.loadData();
     const { job, deduplicated } = enqueueJob(data, {
       kind: 'self_development',
@@ -15386,7 +15387,7 @@ export class CheState extends DurableObject {
       retry_at: immediate ? Date.now() : Date.now() + backoffMs(0, 5 * 60_000),
       ...(fixThis === true ? { fix_this: true } : {}),
     });
-    if (ownerRequested) job.owner_requested = true;
+    if (ownerRequested) Object.assign(job, { owner_requested: true, ...(noPr ? { no_pr: true } : {}) });
     if (!deduplicated) noteJobActivity(job, 'Coding job accepted and queued.');
     syncAtlasCodingTasks(data);
     await this.ctx.storage.put('che', data);
@@ -15397,7 +15398,7 @@ export class CheState extends DurableObject {
       scheduled = false;
       console.error('CHE coding alarm scheduling failed', String(error?.message || error).slice(0, 300));
     }
-    return { job, deduplicated, paused: !data.autonomy, held: !data.autonomy && !job.owner_requested, scheduled };
+    return { job, deduplicated, paused: !data.autonomy, held: !data.autonomy && !job.owner_requested, no_pr: job.no_pr === true, scheduled };
   }
 
   // Compatibility path for installed clients that selected the legacy coding
@@ -16242,7 +16243,7 @@ export class CheState extends DurableObject {
         };
       }
       await this.ctx.storage.put(PENDING_SELF_UPDATE_KEY, reviewed);
-      if (job.owner_requested === true || (await this.loadData().catch(() => ({})))?.autonomy !== false) {
+      if (!job.no_pr && (job.owner_requested === true || (await this.loadData().catch(() => ({})))?.autonomy !== false)) {
         const auto = await autoOpenReviewedPr(this.env, this.ctx.storage, prepared.proposal);
         return { id: job.id, status: 'complete', result: auto.message, owner_message: auto.message, error: '', pr_number: auto.number, pr_url: auto.url };
       }
