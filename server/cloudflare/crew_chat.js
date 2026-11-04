@@ -23,8 +23,9 @@ export function crewThreadReply({ jobId }, { jobs = [], threads = [] } = {}) {
   const job = jobs.find((j) => String(j?.id || '').toLowerCase().startsWith(jobId));
   const short = job ? String(job.id).slice(0, 8) : jobId.slice(0, 8);
   // A thread names its job (job_id); older threads only carry the request as their title.
-  const title = job ? clip(String(job.request || job.prompt || '').replace(/^\s*(?:update|change) your code\s*:?\s*/i, ''), 90) : '';
-  const list = (Array.isArray(threads) ? threads : []).filter((t) => (t?.job_id && String(t.job_id).toLowerCase().startsWith(jobId)) || (!t?.job_id && title && clip(t?.title, 90) === title));
+  // The title as recordCrewThread wrote it: the first 90 characters, verbatim (Codex on #932).
+  const title = job ? String(job.request || job.prompt || 'Coding job').replace(/^\s*(?:update|change) your code\s*:?\s*/i, '').slice(0, 90) : '';
+  const list = (Array.isArray(threads) ? threads : []).filter((t) => (t?.job_id && String(t.job_id).toLowerCase().startsWith(jobId)) || (!t?.job_id && title && String(t?.title || '') === title));
   const thread = list.at(-1);
   if (!job && !thread) return `I have no coding job ${short} in my records, sir, so there is no crew discussion to show.`;
   if (!thread) {

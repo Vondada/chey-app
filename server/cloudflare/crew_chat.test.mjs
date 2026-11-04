@@ -30,6 +30,16 @@ test('the reply comes from the records: a job\'s latest messages, a running job 
   assert.match(crewThreadReply({ jobId: '09b806cc' }, { jobs, threads: [{ ...threads[0], job_id: undefined }] }), /^Here are the last 2 messages/);
 });
 
+test('Codex on #932: an older thread with a request over 90 characters is found by the title as it was saved', async () => {
+  const request = 'Owner task: Jay, backtest a pairs-trading strategy on two correlated ETFs using historical market data from 2018 through 2023.';
+  const saved = new Map();
+  const storage = { get: async (k) => saved.get(k), put: async (k, v) => { saved.set(k, v); } };
+  await recordCrewThread(storage, { request, discussion: [{ from: 'Atlas', msg: 'Plan.' }], outcome: 'failed' });
+  const threads = saved.get(CREW_THREADS_KEY);
+  assert.equal(threads[0].job_id, undefined);
+  assert.match(crewThreadReply({ jobId: '98238043' }, { jobs: [{ id: '98238043-aa31', status: 'failed', request }], threads }), /^Here are the last 1 messages from my crew on coding job 98238043/);
+});
+
 test('a saved crew thread records its job id', async () => {
   const saved = new Map();
   const storage = { get: async (k) => saved.get(k), put: async (k, v) => { saved.set(k, v); } };
