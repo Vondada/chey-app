@@ -6,7 +6,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import test from 'node:test';
-import { dayRange, mediaSearchIntent, pickIntent, queueIntent, readQueue, restartFailedJob, searchMedia } from './owner_tools.js';
+import { dayRange, mediaSearchIntent, objectRequest, objectTurn, pickIntent, queueIntent, readQueue, restartFailedJob, searchMedia } from './owner_tools.js';
 import { mediaHoldIntent, mediaLibraryIntent } from './media_library.js';
 import { listMedia, saveOwnerFile } from './media.js';
 
@@ -233,4 +233,53 @@ test('/api/chat: a named file is found and opened from the bytes read back; a da
   assert.equal(none.done.source, 'che_media_search');
   assert.match(none.text, /found no files named "tax_return_1999"/);
   assert.deepEqual(none.done.execution_receipt?.matched, []);
+});
+
+// ─── 3D objects (ivg-20) ───
+test('a 3D object request names its object; questions, rooms and avatars are other routes', () => {
+  assert.deepEqual(objectRequest('Create a 3D model of a chair and export it as glTF.'), { description: 'chair', format: 'gltf' });
+  assert.equal(objectRequest('Make a 3D model of a red table.')?.description, 'red table');
+  for (const q of ['How do I make a 3D model of a chair?', 'Create a 3D room.', 'Make a 3D avatar of me.', 'What is glTF?', 'Do not build a 3D chair.', 'Explain how to create a 3D model of a chair.', 'Make a 3D model of me.']) assert.equal(objectRequest(q), null, q);
+  // Codex review on #918: "for me" is not the subject.
+  assert.equal(objectRequest('Create a 3D model of a chair for me.')?.description, 'chair');
+});
+
+test('a probe turn checks the object is buildable and starts nothing', async () => {
+  const storage = storageMap();
+  const out = await objectTurn(storage, 'Create a 3D model of a chair and export it as glTF.', { probe: true });
+  assert.equal(out.meta.execution_receipt.status, 'not_run');
+  assert.equal(out.meta.execution_receipt.buildable, true);
+  assert.match(out.text, /GLB, which is glTF 2\.0 in its binary form/);
+  assert.equal(storage.saved.size, 0, 'no project, no job');
+});
+
+test('/api/chat: "a 3D model of a chair as glTF" starts a Creation Studio chair and queues its GLB build', async () => {
+  const env = { CHE_PAIR_CODE: '123456', CHE_DISABLE_KEYLESS_AI: '1', AI: { run: async () => ({ response: 'MODEL TEXT' }) } };
+  const storage = storageMap();
+  const state = new CheState({ storage, waitUntil: () => {} }, env);
+  env.CHE_STATE = { getByName: () => state };
+  const post = (path, body, token = '') => worker.fetch(new Request(`https://che.example${path}`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) }, body: JSON.stringify(body),
+  }), env);
+  const token = (await (await post('/api/pair', { code: '123456' })).json()).device_token;
+  const frames = (await (await post('/api/chat', { message: 'Create a 3D model of a chair and export it as glTF.', history: [] }, token)).text()).split('\n').filter(Boolean).map((l) => JSON.parse(l));
+  const done = frames.find((f) => f.type === 'done');
+  const text = frames.filter((f) => f.type === 'delta').map((f) => f.delta).join('');
+  assert.equal(done.source, 'che_create_object');
+  assert.equal(done.execution_receipt.status, 'queued');
+  const projects = await storage.get('creations:projects');
+  const chair = projects.find((p) => p.id === done.project_id);
+  assert.equal(chair.kind, 'object');
+  assert.equal(chair.versions[0].params.family, 'chair');
+  const jobs = [...storage.saved.entries()].filter(([k]) => /gpu/i.test(k)).flatMap(([, v]) => (Array.isArray(v) ? v : Array.isArray(v?.jobs) ? v.jobs : []));
+  const job = jobs.find((j) => j.id === done.job_id);
+  assert.ok(job, `the build job ${done.job_id} is stored`);
+  assert.equal(job.kind, 'object_model');
+  assert.match(text, new RegExp(`queued as job ${done.job_id}`));
+  assert.match(text, /Nothing is finished yet/);
+  // Codex review on #918: an explanation request starts no project and no job.
+  const before = (await storage.get('creations:projects')).length;
+  const explain = (await (await post('/api/chat', { message: 'Explain how to create a 3D model of a chair.', history: [] }, token)).text()).split('\n').filter(Boolean).map((l) => JSON.parse(l)).find((f) => f.type === 'done');
+  assert.notEqual(explain.source, 'che_create_object');
+  assert.equal((await storage.get('creations:projects')).length, before);
 });
