@@ -17,6 +17,8 @@ const INVENTORY_CHECKS = 60;
 export function mediaLibraryIntent(message) {
   const text = String(message || '').trim().replace(/^(?:che|chay|chey)[,:]?\s+/i, '');
   if (!text) return false;
+  // A search by name or date is the search tool's, which applies the filter (Codex review on #915).
+  if (mediaSearchIntent(text)) return false;
   if (/\b(?:make|create|generate|render|produce|build|film|shoot)\b[\s\S]{0,40}\b(?:video|mp4|clip|short|reel)\b/i.test(text)) return false;
   // Render progress, status and the renderer's last verified job belong to the video status route, not the library.
   if (/\bverified\b/i.test(text)) return false;
@@ -110,6 +112,7 @@ const LATEST_WORD = /\b(?:latest|newest|most\s+recent)\b|\blast\b(?!\s+(?:week(?
 // question stays with the video library above.
 export function mediaHoldIntent(message) {
   const text = cleanText(message);
+  if (mediaSearchIntent(text)) return false;
   if (text.length > MAX_STORE_REQUEST) return false; // a long instruction (a study plan, a document) is never a store question
   if (REMOVE_VERB.test(text)) return false;
   if (!STORE_WORD.test(text) || SERVICE_WORD.test(text) || !STORE_OWNER.test(text)) return false;
@@ -120,6 +123,7 @@ export function mediaHoldIntent(message) {
 // "Show me the last picture": the newest saved picture, returned as an image the chat can display.
 export function mediaShowLatestIntent(message) {
   const text = cleanText(message);
+  if (mediaSearchIntent(text)) return false;
   if (text.length > MAX_STORE_REQUEST) return false;
   // A request to open it in the Creation Room is answered by mediaOpenIntent, never by this one-picture reply.
   return /\b(?:show|open|display|send|see|view|pull\s+up|bring\s+up)\b/i.test(text)
@@ -365,3 +369,64 @@ export function mediaLibraryReply(report, { latest = false } = {}) {
   if (latest && report.videos[0]?.status !== 'playable') lines.push('The latest one is not playable, so I did not pick it as playable.');
   return lines.join('\n');
 }
+
+// ─── Search by name or date (owner_tools.js che_media_search; certification run 24 ter-13, ter-20) ───
+const SEARCH_VERB = /\b(?:find|search(?:\s+for)?|look\s+(?:for|up)|locate|show(?:\s+me)?|open|pull\s+up|get|bring\s+up|where(?:['’]s|\s+is|\s+are))\b/i;
+const FILE_NOUN = /\b(?:files?|documents?|docs?|pdfs?|spreadsheets?|photos?|pictures?|images?|pics?|videos?|clips?|uploads?)\b/i;
+const PICTURE_NOUN = /\b(?:photos?|pictures?|images?|pics?)\b/i;
+const VIDEO_NOUN = /\b(?:videos?|clips?)\b/i;
+const NAMED = /\b(?:named|called|titled|name(?:d)?\s+is)\s+["“']?([\w.\- ]{2,60}?)["”']?(?=\s+(?:and|then|from|in|on|for|please)\b|[,.?!]|$)/i;
+const QUOTED_NAME = /["“]([^"”]{2,60})["”]/;
+const DATE_WORDS = /\b(?:last\s+weekend|this\s+weekend|yesterday|today|last\s+week|this\s+week|last\s+month|this\s+month)\b/i;
+
+const normName = (s) => String(s || '').toLowerCase().replace(/[\s_\-.]+/g, '');
+
+/** The search the owner asked for ({ name, range, kind, open }), or null. */
+export function mediaSearchIntent(message = '') {
+  const text = String(message || '').replace(/\s+/g, ' ').trim();
+  if (!text || text.length > 300 || !SEARCH_VERB.test(text) || !FILE_NOUN.test(text)) return null;
+  const name = (NAMED.exec(text)?.[1] || QUOTED_NAME.exec(text)?.[1] || '').trim();
+  const range = DATE_WORDS.exec(text)?.[0]?.toLowerCase() || '';
+  if (!name && !range) return null;
+  return { name, range, kind: PICTURE_NOUN.test(text) ? 'image' : VIDEO_NOUN.test(text) ? 'video' : '', open: /\bopen\b/i.test(text) };
+}
+
+// A calendar day (YYYY-MM-DD) in the owner's time zone.
+function localDay(ms, timeZone) {
+  try { return new Intl.DateTimeFormat('en-CA', { timeZone: timeZone || 'UTC', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(ms)); } catch (_) { return new Date(ms).toISOString().slice(0, 10); }
+}
+const addDays = (day, n) => new Date(Date.parse(`${day}T12:00:00Z`) + n * 86_400_000).toISOString().slice(0, 10);
+const weekday = (day) => new Date(`${day}T12:00:00Z`).getUTCDay();
+
+/** The inclusive local-day range a date phrase means: { from, to }. "Last weekend" is the most recent Saturday and Sunday before today. */
+export function dayRange(phrase, { now = Date.now(), timeZone = 'UTC' } = {}) {
+  const today = localDay(now, timeZone);
+  const dow = weekday(today);
+  switch (String(phrase || '').toLowerCase().replace(/\s+/g, ' ')) {
+    case 'today': return { from: today, to: today };
+    case 'yesterday': { const d = addDays(today, -1); return { from: d, to: d }; }
+    case 'this weekend': { const sat = addDays(today, dow === 0 ? -1 : 6 - dow); return { from: sat, to: addDays(sat, 1) }; }
+    case 'last weekend': { const sat = addDays(today, -(dow === 0 ? 8 : dow === 6 ? 7 : dow + 1)); return { from: sat, to: addDays(sat, 1) }; }
+    case 'this week': { const mon = addDays(today, -((dow + 6) % 7)); return { from: mon, to: today }; }
+    case 'last week': { const mon = addDays(today, -((dow + 6) % 7) - 7); return { from: mon, to: addDays(mon, 6) }; }
+    case 'this month': return { from: `${today.slice(0, 7)}-01`, to: today };
+    case 'last month': { const first = `${today.slice(0, 7)}-01`; const prev = addDays(first, -1); return { from: `${prev.slice(0, 7)}-01`, to: prev }; }
+    default: return null;
+  }
+}
+
+/** The stored media rows that match a search, newest first. */
+export function searchMedia(items, { name = '', range = null, kind = '', timeZone = 'UTC' } = {}) {
+  const want = normName(name);
+  return [...(items || [])]
+    .filter((item) => item && item.id)
+    .filter((item) => !kind || (kind === 'image' ? /^image\//.test(String(item.mime_type || '')) : item.kind === 'video' || /^video\//.test(String(item.mime_type || ''))))
+    .filter((item) => !want || normName(item.title).includes(want) || normName(item.file_name || item.filename).includes(want))
+    .filter((item) => {
+      if (!range) return true;
+      const day = item.created_at ? localDay(Date.parse(item.created_at), timeZone) : '';
+      return day && day >= range.from && day <= range.to;
+    })
+    .sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || '')));
+}
+

@@ -6,7 +6,8 @@
 import assert from 'node:assert/strict';
 import { readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import test from 'node:test';
-import { dayRange, mediaSearchIntent, queueIntent, readQueue, restartFailedJob, searchMedia } from './owner_tools.js';
+import { dayRange, mediaSearchIntent, pickIntent, queueIntent, readQueue, restartFailedJob, searchMedia } from './owner_tools.js';
+import { mediaHoldIntent, mediaLibraryIntent } from './media_library.js';
 import { listMedia, saveOwnerFile } from './media.js';
 
 const job = (id, status, minutesAgo, extra = {}) => ({ id, kind: 'self_development', title: `Job ${id}`, status, created_at: new Date(Date.now() - minutesAgo * 60_000).toISOString(), updated_at: new Date(Date.now() - minutesAgo * 60_000).toISOString(), ...extra });
@@ -137,6 +138,12 @@ test('file and picture searches are recognised by name or date; plain talk is no
   assert.deepEqual(mediaSearchIntent('Show me the photos from last weekend.'), { name: '', range: 'last weekend', kind: 'image', open: false });
   assert.equal(mediaSearchIntent('Look for the document called "Lease draft"')?.name, 'Lease draft');
   for (const q of ['Show me my latest picture.', 'Find me a good recipe for dinner.', 'What files do you support?', 'Open the file menu.']) assert.equal(mediaSearchIntent(q), null, q);
+  // The broad library and inventory routes leave a dated or named search to the search tool (Codex review on #915).
+  for (const q of ['Show me my photos from last weekend.', 'Show me the videos from last weekend.']) { assert.equal(mediaHoldIntent(q), false, q); assert.equal(mediaLibraryIntent(q), false, q); }
+  assert.equal(pickIntent('Open number 2.'), 2);
+  assert.equal(pickIntent('the second one'), 2);
+  assert.equal(pickIntent('3'), 3);
+  for (const q of ['Open the door.', 'I have 2 kids.', 'Number of files?']) assert.equal(pickIntent(q), 0, q);
 });
 
 test('date phrases are the right local days; "last weekend" is the Saturday and Sunday before today', () => {
@@ -180,19 +187,48 @@ test('/api/chat: a named file is found and opened from the bytes read back; a da
     const frames = (await (await post('/api/chat', { message, history: [] }, token)).text()).split('\n').filter(Boolean).map((l) => JSON.parse(l));
     return { text: frames.filter((f) => f.type === 'delta').map((f) => f.delta).join(''), done: frames.find((f) => f.type === 'done') || {} };
   };
+  // A PDF is found and read back, but the chat cannot show it, so it is not called opened (Codex review on #915).
   const file = await ask('Find the file named budget_2025 and open it.');
   assert.equal(file.done.source, 'che_media_search');
-  assert.equal(file.done.media_id, saved.item.id);
   assert.equal(file.done.media_retrieval, 'verified');
-  assert.match(file.done.media_url, /^https:\/\/che\.example\/api\/media\//);
+  assert.equal(file.done.media_type, undefined, 'no picture fields for a PDF');
   assert.equal(file.done.execution_receipt?.status, 'success');
-  assert.equal(file.done.execution_receipt?.opened, saved.item.id);
+  assert.equal(file.done.execution_receipt?.verified_file, saved.item.id);
+  assert.match(file.text, /can't show a PDF inside chat yet, so it is not open/);
+  // A picture found by name opens as chat media with an https URL.
+  const pic = await ask('Find the picture named beach and open it.');
+  assert.equal(pic.done.media_id, beach.item.id);
+  assert.equal(pic.done.media_type, 'image');
+  assert.match(pic.done.media_url, /^https:\/\/che\.example\/api\/media\//);
+  assert.equal(pic.done.execution_receipt?.opened, beach.item.id);
+  // A text file opens as its text.
+  const note = await saveOwnerFile(env, storage, { name: 'packing_list.txt', media_type: 'text/plain', base64: btoa('passport\ncharger\nsocks') });
+  assert.equal(note.ok, true, note.reason);
+  const txt = await ask('Open the file named packing_list.');
+  assert.match(txt.text, /passport\ncharger\nsocks/);
+  assert.equal(txt.done.execution_receipt?.opened, note.item.id);
   const photos = await ask('Show me the photos from last weekend.');
   assert.equal(photos.done.source, 'che_media_search');
   assert.deepEqual(photos.done.execution_receipt?.matched, [beach.item.id]);
   assert.match(photos.text, new RegExp(beach.item.id));
   assert.doesNotMatch(photos.text, new RegExp(today.item.id));
   assert.match(photos.text, /iPhone Photos library stays on the phone/);
+  // My-photos and video variants reach the search too, not the whole-store inventory (Codex review on #915).
+  const mine = await ask('Show me my photos from last weekend.');
+  assert.equal(mine.done.source, 'che_media_search');
+  assert.deepEqual(mine.done.execution_receipt?.matched, [beach.item.id]);
+  // Several matches: a numbered list, and "open number 2" opens the second through the verified path.
+  const all = await ask('Find the pictures named png.');
+  assert.equal(all.done.source, 'che_media_search');
+  const ids = all.done.execution_receipt.matched;
+  assert.equal(ids.length, 2);
+  assert.match(all.text, /Say "open number"/);
+  const second = await ask('Open number 2.');
+  assert.equal(second.done.source, 'che_media_search');
+  assert.equal(second.done.media_id, ids[1]);
+  assert.equal(second.done.media_retrieval, 'verified');
+  const tooFar = await ask('Open number 7.');
+  assert.match(tooFar.text, /no number 7/);
   const none = await ask('Find the file named tax_return_1999.');
   assert.equal(none.done.source, 'che_media_search');
   assert.match(none.text, /found no files named "tax_return_1999"/);

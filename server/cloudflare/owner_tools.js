@@ -7,8 +7,9 @@
 // though the background job queue (data.jobs, worker.js enqueueJob/processJobs) holds exactly those records.
 import { retryCloudJob } from './cloud_computer.js';
 import { listChatTurn } from './owner_lists.js';
-import { listMedia, verifyMediaFile } from './media.js';
-import { mediaChatFields } from './media_library.js';
+import { listMedia, readBlob, verifyMediaFile } from './media.js';
+import { dayRange, mediaChatFields, mediaSearchIntent, searchMedia } from './media_library.js';
+export { dayRange, mediaSearchIntent, searchMedia };
 
 const DATA_KEY = 'che';
 const READ_LIMIT = 100;
@@ -127,71 +128,58 @@ export async function queueChatTurn(storage, message, { probe = false, owner = t
 // weekend" (ter-20) went to the model, which answered without looking: the media library could list everything or the
 // latest item, but not search. The search reads CHE's own media index (media.js listMedia). The iPhone's Photos library
 // stays on the phone, and Google Drive is a separate connector, so the answer says which store was searched.
-const SEARCH_VERB = /\b(?:find|search(?:\s+for)?|look\s+(?:for|up)|locate|show(?:\s+me)?|open|pull\s+up|get|bring\s+up|where(?:['’]s|\s+is|\s+are))\b/i;
-const FILE_NOUN = /\b(?:files?|documents?|docs?|pdfs?|spreadsheets?|photos?|pictures?|images?|pics?|videos?|clips?|uploads?)\b/i;
-const PICTURE_NOUN = /\b(?:photos?|pictures?|images?|pics?)\b/i;
-const VIDEO_NOUN = /\b(?:videos?|clips?)\b/i;
-const NAMED = /\b(?:named|called|titled|name(?:d)?\s+is)\s+["“']?([\w.\- ]{2,60}?)["”']?(?=\s+(?:and|then|from|in|on|for|please)\b|[,.?!]|$)/i;
-const QUOTED_NAME = /["“]([^"”]{2,60})["”]/;
-const DATE_WORDS = /\b(?:last\s+weekend|this\s+weekend|yesterday|today|last\s+week|this\s+week|last\s+month|this\s+month)\b/i;
+const LAST_SEARCH_KEY = 'media_search_last';
+const PICK_TTL_MS = 15 * 60_000;
+const ORDINALS = { one: 1, first: 1, two: 2, second: 2, three: 3, third: 3, four: 4, fourth: 4, five: 5, fifth: 5, six: 6, sixth: 6, seven: 7, seventh: 7, eight: 8, eighth: 8, nine: 9, ninth: 9, ten: 10, tenth: 10 };
+// "Open number 2", "number two", "2", "the second one", after a search that listed several files (AGENTS.md: spoken
+// numbered choices).
+const PICK = /^(?:(?:please\s+)?(?:open|show(?:\s+me)?|pull\s+up|bring\s+up)\s+)?(?:(?:number|no\.?|#)\s*|the\s+)?(\d{1,2}|one|two|three|four|five|six|seven|eight|nine|ten|first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth)(?:\s+one)?\s*[.!]?$/i;
 
-const norm = (s) => String(s || '').toLowerCase().replace(/[\s_\-.]+/g, '');
-
-/** The search the owner asked for ({ name, range, kind, open }), or null. */
-export function mediaSearchIntent(message = '') {
-  const text = String(message || '').replace(/\s+/g, ' ').trim();
-  if (!text || text.length > 300 || !SEARCH_VERB.test(text) || !FILE_NOUN.test(text)) return null;
-  const name = (NAMED.exec(text)?.[1] || QUOTED_NAME.exec(text)?.[1] || '').trim();
-  const range = DATE_WORDS.exec(text)?.[0]?.toLowerCase() || '';
-  if (!name && !range) return null;
-  return { name, range, kind: PICTURE_NOUN.test(text) ? 'image' : VIDEO_NOUN.test(text) ? 'video' : '', open: /\bopen\b/i.test(text) };
+/** The list position a reply picks ("open number 2" -> 2), or 0. */
+export function pickIntent(message = '') {
+  const m = PICK.exec(String(message || '').replace(/\s+/g, ' ').trim());
+  if (!m) return 0;
+  return /^\d+$/.test(m[1]) ? Number(m[1]) : ORDINALS[m[1].toLowerCase()] || 0;
 }
 
-// A calendar day (YYYY-MM-DD) in the owner's time zone.
-function localDay(ms, timeZone) {
-  try { return new Intl.DateTimeFormat('en-CA', { timeZone: timeZone || 'UTC', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(ms)); } catch (_) { return new Date(ms).toISOString().slice(0, 10); }
-}
-const addDays = (day, n) => new Date(Date.parse(`${day}T12:00:00Z`) + n * 86_400_000).toISOString().slice(0, 10);
-const weekday = (day) => new Date(`${day}T12:00:00Z`).getUTCDay();
-
-/** The inclusive local-day range a date phrase means: { from, to }. "Last weekend" is the most recent Saturday and Sunday before today. */
-export function dayRange(phrase, { now = Date.now(), timeZone = 'UTC' } = {}) {
-  const today = localDay(now, timeZone);
-  const dow = weekday(today);
-  switch (String(phrase || '').toLowerCase().replace(/\s+/g, ' ')) {
-    case 'today': return { from: today, to: today };
-    case 'yesterday': { const d = addDays(today, -1); return { from: d, to: d }; }
-    case 'this weekend': { const sat = addDays(today, dow === 0 ? -1 : 6 - dow); return { from: sat, to: addDays(sat, 1) }; }
-    case 'last weekend': { const sat = addDays(today, -(dow === 0 ? 8 : dow === 6 ? 7 : dow + 1)); return { from: sat, to: addDays(sat, 1) }; }
-    case 'this week': { const mon = addDays(today, -((dow + 6) % 7)); return { from: mon, to: today }; }
-    case 'last week': { const mon = addDays(today, -((dow + 6) % 7) - 7); return { from: mon, to: addDays(mon, 6) }; }
-    case 'this month': return { from: `${today.slice(0, 7)}-01`, to: today };
-    case 'last month': { const first = `${today.slice(0, 7)}-01`; const prev = addDays(first, -1); return { from: `${prev.slice(0, 7)}-01`, to: prev }; }
-    default: return null;
+// Opens one stored record: pictures and videos as chat media, a text file as its text, a PDF reported as found and
+// read back (the chat cannot show a PDF, so it is not called opened; Codex review on #915).
+async function openFound(row, { storage, env, request, items, receipt, where }) {
+  const check = await verifyMediaFile(env, storage, row).catch(() => ({ ok: false, reason: 'its file could not be read' }));
+  if (!check.ok) return { text: `I found ${String(row.title || 'it')} (ID ${row.id}) but could not open it, sir: ${check.reason || 'its file was not checked'}. Receipt ${receipt.id}.`, meta: { ok: false, execution_receipt: { ...receipt, status: 'failure', error: check.reason || 'not_verified' } } };
+  const type = String(row.mime_type || '');
+  const title = String(row.title || 'Untitled').slice(0, 80);
+  if (/^image\//.test(type) || row.kind === 'video' || /^video\//.test(type)) {
+    const fields = mediaChatFields(row, { origin: new URL(request.url).origin, items });
+    return { text: `Found and opened ${fields.media_title}, sir (ID ${row.id}, saved ${String(row.created_at || '').slice(0, 10)}). ${where}. Receipt ${receipt.id}.`, meta: { ok: true, ...fields, media_retrieval: 'verified', execution_receipt: { ...receipt, opened: row.id } } };
   }
+  if (/^text\//.test(type)) {
+    let body = '';
+    try { const bytes = await readBlob(env, storage, row); if (bytes) body = new TextDecoder().decode(bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes)); } catch (_) { body = ''; }
+    if (body) return { text: `${title} (ID ${row.id}, saved ${String(row.created_at || '').slice(0, 10)}), read from storage, sir:\n${body.slice(0, 1500)}${body.length > 1500 ? '\n…' : ''}\nReceipt ${receipt.id}.`, meta: { ok: true, media_retrieval: 'verified', execution_receipt: { ...receipt, opened: row.id } } };
+  }
+  return { text: `I found ${title} (ID ${row.id}, saved ${String(row.created_at || '').slice(0, 10)}, ${type || 'unknown type'}) and read its file back, sir, but I can't show a ${/pdf/.test(type) ? 'PDF' : 'file of that type'} inside chat yet, so it is not open. ${where}. Receipt ${receipt.id}.`, meta: { ok: true, media_retrieval: 'verified', execution_receipt: { ...receipt, verified_file: row.id } } };
 }
 
-/** The stored media rows that match a search, newest first. */
-export function searchMedia(items, { name = '', range = null, kind = '', timeZone = 'UTC' } = {}) {
-  const want = norm(name);
-  return [...(items || [])]
-    .filter((item) => item && item.id)
-    .filter((item) => !kind || (kind === 'image' ? /^image\//.test(String(item.mime_type || '')) : item.kind === 'video' || /^video\//.test(String(item.mime_type || ''))))
-    .filter((item) => !want || norm(item.title).includes(want) || norm(item.file_name || item.filename).includes(want))
-    .filter((item) => {
-      if (!range) return true;
-      const day = item.created_at ? localDay(Date.parse(item.created_at), timeZone) : '';
-      return day && day >= range.from && day <= range.to;
-    })
-    .sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || '')));
-}
-
-/** One chat turn for a file or picture search, or null when the message is not one. */
+/** One chat turn for a file or picture search, or a numbered pick from the last one; null when the message is neither. */
 export async function mediaSearchTurn(storage, message, { owner = true, probe = false, env = {}, request = null, now = Date.now() } = {}) {
-  const intent = mediaSearchIntent(message);
-  if (!intent) return null;
   const meta = (extra = {}) => ({ source: 'che_media_search', model_calls: 0, ...extra });
-  if (!owner && !probe) return { text: 'Stored files are the owner\'s, sir. Nothing was searched.', meta: meta({ ok: false }) };
+  const intent = mediaSearchIntent(message);
+  const pick = intent ? 0 : pickIntent(message);
+  if (!intent && !pick) return null;
+  if (!owner && !probe) return intent ? { text: 'Stored files are the owner\'s, sir. Nothing was searched.', meta: meta({ ok: false }) } : null;
+  if (pick) {
+    const last = await storage.get(LAST_SEARCH_KEY).catch(() => null);
+    if (!last?.ids?.length || now - Number(last.at || 0) > PICK_TTL_MS) return null;
+    if (pick > last.ids.length) return { text: `That list had ${last.ids.length} files, sir, so there is no number ${pick}. Say a number from 1 to ${last.ids.length}.`, meta: meta({ ok: false }) };
+    const items = await listMedia(storage).catch(() => []);
+    const row = items.find((i) => i.id === last.ids[pick - 1]);
+    const receipt = { tool: 'che_media_search', operation: 'open', status: 'success', at: new Date(now).toISOString(), id: `media_search:${now}`, picked: pick, verified: 'read_back' };
+    if (!row) return { text: `Number ${pick} is no longer in my stored files, sir, so nothing was opened.`, meta: meta({ ok: false, execution_receipt: { ...receipt, status: 'failure', error: 'not_found' } }) };
+    if (!request) return null;
+    const out = await openFound(row, { storage, env, request, items, receipt, where: 'From your last search' });
+    return { text: out.text, meta: meta(out.meta) };
+  }
   const timeZone = env?.CHE_TIMEZONE || 'UTC';
   const range = intent.range ? dayRange(intent.range, { now, timeZone }) : null;
   let items;
@@ -204,16 +192,16 @@ export async function mediaSearchTurn(storage, message, { owner = true, probe = 
   const where = `I searched the ${items.length} ${items.length === 1 ? 'file' : 'files'} stored in CHE${intent.kind === 'image' ? '; your iPhone Photos library stays on the phone, so it was not searched' : '; Google Drive is a separate connection and was not searched'}`;
   const receipt = { tool: 'che_media_search', operation: 'search', status: 'success', at: new Date(now).toISOString(), id: `media_search:${now}`, query: { name: intent.name || null, range, kind: intent.kind || null }, searched: items.length, matched: found.map((r) => r.id).slice(0, 50), verified: 'read_back' };
   if (!found.length) return { text: `I found no ${what} ${asked}, sir. ${where}. Receipt ${receipt.id}.`, meta: meta({ ok: true, execution_receipt: receipt }) };
-  const list = found.slice(0, 10).map((r, i) => `${i + 1}. ${String(r.title || 'Untitled').slice(0, 60)} · ${String(r.created_at || '').slice(0, 10)} · ID ${r.id}`).join('\n');
   if (intent.open && found.length === 1 && request) {
-    const row = found[0];
-    const check = await verifyMediaFile(env, storage, row).catch(() => ({ ok: false, reason: 'its file could not be read' }));
-    if (!check.ok) return { text: `I found ${String(row.title || 'it')} (ID ${row.id}) but could not open it, sir: ${check.reason || 'its file was not checked'}. Receipt ${receipt.id}.`, meta: meta({ ok: false, execution_receipt: { ...receipt, status: 'failure', error: check.reason || 'not_verified' } }) };
-    const fields = mediaChatFields(row, { origin: new URL(request.url).origin, items });
-    return { text: `Found and opened ${fields.media_title}, sir (ID ${row.id}, saved ${String(row.created_at || '').slice(0, 10)}). ${where}. Receipt ${receipt.id}.`, meta: meta({ ok: true, ...fields, media_retrieval: 'verified', execution_receipt: { ...receipt, opened: row.id } }) };
+    const out = await openFound(found[0], { storage, env, request, items, receipt, where });
+    return { text: out.text, meta: meta(out.meta) };
   }
-  const opener = intent.open && found.length > 1 ? ' Say which number to open.' : intent.open ? '' : '';
-  return { text: `I found ${found.length} ${found.length === 1 ? what.replace(/s$/, '') : what} ${asked}, sir:\n${list}\n${where}.${opener} Receipt ${receipt.id}.`, meta: meta({ ok: true, execution_receipt: receipt }) };
+  const shown = found.slice(0, 10);
+  // The numbered list is kept for 15 minutes so "open number 2" opens that file (a probe turn keeps nothing).
+  if (!probe) await storage.put(LAST_SEARCH_KEY, { ids: shown.map((r) => r.id), at: now }).catch(() => null);
+  const list = shown.map((r, i) => `${i + 1}. ${String(r.title || 'Untitled').slice(0, 60)} · ${String(r.created_at || '').slice(0, 10)} · ID ${r.id}`).join('\n');
+  const choose = shown.length > 1 && !probe ? ' Say "open number" and the number to open one.' : '';
+  return { text: `I found ${found.length} ${found.length === 1 ? what.replace(/s$/, '') : what} ${asked}, sir:\n${list}\n${where}.${choose} Receipt ${receipt.id}.`, meta: meta({ ok: true, execution_receipt: receipt }) };
 }
 
 // The deterministic owner tools, in the order they are tried. Each turn(storage, message, opts) returns a chat answer
