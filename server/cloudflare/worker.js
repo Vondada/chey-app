@@ -1429,6 +1429,9 @@ export function busyError(error) {
 // that were interrupted by a Worker restart), so a job that keeps crashing the
 // isolate cannot be re-run forever.
 export const MAX_JOB_ATTEMPTS = 4;
+// One built-in coding run's wall-time budget, under the 15-minute alarm limit, and how often a job may continue.
+const SELF_DEV_RUN_MS = 9 * 60_000;
+const MAX_CONTINUATIONS = 8;
 // One line about how a coding run ended, for its group-chat thread.
 function crewOutcome(prepared) {
   if (prepared?.proposal) return 'Reviewed change ready for your approval';
@@ -15922,6 +15925,7 @@ export class CheState extends DurableObject {
       if (outcome.step_results) { job.step_results = outcome.step_results; job.step_index = outcome.step_index; }
       noteJobActivity(job, outcome.cloud?.log?.length
         ? String(outcome.cloud.log.at(-1)).slice(9)
+        : outcome.continuations !== undefined ? `Run time limit reached; progress saved (continuation ${outcome.continuations}). Continuing in the next run.`
         : outcome.error
         ? `Problem: ${outcome.error}${outcome.status === 'queued' ? ' Trying again.' : ''}`
         : outcome.status === 'complete'
@@ -15930,6 +15934,7 @@ export class CheState extends DurableObject {
             ? `Step ${outcome.step_index} done. Moving to the next step.`
             : 'Result received.');
       if (outcome.attempts !== undefined) job.attempts = outcome.attempts;
+      if (outcome.continuations !== undefined) job.continuations = outcome.continuations;
       job.retry_count = outcome.retry_count ?? job.retry_count ?? 0;
       job.retry_at = outcome.retry_at || null;
       job.dead_letter = outcome.dead_letter === true;
@@ -15985,6 +15990,12 @@ export class CheState extends DurableObject {
   // failures back off exponentially (5, 10, 20 min) up to MAX_JOB_RETRIES and
   // then dead-letter; everything else is terminal immediately.
   jobFailureOutcome(job, error) {
+    // A run that stopped at its time limit with a checkpoint is the same job continuing, not a failure: it does not
+    // use a retry or an attempt, and the next run starts in a minute, at most MAX_CONTINUATIONS times.
+    const continued = Number(job.continuations || 0);
+    if (error?.continuation && error?.checkpoint && continued < MAX_CONTINUATIONS) {
+      return { id: job.id, checkpoint: error.checkpoint, status: 'queued', result: '', continuations: continued + 1, attempts: Math.max(0, Number(job.attempts || 1) - 1), retry_at: Date.now() + 60_000, error: '' };
+    }
     const retryCount = Number(job.retry_count || 0);
     const temporary = busyError(error) || error?.failure_class === FAILURE_CLASS.TEMPORARY_EXTERNAL;
     const retry = temporary && retryCount < MAX_JOB_RETRIES && Number(job.attempts || 0) < MAX_JOB_ATTEMPTS;
@@ -16223,7 +16234,7 @@ export class CheState extends DurableObject {
     // UI vs server, the retained failure record) stays the ungrounded prompt,
     // exactly as the foreground path passes intentRequest, so recalled text
     // that names other files can never become an owner-named target.
-    const prepared = await prepareSelfUpdate(this.env, groundedPrompt, fetch, this.ctx.storage, { ownerInitiated: true, intentRequest: prompt, checkpoint: job.checkpoint || null });
+    const prepared = await prepareSelfUpdate(this.env, groundedPrompt, fetch, this.ctx.storage, { ownerInitiated: true, intentRequest: prompt, checkpoint: job.checkpoint || null, deadline: Date.now() + SELF_DEV_RUN_MS });
     await recordCrewThread(this.ctx.storage, { request: job.request || job.prompt, discussion: prepared?.discussion, outcome: crewOutcome(prepared) }).catch(() => null);
     if (prepared.status === 200 && prepared.proposal) {
       await recordReceipt(this.ctx.storage, { kind: 'proposal_ready', key: `proposal:${job.id}`, job_id: job.id, files: prepared.proposal.files.map((f) => f.path) });
@@ -16278,6 +16289,7 @@ export class CheState extends DurableObject {
       error.failure_class = FAILURE_CLASS.TEMPORARY_EXTERNAL;
       // The retry continues this job from its checkpoint on other engines.
       if (prepared.checkpoint) error.checkpoint = prepared.checkpoint;
+      if (prepared.continuation) error.continuation = true;
       throw error;
     }
     if (prepared.engineering_record) {
