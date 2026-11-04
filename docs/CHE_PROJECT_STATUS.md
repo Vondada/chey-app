@@ -39,7 +39,7 @@ changes them. Do not delete the old values: the change is recorded in `docs/CHE_
 
 | Fact | State | Time | Evidence |
 |---|---|---|---|
-| Live futures paper simulator end-to-end on the test account (no broker, delayed CME data): order acknowledged, filled, positioned, duplicate refused, rejects, cancel, bracket take profit with OCO cancel, emergency flatten, reconciliation: 19/19 | verified | 2026-11-04 06:20 UTC | run `41782752211` |
+| Live futures paper simulator end-to-end on the test account (no broker, delayed CME data): order acknowledged, filled, positioned, duplicate refused, rejects, cancel, bracket take profit with OCO cancel, emergency flatten, reconciliation: 19/19 twice; the second run filled the bracket stop loss from a gapping delayed bar | verified | 2026-11-04 06:45 UTC | runs `41782752211`, `41784906480` |
 | Worker deploy of `ad77aa3f` (#925): live commit verified | verified | 2026-11-04 05:42 UTC | deploy run `41780219980` |
 | Full 600 certification, fresh, on `91f61359` (with #870, #871): 483 pass, 117 fail, 0 blocked; +6 against run 18 | verified | 2026-11-02 03:22 UTC | run `41379642353` |
 | Worker deploys of #870 `b7f97967` and #871 `91f61359`: live commit verified; memory probe failed only on a GitHub API rate limit (403) | verified (deploy) / failed (probe, external) | 2026-11-02 01:48 UTC | deploy runs `41373497127`, `41374022540` |
