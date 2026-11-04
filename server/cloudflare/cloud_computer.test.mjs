@@ -485,3 +485,22 @@ test('the seven spoken requests reach their catalog commands with no model; ques
   assert.deepEqual(parseControl('stop 1a2b3c4d'), { action: 'stop', id: '1a2b3c4d' });
   assert.equal(parseControl('rm -rf /'), null);
 });
+
+// Certification run 24, ter-15: "Run the unit tests for the Worker." got "Nothing was done" from the connector gate.
+test('"Run the unit tests for the Worker" requests the repository test run, waiting for approval, with a receipt', async () => {
+  for (const said of ['Run the unit tests for the Worker.', 'Run the Worker tests.', 'Run the test suite for CHE.', 'Run CI on the repo.']) assert.equal(cloudIntent(said)?.command, 'cloud-tests', said);
+  for (const said of ['Run a marathon.', 'Run the dishwasher.', 'Run tests?']) assert.equal(cloudIntent(said), null, said);
+  const che = await owner({ env: GH_ENV });
+  const out = await che.say('Run the unit tests for the Worker.');
+  assert.equal(out.route, 'che_cloud_computer');
+  assert.equal(out.modelCalls, 0);
+  const r = out.done.execution_receipt;
+  assert.equal(r.tool, 'che_cloud_computer');
+  assert.equal(r.operation, 'repo_tests');
+  assert.equal(r.status, 'awaiting_approval');
+  assert.equal(r.job_id, out.done.cloud_job_id);
+  // Asking again reuses the waiting job instead of queuing a second one.
+  const again = await che.say('Run the Worker tests.');
+  assert.equal(again.done.execution_receipt.job_id, r.job_id);
+  assert.equal(again.done.execution_receipt.deduplicated, true);
+});

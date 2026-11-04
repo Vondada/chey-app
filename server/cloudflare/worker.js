@@ -186,7 +186,7 @@ import { PROBE_TIMERS_KEY, TIMERS_KEY, TIMER_KEYS, fireDueTimers, nextTimerAt, t
 import { ownerToolTurn } from './owner_tools.js';
 import { guardHolds, probeHolds } from './probe_holds.js';
 import { brainTruthSummary, brainTruthView, truthScreenAsk } from './brain_truth.js';
-import { CLOUD_JOB_KIND, CLOUD_SOURCE, approveCloudJob, cancelCloudJob, cloudIntent, cloudJobs, cloudView, latestCloudJob, openPullRequests, parseControl, providerStatuses, requestCloudWork, retryCloudJob, runCloudTask, runFileJob, selectProvider, speakAgentWork, speakBlocked, speakCloudSummary, speakControl, speakInstall, speakPullRequests, speakRender, speakRequest, speakStartResult, startCloudTask, stopCloudJob } from './cloud_computer.js';
+import { CLOUD_JOB_KIND, CLOUD_SOURCE, approveCloudJob, cloudReceipt, cancelCloudJob, cloudIntent, cloudJobs, cloudView, latestCloudJob, openPullRequests, parseControl, providerStatuses, requestCloudWork, retryCloudJob, runCloudTask, runFileJob, selectProvider, speakAgentWork, speakBlocked, speakCloudSummary, speakControl, speakInstall, speakPullRequests, speakRender, speakRequest, speakStartResult, startCloudTask, stopCloudJob } from './cloud_computer.js';
 import { auditLedger, knowVsGuessQuestion, knowVsGuessReply, MEMORY_CLAIM_MS, memorySavedQuestion, memorySavedReply } from './hallucination_auditor.js';
 import { verifyReply } from './truth_pipeline.js';
 import { auditReply } from './hallucination_auditor.js';
@@ -5991,7 +5991,7 @@ export class CheState extends DurableObject {
     }
     if (command.local === 'cloud_tests') {
       const out = await this.cloudStart('repo_tests', {}, { agent: 'CHE' });
-      return reply(out.spoken, { ok: out.ok, needs_approval: Boolean(out.needs_approval), cloud_job_id: out.job?.id || null });
+      return reply(out.spoken, { ok: out.ok, needs_approval: Boolean(out.needs_approval), cloud_job_id: out.job?.id || null, execution_receipt: cloudReceipt(out, 'repo_tests') });
     }
     if (command.local === 'cloud_prs') {
       const result = await openPullRequests(env);
