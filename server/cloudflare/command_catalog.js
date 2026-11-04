@@ -855,6 +855,16 @@ export const COMMANDS = Object.freeze([
     keywords: ['rea status', 'rea history', 'analysis status', 'reverse engineering jobs', 'rea capabilities'],
     aliases: ['rea-capabilities', 'rea-history'],
   }),
+  // GitHub issues in CHE's own repository, filed from chat by github_issues.js (certification run 24, csd-38).
+  C('github-issue', 'build', 'BUILD', 'File a GitHub issue in CHE\'s repository.', {
+    title: 'GitHub issue',
+    does: 'Files an issue with your title in CHE\'s own GitHub repository and gives you GitHub\'s issue number and link. An open issue with the same title is reported instead of filed twice; reproduction steps you did not give are left to fill in, never invented.',
+    needs: ['github'], route: 'che_github_issue', handler: 'owner_tools.ownerToolTurn → github_issues.issueTurn',
+    input: { name: 'title', required: true, hint: 'the issue title, then "steps:" and the steps if you have them' },
+    examples: ["Create a GitHub issue titled 'Flaky login test'", 'File an issue called Gallery crash steps: 1. open Gallery 2. scroll fast'],
+    prompt: 'Create a GitHub issue titled "{input}"', produces: 'status', evidence: 'The issue number and link GitHub returned.',
+    cost: 'Free.', keywords: ['github issue', 'file an issue', 'open an issue', 'bug report', 'create issue'],
+  }),
 
   // ── Money Management ──────────────────────────────────────────────────
   C('money-dashboard', 'money', 'EXPLORE', 'Financial overview from connected records.', {
