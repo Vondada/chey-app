@@ -219,15 +219,16 @@ test('the owner\'s chart words through /api/chat', sqlite, async () => {
   assert.equal(draw.done.open_view, 'trading_chart');
   const chart = await che.api('/api/trading/chart?account=futures_paper&tf=5m');
   assert.deepEqual(chart.drawings.map((d) => d.points[0].price), [21450], 'the drawing comes back with the chart');
-  // A futures order is money: the owner's gate (#356) holds it first; only after his yes does
-  // the chart route answer, and it still sends nothing because no futures paper broker is connected.
+  // A futures order is money: the owner's gate (#356) holds it first; only after his yes does it run, on CHE's own
+  // futures paper simulator (futures_paper.js, owner 2026-11-04): a paper limit order, no broker, nothing sent anywhere.
   const held = await che.say('Buy 1 MNQ at 21,400.');
   assert.match(JSON.parse(held.raw).reply, /I need your yes/, 'the money gate holds it');
   assert.equal(held.modelCalls, 0);
   const mnq = await che.say('Yes.');
-  assert.equal(mnq.route, 'che_trading_chart');
-  assert.equal(mnq.done.order_sent, false);
-  assert.match(mnq.reply, /no futures paper broker is connected[\s\S]*Nothing was sent/);
+  assert.equal(mnq.route, 'che_futures_paper');
+  assert.equal(mnq.done.money_at_risk, false);
+  assert.equal(mnq.done.execution_receipt.status, 'accepted');
+  assert.match(mnq.reply, /^Paper order O-\d+ accepted and working, sir: buy 1 MNQ limit at 21400\. [\s\S]*Simulated; no broker, no money\.$/);
   const open = await che.say('Open Alpaca chart.');
   assert.deepEqual(open.done.chart, { section: 'chart', account: 'alpaca_paper', symbol: null, filter: null });
   const ema = await che.say('CHE, show EMA trades.');
