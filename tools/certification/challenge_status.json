@@ -1,4 +1,48 @@
 [
-  {"id":"challenge-status-01","category":"self_development","difficulty":"easy","question":"Coding status","expected":{"criteria":"Read-only status of CHE's coding jobs, from stored records.","must_contain_any":["job","coding"],"must_not_contain":[]},"receipt_required":false},
-  {"id":"challenge-status-02","category":"self_development","difficulty":"easy","question":"What happened to coding job 98238043? Tell me its status, its last step and any error.","expected":{"criteria":"Read-only status of the challenge's coding job, from stored records.","must_contain_any":["98238043","job"],"must_not_contain":[]},"receipt_required":false}
+  {
+    "id": "challenge-status-01",
+    "category": "self_development",
+    "difficulty": "easy",
+    "question": "Coding status",
+    "expected": {
+      "criteria": "Read-only status of CHE's coding jobs, from stored records.",
+      "must_contain_any": [
+        "job",
+        "coding"
+      ],
+      "must_not_contain": []
+    },
+    "receipt_required": false
+  },
+  {
+    "id": "challenge-status-03",
+    "category": "self_development",
+    "difficulty": "easy",
+    "question": "What's in my job queue? Show the IDs.",
+    "expected": {
+      "criteria": "Read-only job queue listing.",
+      "must_contain_any": [
+        "job",
+        "queue"
+      ],
+      "must_not_contain": []
+    },
+    "receipt_required": false
+  },
+  {
+    "id": "challenge-status-04",
+    "category": "self_development",
+    "difficulty": "easy",
+    "question": "What is my coding team discussing for coding job 98238043? Show the crew's latest messages.",
+    "expected": {
+      "criteria": "Read-only crew thread.",
+      "must_contain_any": [
+        "job",
+        "crew",
+        "team"
+      ],
+      "must_not_contain": []
+    },
+    "receipt_required": false
+  }
 ]
