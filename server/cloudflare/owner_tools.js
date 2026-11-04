@@ -7,6 +7,8 @@
 // though the background job queue (data.jobs, worker.js enqueueJob/processJobs) holds exactly those records.
 import { retryCloudJob } from './cloud_computer.js';
 import { listChatTurn } from './owner_lists.js';
+import { CreationStudio } from './creation_studio.js';
+import * as OBJ from './creation_objects.js';
 import { listMedia, readBlob, verifyMediaFile } from './media.js';
 import { dayRange, mediaChatFields, mediaSearchIntent, searchMedia } from './media_library.js';
 export { dayRange, mediaSearchIntent, searchMedia };
@@ -204,12 +206,62 @@ export async function mediaSearchTurn(storage, message, { owner = true, probe = 
   return { text: `I found ${found.length} ${found.length === 1 ? what.replace(/s$/, '') : what} ${asked}, sir:\n${list}\n${where}.${choose} Receipt ${receipt.id}.`, meta: meta({ ok: true, execution_receipt: receipt }) };
 }
 
+// ─── 3D objects from chat, built by the Create Object studio (certification run 24, ivg-20) ───
+// "Create a 3D model of a chair and export it as glTF" went to the model, which described a process and offered a file
+// it could not make. The Live Studio already builds parametric objects (creation_objects.js: lamp, chair, table, mug,
+// vase, shelf, desk, and simple shapes composed from a description) as a GLB, the binary form of glTF 2.0, on the
+// free creation worker queue (gpu_queue.js object_model). This turn starts that project and queues its build.
+const THREE_D = /\b(?:3-?d|three[\s-]?d)\b|\b(?:gltf|glb)\b/i;
+const BUILD_VERB = /\b(?:create|make|build|model|generate|design|produce)\b/i;
+const NOT_A_BUILD = /\b(?:do\s+not|don['’]t|never)\b[^.?!]{0,30}\b(?:create|make|build|model|generate)\b|^(?:how\s+(?:do|can|would|should)\s+(?:i|we|you|one)|how\s+to|what\s+(?:is|are|does)|why|can\s+i|should\s+i)\b/i;
+
+/** The object description a 3D request names ("a chair", "a red table"), or null. */
+export function objectRequest(message = '') {
+  const text = String(message || '').replace(/\s+/g, ' ').trim();
+  if (!text || text.length > 300 || !THREE_D.test(text) || !BUILD_VERB.test(text) || NOT_A_BUILD.test(text)) return null;
+  if (/\b(?:room|game|roblox|scene|avatar|person|character|face|me\b|myself)\b/i.test(text)) return null; // other studios
+  const m = /\b(?:of|for)\s+(?:an?\s+|the\s+)?(.+?)(?:\s+(?:and|then)\s+(?:export|save|send|give|render)\b|\s+(?:as|in)\s+(?:a\s+)?(?:gltf|glb)\b|[.?!]|$)/i.exec(text);
+  const description = (m ? m[1] : '').replace(/\b(?:3-?d|three[\s-]?d)\s+(?:model|object)?\b/gi, '').replace(/\b(?:model|object)\s+of\b/gi, '').trim();
+  return description ? { description: description.slice(0, 200), format: /\bgltf\b/i.test(text) ? 'gltf' : /\bglb\b/i.test(text) ? 'glb' : null } : null;
+}
+
+export async function objectTurn(storage, message, { owner = true, probe = false, env = {}, now = Date.now() } = {}) {
+  const ask = objectRequest(message);
+  if (!ask) return null;
+  const meta = (extra = {}) => ({ source: 'che_create_object', model_calls: 0, ...extra });
+  if (!owner && !probe) return { text: 'Making 3D models is for the owner, sir. Nothing was made.', meta: meta({ ok: false }) };
+  const format = ask.format === 'gltf' ? ' The file is a GLB, which is glTF 2.0 in its binary form; any glTF viewer opens it.' : '';
+  const receipt = { tool: 'che_create_object', operation: 'queue_build', at: new Date(now).toISOString(), id: `create_object:${now}`, description: ask.description };
+  if (probe) {
+    // A certification probe turn checks that the object can be built but does not add a project or a build job to the
+    // owner's Creation Studio (it keeps at most 100 projects).
+    const family = /\b(?:desk|lamp|chair|table|mug|cup|vase|shelf|bookshelf|bookcase)\b/i.exec(ask.description)?.[0]?.toLowerCase();
+    const buildable = Boolean(family) || OBJ.describedObject(ask.description).ok;
+    return { text: buildable
+      ? `I can build ${ask.description} as a 3D model in my Creation Studio, sir: a procedural build queued on my free creation worker, which writes a GLB file and checks it.${format} This is a test turn, so I did not start a project or a build. Receipt ${receipt.id}.`
+      : `I can't build "${ask.description}" as a 3D model, sir: my Creation Studio builds ${OBJ.CAPABILITY_NOTE}. This is a test turn; nothing was started. Receipt ${receipt.id}.`,
+    meta: meta({ ok: buildable, execution_receipt: { ...receipt, status: 'not_run', buildable } }) };
+  }
+  const studio = new CreationStudio(storage, () => now, { env });
+  const made = await studio.createThing('object', { description: ask.description });
+  if (!made.ok) return { text: `I did not start that 3D model, sir: ${made.detail} Nothing was queued.`, meta: meta({ ok: false, execution_receipt: { ...receipt, status: 'failure', error: made.detail } }) };
+  const id = made.project.id;
+  const built = await studio.generate(id);
+  if (!built.ok) return { text: `I started the project ${made.project.title} (${id}) but could not queue its build, sir: ${built.detail} Receipt ${receipt.id}.`, meta: meta({ ok: false, project_id: id, execution_receipt: { ...receipt, status: 'failure', project_id: id, error: built.detail } }) };
+  const job = built.job || {};
+  return {
+    text: `${made.spoken.replace(/ Say a change, or say generate to build it\.$/, '')} Its build is queued as job ${job.id}: ${built.spoken}${format} Nothing is finished yet: the file and its previews appear in the project when the worker completes and checks them. Ask "status of my ${made.project.title}" or open Projects. Receipt ${receipt.id}.`,
+    meta: meta({ ok: true, project_id: id, job_id: job.id, open_screen: 'projects', execution_receipt: { ...receipt, status: 'queued', project_id: id, job_id: job.id, job_state: job.state || 'queued' } }),
+  };
+}
+
 // The deterministic owner tools, in the order they are tried. Each turn(storage, message, opts) returns a chat answer
 // with its receipt, or null when the message is not for it.
 export const OWNER_TOOLS = [
   { id: 'che_lists', turn: (storage, message, opts) => listChatTurn(storage, message, opts) },
   { id: 'che_job_queue', turn: (storage, message, opts) => queueChatTurn(storage, message, opts) },
   { id: 'che_media_search', turn: (storage, message, opts) => mediaSearchTurn(storage, message, opts) },
+  { id: 'che_create_object', turn: (storage, message, opts) => objectTurn(storage, message, opts) },
 ];
 
 /** The first owner tool that answers [message], or null. */
