@@ -2860,7 +2860,8 @@ export async function prepareSelfUpdate(env, request, fetcher = fetch, memory = 
           failure_class: FAILURE_CLASS.TEMPORARY_EXTERNAL,
           retryable: true,
           continuation: true,
-          checkpoint: saveCheckpoint(),
+          // A time-slice is not an outage: it keeps the outage-resume count as it was (job.continuations bounds it).
+          checkpoint: { ...saveCheckpoint(), resumes },
           detail: `This run reached its time limit after ${genuinePasses} implementation pass(es); the job saved a checkpoint and continues in its next run with ${maxRounds - genuinePasses} pass(es) left. Nothing was changed yet.`,
           owner_message: 'My coding team is still working on it, sir: one run reached its time limit, so it saved its progress and continues in the next run. Nothing was changed yet.',
         });

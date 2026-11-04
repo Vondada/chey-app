@@ -1340,6 +1340,8 @@ test('a run past its time limit stops between rounds with a checkpoint, and the 
   assert.equal(first.continuation, true);
   assert.match(first.detail, /reached its time limit after \d implementation pass\(es\); the job saved a checkpoint and continues in its next run/);
   assert.ok(first.checkpoint && first.checkpoint.round_offset >= 1, 'the next run starts after the round already done');
+  // Codex review on #924: a time-slice does not use the outage-resume allowance.
+  assert.equal(first.checkpoint.resumes, 0);
   const callsInFirstRun = implementationCalls;
   assert.ok(callsInFirstRun > 0, 'round one ran before the deadline was checked');
   // The next run, with time left, continues on later rounds; it does not restart the round already done.
