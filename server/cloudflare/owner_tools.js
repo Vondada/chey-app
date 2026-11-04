@@ -7,6 +7,9 @@
 // though the background job queue (data.jobs, worker.js enqueueJob/processJobs) holds exactly those records.
 import { retryCloudJob } from './cloud_computer.js';
 import { listChatTurn } from './owner_lists.js';
+import { listMedia, readBlob, verifyMediaFile } from './media.js';
+import { dayRange, mediaChatFields, mediaSearchIntent, searchMedia } from './media_library.js';
+export { dayRange, mediaSearchIntent, searchMedia };
 
 const DATA_KEY = 'che';
 const READ_LIMIT = 100;
@@ -120,11 +123,93 @@ export async function queueChatTurn(storage, message, { probe = false, owner = t
   return { text: out.text, meta: meta({ ok: true, execution_receipt: out.receipt }) };
 }
 
+// ─── Search CHE's stored files and pictures by name or date ───
+// Certification run 24: "Find the file named budget_2025 and open it" (ter-13) and "Show me the photos from last
+// weekend" (ter-20) went to the model, which answered without looking: the media library could list everything or the
+// latest item, but not search. The search reads CHE's own media index (media.js listMedia). The iPhone's Photos library
+// stays on the phone, and Google Drive is a separate connector, so the answer says which store was searched.
+const LAST_SEARCH_KEY = 'media_search_last';
+const PICK_TTL_MS = 15 * 60_000;
+const ORDINALS = { one: 1, first: 1, two: 2, second: 2, three: 3, third: 3, four: 4, fourth: 4, five: 5, fifth: 5, six: 6, sixth: 6, seven: 7, seventh: 7, eight: 8, eighth: 8, nine: 9, ninth: 9, ten: 10, tenth: 10 };
+// "Open number 2", "number two", "2", "the second one", after a search that listed several files (AGENTS.md: spoken
+// numbered choices).
+const PICK = /^(?:(?:please\s+)?(?:open|show(?:\s+me)?|pull\s+up|bring\s+up)\s+)?(?:(?:number|no\.?|#)\s*|the\s+)?(\d{1,2}|one|two|three|four|five|six|seven|eight|nine|ten|first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth)(?:\s+one)?\s*[.!]?$/i;
+
+/** The list position a reply picks ("open number 2" -> 2), or 0. */
+export function pickIntent(message = '') {
+  const m = PICK.exec(String(message || '').replace(/\s+/g, ' ').trim());
+  if (!m) return 0;
+  return /^\d+$/.test(m[1]) ? Number(m[1]) : ORDINALS[m[1].toLowerCase()] || 0;
+}
+
+// Opens one stored record: pictures and videos as chat media, a text file as its text, a PDF reported as found and
+// read back (the chat cannot show a PDF, so it is not called opened; Codex review on #915).
+async function openFound(row, { storage, env, request, items, receipt, where }) {
+  const check = await verifyMediaFile(env, storage, row).catch(() => ({ ok: false, reason: 'its file could not be read' }));
+  if (!check.ok) return { text: `I found ${String(row.title || 'it')} (ID ${row.id}) but could not open it, sir: ${check.reason || 'its file was not checked'}. Receipt ${receipt.id}.`, meta: { ok: false, execution_receipt: { ...receipt, status: 'failure', error: check.reason || 'not_verified' } } };
+  const type = String(row.mime_type || '');
+  const title = String(row.title || 'Untitled').slice(0, 80);
+  if (/^image\//.test(type) || row.kind === 'video' || /^video\//.test(type)) {
+    const fields = mediaChatFields(row, { origin: new URL(request.url).origin, items });
+    return { text: `Found and opened ${fields.media_title}, sir (ID ${row.id}, saved ${String(row.created_at || '').slice(0, 10)}). ${where}. Receipt ${receipt.id}.`, meta: { ok: true, ...fields, media_retrieval: 'verified', execution_receipt: { ...receipt, opened: row.id } } };
+  }
+  if (/^text\//.test(type)) {
+    let body = '';
+    try { const bytes = await readBlob(env, storage, row); if (bytes) body = new TextDecoder().decode(bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes)); } catch (_) { body = ''; }
+    if (body) return { text: `${title} (ID ${row.id}, saved ${String(row.created_at || '').slice(0, 10)}), read from storage, sir:\n${body.slice(0, 1500)}${body.length > 1500 ? '\n…' : ''}\nReceipt ${receipt.id}.`, meta: { ok: true, media_retrieval: 'verified', execution_receipt: { ...receipt, opened: row.id } } };
+  }
+  return { text: `I found ${title} (ID ${row.id}, saved ${String(row.created_at || '').slice(0, 10)}, ${type || 'unknown type'}) and read its file back, sir, but I can't show a ${/pdf/.test(type) ? 'PDF' : 'file of that type'} inside chat yet, so it is not open. ${where}. Receipt ${receipt.id}.`, meta: { ok: true, media_retrieval: 'verified', execution_receipt: { ...receipt, verified_file: row.id } } };
+}
+
+/** One chat turn for a file or picture search, or a numbered pick from the last one; null when the message is neither. */
+export async function mediaSearchTurn(storage, message, { owner = true, probe = false, env = {}, request = null, now = Date.now() } = {}) {
+  const meta = (extra = {}) => ({ source: 'che_media_search', model_calls: 0, ...extra });
+  const intent = mediaSearchIntent(message);
+  const pick = intent ? 0 : pickIntent(message);
+  if (!intent && !pick) return null;
+  if (!owner && !probe) return intent ? { text: 'Stored files are the owner\'s, sir. Nothing was searched.', meta: meta({ ok: false }) } : null;
+  if (pick) {
+    const last = await storage.get(LAST_SEARCH_KEY).catch(() => null);
+    if (!last?.ids?.length || now - Number(last.at || 0) > PICK_TTL_MS) return null;
+    if (pick > last.ids.length) return { text: `That list had ${last.ids.length} files, sir, so there is no number ${pick}. Say a number from 1 to ${last.ids.length}.`, meta: meta({ ok: false }) };
+    const items = await listMedia(storage).catch(() => []);
+    const row = items.find((i) => i.id === last.ids[pick - 1]);
+    const receipt = { tool: 'che_media_search', operation: 'open', status: 'success', at: new Date(now).toISOString(), id: `media_search:${now}`, picked: pick, verified: 'read_back' };
+    if (!row) return { text: `Number ${pick} is no longer in my stored files, sir, so nothing was opened.`, meta: meta({ ok: false, execution_receipt: { ...receipt, status: 'failure', error: 'not_found' } }) };
+    if (!request) return null;
+    const out = await openFound(row, { storage, env, request, items, receipt, where: 'From your last search' });
+    return { text: out.text, meta: meta(out.meta) };
+  }
+  const timeZone = env?.CHE_TIMEZONE || 'UTC';
+  const range = intent.range ? dayRange(intent.range, { now, timeZone }) : null;
+  let items;
+  try { items = await listMedia(storage); } catch (_) {
+    return { text: 'I could not read my stored files just now, sir, so nothing was searched.', meta: meta({ ok: false, execution_receipt: { tool: 'che_media_search', operation: 'search', status: 'failed', error: 'read_failed', at: new Date(now).toISOString(), id: `media_search:${now}` } }) };
+  }
+  const found = searchMedia(items, { ...intent, range, timeZone });
+  const what = intent.kind === 'image' ? 'pictures' : intent.kind === 'video' ? 'videos' : 'files';
+  const asked = [intent.name ? `named "${intent.name}"` : '', range ? `from ${intent.range} (${range.from === range.to ? range.from : `${range.from} to ${range.to}`})` : ''].filter(Boolean).join(' ');
+  const where = `I searched the ${items.length} ${items.length === 1 ? 'file' : 'files'} stored in CHE${intent.kind === 'image' ? '; your iPhone Photos library stays on the phone, so it was not searched' : '; Google Drive is a separate connection and was not searched'}`;
+  const receipt = { tool: 'che_media_search', operation: 'search', status: 'success', at: new Date(now).toISOString(), id: `media_search:${now}`, query: { name: intent.name || null, range, kind: intent.kind || null }, searched: items.length, matched: found.map((r) => r.id).slice(0, 50), verified: 'read_back' };
+  if (!found.length) return { text: `I found no ${what} ${asked}, sir. ${where}. Receipt ${receipt.id}.`, meta: meta({ ok: true, execution_receipt: receipt }) };
+  if (intent.open && found.length === 1 && request) {
+    const out = await openFound(found[0], { storage, env, request, items, receipt, where });
+    return { text: out.text, meta: meta(out.meta) };
+  }
+  const shown = found.slice(0, 10);
+  // The numbered list is kept for 15 minutes so "open number 2" opens that file (a probe turn keeps nothing).
+  if (!probe) await storage.put(LAST_SEARCH_KEY, { ids: shown.map((r) => r.id), at: now }).catch(() => null);
+  const list = shown.map((r, i) => `${i + 1}. ${String(r.title || 'Untitled').slice(0, 60)} · ${String(r.created_at || '').slice(0, 10)} · ID ${r.id}`).join('\n');
+  const choose = shown.length > 1 && !probe ? ' Say "open number" and the number to open one.' : '';
+  return { text: `I found ${found.length} ${found.length === 1 ? what.replace(/s$/, '') : what} ${asked}, sir:\n${list}\n${where}.${choose} Receipt ${receipt.id}.`, meta: meta({ ok: true, execution_receipt: receipt }) };
+}
+
 // The deterministic owner tools, in the order they are tried. Each turn(storage, message, opts) returns a chat answer
 // with its receipt, or null when the message is not for it.
 export const OWNER_TOOLS = [
   { id: 'che_lists', turn: (storage, message, opts) => listChatTurn(storage, message, opts) },
   { id: 'che_job_queue', turn: (storage, message, opts) => queueChatTurn(storage, message, opts) },
+  { id: 'che_media_search', turn: (storage, message, opts) => mediaSearchTurn(storage, message, opts) },
 ];
 
 /** The first owner tool that answers [message], or null. */

@@ -13885,7 +13885,7 @@ export class CheState extends DurableObject {
           );
         }
 
-        const timerTurn = await timerChatTurn(this.ctx.storage, message, { timeZone: this.env.CHE_TIMEZONE, wake: () => this.scheduleWork(), key: PROBE_CHAT_REQUESTS.has(request) ? PROBE_TIMERS_KEY : TIMERS_KEY }) || await ownerToolTurn(this.ctx.storage, message, { probe: PROBE_CHAT_REQUESTS.has(request), grant: ownerGrant, owner: ownerDevice });
+        const timerTurn = await timerChatTurn(this.ctx.storage, message, { timeZone: this.env.CHE_TIMEZONE, wake: () => this.scheduleWork(), key: PROBE_CHAT_REQUESTS.has(request) ? PROBE_TIMERS_KEY : TIMERS_KEY }) || await ownerToolTurn(this.ctx.storage, message, { probe: PROBE_CHAT_REQUESTS.has(request), grant: ownerGrant, owner: ownerDevice, request, env: this.env });
         if (timerTurn) return ndjsonReply(timerTurn.text, timerTurn.meta);
         const connectorGate = receiptGate(message, this.keyEnv || this.env, body);
         if (connectorGate) return ndjsonReply(...connectorGate.reply);
