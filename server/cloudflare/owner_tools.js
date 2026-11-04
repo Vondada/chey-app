@@ -9,7 +9,8 @@ import { retryCloudJob } from './cloud_computer.js';
 import { listChatTurn } from './owner_lists.js';
 import { CreationStudio } from './creation_studio.js';
 import * as OBJ from './creation_objects.js';
-import { listMedia, readBlob, verifyMediaFile } from './media.js';
+import { listMedia, readBlob, saveMadeImage, verifyMediaFile } from './media.js';
+import { ANIMATION_MOTIONS, ANIMATION_SHAPES, animationSpec, inspectGif, makeAnimation } from './gif_encoder.js';
 import { dayRange, mediaChatFields, mediaSearchIntent, searchMedia } from './media_library.js';
 export { dayRange, mediaSearchIntent, searchMedia };
 
@@ -213,16 +214,21 @@ export async function mediaSearchTurn(storage, message, { owner = true, probe = 
 // free creation worker queue (gpu_queue.js object_model). This turn starts that project and queues its build.
 const THREE_D = /\b(?:3-?d|three[\s-]?d)\b|\b(?:gltf|glb)\b/i;
 const BUILD_VERB = /\b(?:create|make|build|model|generate|design|produce)\b/i;
-const NOT_A_BUILD = /\b(?:do\s+not|don['’]t|never)\b[^.?!]{0,30}\b(?:create|make|build|model|generate)\b|^(?:how\s+(?:do|can|would|should)\s+(?:i|we|you|one)|how\s+to|what\s+(?:is|are|does)|why|can\s+i|should\s+i)\b/i;
+// Not a build: negated, a how-to or what-is question, or a request to explain or teach the process (Codex review on #918:
+// "Explain how to create a 3D model of a chair" started a build).
+const NOT_A_BUILD = /\b(?:do\s+not|don['’]t|never)\b[^.?!]{0,30}\b(?:create|make|build|model|generate)\b|^(?:how\s+(?:do|can|would|should)\s+(?:i|we|you|one)|how\s+to|what\s+(?:is|are|does)|why|can\s+i|should\s+i)\b|\b(?:explain|describe|teach\s+me|tell\s+me|walk\s+me\s+through|show\s+me)\s+how\b|^(?:explain|describe|teach)\b/i;
 
 /** The object description a 3D request names ("a chair", "a red table"), or null. */
 export function objectRequest(message = '') {
-  const text = String(message || '').replace(/\s+/g, ' ').trim();
+  const text = String(message || '').replace(/["“][^"”]*["”]/g, ' ').replace(/\s+/g, ' ').trim();
   if (!text || text.length > 300 || !THREE_D.test(text) || !BUILD_VERB.test(text) || NOT_A_BUILD.test(text)) return null;
-  if (/\b(?:room|game|roblox|scene|avatar|person|character|face|me\b|myself)\b/i.test(text)) return null; // other studios
   const m = /\b(?:of|for)\s+(?:an?\s+|the\s+)?(.+?)(?:\s+(?:and|then)\s+(?:export|save|send|give|render)\b|\s+(?:as|in)\s+(?:a\s+)?(?:gltf|glb)\b|[.?!]|$)/i.exec(text);
   const description = (m ? m[1] : '').replace(/\b(?:3-?d|three[\s-]?d)\s+(?:model|object)?\b/gi, '').replace(/\b(?:model|object)\s+of\b/gi, '').trim();
-  return description ? { description: description.slice(0, 200), format: /\bgltf\b/i.test(text) ? 'gltf' : /\bglb\b/i.test(text) ? 'glb' : null } : null;
+  // "a chair for me" is a chair; a person, avatar, room, scene or game as the subject belongs to its own studio (Codex
+  // review on #918: the word "me" anywhere refused "a chair for me").
+  const subject = description.replace(/\s+for\s+(?:me|us|myself|ourselves|my\s+[\w\s]+)$/i, '').trim();
+  if (!subject || /\b(?:room|game|roblox|scene|avatar|person|character|face|me|myself|him|her|them)\b/i.test(subject)) return null;
+  return subject ? { description: subject.slice(0, 200), format: /\bgltf\b/i.test(text) ? 'gltf' : /\bglb\b/i.test(text) ? 'glb' : null } : null;
 }
 
 export async function objectTurn(storage, message, { owner = true, probe = false, env = {}, now = Date.now() } = {}) {
@@ -255,6 +261,45 @@ export async function objectTurn(storage, message, { owner = true, probe = false
   };
 }
 
+// ─── Animated GIFs made in the Worker (gif_encoder.js; certification run 24, ivg-35) ───
+const MAKE_VERB = /\b(?:make|produce|create|generate|draw|render|build|give\s+me|send\s+me)\b/i;
+
+/** One chat turn that makes an animated GIF, or null when the message does not ask for one this can draw. */
+// A request to make one, not "do not make a GIF", "how do I make a GIF?" or a quoted line (Codex review on #917).
+const NOT_A_REQUEST = /\b(?:do\s+not|don['’]t|never|stop|no\s+need\s+to|instead\s+of|rather\s+than)\b[^.?!]{0,30}\b(?:make|produce|create|generate|draw|render|send|give)\b|^(?:how\s+(?:do|can|would|should|could)\s+(?:i|we|one|you)|how\s+to|what\s+(?:is|are|does)|why|can\s+i|should\s+i|is\s+it)\b/i;
+
+/** Whether [message] asks CHE to make an animated GIF she can draw (also used by the picture route). */
+export function gifRequest(message) {
+  const text = String(message || '').replace(/["“][^"”]*["”]/g, ' ').trim();
+  return text.length <= 300 && MAKE_VERB.test(text) && !NOT_A_REQUEST.test(text) && Boolean(animationSpec(text));
+}
+
+export async function gifTurn(storage, message, { owner = true, probe = false, env = {}, request = null, origin = '', now = Date.now() } = {}) {
+  const text = String(message || '');
+  if (!gifRequest(text)) return null;
+  const spec = animationSpec(text);
+  if (!spec) return null;
+  const meta = (extra = {}) => ({ source: 'che_gif', model_calls: 0, ...extra });
+  if (!owner && !probe) return { text: 'Making pictures is for the owner, sir. Nothing was made.', meta: meta({ ok: false }) };
+  const made = makeAnimation(spec);
+  const check = inspectGif(made.bytes);
+  const what = `a ${made.seconds.toFixed(1)}-second looping GIF of a ${spec.colour} ${spec.shape === 'ball' ? 'ball' : 'square'} ${spec.motion === 'bounce' ? 'bouncing' : spec.motion === 'slide' ? 'sliding' : spec.motion === 'pulse' ? 'pulsing' : 'spinning'}`;
+  const receipt = { tool: 'che_gif', operation: 'make', status: check.ok ? 'success' : 'failure', at: new Date(now).toISOString(), id: `gif:${now}`, spec, width: check.width, height: check.height, frames: check.frames, bytes: check.bytes, verified: check.ok ? 'decoded' : check.reason };
+  if (!check.ok) return { text: `I could not make that GIF, sir: the file did not read back as a GIF (${check.reason}). Nothing was saved.`, meta: meta({ ok: false, execution_receipt: receipt }) };
+  const how = `${made.width} by ${made.height} pixels, ${check.frames} frames, ${check.bytes} bytes, drawn by CHE's own code in the Worker with no model or outside service. I can draw a ${ANIMATION_SHAPES.join(' or ')} that will ${ANIMATION_MOTIONS.join(', ')}`;
+  // A certification probe turn makes and checks the file but does not fill the owner's media store with test files.
+  const base = origin || (request ? new URL(request.url).origin : '');
+  if (probe || !base) return { text: `I made ${what} and read it back as a valid GIF, sir: ${how}. This is a test turn, so it was not saved or attached. Receipt ${receipt.id}.`, meta: meta({ ok: true, execution_receipt: { ...receipt, stored: false } }) };
+  const item = await saveMadeImage(env, storage, { bytes: made.bytes, mime: 'image/gif', title: `${spec.colour} ${spec.shape} ${spec.motion} GIF`, prompt: text.slice(0, 300), width: made.width, height: made.height, recipe: spec });
+  const stored = await verifyMediaFile(env, storage, item).catch(() => ({ ok: false, reason: 'its file could not be read' }));
+  if (!stored.ok) return { text: `I made the GIF, sir, but it did not read back from storage (${stored.reason}), so it is not attached. Receipt ${receipt.id}.`, meta: meta({ ok: false, execution_receipt: { ...receipt, status: 'failure', stored: false, error: stored.reason } }) };
+  const fields = mediaChatFields(item, { origin: base, items: [item] });
+  return {
+    text: `Here it is, sir: ${what}, attached. ${how}. It is saved as picture ${item.id}. Receipt ${receipt.id}.`,
+    meta: meta({ ok: true, ...fields, media_retrieval: 'verified', execution_receipt: { ...receipt, stored: true, media_id: item.id } }),
+  };
+}
+
 // The deterministic owner tools, in the order they are tried. Each turn(storage, message, opts) returns a chat answer
 // with its receipt, or null when the message is not for it.
 export const OWNER_TOOLS = [
@@ -262,6 +307,7 @@ export const OWNER_TOOLS = [
   { id: 'che_job_queue', turn: (storage, message, opts) => queueChatTurn(storage, message, opts) },
   { id: 'che_media_search', turn: (storage, message, opts) => mediaSearchTurn(storage, message, opts) },
   { id: 'che_create_object', turn: (storage, message, opts) => objectTurn(storage, message, opts) },
+  { id: 'che_gif', turn: (storage, message, opts) => gifTurn(storage, message, opts) },
 ];
 
 /** The first owner tool that answers [message], or null. */

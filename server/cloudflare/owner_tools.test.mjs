@@ -239,7 +239,9 @@ test('/api/chat: a named file is found and opened from the bytes read back; a da
 test('a 3D object request names its object; questions, rooms and avatars are other routes', () => {
   assert.deepEqual(objectRequest('Create a 3D model of a chair and export it as glTF.'), { description: 'chair', format: 'gltf' });
   assert.equal(objectRequest('Make a 3D model of a red table.')?.description, 'red table');
-  for (const q of ['How do I make a 3D model of a chair?', 'Create a 3D room.', 'Make a 3D avatar of me.', 'What is glTF?', 'Do not build a 3D chair.']) assert.equal(objectRequest(q), null, q);
+  for (const q of ['How do I make a 3D model of a chair?', 'Create a 3D room.', 'Make a 3D avatar of me.', 'What is glTF?', 'Do not build a 3D chair.', 'Explain how to create a 3D model of a chair.', 'Make a 3D model of me.']) assert.equal(objectRequest(q), null, q);
+  // Codex review on #918: "for me" is not the subject.
+  assert.equal(objectRequest('Create a 3D model of a chair for me.')?.description, 'chair');
 });
 
 test('a probe turn checks the object is buildable and starts nothing', async () => {
@@ -275,4 +277,9 @@ test('/api/chat: "a 3D model of a chair as glTF" starts a Creation Studio chair 
   assert.equal(job.kind, 'object_model');
   assert.match(text, new RegExp(`queued as job ${done.job_id}`));
   assert.match(text, /Nothing is finished yet/);
+  // Codex review on #918: an explanation request starts no project and no job.
+  const before = (await storage.get('creations:projects')).length;
+  const explain = (await (await post('/api/chat', { message: 'Explain how to create a 3D model of a chair.', history: [] }, token)).text()).split('\n').filter(Boolean).map((l) => JSON.parse(l)).find((f) => f.type === 'done');
+  assert.notEqual(explain.source, 'che_create_object');
+  assert.equal((await storage.get('creations:projects')).length, before);
 });

@@ -6,6 +6,7 @@ import { MODAL_IMAGE_FLAG, MODAL_IMAGE_KEY, startModalImage } from './media.js';
 import { CHAT_IMAGE_SOURCE, chatImageInline, chatImageMedia, chatImageReply, requestedImageCount } from './chat_images.js';
 import { COMPOSER, oncePerSentence, refusedPictureText, startedPictureText } from './execution_reply.js';
 import { turnReceipt } from './action_receipts.js';
+import { gifRequest, gifTurn } from './owner_tools.js';
 
 /** The engine for one chat picture request: { provider: 'modal' | 'workers_ai', reason }. */
 export async function chatImageProvider(env, storage, { count = 1 } = {}) {
@@ -94,6 +95,13 @@ export function pictureSizeNote(message) {
  * `makeImages(count)` is the Workers AI path (chat_images.js). Returns { text, meta } for the chat.
  */
 export async function chatPictureTurn(env, storage, { message, origin, makeImages }) {
+  // An animated GIF CHE can draw is made by her own encoder (gif_encoder.js), not by a still-picture engine: "draw me
+  // an animated GIF of a bouncing ball" reaches here when the phone or the inference marks it image_generation (Codex
+  // review on #917).
+  if (gifRequest(message)) {
+    const gif = await gifTurn(storage, message, { env, origin });
+    if (gif) return gif;
+  }
   const count = requestedImageCount(message);
   const choice = await chatImageProvider(env, storage, { count });
   // An explicit Modal request is never answered by another engine: if Modal is not chosen, nothing is made and the reason is said.
