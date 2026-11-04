@@ -203,3 +203,35 @@ test('a coding run that stopped at its time limit continues: no retry or attempt
   const capped = state.jobFailureOutcome({ id: 'j', attempts: 4, retry_count: 2, continuations: 8 }, error);
   assert.equal(capped.dead_letter, true);
 });
+
+test('a run cut off by a new Worker version gets its attempt back; an ordinary interruption still counts (challenge job fa1d318a)', async () => {
+  const { env, storage, state } = setup();
+  env.CF_VERSION_METADATA = { id: 'v2' };
+  const old = new Date(Date.now() - 25 * 60_000).toISOString();
+  const job = (id, extra) => ({ id, kind: 'self_development', prompt: 'Owner task: x', request: 'Owner task: x', owner_requested: true, status: 'running', attempts: 4, created_at: old, updated_at: old, ...extra });
+  await storage.put('che', { autonomy: false, devices: {}, memories: [], jobs: [
+    job('redeployed', { worker_version: 'v1' }),
+    job('same', { worker_version: 'v2' }),
+    job('capped', { worker_version: 'v1', redeploys: 8 }),
+  ] });
+  await state.alarm();
+  const jobs = Object.fromEntries((await storage.get('che')).jobs.map((j) => [j.id, j]));
+  assert.deepEqual([jobs.redeployed.status, jobs.redeployed.attempts, jobs.redeployed.redeploys, Boolean(jobs.redeployed.dead_letter)], ['queued', 3, 1, false]);
+  assert.ok(jobs.redeployed.retry_at - Date.now() <= 60_000);
+  assert.match(jobs.redeployed.activity.at(-1).text, /new Worker version restarted this run/);
+  // The same version: the run itself was cut off, so the attempt ceiling applies as before.
+  assert.equal(jobs.same.dead_letter, true);
+  // After eight redeploys the ordinary rule applies again.
+  assert.equal(jobs.capped.dead_letter, true);
+});
+
+test('a job that starts records the Worker version it runs on', async () => {
+  const { env, storage, state } = setup();
+  env.CF_VERSION_METADATA = { id: 'v7' };
+  const now = new Date().toISOString();
+  await storage.put('che', { autonomy: false, devices: {}, memories: [], jobs: [
+    { id: 'owner', kind: 'self_development', prompt: 'Owner task: x', request: 'Owner task: x', owner_requested: true, status: 'queued', attempts: 0, retry_at: 0, created_at: now, updated_at: now },
+  ] });
+  await state.alarm();
+  assert.equal((await storage.get('che')).jobs[0].worker_version, 'v7');
+});

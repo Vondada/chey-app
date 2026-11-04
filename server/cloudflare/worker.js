@@ -1446,6 +1446,13 @@ export function jobStaleMs(job) {
   return job?.kind === 'self_development' || job?.kind === 'autonomy_exam' ? 20 * 60_000 : 300000;
 }
 export const MAX_JOB_RETRIES = 3;
+// A run cut off because a new Worker version went live (a deploy, or the certification's probe-token change) is not
+// the job failing: its attempt is given back, at most this many times (challenge job fa1d318a dead-lettered after the
+// status probes restarted it).
+export const MAX_JOB_REDEPLOYS = 8;
+export function redeployedRun(job, version) {
+  return Boolean(version && job?.worker_version && job.worker_version !== version && Number(job.redeploys || 0) < MAX_JOB_REDEPLOYS);
+}
 const JOB_DEDUPE_MS = 30 * 60_000;
 
 // Adds a job unless an equivalent one is already queued/running (idempotency:
@@ -15792,7 +15799,10 @@ export class CheState extends DurableObject {
       if (job.status === 'running' && Date.parse(job.updated_at) <= now - jobStaleMs(job)) {
         swept = true;
         const attempts = Number(job.attempts || 0);
-        if (attempts >= MAX_JOB_ATTEMPTS) {
+        if (redeployedRun(job, this.env?.CF_VERSION_METADATA?.id)) {
+          Object.assign(job, { status: 'queued', attempts: Math.max(0, attempts - 1), redeploys: Number(job.redeploys || 0) + 1, retry_at: now + 60_000 });
+          noteJobActivity(job, 'A new Worker version restarted this run; it resumes from its checkpoint without using an attempt.');
+        } else if (attempts >= MAX_JOB_ATTEMPTS) {
           Object.assign(job, {
             status: 'failed', dead_letter: true, dead_letter_at: new Date().toISOString(), retry_at: null,
             error: 'Retry limit reached; job moved to terminal dead-letter state after repeated interrupted runs.',
@@ -15820,6 +15830,7 @@ export class CheState extends DurableObject {
       job.status = 'running';
       job.attempts = Number(job.attempts || 0) + 1;
       job.updated_at = startedAt;
+      job.worker_version = String(this.env?.CF_VERSION_METADATA?.id || '');
       noteJobActivity(job, job.steps?.length
         ? `Starting step ${(job.step_index || 0) + 1} of ${job.steps.length}: ${job.steps[job.step_index || 0]}`
         : `Starting: ${job.title || job.prompt}`);
