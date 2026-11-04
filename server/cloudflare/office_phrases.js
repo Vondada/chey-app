@@ -1,7 +1,7 @@
 // Deterministic Office voice phrases. CHE is always the speaker; agents never
 // address the owner. Every line is built from the real board only.
 import { OFFICE_AGENTS } from './office_router.js';
-import { officeAgentForRole } from './office_company.js';
+import { LA_AGENCIA_ROLES, officeAgentForRole } from './office_company.js';
 import { parseOpportunityScoutPhrase } from './opportunity_scout.js';
 import { parseRobloxPhrase } from './roblox_studio.js';
 import { parseMlPhrase } from './ml_studio.js';
@@ -41,6 +41,47 @@ function agentRefs(t) {
   }
   for (const m of t.matchAll(new RegExp(`\\b(${AGENTS.join('|')})(?:'s|s)?\\b`, 'g'))) refs.push({ name: cap(m[1]), at: m.index });
   return refs.sort((a, b) => a.at - b.at);
+}
+
+// "Route this to the coding agent, then the office agent, then return a summary to me" (certification run 24, ter-30):
+// a hand-off chain is a coordinated Office job whose departments are the ones the owner named, in his order. "This" or
+// "it" with nothing else is the work of the owner's previous message; the caller resolves it (subject: '').
+// A desk named by its role. A desk named by its agent ("Sage", "Iris") is that agent's own department from the roster
+// (office_company.js), never a guess (Codex review on #923).
+const DESKS = [
+  ['engineering', /\b(?:coding|code|engineering|developer|dev)\b/],
+  ['operations', /\b(?:office|operations|ops|coordinator)\b/],
+  ['research', /\b(?:research|researcher)\b/],
+  ['security', /\bsecurity\b/],
+  ['intelligence', /\b(?:intelligence|strategy|analyst)\b/],
+  ['experience', /\b(?:design|designer|ux|ui|accessibility)\b/],
+  ['creative', /\b(?:creative|content|marketing)\b/],
+  ['markets', /\b(?:markets?|trading)\b/],
+  ['qa', /\b(?:qa|testing|test|tester|quality|verification)\b/],
+];
+const ROSTER = Object.entries(LA_AGENCIA_ROLES).map(([name, spec]) => [name.toLowerCase(), spec.department?.id]).filter(([, id]) => id);
+const deskOf = (leg) => {
+  const words = leg.toLowerCase();
+  const agent = ROSTER.find(([name]) => new RegExp(`\\b${name}\\b`).test(words));
+  return agent ? agent[1] : DESKS.find(([, re]) => re.test(words))?.[0] || null;
+};
+// Only a request for the result back closes a chain ("then return a summary to me"); "then send it to legal" is a leg.
+const SUMMARY_BACK = /\s+(?:and\s+)?then\s+(?:return|send|give|bring|report)\s+(?:(?:me|us|it|that|this|the\s+\w+)\s+)?(?:(?:a|an|the|my)\s+)?(?:summary|summaries|report|results?|it\s+back|back|recap|update)\b[^.!?]*$/i;
+export function handoffChain(raw) {
+  const text = String(raw || '').replace(/[’‘]/g, "'").replace(/\s+/g, ' ').trim();
+  const summary = SUMMARY_BACK.test(text.replace(/[.!?]+$/, ''));
+  const body = text.replace(/[.!?]+$/, '').replace(SUMMARY_BACK, '');
+  const m = /^(?:(?:hey )?(?:che|chay|chey|jay)[, ]+)?(?:please )?(?:route|send|hand|pass|give|forward|take)\s+(this|it|that|.{3,300}?)\s+(?:to|over to)\s+(.+?)$/i.exec(body);
+  if (!m || !/\bthen\b/i.test(text)) return null;
+  const legs = m[2].split(/[,;]?\s+(?:and\s+)?then\s+(?:to\s+)?|,\s*/i).map((leg) => leg.trim()).filter(Boolean);
+  if (legs.length < 2 || !legs.every((leg) => /\b(?:agent|desk|team|department)\b/i.test(leg) || ROSTER.some(([name]) => new RegExp(`\\b${name}\\b`, 'i').test(leg)))) return null;
+  const departments = legs.map(deskOf);
+  // "...then the office agent after I approve it": a hand-off that waits on a condition is not started now (Codex
+  // review on #923); CHE says so instead of dropping the condition.
+  if (CONDITIONAL.test(text.toLowerCase()) || NEGATED.test(text.toLowerCase())) return { type: 'unknownDesk', legs, departments, conditional: true };
+  if (departments.some((d) => !d)) return { type: 'unknownDesk', legs, departments };
+  const subject = /^(?:this|it|that)$/i.test(m[1]) ? '' : m[1].trim();
+  return { type: 'officeJob', request: subject, disciplines: [...new Set(departments)], chain: legs, summary };
 }
 
 export function matchOfficePhrase(raw) {
@@ -95,6 +136,8 @@ export function matchOfficePhrase(raw) {
   // engineering, security and testing".
   const coordinate = original.match(/^(?:(?:hey )?(?:che|chay|chey)[, ]+)?(?:please )?(?:have|ask|get|let) (?:nova|the office) (?:to )?(?:coordinate|run|work together on) (.{6,})$/i);
   if (coordinate) return { type: 'officeJob', request: coordinate[1].replace(/[.!?]+$/, '').trim() };
+  const chain = handoffChain(original);
+  if (chain) return chain;
   const jobId = t.match(/\boffice job (oj [0-9a-f]{8}|oj-[0-9a-f]{8})\b/) || original.match(/\b(oj-[0-9a-f]{8})\b/i);
   if (jobId || /\b(?:status of (?:the |my )?(?:coordinated )?office jobs?|(?:coordinated )?office jobs? status|how (?:is|are) (?:the |my )?(?:coordinated )?office jobs? (?:going|doing))\b/.test(t)) {
     return { type: 'officeJobStatus', id: jobId ? jobId[1].replace(' ', '-').toLowerCase() : '' };

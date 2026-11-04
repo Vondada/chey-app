@@ -237,7 +237,7 @@ import {
   laAgenciaPanelNeeds,
 } from './work_agent_mode.js';
 import { matchOfficePhrase, speakGoalPlan, speakOfficeAgentMore, speakOfficeBoard } from './office_phrases.js';
-import { advanceOfficeJobs, officeJobView, officeJobsView, planOfficeJob, speakOfficeJob } from './office_jobs.js';
+import { advanceOfficeJobs, handoffAskReply, handoffWork, handoffRequest, handoffUnknownReply, officeJobView, officeJobsView, planOfficeJob, speakOfficeJob } from './office_jobs.js';
 import { headRecord, officeOrg, speakOfficeOrg } from './office_org.js';
 import { assertOwnerTalksToCheOnly, codexWorkPacket, OFFICE_AGENTS } from './office_router.js';
 import {
@@ -11933,9 +11933,13 @@ export class CheState extends DurableObject {
         }
         const roleTurn = await officeRoleTurn(this, data, officePhrase);
         if (roleTurn) return ndjsonReply(...roleTurn);
+        if (officePhrase?.type === 'unknownDesk') return ndjsonReply(handoffUnknownReply(officePhrase), { source: 'che_office', office: 'unknownDesk', ok: false, model_calls: 0 });
         if (officePhrase?.type === 'officeJob') {
-          const result = await this.officeCoordinate(data, { request: officePhrase.request });
-          return ndjsonReply(result.error ? `CHE here. ${result.error}` : result.reply, { office: 'job', job_id: result.job?.id || null });
+          // A hand-off chain's "this" is the owner's previous message (office_phrases.js handoffChain).
+          const work = handoffWork(officePhrase, body.history);
+          if (!work) return ndjsonReply(handoffAskReply(officePhrase), { source: 'che_office', office: 'job', ok: false, model_calls: 0 });
+          const result = await this.officeCoordinate(data, { request: officePhrase.chain ? handoffRequest(work, officePhrase) : work, disciplines: officePhrase.disciplines, ordered: Boolean(officePhrase.chain) });
+          return ndjsonReply(result.error ? `CHE here. ${result.error}` : result.reply, { office: 'job', job_id: result.job?.id || null, ...(result.job ? { execution_receipt: { tool: 'office_job', operation: 'coordinate', status: 'queued', id: result.job.id, at: new Date().toISOString(), stages: (result.job.stages || []).map((st) => `${st.agent}:${st.discipline}`) } } : {}) });
         }
         if (officePhrase?.type === 'officeJobStatus') {
           const jobs = (data.office_goals || []).filter((g) => g?.coordinated);
