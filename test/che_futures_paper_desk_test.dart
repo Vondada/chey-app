@@ -3,7 +3,10 @@
 // in the Worker's own JSON shapes; the screen only shows what it answers.
 import 'dart:convert';
 
+import 'dart:async';
+
 import 'package:flutter/material.dart';
+import 'package:flutter/semantics.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
@@ -13,6 +16,7 @@ import 'package:chey/trading/che_futures_paper_desk.dart';
 class _Worker {
   bool up = true;
   bool loseNextAnswer = false;
+  Completer<void>? hold;
   int orders = 0;
   final placedIds = <String>[];
   final working = <Map<String, dynamic>>[];
@@ -31,6 +35,7 @@ class _Worker {
     if (r.method == 'GET') return http.Response(jsonEncode(account()), 200);
     final body = jsonDecode(r.body) as Map<String, dynamic>;
     posts.add({'path': r.url.path, ...body});
+    if (hold != null) await hold!.future;
     if (r.url.path.endsWith('/order')) {
       if (placedIds.contains(body['client_id'])) return http.Response(jsonEncode({'ok': true, 'duplicate': true, 'text': 'That is the same paper order as O-00001 (filled), sir, so I did not place it twice.', 'account': account()}), 200);
       placedIds.add('${body['client_id']}');
@@ -61,14 +66,19 @@ class _Worker {
   });
 }
 
-Future<void> _pump(WidgetTester tester, _Worker w, {double textScale = 1}) async {
+Future<void> _pump(WidgetTester tester, _Worker w, {double textScale = 1, List<String>? spoken, ValueNotifier<bool>? shown}) async {
   await tester.binding.setSurfaceSize(const Size(390, 2400));
   addTearDown(() => tester.binding.setSurfaceSize(null));
   await tester.pumpWidget(MaterialApp(
     theme: ThemeData.dark(),
     home: MediaQuery(
       data: MediaQueryData(size: const Size(390, 2400), textScaler: TextScaler.linear(textScale)),
-      child: Scaffold(body: SingleChildScrollView(padding: const EdgeInsets.all(16), child: CheFuturesPaperDesk(baseUrl: () => 'https://che.example', headers: () => const {}, client: w.client, refreshEvery: const Duration(hours: 1)))),
+      child: Scaffold(body: SingleChildScrollView(padding: const EdgeInsets.all(16), child: ValueListenableBuilder<bool>(
+        valueListenable: shown ?? ValueNotifier(true),
+        builder: (_, on, _) => on
+            ? CheFuturesPaperDesk(baseUrl: () => 'https://che.example', headers: () => const {}, client: w.client, onRead: spoken?.add, refreshEvery: const Duration(hours: 1))
+            : const Text('another section'),
+      ))),
     ),
   ));
   await tester.pumpAndSettle();
@@ -77,7 +87,8 @@ Future<void> _pump(WidgetTester tester, _Worker w, {double textScale = 1}) async
 void main() {
   testWidgets('says paper and delayed plainly; a buy is confirmed first, then placed once and shown as the Worker answered', (tester) async {
     final w = _Worker();
-    await _pump(tester, w);
+    final spoken = <String>[];
+    await _pump(tester, w, spoken: spoken);
     expect(find.text('CHE\'s paper simulator. No broker, no money. Live orders are off.'), findsOneWidget);
     expect(find.textContaining('DELAYED · Yahoo Finance chart (public) MNQ=F · MNQZ6 · 21000'), findsOneWidget);
     expect(find.textContaining('(11 min old) · market orders allowed'), findsOneWidget);
@@ -96,6 +107,8 @@ void main() {
     expect(w.posts.single['client_id'], startsWith('app-'));
     expect(find.text('Paper order O-00001 filled, sir: buy 1 MNQ at 21000.25.'), findsOneWidget);
     expect(find.text('Long 1 MNQ at 21000.25; mark 21000; open P&L −\$0.5'), findsOneWidget);
+    // The outcome is spoken once; the initial refresh said nothing.
+    expect(spoken, ['Paper order O-00001 filled, sir: buy 1 MNQ at 21000.25.']);
   });
 
   testWidgets('a dropped connection keeps the ticket id, so sending it again is refused as a duplicate, never placed twice', (tester) async {
@@ -157,5 +170,52 @@ void main() {
     expect(find.bySemanticsLabel('Buy 1 MNQ on paper'), findsOneWidget);
     expect(find.bySemanticsLabel('Flatten all paper positions and cancel every paper order'), findsOneWidget);
     semantics.dispose();
+  });
+
+  testWidgets('Codex on #926: VoiceOver can activate the buttons; the feed is not a live region; a lost connection is spoken only for an action', (tester) async {
+    final w = _Worker();
+    final spoken = <String>[];
+    final semantics = tester.ensureSemantics();
+    await _pump(tester, w, spoken: spoken);
+    for (final label in ['Buy 1 MNQ on paper', 'Sell 1 MNQ on paper', 'Flatten all paper positions and cancel every paper order']) {
+      final node = tester.getSemantics(find.bySemanticsLabel(label));
+      expect(node.getSemanticsData().hasAction(SemanticsAction.tap), isTrue, reason: label);
+    }
+    final feed = tester.getSemantics(find.bySemanticsLabel(RegExp(r'^MNQ data: DELAYED')));
+    expect(feed.getSemanticsData().flagsCollection.isLiveRegion, isFalse);
+    // Activating BUY through accessibility opens the confirmation, and its confirm button is activatable too.
+    tester.semantics.tap(find.semantics.byLabel('Buy 1 MNQ on paper'));
+    await tester.pumpAndSettle();
+    expect(find.text('Buy 1 MNQ market on paper?'), findsOneWidget);
+    tester.semantics.tap(find.semantics.byLabel('Place paper buy'));
+    await tester.pumpAndSettle();
+    expect(w.orders, 1);
+    expect(spoken.single, startsWith('Paper order O-00001 filled'));
+    // A passive refresh that fails is shown, not spoken.
+    w.up = false;
+    await tester.state<CheFuturesPaperDeskState>(find.byType(CheFuturesPaperDesk)).refresh();
+    await tester.pumpAndSettle();
+    expect(find.textContaining('Connection lost.'), findsOneWidget);
+    expect(spoken.length, 1);
+    semantics.dispose();
+  });
+
+  testWidgets('Codex on #926: leaving the desk while an order is pending does not touch a disposed screen', (tester) async {
+    final w = _Worker()..hold = Completer<void>();
+    final spoken = <String>[];
+    final shown = ValueNotifier(true);
+    await _pump(tester, w, spoken: spoken, shown: shown);
+    await tester.tap(find.byKey(const Key('futures_buy')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('futures_confirm')));
+    await tester.pump();
+    expect(w.posts.single['path'], '/api/futures/paper/order');
+    shown.value = false;
+    await tester.pump();
+    expect(find.text('another section'), findsOneWidget);
+    w.hold!.complete();
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+    expect(spoken, isEmpty);
   });
 }

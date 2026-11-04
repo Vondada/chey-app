@@ -8,6 +8,9 @@
 //   a double tap or a retry after a dropped connection can never place it twice (the simulator refuses the repeat).
 // - Everything shown comes from the Worker's account view: positions, P&L, working orders, fills and the feed's own
 //   label. The feed is always named: DELAYED (Yahoo's public CME data) or UNAVAILABLE. Nothing here says live.
+// - Voice: every order, cancel and flatten outcome (success, rejection or a dropped connection) is spoken through
+//   onRead, the Trading Room's reader. Passive refreshes (the feed line, the connection notice) stay silent: they are
+//   ordinary text, not live regions (AGENTS.md: no forced announcements for passive status).
 // - The view refreshes every 5 seconds while open. A failed refresh shows "Connection lost" and keeps the last
 //   account it read, marked as old; nothing is guessed.
 // - No broker, no money: the header says so, and live orders are off in CHE's code.
@@ -62,10 +65,12 @@ String _num(num? v) {
 String _money(num? v) => v == null ? 'unknown' : '${v < 0 ? '−' : ''}\$${_num(v.abs())}';
 
 class CheFuturesPaperDesk extends StatefulWidget {
-  const CheFuturesPaperDesk({super.key, required this.baseUrl, required this.headers, this.client, this.refreshEvery = const Duration(seconds: 5)});
+  const CheFuturesPaperDesk({super.key, required this.baseUrl, required this.headers, this.client, this.onRead, this.refreshEvery = const Duration(seconds: 5)});
   final String Function() baseUrl;
   final Map<String, String> Function() headers;
   final http.Client? client;
+  /// Speaks an action's actual outcome. Never called for passive refreshes.
+  final void Function(String text)? onRead;
   final Duration refreshEvery;
 
   @override
@@ -133,18 +138,24 @@ class CheFuturesPaperDeskState extends State<CheFuturesPaperDesk> {
           .post(_u(path), headers: {...widget.headers(), 'Content-Type': 'application/json'}, body: jsonEncode(body))
           .timeout(const Duration(seconds: 30));
       final j = jsonDecode(r.body);
-      if (j is! Map<String, dynamic>) return null;
+      if (!mounted || j is! Map<String, dynamic>) return null;
       if (j['account'] is Map<String, dynamic>) {
         _view = j['account'] as Map<String, dynamic>;
         _readAt = DateTime.now();
       }
       return j;
     } catch (_) {
-      setState(() => _result = 'No answer from CHE: the connection dropped. Nothing is assumed placed; the ticket keeps its id, so sending it again cannot place it twice.');
+      if (mounted) _report('No answer from CHE: the connection dropped. Nothing is assumed placed; the ticket keeps its id, so sending it again cannot place it twice.');
       return null;
     } finally {
       if (mounted) setState(() => _busy = false);
     }
+  }
+
+  /// Shows an action's outcome and speaks it. Callers check `mounted` first.
+  void _report(String text) {
+    setState(() => _result = text);
+    widget.onRead?.call(text);
   }
 
   double? _field(TextEditingController c) {
@@ -167,17 +178,17 @@ class CheFuturesPaperDeskState extends State<CheFuturesPaperDesk> {
         color: side == 'buy' ? _green : _red,
       ),
     );
-    if (ok != true) return;
+    if (ok != true || !mounted) return;
     HapticFeedback.mediumImpact();
     final j = await _post('/api/futures/paper/order', ticket.toJson());
-    if (j == null) return;
+    if (j == null || !mounted) return;
     _pending = null;
-    setState(() => _result = '${j['text'] ?? ''}');
+    _report('${j['text'] ?? 'The order was answered without text.'}');
   }
 
   Future<void> _cancel(String id, String what) async {
     final j = await _post('/api/futures/paper/cancel', {'id': id});
-    if (j != null) setState(() => _result = '${j['text'] ?? 'Cancel answered.'}');
+    if (j != null && mounted) _report('${j['text'] ?? 'Cancel answered.'}');
   }
 
   Future<void> _flatten() async {
@@ -191,10 +202,10 @@ class CheFuturesPaperDeskState extends State<CheFuturesPaperDesk> {
         color: _red,
       ),
     );
-    if (ok != true) return;
+    if (ok != true || !mounted) return;
     HapticFeedback.heavyImpact();
     final j = await _post('/api/futures/paper/flatten', {});
-    if (j != null) setState(() => _result = '${j['text'] ?? ''}');
+    if (j != null && mounted) _report('${j['text'] ?? 'Flatten answered.'}');
   }
 
   Map<String, dynamic> get _feed => ((_view?['feeds'] as Map?)?[_root] as Map?)?.cast<String, dynamic>() ?? const {};
@@ -218,7 +229,7 @@ class CheFuturesPaperDeskState extends State<CheFuturesPaperDesk> {
             key: Key('futures_paper_banner'), style: TextStyle(color: Colors.white70, fontSize: 15)),
         if (_connection.isNotEmpty) ...[
           const SizedBox(height: 8),
-          _Notice(key: const Key('futures_paper_connection'), text: _connection, color: _red),
+          _Notice(key: const Key('futures_paper_connection'), text: _connection, color: _red, live: false),
         ],
         const SizedBox(height: 12),
         Semantics(
@@ -269,7 +280,8 @@ class CheFuturesPaperDeskState extends State<CheFuturesPaperDesk> {
         ]),
         if (_result.isNotEmpty) ...[
           const SizedBox(height: 10),
-          _Notice(key: const Key('futures_paper_result'), text: _result, color: Colors.white24),
+          // Spoken through onRead when the room provides it; otherwise VoiceOver announces the outcome itself.
+          _Notice(key: const Key('futures_paper_result'), text: _result, color: Colors.white24, live: widget.onRead == null),
         ],
         const SizedBox(height: 16),
         _Section(title: 'POSITIONS', children: [
@@ -329,7 +341,6 @@ class _FeedLine extends StatelessWidget {
         ? 'DELAYED · ${feed['source'] ?? ''} · ${feed['contract'] ?? ''} · ${_num(feed['price'] as num?)} at ${'${feed['bar_time'] ?? ''}'.replaceFirst('T', ' ').replaceFirst(':00.000Z', ' UTC')}$age · ${fresh ? 'market orders allowed' : 'too old for market orders'}'
         : '$status · ${feed['error'] ?? 'no price read yet'} · market orders refused';
     return Semantics(
-      liveRegion: true,
       label: '$root data: $text',
       child: Text(text, key: const Key('futures_feed_line'), style: TextStyle(color: status == 'DELAYED' && fresh ? const Color(0xFFFFC857) : _red, fontSize: 16, fontWeight: FontWeight.w600)),
     );
@@ -363,7 +374,9 @@ class _BigButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Semantics(
         button: true,
+        enabled: onTap != null,
         label: semantics,
+        onTap: onTap,
         excludeSemantics: true,
         child: FilledButton(
           onPressed: onTap,
@@ -381,7 +394,9 @@ class _SmallButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Semantics(
         button: true,
+        enabled: onTap != null,
         label: semantics,
+        onTap: onTap,
         excludeSemantics: true,
         child: OutlinedButton(onPressed: onTap, style: OutlinedButton.styleFrom(minimumSize: const Size(96, 48)), child: Text(label, style: const TextStyle(fontSize: 16))),
       );
@@ -397,12 +412,13 @@ class _BigIcon extends StatelessWidget {
 }
 
 class _Notice extends StatelessWidget {
-  const _Notice({super.key, required this.text, required this.color});
+  const _Notice({super.key, required this.text, required this.color, required this.live});
   final String text;
   final Color color;
+  final bool live;
   @override
   Widget build(BuildContext context) => Semantics(
-        liveRegion: true,
+        liveRegion: live,
         child: Container(
           padding: const EdgeInsets.all(12),
           decoration: BoxDecoration(color: color.withValues(alpha: 0.18), border: Border.all(color: color), borderRadius: BorderRadius.circular(10)),

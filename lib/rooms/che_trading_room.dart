@@ -359,7 +359,7 @@ class _CheTradingRoomState extends State<CheTradingRoom> {
       case CheTradingSection.crypto:
         return [_pad(CheCryptoDeskPanel(baseUrl: p.baseUrl, headers: p.headers, client: p.client, onRead: widget.onRead))];
       case CheTradingSection.futures:
-        return [_pad(CheFuturesPaperDesk(key: const Key('futures_paper_desk'), baseUrl: p.baseUrl, headers: p.headers, client: p.client))];
+        return [_pad(CheFuturesPaperDesk(key: const Key('futures_paper_desk'), baseUrl: p.baseUrl, headers: p.headers, client: p.client, onRead: widget.onRead))];
     }
   }
 
