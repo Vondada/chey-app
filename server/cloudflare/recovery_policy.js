@@ -148,6 +148,19 @@ export class AgentBudget {
     return true;
   }
 
+  // Which limit stops a spend, in words, or '' when it may go ahead. A budget stop names it, so a failed coding job
+  // says why ("3 identical engine errors: ...") instead of only "engineering budget" (challenge job 09b806cc).
+  stopReason(stage = 'other', estimatedTokens = 0) {
+    const limit = this.stageLimits[stage];
+    if (this.calls >= this.maxCalls) return `all ${this.maxCalls} model calls used`;
+    if (this.now() - this.startedAt > this.maxElapsedMs) return `the ${Math.round(this.maxElapsedMs / 60_000)}-minute time limit passed`;
+    const repeated = this.repeatedError();
+    if (repeated) return `the same engine error came back more than ${this.maxIdenticalErrors} times: ${repeated}`;
+    if (Number.isFinite(limit) && (this.byStage[stage] || 0) >= limit) return `all ${limit} ${stage} calls used`;
+    if (this.tokens + Math.max(0, estimatedTokens) > this.maxTokens) return `the ${this.maxTokens.toLocaleString('en-US')}-token limit would be passed`;
+    return '';
+  }
+
   spend(stage = 'other', estimatedTokens = 0) {
     if (!this.canSpend(stage, estimatedTokens)) {
       const error = new Error(`Engineering budget reached for ${stage}.`);
