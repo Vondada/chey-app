@@ -52,6 +52,7 @@ import { isStoryTurn, storyMode, storyModeBlock } from './story_mode.js';
 import { mediaHoldAnswer, mediaHoldIntent, mediaKeepFor, mediaLatestReply, mediaLibraryIntent, mediaLibraryReply, mediaLibraryReport, mediaLatestOpenRow, mediaOpenIntent, mediaOpenMissingReply, mediaOpenReply, mediaOpenRow, mediaRows, mediaSaveIntent, mediaSaveReply, mediaShowLatestIntent, mediaShowReply, verifyMediaRows, wantsLatestVideo } from './media_library.js';
 import { capabilityGap, capabilityReply } from './capability_gap.js';
 import { acquireCapability as acquireAbility, acquisitionRequest } from './capability_acquisition.js';
+import { multiToolRequest, multiToolTurn } from './multi_tool.js';
 import { INTERNAL_SOURCE, LAST_RENDER_KEY, internalSceneIntent, internalSceneTurn } from './internal_studio.js';
 import { CHAT_IMAGE_SOURCE, chatImageInline, chatImageMedia, chatImageReply, makeChatImages, pretendToolCall, requestedImageCount } from './chat_images.js';
 import { realPersonHarmIntent, REAL_PERSON_REFUSAL } from './real_person_images.js';
@@ -11769,6 +11770,8 @@ export class CheState extends DurableObject {
         // "Do X; if you can't, build it" (capability_acquisition.js).
         const acquire = ownerDevice && turnActionPolicy.codingJobAllowed && !ACQUIRE_TRIES.has(request) ? acquisitionRequest(message) : null;
         if (acquire) return this.acquireCapability(request, body, acquire, turnActionPolicy.prCreationAllowed);
+        const chain = ownerDevice && !ACQUIRE_TRIES.has(request) ? multiToolRequest(message) : null;
+        if (chain) return multiToolTurn(chain, { runTurn: (text) => this.innerTurn(request, body, text) });
         // "Diagnose/recover the failed coding job": goes to the coding
         // pipeline, which builds on the retained failure evidence.
         // A command about the existing change ("Create the PR. Then fix the
@@ -15361,17 +15364,20 @@ export class CheState extends DurableObject {
     );
   }
 
+  // One fresh turn of this route for [message], as this request's sender; it never starts an acquisition or a chain.
+  async innerTurn(request, body, message) {
+    const inner = new Request(request.url, { method: 'POST', headers: request.headers, body: JSON.stringify({ ...body, message }) });
+    for (const set of [PROBE_CHAT_REQUESTS, WORKFLOW_STEP_REQUESTS]) if (set.has(request)) set.add(inner);
+    ACQUIRE_TRIES.add(inner);
+    const res = await this.handleRequest(inner);
+    return { ok: res.ok, ...parseProbeChatBody(await res.text()) };
+  }
+
   // The try is a fresh turn of this route; a certification turn builds only in a run the owner authorized.
   async acquireCapability(request, body, acquire, openPr) {
     const probe = PROBE_CHAT_REQUESTS.has(request);
     return acquireAbility(acquire, {
-      tryTurn: async (message) => {
-        const inner = new Request(request.url, { method: 'POST', headers: request.headers, body: JSON.stringify({ ...body, message }) });
-        for (const set of [PROBE_CHAT_REQUESTS, WORKFLOW_STEP_REQUESTS]) if (set.has(request)) set.add(inner);
-        ACQUIRE_TRIES.add(inner);
-        const res = await this.handleRequest(inner);
-        return { ok: res.ok, ...parseProbeChatBody(await res.text()) };
-      },
+      tryTurn: (message) => this.innerTurn(request, body, message),
       queue: probe && !PROBE_BUILD_REQUESTS.has(request) ? null : (text) => this.queueSelfDevelopment({ request: text, immediate: true, ownerRequested: true, noPr: !openPr }),
       storage: this.ctx.storage,
       openPr,
