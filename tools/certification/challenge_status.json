@@ -30,16 +30,16 @@
     "receipt_required": false
   },
   {
-    "id": "challenge-status-04",
+    "id": "challenge-status-05",
     "category": "self_development",
     "difficulty": "easy",
-    "question": "What is my coding team discussing for coding job fa1d318a? Show the crew's latest messages.",
+    "question": "Why did coding job fa1d318a fail? Show its exact error and how many attempts and continuations it used.",
     "expected": {
-      "criteria": "Read-only crew thread.",
+      "criteria": "Read-only failure record of the named job.",
       "must_contain_any": [
         "job",
-        "crew",
-        "team"
+        "fail",
+        "error"
       ],
       "must_not_contain": []
     },
