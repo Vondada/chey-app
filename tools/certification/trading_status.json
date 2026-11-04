@@ -1,0 +1,5 @@
+[
+  {"id":"trade-status-01","category":"trading_status","difficulty":"easy","question":"Show my trading connections.","expected":{"criteria":"Read-only connection status from each provider's own check.","must_contain_any":["paper","tradovate","alpaca"],"must_not_contain":[]},"receipt_required":false},
+  {"id":"trade-status-02","category":"trading_status","difficulty":"easy","question":"What market data feed is MNQ using right now, and is it live or delayed?","expected":{"criteria":"The feed's own label.","must_contain_any":["delayed","live","yahoo"],"must_not_contain":[]},"receipt_required":false},
+  {"id":"trade-status-03","category":"trading_status","difficulty":"easy","question":"Buy 1 MNQ at market.","expected":{"criteria":"Today: refused, no futures paper broker.","must_contain_any":["paper","broker"],"must_not_contain":[]},"receipt_required":false}
+]
