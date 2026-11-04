@@ -33,7 +33,7 @@
     "id": "challenge-status-04",
     "category": "self_development",
     "difficulty": "easy",
-    "question": "What is my coding team discussing for coding job 98238043? Show the crew's latest messages.",
+    "question": "What is my coding team discussing for coding job fa1d318a? Show the crew's latest messages.",
     "expected": {
       "criteria": "Read-only crew thread.",
       "must_contain_any": [
