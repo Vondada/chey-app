@@ -5,7 +5,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import test from 'node:test';
-import { multiToolRequest, multiToolTurn, toolOutcome, TOOL_REQUESTS } from './multi_tool.js';
+import { multiToolRequest, multiToolTurn, toolInstruction, toolOutcome, TOOL_REQUESTS } from './multi_tool.js';
 
 const tool = (id) => TOOL_REQUESTS.find((t) => t.id === id);
 const frames = async (res) => (await res.text()).split('\n').filter(Boolean).map((l) => JSON.parse(l));
@@ -15,6 +15,23 @@ test('a multi-tool request lists the named tools in the owner\'s order; one tool
   assert.equal(multiToolRequest('Use the image tool, the email tool and the timer tool at the same time.').together, true);
   assert.deepEqual(multiToolRequest('Chain five tools: weather, news, calendar, email and timer. Report each outcome with its receipt.').tools.map((t) => t.id), ['weather', 'news', 'calendar', 'email', 'timer']);
   for (const q of ["What's the weather and the news today?", 'Use the timer tool.', 'Which tools do you have for weather and news?', "Don't use the email and calendar tools."]) assert.equal(multiToolRequest(q), null, q);
+});
+
+test('Codex review on #922: a forbidden tool is skipped, the owner\'s own instruction for a tool is what runs', () => {
+  const forbidden = multiToolRequest("Use the timer and email tools, but don't read my email.");
+  assert.deepEqual(forbidden.tools.map((t) => t.id), ['timer']);
+  assert.deepEqual(forbidden.skipped.map((t) => t.id), ['email']);
+  assert.deepEqual(multiToolRequest("Use the timer tool to set a timer for 10 minutes and the news tool for today's headlines.").tools.map((t) => [t.id, t.instruction]), [['timer', 'set a timer for 10 minutes'], ['news', "Tell me the news: today's headlines."]]);
+  assert.deepEqual(multiToolRequest('Use the weather tool for Paris and the image tool to draw a red bicycle.').tools.map((t) => [t.id, t.instruction]), [['weather', "What's the weather for Paris?"], ['image', 'draw a red bicycle']]);
+  // Underspecified tools keep their plain request (ter-36, ter-50).
+  assert.ok(multiToolRequest('Use the image tool, the email tool and the timer tool at the same time.').tools.every((t) => t.instruction === ''));
+  assert.ok(multiToolRequest('Chain five tools: weather, news, calendar, email and timer. Report each outcome with its receipt.').tools.every((t) => t.instruction === ''));
+  assert.equal(toolInstruction('timer tool too', TOOL_REQUESTS.find((t) => t.id === 'timer')), '');
+});
+
+test('a tool\'s whole reply is kept: an email body with no full stop is not dropped', () => {
+  const out = toolOutcome(tool('email'), { ok: true, reply: 'From Alice, subject "Lunch". Meet me at noon at 12.30 by the door', receipts: [{ status: 'success' }] });
+  assert.equal(out.said, 'From Alice, subject "Lunch". Meet me at noon at 12.30 by the door');
 });
 
 test('each outcome is what its own turn returned: a success receipt, blocked, answered without a receipt, or not run', () => {
@@ -87,6 +104,14 @@ test('/api/chat: ter-36 and ter-50 run each tool through its own route and repor
   assert.deepEqual(d50.tools.map((t) => t.id), ['weather', 'news', 'calendar', 'email', 'timer']);
   assert.equal(d50.execution_receipts.length >= 5, true);
   assert.match(t50.filter((f) => f.type === 'delta').map((f) => f.delta).join(''), /3\. Calendar \(blocked\): Google Calendar is not connected, sir\./);
+  // The owner's own instruction runs: the timer is really set; a forbidden tool is never run.
+  const set = await ask("Use the timer tool to set a timer for 10 minutes and the news tool for today's headlines.");
+  assert.deepEqual(set.find((f) => f.type === 'done').tools.map((t) => [t.id, t.route]), [['timer', 'che_timer'], ['news', 'model']]);
+  assert.equal((await storage.get('owner_timers')).filter((t) => t.status === 'scheduled').length, 1);
+  const skip = await ask("Use the timer and email tools, but don't read my email.");
+  const skipDone = skip.find((f) => f.type === 'done');
+  assert.deepEqual(skipDone.tools.map((t) => [t.id, t.status]), [['timer', 'no_receipt'], ['email', 'not_run']]);
+  assert.match(skip.filter((f) => f.type === 'delta').map((f) => f.delta).join(''), /2\. Email \(not run\): Not run: you said not to\./);
   // A certification probe turn runs the same steps as probe turns.
   const probe = await state.probeChat({ message: 'Use the image tool, the email tool and the timer tool at the same time.' });
   assert.match(probe.reply, /0 of 3 tools finished with a receipt, sir\./);
