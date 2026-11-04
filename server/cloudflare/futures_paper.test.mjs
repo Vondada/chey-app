@@ -5,8 +5,8 @@
 import assert from 'node:assert/strict';
 import { readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import test from 'node:test';
-import { emptyState, feedReading, flatten, ledgerBook, placeOrder, reconcile, workOrders, cancelOrder, ROOTS, DAILY_LOSS_LIMIT } from './futures_paper.js';
-import { futuresPaperApi, futuresPaperIntent, PROBE_STATE_KEY } from './futures_paper_desk.js';
+import { boundHistory, emptyState, feedReading, flatten, ledgerBook, placeOrder, reconcile, workOrders, cancelOrder, ROOTS, DAILY_LOSS_LIMIT } from './futures_paper.js';
+import { futuresPaperApi, futuresPaperIntent, locked, PROBE_STATE_KEY } from './futures_paper_desk.js';
 
 const T0 = Date.parse('2026-11-04T15:00:00Z'); // a Wednesday, CME open
 const bar = (min, o, h, l, c) => ({ t: new Date(T0 + min * 60_000).toISOString(), o, h, l, c, v: 100 });
@@ -155,6 +155,72 @@ test('chat requests are read exactly; live wording is refused; stock orders are 
   assert.equal(futuresPaperIntent('Close all my futures positions').action, 'flatten');
   assert.equal(futuresPaperIntent('Cancel order O-00012').id, 'O-00012');
   for (const q of ['Buy 10 shares of AAPL', 'What is MNQ?', 'Should I buy MNQ?']) assert.equal(futuresPaperIntent(q), null, q);
+});
+
+// ─── Codex review on #925 ───
+
+test('working entries count toward the contract limit, and a fill is checked again at execution', () => {
+  const s = emptyState(T0);
+  const r = reading('ES', [bar(-11, 5000, 5000, 5000, 5000)], T0);
+  assert.equal(placeOrder(s, { root: 'ES', side: 'buy', qty: 2, type: 'limit', price: 4990 }, r, T0).receipt.status, 'accepted');
+  assert.match(placeOrder(s, { root: 'ES', side: 'buy', qty: 2, type: 'limit', price: 4980 }, r, T0 + 10_000).text, /up to 4 ES with the working orders, over the 2-contract paper limit/);
+  // An order accepted before a position grew is refused when it would fill past the limit.
+  const t = emptyState(T0);
+  placeOrder(t, { root: 'ES', side: 'buy', qty: 2, type: 'limit', price: 4990 }, r, T0);
+  t.positions.ES = { qty: 1, avg: 5000 };
+  workOrders(t, 'ES', [bar(1, 4991, 4992, 4989, 4990)], T0);
+  assert.equal(t.orders[0].status, 'rejected');
+  assert.match(t.orders[0].reject_reason, /filling it would hold 3 ES/);
+});
+
+test('a bracket\'s exits are reduce-only: closing the position by hand cancels them, so they cannot reopen it', () => {
+  const s = emptyState(T0);
+  const r = (m, p) => reading('ES', [bar(m, p, p, p, p)], T0 + (m + 11) * 60_000);
+  placeOrder(s, { root: 'ES', side: 'buy', qty: 1, type: 'market', stop_loss: 4990 }, r(-11, 5000), T0);
+  placeOrder(s, { root: 'ES', side: 'sell', qty: 1, type: 'market' }, r(1, 5005), T0 + 12 * 60_000);
+  const stop = s.orders.find((o) => o.role === 'stop_loss');
+  assert.equal(stop.status, 'cancelled');
+  assert.match(stop.cancel_reason, /position it protected is closed/);
+  workOrders(s, 'ES', [bar(14, 4995, 4996, 4980, 4985)], T0 + 30 * 60_000);
+  assert.equal(s.positions.ES.qty, 0, 'no stale stop reverses the flat position');
+});
+
+test('a bracket entry that fills in a bar that also runs through its stop is stopped out in that bar (worst case)', () => {
+  const s = emptyState(T0);
+  placeOrder(s, { root: 'ES', side: 'buy', qty: 1, type: 'limit', price: 5000, stop_loss: 4990, take_profit: 5050 }, reading('ES', [bar(-11, 5005, 5005, 5005, 5005)], T0), T0);
+  workOrders(s, 'ES', [bar(1, 5003, 5004, 4985, 4988)], T0);
+  assert.deepEqual(s.fills.map((f) => f.price), [5000, 4989.75]);
+  assert.equal(s.positions.ES.qty, 0);
+  assert.equal(s.orders.find((o) => o.role === 'take_profit').status, 'cancelled');
+});
+
+test('bounded history keeps every working order, and old fills fold into a base the ledger still rebuilds from', () => {
+  const s = emptyState(T0);
+  const r = (p) => reading('MNQ', [bar(-11, p, p, p, p)], T0);
+  placeOrder(s, { root: 'MNQ', side: 'buy', qty: 1, type: 'limit', price: 100, client_id: 'keep' }, r(21000), T0);
+  for (let i = 0; i < 1100; i++) placeOrder(s, { root: 'MNQ', side: i % 2 ? 'sell' : 'buy', qty: 1, type: 'market', client_id: `m${i}` }, r(21000 + (i % 2 ? 10 : 0)), T0);
+  boundHistory(s);
+  assert.ok(s.orders.some((o) => o.client_id === 'keep' && o.status === 'working'), 'the old working order survives the trim');
+  assert.equal(s.fills.length, 1000);
+  assert.ok(s.base, 'the dropped fills are an accounting base');
+  assert.equal(reconcile(s, T0).status, 'success', reconcile(s, T0).diffs.join('; '));
+});
+
+test('one account change at a time: two overlapping requests both keep their orders', async () => {
+  const saved = new Map();
+  const storage = { get: async (k) => structuredClone(saved.get(k)), put: async (k, v) => { saved.set(k, structuredClone(v)); } };
+  const slow = (delay, p) => async (root) => { await new Promise((res) => setTimeout(res, delay)); return { status: 'DELAYED', provider: 'Yahoo', session: { open: true }, candles: [{ t: new Date(Date.now() - 11 * 60_000).toISOString(), o: p, h: p, l: p, c: p, v: 1 }] }; };
+  const [a, b] = await Promise.all([
+    futuresPaperApi('/api/futures/paper/order', 'POST', { root: 'MNQ', side: 'buy', qty: 1, type: 'limit', price: 20000, client_id: 'a' }, storage, { load: slow(40, 21000) }),
+    futuresPaperApi('/api/futures/paper/order', 'POST', { root: 'MES', side: 'buy', qty: 1, type: 'limit', price: 4000, client_id: 'b' }, storage, { load: slow(5, 5000) }),
+  ]);
+  assert.notEqual(a.body.order.id, b.body.order.id);
+  const orders = saved.get('futures_paper_v1').orders.map((o) => o.client_id).sort();
+  assert.deepEqual(orders, ['a', 'b']);
+  // The lock runs callers in order and survives a failure.
+  const seen = [];
+  await Promise.all([locked('k', async () => { await new Promise((r) => setTimeout(r, 10)); seen.push(1); }), locked('k', async () => { seen.push(2); throw new Error('x'); }).catch(() => null), locked('k', async () => seen.push(3))]);
+  assert.deepEqual(seen, [1, 2, 3]);
 });
 
 // Through the real Worker: /api/chat, the app's /api/futures/paper routes and the deploy's probe route, with a Yahoo

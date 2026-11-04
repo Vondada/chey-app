@@ -46,11 +46,25 @@ export async function loadState(storage, now = Date.now()) {
   const saved = await Promise.resolve(storage.get(STATE_KEY)).catch(() => null);
   return saved && saved.v === 1 ? saved : emptyState(now);
 }
-export async function saveState(storage, state) {
-  state.orders = state.orders.slice(-MAX_ORDERS);
-  state.fills = state.fills.slice(-MAX_FILLS);
+// History is bounded without losing anything that matters (Codex review on #925): every working order is kept, and
+// fills older than the newest MAX_FILLS are folded into an accounting base the ledger starts from, so reconcile()
+// still rebuilds the whole account.
+export function boundHistory(state) {
+  if (state.orders.length > MAX_ORDERS) {
+    const done = state.orders.filter((o) => o.status !== 'working');
+    const drop = new Set(done.slice(0, state.orders.length - MAX_ORDERS).map((o) => o.id));
+    state.orders = state.orders.filter((o) => !drop.has(o.id));
+  }
+  if (state.fills.length > MAX_FILLS) {
+    const old = state.fills.slice(0, state.fills.length - MAX_FILLS);
+    state.base = ledgerBook(old, state.base);
+    state.fills = state.fills.slice(-MAX_FILLS);
+  }
   state.events = (state.events || []).slice(-100);
-  await storage.put(STATE_KEY, state);
+  return state;
+}
+export async function saveState(storage, state) {
+  await storage.put(STATE_KEY, boundHistory(state));
 }
 
 function nextId(state, prefix) {
@@ -111,8 +125,10 @@ function applyFill(book, fill) {
 }
 
 /** Positions, cash, realized P&L and commissions recomputed from the fill ledger alone. */
-export function ledgerBook(fills = []) {
-  const book = { positions: {}, cash: STARTING_CASH, realized: 0, commissions: 0 };
+export function ledgerBook(fills = [], base = null) {
+  const book = base
+    ? { positions: structuredClone(base.positions || {}), cash: base.cash, realized: base.realized, commissions: base.commissions }
+    : { positions: {}, cash: STARTING_CASH, realized: 0, commissions: 0 };
   for (const fill of fills) applyFill(book, fill);
   book.cash = round2(book.cash); book.realized = round2(book.realized); book.commissions = round2(book.commissions);
   return book;
@@ -120,7 +136,7 @@ export function ledgerBook(fills = []) {
 
 /** Reconciliation: the stored book against the ledger, every field; the receipt lists any difference. */
 export function reconcile(state, now = Date.now()) {
-  const book = ledgerBook(state.fills);
+  const book = ledgerBook(state.fills, state.base);
   const diffs = [];
   const roots = new Set([...Object.keys(book.positions), ...Object.keys(state.positions || {})]);
   for (const root of roots) {
@@ -175,8 +191,21 @@ function fillOrder(state, order, price, timeMs, basis) {
     if (order.bracket.take_profit != null) state.orders.push(newOrder(state, { root: order.root, side: exit, qty: order.qty, type: 'limit', price: order.bracket.take_profit, parent_id: order.id, oco: group, role: 'take_profit' }, timeMs));
   }
   if (order.oco) for (const sib of state.orders) if (sib.oco === order.oco && sib.id !== order.id && sib.status === 'working') Object.assign(sib, { status: 'cancelled', cancelled_at: fill.time, cancel_reason: `its bracket partner ${order.id} filled` });
+  reduceOnlyExits(state, order.root, fill.time);
   note(state, timeMs, `${order.id} filled: ${order.side} ${order.qty} ${order.root} at ${price} (${basis}).`);
   return fill;
+}
+
+// Protective exits only ever reduce the position they protect (Codex review on #925): when the position is closed or
+// reversed by another order, its stop and target are cancelled; when it shrinks, they shrink with it.
+function reduceOnlyExits(state, root, at) {
+  const pos = state.positions[root]?.qty || 0;
+  for (const o of state.orders) {
+    if (o.root !== root || o.status !== 'working' || !o.parent_id) continue;
+    const reduces = (o.side === 'sell' && pos > 0) || (o.side === 'buy' && pos < 0);
+    if (!reduces) Object.assign(o, { status: 'cancelled', cancelled_at: at, cancel_reason: 'the position it protected is closed' });
+    else if (o.qty > Math.abs(pos)) o.qty = Math.abs(pos);
+  }
 }
 
 function newOrder(state, o, nowMs) {
@@ -226,7 +255,11 @@ export function placeOrder(state, req, reading, now = Date.now()) {
   const pos = state.positions[o.root]?.qty || 0;
   const signed = o.side === 'buy' ? o.qty : -o.qty;
   const reduces = pos !== 0 && Math.sign(signed) !== Math.sign(pos) && Math.abs(signed) <= Math.abs(pos);
-  if (!reduces && Math.abs(pos + signed) > spec.maxContracts) return reject(`it would hold ${Math.abs(pos + signed)} ${o.root}, over the ${spec.maxContracts}-contract paper limit`);
+  // Working entries count toward the limit as if they filled (Codex review on #925).
+  const pending = state.orders.filter((x) => x.root === o.root && x.status === 'working' && !x.parent_id && x.role !== 'flatten')
+    .reduce((sum, x) => sum + (x.side === 'buy' ? x.qty : -x.qty), 0);
+  const worst = Math.max(Math.abs(pos + pending + signed), Math.abs(pos + signed));
+  if (!reduces && worst > spec.maxContracts) return reject(`it would hold up to ${worst} ${o.root} with the working orders, over the ${spec.maxContracts}-contract paper limit`);
   if (!reduces && todayLoss(state, now) <= -DAILY_LOSS_LIMIT) return reject(`today's paper loss has reached the ${DAILY_LOSS_LIMIT}-dollar daily limit; only orders that reduce a position are accepted`);
   const ref = reading?.price ?? null;
   if (o.type === 'market' && !reading?.fresh) return reject(`there is no current ${o.root} price (${reading?.status === 'DELAYED' ? `the latest delayed bar is ${Math.round((reading.age_s || 0) / 60)} minutes old${reading.session && reading.session !== 'open' ? `, market ${reading.session}` : ''}` : `the feed is unavailable: ${reading?.error || 'no answer'}`})`, { feed: reading?.status || 'UNAVAILABLE' });
@@ -315,7 +348,26 @@ export function workOrders(state, root, candles = [], now = Date.now()) {
         if (o.side === 'buy' && bar.h >= o.price) price = Math.max(o.price, bar.o) + spec.tick;
         if (o.side === 'sell' && bar.l <= o.price) price = Math.min(o.price, bar.o) - spec.tick;
       }
-      if (price != null) fills.push(fillOrder(state, o, price, t + 60_000, `${o.type} ${o.price} reached by the delayed ${bar.t} bar (open ${bar.o}, high ${bar.h}, low ${bar.l})${o.type === 'stop' ? ', plus one tick of slippage' : ''}`));
+      if (price == null) continue;
+      // An entry is checked again when it fills: the limits hold at execution, not only at placement.
+      if (!o.parent_id) {
+        const pos = state.positions[root]?.qty || 0;
+        const next = pos + (o.side === 'buy' ? o.qty : -o.qty);
+        const reducing = pos !== 0 && Math.abs(next) < Math.abs(pos);
+        const why = !reducing && Math.abs(next) > spec.maxContracts ? `filling it would hold ${Math.abs(next)} ${root}, over the ${spec.maxContracts}-contract paper limit`
+          : !reducing && todayLoss(state, t) <= -DAILY_LOSS_LIMIT ? `today's paper loss had reached the ${DAILY_LOSS_LIMIT}-dollar daily limit` : '';
+        if (why) { Object.assign(o, { status: 'rejected', reject_reason: why, rejected_at: iso(t + 60_000) }); note(state, t, `${o.id} rejected at execution: ${why}.`); continue; }
+      }
+      fills.push(fillOrder(state, o, price, t + 60_000, `${o.type} ${o.price} reached by the delayed ${bar.t} bar (open ${bar.o}, high ${bar.h}, low ${bar.l})${o.type === 'stop' ? ', plus one tick of slippage' : ''}`));
+      // A bracket whose entry filled in this bar: its stop is checked against the same bar, worst case (the move
+      // that reached the entry may go on through the stop). Its target waits for the next bar. (Codex review on #925)
+      if (!o.parent_id && o.bracket?.stop_loss != null) {
+        const stop = state.orders.find((x) => x.parent_id === o.id && x.role === 'stop_loss' && x.status === 'working');
+        if (stop && ((stop.side === 'sell' && bar.l <= stop.price) || (stop.side === 'buy' && bar.h >= stop.price))) {
+          const sp = stop.side === 'sell' ? stop.price - spec.tick : stop.price + spec.tick;
+          fills.push(fillOrder(state, stop, sp, t + 60_000, `stop ${stop.price} reached in the same delayed ${bar.t} bar as its entry (high ${bar.h}, low ${bar.l}); worst case assumed, plus one tick of slippage`));
+        }
+      }
     }
     state.processed = { ...(state.processed || {}), [root]: bar.t };
   }

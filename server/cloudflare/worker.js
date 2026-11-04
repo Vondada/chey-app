@@ -14690,8 +14690,10 @@ export class CheState extends DurableObject {
     const minute = await this.minuteOnlyWake(minuteNow).catch(() => null);
     if (minute) {
       await strategySimTick(this.ctx.storage, { now: minuteNow }).catch((error) => console.error('Strategy simulation tick failed:', error?.message || error));
+      // Resting futures paper orders are worked on the minute wake too (Codex review on #925).
+      const futuresBusy = await futuresPaperTick(this.ctx.storage).catch(() => false);
       const simNext = await nextStrategySimTickAt(this.ctx.storage, Date.now()).catch(() => null);
-      const kept = [...minute.others, ...(minute.liveNext ? [minute.liveNext] : []), ...(simNext ? [simNext] : []), ...await modalImageCheckTimes(this.ctx.storage).catch(() => [])];
+      const kept = [...minute.others, ...(minute.liveNext ? [minute.liveNext] : []), ...(simNext ? [simNext] : []), ...(futuresBusy ? [Date.now() + 60_000] : []), ...await modalImageCheckTimes(this.ctx.storage).catch(() => [])];
       if (kept.length) await this.ctx.storage.setAlarm(Math.min(...kept));
       return;
     }

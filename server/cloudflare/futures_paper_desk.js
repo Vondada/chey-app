@@ -8,6 +8,17 @@ import {
 
 export const PROBE_STATE_KEY = `${STATE_KEY}:probe`;
 const stateKey = (probe) => (probe ? PROBE_STATE_KEY : STATE_KEY);
+// One read-modify-write at a time per account (Codex review on #925): a request that waits on prices must not lose an
+// order, cancel or fill saved by another request or the alarm meanwhile. All requests reach one Durable Object.
+const locks = new Map();
+export function locked(key, fn) {
+  const prior = locks.get(key) || Promise.resolve();
+  const run = prior.catch(() => null).then(fn);
+  const tail = run.catch(() => null);
+  locks.set(key, tail);
+  tail.then(() => { if (locks.get(key) === tail) locks.delete(key); });
+  return run;
+}
 const keyed = (storage, key) => ({ get: (k) => storage.get(k === STATE_KEY ? key : k), put: (k, v) => storage.put(k === STATE_KEY ? key : k, v) });
 
 /** Delayed readings for [roots], each worked against its resting orders; the state keeps each feed's last reading. */
@@ -37,13 +48,15 @@ function activeRoots(state, also = []) {
 export async function futuresPaperTick(storage, opts = {}) {
   let busy = false;
   for (const probe of [false, true]) {
-    const store = keyed(storage, stateKey(probe));
-    const state = await loadState(store);
-    const roots = activeRoots(state);
-    if (!roots.length) continue;
-    await syncFeeds(state, roots, opts);
-    await saveState(store, state);
-    busy ||= activeRoots(state).length > 0;
+    busy = (await locked(stateKey(probe), async () => {
+      const store = keyed(storage, stateKey(probe));
+      const state = await loadState(store);
+      const roots = activeRoots(state);
+      if (!roots.length) return false;
+      await syncFeeds(state, roots, opts);
+      await saveState(store, state);
+      return activeRoots(state).length > 0;
+    })) || busy;
   }
   return busy;
 }
@@ -57,12 +70,14 @@ export async function futuresPaperBusy(storage) {
   return false;
 }
 
-async function withState(storage, probe, fn) {
-  const store = keyed(storage, stateKey(probe));
-  const state = await loadState(store);
-  const out = await fn(state);
-  await saveState(store, state);
-  return out;
+function withState(storage, probe, fn) {
+  return locked(stateKey(probe), async () => {
+    const store = keyed(storage, stateKey(probe));
+    const state = await loadState(store);
+    const out = await fn(state);
+    await saveState(store, state);
+    return out;
+  });
 }
 
 /** The app's routes under /api/futures/paper. Returns { status, body } or null for another path. */
