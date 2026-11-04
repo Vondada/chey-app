@@ -11,6 +11,7 @@ import 'package:http/http.dart' as http;
 import 'dart:async';
 
 import '../trading/che_crypto_desk.dart';
+import '../trading/che_futures_paper_desk.dart';
 import '../trading/che_setup_board.dart';
 import '../trading/che_setup_desk.dart';
 import '../trading/che_trading_calendar.dart';
@@ -36,7 +37,7 @@ import 'che_trading_hud.dart';
 const _gold = CheColors.markets;
 final _stroke = CheColors.stroke;
 
-enum CheTradingSection { chart, setups, cheTrades, history, strategies, account, compare, crypto }
+enum CheTradingSection { chart, setups, cheTrades, history, strategies, account, compare, crypto, futures }
 
 const kTradingSectionLabels = <CheTradingSection, String>{
   CheTradingSection.chart: 'CHART',
@@ -49,6 +50,8 @@ const kTradingSectionLabels = <CheTradingSection, String>{
   CheTradingSection.compare: 'SIDE BY SIDE',
   // Orion's crypto desk: BTC and ETH, researched and paper traded around the clock (owner master mission, 2026-10-23).
   CheTradingSection.crypto: 'CRYPTO',
+  // Manual paper trading of MNQ, NQ, MES and ES on CHE's futures paper simulator (owner, 2026-11-04).
+  CheTradingSection.futures: 'PAPER FUTURES',
 };
 
 const _sectionIcons = <CheTradingSection, IconData>{
@@ -60,6 +63,7 @@ const _sectionIcons = <CheTradingSection, IconData>{
   CheTradingSection.account: Icons.account_balance_wallet_outlined,
   CheTradingSection.compare: Icons.compare_arrows_rounded,
   CheTradingSection.crypto: Icons.currency_bitcoin_rounded,
+  CheTradingSection.futures: Icons.swap_horiz_rounded,
 };
 
 /// The section a Worker reply names ("chart", "strategies", ...); chart when unknown.
@@ -71,6 +75,7 @@ CheTradingSection cheTradingSectionNamed(String? name) => switch ((name ?? '').t
       'account' => CheTradingSection.account,
       'compare' || 'sidebyside' || 'side' => CheTradingSection.compare,
       'crypto' || 'bitcoin' || 'btc' || 'eth' || 'orion' => CheTradingSection.crypto,
+      'futures' || 'futurespaper' || 'paperfutures' || 'futuresdesk' => CheTradingSection.futures,
       _ => CheTradingSection.chart,
     };
 
@@ -353,6 +358,8 @@ class _CheTradingRoomState extends State<CheTradingRoom> {
         return [_pad(CheSideBySideView(baseUrl: p.baseUrl, headers: p.headers, client: p.client, onRead: widget.onRead))];
       case CheTradingSection.crypto:
         return [_pad(CheCryptoDeskPanel(baseUrl: p.baseUrl, headers: p.headers, client: p.client, onRead: widget.onRead))];
+      case CheTradingSection.futures:
+        return [_pad(CheFuturesPaperDesk(key: const Key('futures_paper_desk'), baseUrl: p.baseUrl, headers: p.headers, client: p.client, onRead: widget.onRead))];
     }
   }
 
