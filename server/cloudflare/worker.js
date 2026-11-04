@@ -51,6 +51,7 @@ import { classifyFailure as classifyEngineFailure, decideFallback, requestClassF
 import { isStoryTurn, storyMode, storyModeBlock } from './story_mode.js';
 import { mediaHoldAnswer, mediaHoldIntent, mediaKeepFor, mediaLatestReply, mediaLibraryIntent, mediaLibraryReply, mediaLibraryReport, mediaLatestOpenRow, mediaOpenIntent, mediaOpenMissingReply, mediaOpenReply, mediaOpenRow, mediaRows, mediaSaveIntent, mediaSaveReply, mediaShowLatestIntent, mediaShowReply, verifyMediaRows, wantsLatestVideo } from './media_library.js';
 import { capabilityGap, capabilityReply } from './capability_gap.js';
+import { acquireCapability as acquireAbility, acquisitionRequest } from './capability_acquisition.js';
 import { INTERNAL_SOURCE, LAST_RENDER_KEY, internalSceneIntent, internalSceneTurn } from './internal_studio.js';
 import { CHAT_IMAGE_SOURCE, chatImageInline, chatImageMedia, chatImageReply, makeChatImages, pretendToolCall, requestedImageCount } from './chat_images.js';
 import { realPersonHarmIntent, REAL_PERSON_REFUSAL } from './real_person_images.js';
@@ -397,6 +398,9 @@ const WORKFLOW_STEP_REQUESTS = new WeakSet();
 // The certification probe's chat turn (POST /api/probe/chat): created only by the owner's Durable Object after the probe
 // token is checked. It runs as the owner through this same /api/chat path, and its turn does not grow the owner's brain.
 const PROBE_CHAT_REQUESTS = new WeakSet();
+// Probe turns the owner authorized to build (authorize_build); the inner try of an acquisition.
+const PROBE_BUILD_REQUESTS = new WeakSet();
+const ACQUIRE_TRIES = new WeakSet();
 // Wrong pairing codes allowed per 15 minutes across every address.
 const PAIR_FAILURES_GLOBAL_LIMIT = 30;
 // A command's own reply saying it could not do the work: the step failed.
@@ -1479,6 +1483,8 @@ export function enqueueJob(data, fields) {
 // while Office autonomy is paused.
 // A cloud_task is queued only after the owner approved it (or needed no approval), so it is owner-authorized work.
 const OWNER_APPROVED_JOB_KINDS = new Set(['merge_pr', 'verify_deploy', 'verify_app_build', 'command', 'cloud_task']);
+// Also runs while paused: a coding job the owner asked for himself.
+const ownerRunnable = (job) => OWNER_APPROVED_JOB_KINDS.has(job.kind) || (job.kind === 'self_development' && job.owner_requested === true);
 
 export { selectReadyJobs };
 const BUSY_REPLY = "I'm on it, sir. I'll have your full answer for you shortly.";
@@ -4111,6 +4117,7 @@ export class CheState extends DurableObject {
       body: JSON.stringify({ message, history, client: { platform: 'web' } }),
     });
     PROBE_CHAT_REQUESTS.add(request);
+    if (body?.authorize_build === true) PROBE_BUILD_REQUESTS.add(request);
     // The stream's delta frames are the owner's reply; a single JSON body (a queued or refused turn) is read as its
     // reply or detail, so the probe grades what the owner sees (probe_reply.js). An error frame (for example
     // empty_after_checks) names its category and rules.
@@ -4202,7 +4209,7 @@ export class CheState extends DurableObject {
       times.push(...[...data.jobs, ...officeTasks].filter(j => j.status === 'queued' || (j.status === 'review_pending' && j.partner_id))
         .map(j => Math.max(Date.now() + 250, Number(j.retry_at) || 0)));
     } else {
-      times.push(...data.jobs.filter(j => j.status === 'queued' && OWNER_APPROVED_JOB_KINDS.has(j.kind))
+      times.push(...data.jobs.filter(j => j.status === 'queued' && ownerRunnable(j))
         .map(j => Math.max(Date.now() + 250, Number(j.retry_at) || 0)));
     }
     if (data.autonomy) {
@@ -11759,6 +11766,9 @@ export class CheState extends DurableObject {
           const list = levels.map((level) => `level ${level}`).join(', ');
           return ndjsonReply(`I started the autonomy exam, sir: ${list}. Each level is a real coding job on my own code, each harder than the last, run in practice mode so nothing is changed or sent to GitHub. They run one at a time, each starting as soon as the one before finishes. Say "autonomy exam results" anytime to hear the scores.${fresh.autonomy === false ? ' Autonomy is paused right now; say "resume" so the jobs can run.' : ''}`, { source: 'che_autonomy_exam', background_job_ids: queued ? [queued.job.id] : [] });
         }
+        // "Do X; if you can't, build it" (capability_acquisition.js).
+        const acquire = ownerDevice && turnActionPolicy.codingJobAllowed && !ACQUIRE_TRIES.has(request) ? acquisitionRequest(message) : null;
+        if (acquire) return this.acquireCapability(request, body, acquire);
         // "Diagnose/recover the failed coding job": goes to the coding
         // pipeline, which builds on the retained failure evidence.
         // A command about the existing change ("Create the PR. Then fix the
@@ -15347,9 +15357,25 @@ export class CheState extends DurableObject {
     );
   }
 
+  // The try is a fresh turn of this route; a certification turn builds only in a run the owner authorized.
+  async acquireCapability(request, body, acquire) {
+    const probe = PROBE_CHAT_REQUESTS.has(request);
+    return acquireAbility(acquire, {
+      tryTurn: async (message) => {
+        const inner = new Request(request.url, { method: 'POST', headers: request.headers, body: JSON.stringify({ ...body, message }) });
+        for (const set of [PROBE_CHAT_REQUESTS, WORKFLOW_STEP_REQUESTS]) if (set.has(request)) set.add(inner);
+        ACQUIRE_TRIES.add(inner);
+        const res = await this.handleRequest(inner);
+        return { ok: res.ok, ...parseProbeChatBody(await res.text()) };
+      },
+      queue: probe && !PROBE_BUILD_REQUESTS.has(request) ? null : (text) => this.queueSelfDevelopment({ request: text, immediate: true, ownerRequested: true }),
+      storage: this.ctx.storage,
+    });
+  }
+
   // Saves an owner coding request as an idempotent background job when the
   // engines/GitHub are temporarily unavailable (class B).
-  async queueSelfDevelopment({ request, groundedRequest, immediate = false, fixThis = false }) {
+  async queueSelfDevelopment({ request, groundedRequest, immediate = false, fixThis = false, ownerRequested = false }) {
     const data = await this.loadData();
     const { job, deduplicated } = enqueueJob(data, {
       kind: 'self_development',
@@ -15360,6 +15386,7 @@ export class CheState extends DurableObject {
       retry_at: immediate ? Date.now() : Date.now() + backoffMs(0, 5 * 60_000),
       ...(fixThis === true ? { fix_this: true } : {}),
     });
+    if (ownerRequested) job.owner_requested = true;
     if (!deduplicated) noteJobActivity(job, 'Coding job accepted and queued.');
     syncAtlasCodingTasks(data);
     await this.ctx.storage.put('che', data);
@@ -15370,7 +15397,7 @@ export class CheState extends DurableObject {
       scheduled = false;
       console.error('CHE coding alarm scheduling failed', String(error?.message || error).slice(0, 300));
     }
-    return { job, deduplicated, paused: !data.autonomy, scheduled };
+    return { job, deduplicated, paused: !data.autonomy, held: !data.autonomy && !job.owner_requested, scheduled };
   }
 
   // Compatibility path for installed clients that selected the legacy coding
@@ -15740,14 +15767,14 @@ export class CheState extends DurableObject {
     }
     // A swept coding job reaches Atlas's desk before any early return below.
     if (swept) syncAtlasCodingTasks(data);
-    if (ownerApprovedOnly && !data.jobs.some((job) => OWNER_APPROVED_JOB_KINDS.has(job.kind) && job.status === 'queued')) {
+    if (ownerApprovedOnly && !data.jobs.some((job) => ownerRunnable(job) && job.status === 'queued')) {
       if (swept) await this.ctx.storage.put('che', data);
       return false;
     }
     // A level the sweep above just dead-lettered still starts the next one.
     advanceExamChains(data);
     await this.advanceMissions(data);
-    const queued = selectReadyJobs(ownerApprovedOnly ? data.jobs.filter((job) => OWNER_APPROVED_JOB_KINDS.has(job.kind)) : data.jobs, now, 4);
+    const queued = selectReadyJobs(ownerApprovedOnly ? data.jobs.filter(ownerRunnable) : data.jobs, now, 4);
     if (!queued.length) { await this.ctx.storage.put('che', data); await this.scheduleWork(); return false; }
 
     const startedAt = new Date().toISOString();
@@ -16215,7 +16242,7 @@ export class CheState extends DurableObject {
         };
       }
       await this.ctx.storage.put(PENDING_SELF_UPDATE_KEY, reviewed);
-      if ((await this.loadData().catch(() => ({})))?.autonomy !== false) {
+      if (job.owner_requested === true || (await this.loadData().catch(() => ({})))?.autonomy !== false) {
         const auto = await autoOpenReviewedPr(this.env, this.ctx.storage, prepared.proposal);
         return { id: job.id, status: 'complete', result: auto.message, owner_message: auto.message, error: '', pr_number: auto.number, pr_url: auto.url };
       }

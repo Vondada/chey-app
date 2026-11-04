@@ -17,6 +17,7 @@
 // Ranking uses out-of-sample walk-forward results only. Daily bars can rank an idea, never
 // promote one to live trading. Paper signals are journalled; no order is ever sent.
 import { cmeSession, parseYahooChart } from './market_feed.js';
+import { MULTI_MARKET } from './trading_lab.js';
 import {
   CANDIDATES, COSTS, ENGINE_VERSION, FILTERS, MIN_TRADES, candleProblems, causalContext, etParts, tradeDayOf,
   evaluateWalkForward, newPortfolio, promotionVerdict, readTrades, stepPortfolio, summarize,
@@ -578,6 +579,9 @@ export function intelligenceIntent(message) {
   // The study is Nasdaq-100 history. A backtest on a coin ("buying ETH when RSI is below 30, since 2021") is the strategy
   // lab's, never a reason to start the Nasdaq study (certification run 41256280478, thb-18).
   if (/\b(?:crypto\w*|bitcoin|btc|ethereum|eth|ether|solana|sol|dogecoin|doge)\b/i.test(text) && !/\b(?:nq|mnq|nasdaq)\b/i.test(text)) return null;
+  // A pair or spread strategy across two markets ("pairs trading on two correlated ETFs, 2018 to 2023") is not the
+  // single-market Nasdaq study either: the strategy lab answers it, and says what it can and cannot test.
+  if (MULTI_MARKET.test(text) && !/\b(?:nq|mnq|nasdaq)\b/i.test(text)) return null;
   if (/\bdirty\s*trez\b/i.test(text)) return { kind: 'dirty' };
   if (/\b(?:run|start|begin|refresh|update|redo|re-?run|kick off)\b[\s\S]{0,40}\b(?:study|test\w*|backtest\w*|analysis|intelligence|history)\b/i.test(text)) return { kind: 'run' };
   if (/\bsignals?\b/i.test(text)) return { kind: 'signals' };
