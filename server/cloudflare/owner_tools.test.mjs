@@ -6,7 +6,8 @@
 import assert from 'node:assert/strict';
 import { readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import test from 'node:test';
-import { queueIntent, readQueue, restartFailedJob } from './owner_tools.js';
+import { dayRange, mediaSearchIntent, queueIntent, readQueue, restartFailedJob, searchMedia } from './owner_tools.js';
+import { listMedia, saveOwnerFile } from './media.js';
 
 const job = (id, status, minutesAgo, extra = {}) => ({ id, kind: 'self_development', title: `Job ${id}`, status, created_at: new Date(Date.now() - minutesAgo * 60_000).toISOString(), updated_at: new Date(Date.now() - minutesAgo * 60_000).toISOString(), ...extra });
 
@@ -128,4 +129,72 @@ test('/api/chat: the queue read lists the stored job ids with a receipt; a resta
   // Lists still answer first.
   const lists = await ask('What lists do I have?');
   assert.equal(lists.done.source, 'che_lists');
+});
+
+// ─── File and picture search (ter-13, ter-20) ───
+test('file and picture searches are recognised by name or date; plain talk is not', () => {
+  assert.deepEqual(mediaSearchIntent('Find the file named budget_2025 and open it.'), { name: 'budget_2025', range: '', kind: '', open: true });
+  assert.deepEqual(mediaSearchIntent('Show me the photos from last weekend.'), { name: '', range: 'last weekend', kind: 'image', open: false });
+  assert.equal(mediaSearchIntent('Look for the document called "Lease draft"')?.name, 'Lease draft');
+  for (const q of ['Show me my latest picture.', 'Find me a good recipe for dinner.', 'What files do you support?', 'Open the file menu.']) assert.equal(mediaSearchIntent(q), null, q);
+});
+
+test('date phrases are the right local days; "last weekend" is the Saturday and Sunday before today', () => {
+  const wed = Date.parse('2026-11-04T15:00:00Z'); // a Wednesday
+  assert.deepEqual(dayRange('last weekend', { now: wed }), { from: '2026-10-31', to: '2026-11-01' });
+  assert.deepEqual(dayRange('yesterday', { now: wed }), { from: '2026-11-03', to: '2026-11-03' });
+  assert.deepEqual(dayRange('last week', { now: wed }), { from: '2026-10-26', to: '2026-11-01' });
+  const sun = Date.parse('2026-11-08T15:00:00Z');
+  assert.deepEqual(dayRange('last weekend', { now: sun }), { from: '2026-10-31', to: '2026-11-01' }, 'on a Sunday, last weekend is the one before');
+  // The owner's time zone decides the day: 01:00 UTC Thursday is still Wednesday in Chicago.
+  assert.deepEqual(dayRange('today', { now: Date.parse('2026-11-05T01:00:00Z'), timeZone: 'America/Chicago' }), { from: '2026-11-04', to: '2026-11-04' });
+  const items = [
+    { id: 'a', title: 'Budget 2025', mime_type: 'application/pdf', created_at: '2026-10-20T10:00:00Z' },
+    { id: 'b', title: 'Beach', mime_type: 'image/png', created_at: '2026-10-31T18:00:00Z' },
+    { id: 'c', title: 'Dog', mime_type: 'image/jpeg', created_at: '2026-11-02T09:00:00Z' },
+  ];
+  assert.deepEqual(searchMedia(items, { name: 'budget_2025' }).map((r) => r.id), ['a']);
+  assert.deepEqual(searchMedia(items, { range: { from: '2026-10-31', to: '2026-11-01' }, kind: 'image' }).map((r) => r.id), ['b']);
+});
+
+test('/api/chat: a named file is found and opened from the bytes read back; a date search lists only that weekend\'s pictures', async () => {
+  const env = { CHE_PAIR_CODE: '123456', CHE_DISABLE_KEYLESS_AI: '1', AI: { run: async () => ({ response: 'MODEL TEXT' }) } };
+  const storage = storageMap();
+  const state = new CheState({ storage, waitUntil: () => {} }, env);
+  env.CHE_STATE = { getByName: () => state };
+  const post = (path, body, token = '') => worker.fetch(new Request(`https://che.example${path}`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) }, body: JSON.stringify(body),
+  }), env);
+  const token = (await (await post('/api/pair', { code: '123456' })).json()).device_token;
+  const pdf = btoa('%PDF-1.4\n% CHE test budget\n1 0 obj<<>>endobj\ntrailer<<>>\n%%EOF');
+  const png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+  const saved = await saveOwnerFile(env, storage, { name: 'budget_2025.pdf', media_type: 'application/pdf', base64: pdf });
+  assert.equal(saved.ok, true, saved.reason);
+  // A picture from last weekend (UTC: env has no CHE_TIMEZONE) and one from today.
+  const weekend = dayRange('last weekend', { now: Date.now() });
+  const beach = await saveOwnerFile(env, storage, { name: 'beach.png', media_type: 'image/png', base64: png });
+  const today = await saveOwnerFile(env, storage, { name: 'today.png', media_type: 'image/png', base64: png });
+  const index = await listMedia(storage);
+  await storage.put('media_index', index.map((i) => (i.id === beach.item.id ? { ...i, created_at: `${weekend.from}T15:00:00.000Z` } : i)));
+  const ask = async (message) => {
+    const frames = (await (await post('/api/chat', { message, history: [] }, token)).text()).split('\n').filter(Boolean).map((l) => JSON.parse(l));
+    return { text: frames.filter((f) => f.type === 'delta').map((f) => f.delta).join(''), done: frames.find((f) => f.type === 'done') || {} };
+  };
+  const file = await ask('Find the file named budget_2025 and open it.');
+  assert.equal(file.done.source, 'che_media_search');
+  assert.equal(file.done.media_id, saved.item.id);
+  assert.equal(file.done.media_retrieval, 'verified');
+  assert.match(file.done.media_url, /^https:\/\/che\.example\/api\/media\//);
+  assert.equal(file.done.execution_receipt?.status, 'success');
+  assert.equal(file.done.execution_receipt?.opened, saved.item.id);
+  const photos = await ask('Show me the photos from last weekend.');
+  assert.equal(photos.done.source, 'che_media_search');
+  assert.deepEqual(photos.done.execution_receipt?.matched, [beach.item.id]);
+  assert.match(photos.text, new RegExp(beach.item.id));
+  assert.doesNotMatch(photos.text, new RegExp(today.item.id));
+  assert.match(photos.text, /iPhone Photos library stays on the phone/);
+  const none = await ask('Find the file named tax_return_1999.');
+  assert.equal(none.done.source, 'che_media_search');
+  assert.match(none.text, /found no files named "tax_return_1999"/);
+  assert.deepEqual(none.done.execution_receipt?.matched, []);
 });

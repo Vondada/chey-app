@@ -7,6 +7,8 @@
 // though the background job queue (data.jobs, worker.js enqueueJob/processJobs) holds exactly those records.
 import { retryCloudJob } from './cloud_computer.js';
 import { listChatTurn } from './owner_lists.js';
+import { listMedia, verifyMediaFile } from './media.js';
+import { mediaChatFields } from './media_library.js';
 
 const DATA_KEY = 'che';
 const READ_LIMIT = 100;
@@ -120,11 +122,106 @@ export async function queueChatTurn(storage, message, { probe = false, owner = t
   return { text: out.text, meta: meta({ ok: true, execution_receipt: out.receipt }) };
 }
 
+// ─── Search CHE's stored files and pictures by name or date ───
+// Certification run 24: "Find the file named budget_2025 and open it" (ter-13) and "Show me the photos from last
+// weekend" (ter-20) went to the model, which answered without looking: the media library could list everything or the
+// latest item, but not search. The search reads CHE's own media index (media.js listMedia). The iPhone's Photos library
+// stays on the phone, and Google Drive is a separate connector, so the answer says which store was searched.
+const SEARCH_VERB = /\b(?:find|search(?:\s+for)?|look\s+(?:for|up)|locate|show(?:\s+me)?|open|pull\s+up|get|bring\s+up|where(?:['’]s|\s+is|\s+are))\b/i;
+const FILE_NOUN = /\b(?:files?|documents?|docs?|pdfs?|spreadsheets?|photos?|pictures?|images?|pics?|videos?|clips?|uploads?)\b/i;
+const PICTURE_NOUN = /\b(?:photos?|pictures?|images?|pics?)\b/i;
+const VIDEO_NOUN = /\b(?:videos?|clips?)\b/i;
+const NAMED = /\b(?:named|called|titled|name(?:d)?\s+is)\s+["“']?([\w.\- ]{2,60}?)["”']?(?=\s+(?:and|then|from|in|on|for|please)\b|[,.?!]|$)/i;
+const QUOTED_NAME = /["“]([^"”]{2,60})["”]/;
+const DATE_WORDS = /\b(?:last\s+weekend|this\s+weekend|yesterday|today|last\s+week|this\s+week|last\s+month|this\s+month)\b/i;
+
+const norm = (s) => String(s || '').toLowerCase().replace(/[\s_\-.]+/g, '');
+
+/** The search the owner asked for ({ name, range, kind, open }), or null. */
+export function mediaSearchIntent(message = '') {
+  const text = String(message || '').replace(/\s+/g, ' ').trim();
+  if (!text || text.length > 300 || !SEARCH_VERB.test(text) || !FILE_NOUN.test(text)) return null;
+  const name = (NAMED.exec(text)?.[1] || QUOTED_NAME.exec(text)?.[1] || '').trim();
+  const range = DATE_WORDS.exec(text)?.[0]?.toLowerCase() || '';
+  if (!name && !range) return null;
+  return { name, range, kind: PICTURE_NOUN.test(text) ? 'image' : VIDEO_NOUN.test(text) ? 'video' : '', open: /\bopen\b/i.test(text) };
+}
+
+// A calendar day (YYYY-MM-DD) in the owner's time zone.
+function localDay(ms, timeZone) {
+  try { return new Intl.DateTimeFormat('en-CA', { timeZone: timeZone || 'UTC', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(ms)); } catch (_) { return new Date(ms).toISOString().slice(0, 10); }
+}
+const addDays = (day, n) => new Date(Date.parse(`${day}T12:00:00Z`) + n * 86_400_000).toISOString().slice(0, 10);
+const weekday = (day) => new Date(`${day}T12:00:00Z`).getUTCDay();
+
+/** The inclusive local-day range a date phrase means: { from, to }. "Last weekend" is the most recent Saturday and Sunday before today. */
+export function dayRange(phrase, { now = Date.now(), timeZone = 'UTC' } = {}) {
+  const today = localDay(now, timeZone);
+  const dow = weekday(today);
+  switch (String(phrase || '').toLowerCase().replace(/\s+/g, ' ')) {
+    case 'today': return { from: today, to: today };
+    case 'yesterday': { const d = addDays(today, -1); return { from: d, to: d }; }
+    case 'this weekend': { const sat = addDays(today, dow === 0 ? -1 : 6 - dow); return { from: sat, to: addDays(sat, 1) }; }
+    case 'last weekend': { const sat = addDays(today, -(dow === 0 ? 8 : dow === 6 ? 7 : dow + 1)); return { from: sat, to: addDays(sat, 1) }; }
+    case 'this week': { const mon = addDays(today, -((dow + 6) % 7)); return { from: mon, to: today }; }
+    case 'last week': { const mon = addDays(today, -((dow + 6) % 7) - 7); return { from: mon, to: addDays(mon, 6) }; }
+    case 'this month': return { from: `${today.slice(0, 7)}-01`, to: today };
+    case 'last month': { const first = `${today.slice(0, 7)}-01`; const prev = addDays(first, -1); return { from: `${prev.slice(0, 7)}-01`, to: prev }; }
+    default: return null;
+  }
+}
+
+/** The stored media rows that match a search, newest first. */
+export function searchMedia(items, { name = '', range = null, kind = '', timeZone = 'UTC' } = {}) {
+  const want = norm(name);
+  return [...(items || [])]
+    .filter((item) => item && item.id)
+    .filter((item) => !kind || (kind === 'image' ? /^image\//.test(String(item.mime_type || '')) : item.kind === 'video' || /^video\//.test(String(item.mime_type || ''))))
+    .filter((item) => !want || norm(item.title).includes(want) || norm(item.file_name || item.filename).includes(want))
+    .filter((item) => {
+      if (!range) return true;
+      const day = item.created_at ? localDay(Date.parse(item.created_at), timeZone) : '';
+      return day && day >= range.from && day <= range.to;
+    })
+    .sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || '')));
+}
+
+/** One chat turn for a file or picture search, or null when the message is not one. */
+export async function mediaSearchTurn(storage, message, { owner = true, probe = false, env = {}, request = null, now = Date.now() } = {}) {
+  const intent = mediaSearchIntent(message);
+  if (!intent) return null;
+  const meta = (extra = {}) => ({ source: 'che_media_search', model_calls: 0, ...extra });
+  if (!owner && !probe) return { text: 'Stored files are the owner\'s, sir. Nothing was searched.', meta: meta({ ok: false }) };
+  const timeZone = env?.CHE_TIMEZONE || 'UTC';
+  const range = intent.range ? dayRange(intent.range, { now, timeZone }) : null;
+  let items;
+  try { items = await listMedia(storage); } catch (_) {
+    return { text: 'I could not read my stored files just now, sir, so nothing was searched.', meta: meta({ ok: false, execution_receipt: { tool: 'che_media_search', operation: 'search', status: 'failed', error: 'read_failed', at: new Date(now).toISOString(), id: `media_search:${now}` } }) };
+  }
+  const found = searchMedia(items, { ...intent, range, timeZone });
+  const what = intent.kind === 'image' ? 'pictures' : intent.kind === 'video' ? 'videos' : 'files';
+  const asked = [intent.name ? `named "${intent.name}"` : '', range ? `from ${intent.range} (${range.from === range.to ? range.from : `${range.from} to ${range.to}`})` : ''].filter(Boolean).join(' ');
+  const where = `I searched the ${items.length} ${items.length === 1 ? 'file' : 'files'} stored in CHE${intent.kind === 'image' ? '; your iPhone Photos library stays on the phone, so it was not searched' : '; Google Drive is a separate connection and was not searched'}`;
+  const receipt = { tool: 'che_media_search', operation: 'search', status: 'success', at: new Date(now).toISOString(), id: `media_search:${now}`, query: { name: intent.name || null, range, kind: intent.kind || null }, searched: items.length, matched: found.map((r) => r.id).slice(0, 50), verified: 'read_back' };
+  if (!found.length) return { text: `I found no ${what} ${asked}, sir. ${where}. Receipt ${receipt.id}.`, meta: meta({ ok: true, execution_receipt: receipt }) };
+  const list = found.slice(0, 10).map((r, i) => `${i + 1}. ${String(r.title || 'Untitled').slice(0, 60)} · ${String(r.created_at || '').slice(0, 10)} · ID ${r.id}`).join('\n');
+  if (intent.open && found.length === 1 && request) {
+    const row = found[0];
+    const check = await verifyMediaFile(env, storage, row).catch(() => ({ ok: false, reason: 'its file could not be read' }));
+    if (!check.ok) return { text: `I found ${String(row.title || 'it')} (ID ${row.id}) but could not open it, sir: ${check.reason || 'its file was not checked'}. Receipt ${receipt.id}.`, meta: meta({ ok: false, execution_receipt: { ...receipt, status: 'failure', error: check.reason || 'not_verified' } }) };
+    const fields = mediaChatFields(row, { origin: new URL(request.url).origin, items });
+    return { text: `Found and opened ${fields.media_title}, sir (ID ${row.id}, saved ${String(row.created_at || '').slice(0, 10)}). ${where}. Receipt ${receipt.id}.`, meta: meta({ ok: true, ...fields, media_retrieval: 'verified', execution_receipt: { ...receipt, opened: row.id } }) };
+  }
+  const opener = intent.open && found.length > 1 ? ' Say which number to open.' : intent.open ? '' : '';
+  return { text: `I found ${found.length} ${found.length === 1 ? what.replace(/s$/, '') : what} ${asked}, sir:\n${list}\n${where}.${opener} Receipt ${receipt.id}.`, meta: meta({ ok: true, execution_receipt: receipt }) };
+}
+
 // The deterministic owner tools, in the order they are tried. Each turn(storage, message, opts) returns a chat answer
 // with its receipt, or null when the message is not for it.
 export const OWNER_TOOLS = [
   { id: 'che_lists', turn: (storage, message, opts) => listChatTurn(storage, message, opts) },
   { id: 'che_job_queue', turn: (storage, message, opts) => queueChatTurn(storage, message, opts) },
+  { id: 'che_media_search', turn: (storage, message, opts) => mediaSearchTurn(storage, message, opts) },
 ];
 
 /** The first owner tool that answers [message], or null. */
