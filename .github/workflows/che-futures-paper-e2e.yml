@@ -1,0 +1,75 @@
+# CHE futures paper simulator, live end-to-end on the DEPLOYED Worker (owner, 2026-11-04).
+#
+# Trades the separate TEST account only (/api/probe/futures-paper → futures_paper_desk.js PROBE_STATE_KEY), never the
+# owner's paper account, and never a broker: the simulator has no broker connection and live orders are off in code.
+# Prices are the real delayed CME bars the Worker reads. Every receipt is in the job summary and the artifact.
+#
+# Manual only (workflow_dispatch). Costs nothing but GitHub Actions minutes (about 40).
+name: CHE futures paper end-to-end (live)
+
+on:
+  workflow_dispatch:
+    inputs:
+      stop_wait_min:
+        description: Minutes to wait for a later delayed bar to fill the bracket's stop or target
+        type: string
+        default: "35"
+
+# The deploy and certification set the same probe token, so they run one at a time.
+concurrency:
+  group: che-worker-deploy
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      CHE_WORKER: https://chey-app.henryjavoni.workers.dev
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: c49b395e8f1138b5fae36ab88222542c
+      STOP_WAIT_MIN: ${{ inputs.stop_wait_min }}
+      RUN_ID: ${{ github.run_id }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: The live Worker runs the latest Worker code
+        run: |
+          expected=$(git log -1 --format=%H -- server/cloudflare .github/workflows/che-worker-deploy.yml .github/scripts/che_live_probes.mjs)
+          echo "Expected live commit: $expected"
+          EXPECTED_TAG="$expected" CHE_LIVE_BASE="$CHE_WORKER" node .github/scripts/che_live_probes.mjs health
+
+      - name: The probe route is closed without a token (must answer 404)
+        run: |
+          code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 60 "$CHE_WORKER/api/probe/futures-paper")
+          echo "Without a token: HTTP $code"
+          [ "$code" = "404" ] || { echo "::error::the futures paper probe route is open without a token (HTTP $code)"; exit 1; }
+
+      - name: Probe token for the Worker's probe routes (masked, never printed)
+        working-directory: server/cloudflare
+        run: |
+          token="$(openssl rand -hex 32)"
+          echo "::add-mask::$token"
+          printf '%s' "$token" | npx --yes wrangler@4 secret put CHE_VOICE_PROBE_TOKEN
+          echo "CHE_PROBE_TOKEN=$token" >> "$GITHUB_ENV"
+          sleep 20
+
+      - name: Paper order, ack, fill, duplicate, rejections, cancel, stop execution, emergency flatten, reconciliation
+        run: node .github/scripts/che_futures_paper_e2e.mjs
+
+      - name: Receipts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: futures-paper-e2e-${{ github.run_id }}
+          path: futures-paper-e2e.json
+          if-no-files-found: warn
