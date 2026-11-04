@@ -6,7 +6,7 @@ Read this first in every session, with `CLAUDE.md`. Each fact carries a state an
 - **reported**: stated by an earlier session or by the owner, not re-checked here. Re-check before relying on it.
 - **unknown**: not reachable from the session (for example, the live Worker's stored state). Never filled in by guessing.
 
-Snapshot taken: **2026-10-31 ~18:10 UTC**, by Claude (session `251cdea8`); the full open-work list is
+Snapshot taken: **2026-11-04 ~06:30 UTC** (earlier: 2026-10-31 ~18:10 UTC), by Claude (session `251cdea8`); the full open-work list is
 `docs/CHE_MASTER_COMPLETION_LEDGER.md`. Replace this file's facts when a checkpoint
 changes them. Do not delete the old values: the change is recorded in `docs/CHE_PROJECT_HISTORY.md`.
 
@@ -14,6 +14,7 @@ changes them. Do not delete the old values: the change is recorded in `docs/CHE_
 
 | Fact | State | Time | Evidence |
 |---|---|---|---|
+| `main` is `133b3615` (#926, iPhone paper futures desk; after #925 `ad77aa3f` futures paper simulator and #920-#924); deploy `41780219980` verified live commit `ad77aa3f`; live futures paper e2e `41782752211` passed 19/19 | verified | 2026-11-04 06:30 UTC | merge receipts, deploy and e2e runs |
 | `main` is `1598930d` (#906, clock arithmetic to the reasoning route); live commit verified by deploy `41659439388` (live code-switching step passed); last certification is run 25 `41657004307`, 501/600 (run 24 506/600) | verified | 2026-11-03 16:10 UTC | merge receipt, deploy run |
 | `main` is `92f8f5ec` (#895, after #892 `24d06f7a`, #891 `ad55a989`, #894 `5847d7dd`); run 24 `41491194768` scored 506/600 on live commit `24d06f7a` (deploy `41489886991`); #895 deploy `41491527262` verified live commit `92f8f5ec`, live code-switching step passed | reported (superseded above) | 2026-11-02 18:05 UTC | merge receipts, deploy and certification runs |
 | `main` is `9788151a` (#889, after #888 `cd3fd386`); live commit verified by deploy `41448895778` (live code-switching probe failed); run 23 `41458252827` scored 497/600 | reported (superseded above) | 2026-11-02 15:25 UTC | merge receipts, deploy and certification runs |
@@ -38,6 +39,8 @@ changes them. Do not delete the old values: the change is recorded in `docs/CHE_
 
 | Fact | State | Time | Evidence |
 |---|---|---|---|
+| Live futures paper simulator end-to-end on the test account (no broker, delayed CME data): order acknowledged, filled, positioned, duplicate refused, rejects, cancel, bracket take profit with OCO cancel, emergency flatten, reconciliation: 19/19 | verified | 2026-11-04 06:20 UTC | run `41782752211` |
+| Worker deploy of `ad77aa3f` (#925): live commit verified | verified | 2026-11-04 05:42 UTC | deploy run `41780219980` |
 | Full 600 certification, fresh, on `91f61359` (with #870, #871): 483 pass, 117 fail, 0 blocked; +6 against run 18 | verified | 2026-11-02 03:22 UTC | run `41379642353` |
 | Worker deploys of #870 `b7f97967` and #871 `91f61359`: live commit verified; memory probe failed only on a GitHub API rate limit (403) | verified (deploy) / failed (probe, external) | 2026-11-02 01:48 UTC | deploy runs `41373497127`, `41374022540` |
 | Full 600 certification, fresh, on `953a4e4e` (all eight stable-failure fixes): 477 pass, 122 fail, 1 blocked (cre-12); +47 against run 17; 52 of the 101 always-failing questions now pass | verified | 2026-11-02 01:01 UTC | run `41367267850` |
@@ -92,7 +95,8 @@ changes them. Do not delete the old values: the change is recorded in `docs/CHE_
 
 | PR | Title (short) | State | Time |
 |---|---|---|---|
-| #818 | Coinbase 429 retry for backtests | checks running | 2026-10-31 ~21:40 UTC |
+| none | no open pull requests | verified | 2026-11-04 06:28 UTC |
+| #818 | Coinbase 429 retry for backtests | reported (superseded: merged) | 2026-10-31 ~21:40 UTC |
 
 #809-#817 merged on 2026-10-31; see the master ledger.
 
@@ -113,7 +117,10 @@ changes them. Do not delete the old values: the change is recorded in `docs/CHE_
 
 Owner accounts and decisions (each listed once in `docs/CHE_MASTER_COMPLETION_LEDGER.md`):
 1. Google sign-in expired (live 401): reconnect Google on the Connections page.
-2. Smart home, Twilio texts, YouTube channel, Tradovate: not connected.
+2. Smart home, Twilio texts, YouTube channel, Tradovate: not connected. Futures: no broker can execute futures orders
+   (Tradovate needs a funded account, the CME agreement, the paid API add-on and OAuth; Rithmic orders need its licensed
+   API); market data is delayed Yahoo CME. CHE's own paper simulator works live (run `41782752211`). Live orders stay
+   off until the owner authorises them.
 3. Spend caps for live evals and GPU upgrades (Q-09, Q-35) are $0 until the owner approves.
 4. Trading: new automated paper entries stay paused until the cost-vs-R audit; it needs the live journal, not readable
    from a session.

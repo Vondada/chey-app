@@ -84,6 +84,8 @@ model sampling, not code.
 | R-10 | Staging jobs that overlap fail on the shared pairing code ("Incorrect pairing code", #904 and #902 staging) | open | The staging wait step lets two runs use the one staging Worker at once; serialise staging runs | #904 staging re-run passed |
 | R-11 | The 8B model opens with a persona line and can lose the answer ("Sir, you're lucky you're cute", run 25 csd-01, thb-33) | open | Keep the personality; an opener with no answer content must not stand as the reply | run 25 `41657004307` |
 | R-12 | The execution-claims stage replaces numbered design advice (run 25 eer-31) | open | Advice steps are not action claims (#902 covered prose, not numbered steps) | run 25 `41657004307` |
+| R-13 | Futures paper trading of MNQ, NQ, MES and ES through CHE (owner, 2026-11-04). No broker can execute futures today: Rithmic orders were never built (licensed API), there is no IB integration, Tradovate is not set up, Alpaca has no futures; data is delayed Yahoo CME | done (paper simulator, live) | Live stop-loss fill (second e2e run); real-time CME feed and a broker need the owner (accounts, fees); live orders stay off until the owner authorises them | #925 `ad77aa3f` (simulator; deploy `41780219980` verified live), #926 `133b3615` (iPhone desk, e2e workflow); live e2e `41782752211` 19/19 |
+| R-14 | Unknown-capability challenge (pairs-trading backtest): CHE diagnoses the gap and queues her own coding job | in progress | Re-run stage 2 on the live Worker with `authorize_build=true`; follow the job to a PR | #920 `38e6c71a`, #924 `2a09ee62` (job continuations); run `41764002449` (diagnosis evidenced); job `98238043` dead-lettered before #924 |
 
 ## Owner decisions needed
 - Office swipe (Q-02).
@@ -92,6 +94,7 @@ model sampling, not code.
 - Whether automatic background runs are allowed: yes, for the reliability recovery (owner, 2026-11-01).
 
 ## Log
+- 2026-11-04: #920-#924 merged (capability acquisition, GitHub issues, multi-tool chains, Office hand-off chains, self-development continuations); #925 and #926 merged (futures paper simulator and iPhone desk); live futures paper e2e `41782752211` 19/19 (R-13).
 - 2026-11-03: #900-#905 merged (reasoning route, grader equivalents, advice claims, prompt echo, receipts logged, run-24 audit); run 25 501/600 (-5, no measurable gain); #906 merged and live; R-10 to R-12 added.
 - 2026-11-02: #897 merged (R-07 done: handoffs backed only to the consulted coworker); deploy `41504425451` verified live commit `699ea027`.
 - 2026-11-02: #891, #892, #894, #895 merged (probe state, Office notice and security refusals, staging deploy check, clean history); run 24 506/600 (+9); R-08 done, R-09 added.
