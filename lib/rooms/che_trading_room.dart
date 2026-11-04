@@ -63,7 +63,7 @@ const _sectionIcons = <CheTradingSection, IconData>{
   CheTradingSection.account: Icons.account_balance_wallet_outlined,
   CheTradingSection.compare: Icons.compare_arrows_rounded,
   CheTradingSection.crypto: Icons.currency_bitcoin_rounded,
-  CheTradingSection.futures: Icons.swap_vert_rounded,
+  CheTradingSection.futures: Icons.swap_horiz_rounded,
 };
 
 /// The section a Worker reply names ("chart", "strategies", ...); chart when unknown.
