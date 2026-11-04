@@ -67,10 +67,65 @@ export function clockTimeMs(message, timeZone, now = Date.now()) {
   return at > now ? at : on(today, 1);
 }
 
+// Recurring reminders (certification run 24, oac-19: "Schedule a weekly review every Monday at 10" was refused because
+// HORIZON held "every"). "Every Monday at 10", "each weekday at 9 am", "every day at 7:30 pm": the rule is kept on the
+// timer record, and each firing re-arms it for the next occurrence, placed on a calendar date in the owner's zone.
+const DAY_NAMES = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+const RECUR = /\b(?:every|each)\s+(day|weekday|weekend|sunday|monday|tuesday|wednesday|thursday|friday|saturday)s?\b/i;
+const RECUR_VERB = /\b(?:schedule|set\s+up|set|add|create|put|book|remind\s+me|make)\b/i;
+
+/** The recurrence a message asks for: { days: [0-6...], hour, minute, words }, or null. */
+export function recurrenceOf(message) {
+  const text = String(message || '');
+  const r = RECUR.exec(text);
+  const c = CLOCK.exec(text);
+  if (!r || !c) return null;
+  let h = Number(c[1]);
+  const mi = Number(c[2] || 0);
+  const half = (c[3] || '').toLowerCase().replace(/\./g, '');
+  if (h > 23 || mi > 59 || (half && (h < 1 || h > 12))) return null;
+  if (half === 'pm' && h < 12) h += 12;
+  if (half === 'am' && h === 12) h = 0;
+  const word = r[1].toLowerCase();
+  const days = word === 'day' ? [0, 1, 2, 3, 4, 5, 6] : word === 'weekday' ? [1, 2, 3, 4, 5] : word === 'weekend' ? [0, 6] : [DAY_NAMES.indexOf(word)];
+  return { days, hour: h, minute: mi, words: word };
+}
+
+/** The next instant (ms) after [now] that a recurrence names, in the owner's zone. */
+export function nextOccurrenceMs(recur, timeZone, now = Date.now()) {
+  const zone = safeTimeZone(timeZone);
+  const parts = Object.fromEntries(new Intl.DateTimeFormat('en-US', { timeZone: zone, year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(new Date(now)).map((p) => [p.type, Number(p.value)]));
+  for (let add = 0; add <= 7; add += 1) {
+    const d = new Date(Date.UTC(parts.year, parts.month - 1, parts.day + add));
+    if (!recur.days.includes(d.getUTCDay())) continue;
+    const at = zonedWallTimeToUtc(d.getUTCFullYear(), d.getUTCMonth() + 1, d.getUTCDate(), recur.hour, recur.minute, zone);
+    if (at > now) return at;
+  }
+  return 0;
+}
+
+function recurWords(recur, timeZone) {
+  const when = recur.words === 'day' ? 'every day' : recur.words === 'weekday' ? 'every weekday' : recur.words === 'weekend' ? 'every weekend day' : `every ${recur.words[0].toUpperCase()}${recur.words.slice(1)}`;
+  const t = new Intl.DateTimeFormat('en-US', { timeZone: 'UTC', hour: 'numeric', minute: '2-digit' }).format(new Date(Date.UTC(2000, 0, 1, recur.hour, recur.minute)));
+  return `${when} at ${t}`;
+}
+
+/** "Schedule a weekly review every Monday at 10" -> "weekly review". */
+function recurLabel(message) {
+  const m = /\b(?:schedule|set\s+up|add|create|put|book|make)\s+(?:a|an|the|my)?\s*(.+?)\s+(?:for\s+)?(?:every|each)\b/i.exec(String(message || ''));
+  const label = (m ? m[1] : timerLabel(message)).replace(/\b(?:recurring|reminder|timer|alarm|please)\b/gi, '').replace(/\s+/g, ' ').trim();
+  return label.slice(0, 80);
+}
+
 /** What a message asks of the timer connector: set, cancel, list, or null when it is not about CHE's timers. */
 export function timerIntent(message) {
   const text = String(message || '').trim();
-  if (!text || !ABOUT.test(text) || QUESTION_ONLY.test(text)) return null;
+  if (!text || QUESTION_ONLY.test(text)) return null;
+  // "Did you schedule a weekly review every Monday at 10?" asks about one; "Can you schedule ...?" asks for one (Codex
+  // review on #916).
+  const asksAbout = /^(?:did|have|has|had|was|were|is|are|do|does|what|which|when|why|how|who|where)\b/i.test(text) || (/\?\s*$/.test(text) && !/^(?:(?:che|chey|chay)[,\s]+)?(?:can|could|would|will)\s+you\b|^please\b/i.test(text));
+  if (!CANCEL.test(text) && !LIST.test(text) && recurrenceOf(text) && RECUR_VERB.test(text)) return asksAbout ? { action: 'list' } : { action: 'set', recur: true };
+  if (!ABOUT.test(text)) return null;
   if (CANCEL.test(text)) return { action: 'cancel' };
   if (LIST.test(text)) return { action: 'list' };
   if (SET.test(text)) return { action: 'set' };
@@ -101,14 +156,19 @@ function makeId(now) {
 }
 
 /** Saves a timer and reads it back. Returns { timer } only when the stored record matches, else { error }. */
-export async function setTimer(storage, { ms = 0, at = 0, label = '', kind = 'timer', now = Date.now(), key = TIMERS_KEY } = {}) {
+export async function setTimer(storage, { ms = 0, at = 0, label = '', kind = 'timer', recur = null, now = Date.now(), key = TIMERS_KEY } = {}) {
   const fireAt = at || now + ms;
   const span = fireAt - now;
   if (!(span >= MIN_MS)) return { error: 'too_short' };
-  if (span > MAX_MS) return { error: 'too_long' };
-  const list = await load(storage, key);
+  // A weekly rule's next occurrence is at most seven calendar days away, which is up to an hour longer than 7 x 24 hours
+  // in the week the clocks go back (Codex review on #916).
+  if (span > MAX_MS + (recur ? 2 * 3600_000 : 0)) return { error: 'too_long' };
+  let list = await load(storage, key);
+  // Probe timers from earlier certification runs are no longer shown and must not hold the twenty-timer limit (Codex
+  // review on #916): they are dropped when a new probe timer is set.
+  if (key === PROBE_TIMERS_KEY) list = list.filter((t) => t.status !== 'scheduled' || now - Date.parse(t.set_at) < PROBE_WINDOW_MS);
   if (list.filter((t) => t.status === 'scheduled').length >= MAX_ACTIVE) return { error: 'too_many' };
-  const timer = { id: makeId(now), kind, label: String(label || '').slice(0, 80), set_at: new Date(now).toISOString(), fire_at: new Date(fireAt).toISOString(), duration_ms: span, status: 'scheduled', receipts: [{ kind: 'timer_set', at: new Date(now).toISOString() }] };
+  const timer = { id: makeId(now), kind, label: String(label || '').slice(0, 80), set_at: new Date(now).toISOString(), fire_at: new Date(fireAt).toISOString(), duration_ms: span, status: 'scheduled', ...(recur ? { recur, fired_count: 0 } : {}), receipts: [{ kind: 'timer_set', at: new Date(now).toISOString() }] };
   await storage.put(key, [...list, timer]);
   const back = (await load(storage, key)).find((t) => t.id === timer.id);
   if (!back || back.fire_at !== timer.fire_at || back.status !== 'scheduled') return { error: 'not_verified' };
@@ -140,14 +200,30 @@ export async function fireDueTimers(storage, now = Date.now(), key = TIMERS_KEY)
   const list = await load(storage, key);
   const due = list.filter((t) => t.status === 'scheduled' && Date.parse(t.fire_at) <= now);
   if (!due.length) return [];
+  const fired = [];
   for (const t of due) {
+    if (t.recur && key !== PROBE_TIMERS_KEY) {
+      // A recurring reminder: this occurrence is recorded as its own fired entry (announced like any timer), and the
+      // rule stays scheduled for its next occurrence.
+      const n = Number(t.fired_count || 0) + 1;
+      const occurrence = { ...t, id: `${t.id}:${n}`, status: 'fired', fired_at: new Date(now).toISOString(), announced: false, receipts: [] };
+      delete occurrence.recur;
+      await receipt(storage, key, occurrence, { kind: 'timer_fired', key: `timer_fired:${occurrence.id}`, timer_id: t.id, fire_at: t.fire_at, fired_at: occurrence.fired_at, at: occurrence.fired_at });
+      fired.push(occurrence);
+      const next = nextOccurrenceMs(t.recur, t.recur.zone, Math.max(now, Date.parse(t.fire_at)));
+      t.fired_count = n;
+      if (next) { t.fire_at = new Date(next).toISOString(); t.duration_ms = next - now; } else { t.status = 'fired'; t.fired_at = occurrence.fired_at; t.announced = true; }
+      continue;
+    }
     t.status = 'fired'; t.fired_at = new Date(now).toISOString(); t.announced = false;
     await receipt(storage, key, t, { kind: 'timer_fired', key: `timer_fired:${t.id}`, timer_id: t.id, fire_at: t.fire_at, fired_at: t.fired_at, at: t.fired_at });
+    fired.push(t);
   }
+  list.push(...fired.filter((t) => !list.includes(t)));
   const scheduled = list.filter((t) => t.status === 'scheduled');
   const done = list.filter((t) => t.status !== 'scheduled').slice(-KEEP_FIRED);
   await storage.put(key, [...scheduled, ...done]);
-  return due;
+  return fired;
 }
 
 function clock(ms, timeZone) {
@@ -162,6 +238,7 @@ export function spokenDuration(ms) {
 }
 
 function name(t) {
+  if (t.recur) return `recurring reminder${t.label ? ` (${t.label})` : ''}, ${recurWords(t.recur)}`;
   return `${t.kind === 'reminder' ? 'reminder' : `${spokenDuration(t.duration_ms)} timer`}${t.label ? ` (${t.label})` : ''}`;
 }
 
@@ -238,6 +315,24 @@ export async function timerChatTurn(storage, message, { timeZone = 'UTC', now = 
     if (wake) await wake();
     if (!cancelled.length) return { text: 'There is no running timer to cancel, sir. Nothing changed.', meta: meta({ cancelled: [] }) };
     return { text: `Cancelled, sir: ${cancelled.map((t) => `${name(t)} (timer ${t.id})`).join(', ')}. It will not go off.`, meta: meta({ cancelled: cancelled.map((t) => t.id), execution_receipt: { tool: 'che_timer', operation: 'cancel', status: 'success', timer_ids: cancelled.map((t) => t.id) } }) };
+  }
+  const recur = recurrenceOf(message);
+  if (recur) {
+    const rule = { ...recur, zone };
+    const at = nextOccurrenceMs(rule, zone, now);
+    const label = recurLabel(message);
+    const result = at ? await setTimer(storage, { at, label, kind: 'reminder', recur: rule, now, key }) : { error: 'not_verified' };
+    if (result.error) {
+      const why = { too_short: 'its next time is under five seconds away', too_long: 'its next time is more than seven days away', too_many: 'twenty timers are already running', not_verified: 'I could not read it back from storage' }[result.error];
+      return { text: `I did not set that recurring reminder, sir: ${why}. Nothing is scheduled for it.`, meta: meta({ ok: false, error: result.error }) };
+    }
+    if (wake) await wake();
+    const t = result.timer;
+    const nextDay = new Intl.DateTimeFormat('en-US', { timeZone: zone, weekday: 'long', month: 'long', day: 'numeric' }).format(new Date(Date.parse(t.fire_at)));
+    return {
+      text: `Recurring reminder set, sir${t.label ? `: ${t.label}` : ''}, ${recurWords(rule)} (${zone}), so ${recur.days.length === 1 ? 'weekly' : 'on each of those days'}. The next one is ${nextDay} at ${clock(Date.parse(t.fire_at), zone)}. It is saved on CHE's server as timer ${t.id} and I read it back; each time it goes off I re-arm it for the next one, and "cancel my ${t.label || 'recurring'} reminder" stops it. I can't ring your phone, so I'll tell you in my next reply after each time.`,
+      meta: meta({ ok: true, timer: t, execution_receipt: { tool: 'che_timer', operation: 'set_recurring', status: 'success', timer_id: t.id, fire_at: t.fire_at, recur: rule, set_at: t.set_at, verified: 'read_back' } }),
+    };
   }
   const ms = durationMs(message);
   const at = ms ? 0 : clockTimeMs(message, zone, now);
