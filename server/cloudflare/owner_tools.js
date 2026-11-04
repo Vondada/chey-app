@@ -209,9 +209,18 @@ export async function mediaSearchTurn(storage, message, { owner = true, probe = 
 const MAKE_VERB = /\b(?:make|produce|create|generate|draw|render|build|give\s+me|send\s+me)\b/i;
 
 /** One chat turn that makes an animated GIF, or null when the message does not ask for one this can draw. */
-export async function gifTurn(storage, message, { owner = true, probe = false, env = {}, request = null, now = Date.now() } = {}) {
+// A request to make one, not "do not make a GIF", "how do I make a GIF?" or a quoted line (Codex review on #917).
+const NOT_A_REQUEST = /\b(?:do\s+not|don['’]t|never|stop|no\s+need\s+to|instead\s+of|rather\s+than)\b[^.?!]{0,30}\b(?:make|produce|create|generate|draw|render|send|give)\b|^(?:how\s+(?:do|can|would|should|could)\s+(?:i|we|one|you)|how\s+to|what\s+(?:is|are|does)|why|can\s+i|should\s+i|is\s+it)\b/i;
+
+/** Whether [message] asks CHE to make an animated GIF she can draw (also used by the picture route). */
+export function gifRequest(message) {
+  const text = String(message || '').replace(/["“][^"”]*["”]/g, ' ').trim();
+  return text.length <= 300 && MAKE_VERB.test(text) && !NOT_A_REQUEST.test(text) && Boolean(animationSpec(text));
+}
+
+export async function gifTurn(storage, message, { owner = true, probe = false, env = {}, request = null, origin = '', now = Date.now() } = {}) {
   const text = String(message || '');
-  if (text.length > 300 || !MAKE_VERB.test(text)) return null;
+  if (!gifRequest(text)) return null;
   const spec = animationSpec(text);
   if (!spec) return null;
   const meta = (extra = {}) => ({ source: 'che_gif', model_calls: 0, ...extra });
@@ -223,11 +232,12 @@ export async function gifTurn(storage, message, { owner = true, probe = false, e
   if (!check.ok) return { text: `I could not make that GIF, sir: the file did not read back as a GIF (${check.reason}). Nothing was saved.`, meta: meta({ ok: false, execution_receipt: receipt }) };
   const how = `${made.width} by ${made.height} pixels, ${check.frames} frames, ${check.bytes} bytes, drawn by CHE's own code in the Worker with no model or outside service. I can draw a ${ANIMATION_SHAPES.join(' or ')} that will ${ANIMATION_MOTIONS.join(', ')}`;
   // A certification probe turn makes and checks the file but does not fill the owner's media store with test files.
-  if (probe || !request) return { text: `I made ${what} and read it back as a valid GIF, sir: ${how}. This is a test turn, so it was not saved or attached. Receipt ${receipt.id}.`, meta: meta({ ok: true, execution_receipt: { ...receipt, stored: false } }) };
+  const base = origin || (request ? new URL(request.url).origin : '');
+  if (probe || !base) return { text: `I made ${what} and read it back as a valid GIF, sir: ${how}. This is a test turn, so it was not saved or attached. Receipt ${receipt.id}.`, meta: meta({ ok: true, execution_receipt: { ...receipt, stored: false } }) };
   const item = await saveMadeImage(env, storage, { bytes: made.bytes, mime: 'image/gif', title: `${spec.colour} ${spec.shape} ${spec.motion} GIF`, prompt: text.slice(0, 300), width: made.width, height: made.height, recipe: spec });
   const stored = await verifyMediaFile(env, storage, item).catch(() => ({ ok: false, reason: 'its file could not be read' }));
   if (!stored.ok) return { text: `I made the GIF, sir, but it did not read back from storage (${stored.reason}), so it is not attached. Receipt ${receipt.id}.`, meta: meta({ ok: false, execution_receipt: { ...receipt, status: 'failure', stored: false, error: stored.reason } }) };
-  const fields = mediaChatFields(item, { origin: new URL(request.url).origin, items: [item] });
+  const fields = mediaChatFields(item, { origin: base, items: [item] });
   return {
     text: `Here it is, sir: ${what}, attached. ${how}. It is saved as picture ${item.id}. Receipt ${receipt.id}.`,
     meta: meta({ ok: true, ...fields, media_retrieval: 'verified', execution_receipt: { ...receipt, stored: true, media_id: item.id } }),

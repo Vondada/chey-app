@@ -6,6 +6,7 @@ import assert from 'node:assert/strict';
 import { readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import test from 'node:test';
 import { animationSpec, encodeGif, inspectGif, makeAnimation } from './gif_encoder.js';
+import { gifRequest } from './owner_tools.js';
 
 // A plain GIF decoder: returns each frame's palette indices.
 function decodeFrames(b) {
@@ -72,6 +73,13 @@ test('a bouncing ball rises from the floor and comes back down', () => {
   assert.equal(animationSpec('Make a GIF of a dancing robot'), null, 'shapes and motions it cannot draw are not claimed');
 });
 
+test('Codex review on #917: a spinning ball visibly turns; only an affirmative request makes a GIF', () => {
+  const spin = decodeFrames(makeAnimation({ shape: 'ball', motion: 'spin' }).bytes);
+  assert.notDeepEqual(spin[0].px, spin[4].px, 'frames differ as the ball turns');
+  for (const q of ['Make a GIF of a spinning ball.', 'Draw me a short animated GIF of a bouncing ball and attach it.', 'Can you make an animated GIF of a red ball bouncing?']) assert.equal(gifRequest(q), true, q);
+  for (const q of ['Do not make a bouncing ball GIF.', 'How do I make a bouncing ball GIF?', 'Don\'t draw an animated GIF of a spinning square.', 'He wrote "make a GIF of a bouncing ball" in the doc.']) assert.equal(gifRequest(q), false, q);
+});
+
 // Through the real /api/chat: the GIF is stored, attached and served back from the media route.
 const generated = new URL('./.gif_encoder.test.generated.mjs', import.meta.url);
 writeFileSync(generated, readFileSync(new URL('./worker.js', import.meta.url), 'utf8').replace(
@@ -109,6 +117,14 @@ test('/api/chat: a GIF request returns a stored, verified GIF that the media rou
   assert.equal(done.media_retrieval, 'verified');
   assert.equal(done.execution_receipt.status, 'success');
   assert.equal(done.execution_receipt.media_id, done.media_id);
+  // "Draw me ..." with the phone's image_generation hint reaches the picture route, which hands it to the GIF tool.
+  const drawFrames = (await (await call('/api/chat', { body: { message: 'Draw me a short animated GIF of a bouncing ball and attach it.', history: [], requested_capabilities: ['image_generation'] }, token })).text()).split('\n').filter(Boolean).map((l) => JSON.parse(l));
+  const drawn = drawFrames.find((f) => f.type === 'done');
+  assert.equal(drawn.source, 'che_gif');
+  assert.equal(drawn.execution_receipt.status, 'success');
+  // "Do not make ..." makes nothing.
+  const noFrames = (await (await call('/api/chat', { body: { message: 'Do not make a bouncing ball GIF.', history: [] }, token })).text()).split('\n').filter(Boolean).map((l) => JSON.parse(l));
+  assert.notEqual(noFrames.find((f) => f.type === 'done').source, 'che_gif');
   const served = await call(`/api/media/${done.media_id}/image`, { method: 'GET', token });
   assert.equal(served.status, 200);
   assert.equal(served.headers.get('content-type'), 'image/gif');

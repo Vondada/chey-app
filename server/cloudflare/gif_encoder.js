@@ -144,7 +144,7 @@ export function makeAnimation({ shape = 'ball', motion = 'bounce', colour = 'red
     for (let x = 0; x < W; x += 1) px[floorY * W + x] = 3;
     let cx = W / 2; let cy = H / 2; let rad = r; let angle = 0;
     if (motion === 'bounce') { const h = Math.abs(Math.sin(Math.PI * ph)); cy = floorY - r - 1 - h * (H * 0.6); }
-    else if (motion === 'slide') { cx = r + 2 + (W - 2 * r - 4) * (0.5 - 0.5 * Math.cos(2 * Math.PI * ph)); cy = floorY - r - 1; }
+    else if (motion === 'slide') { cx = r + 2 + (W - 2 * r - 4) * (0.5 - 0.5 * Math.cos(2 * Math.PI * ph)); cy = floorY - r - 1; angle = cx / r; } // it rolls
     else if (motion === 'pulse') { rad = r * (0.7 + 0.5 * (0.5 - 0.5 * Math.cos(2 * Math.PI * ph))); }
     else if (motion === 'spin') { angle = 2 * Math.PI * ph; }
     // Shadow on the floor, smaller when the shape is higher.
@@ -155,9 +155,11 @@ export function makeAnimation({ shape = 'ball', motion = 'bounce', colour = 'red
       for (let x = 0; x < W; x += 1) {
         const dx = x - cx; const dy = y - cy;
         let inside;
-        if (shape === 'ball') inside = dx * dx + dy * dy <= rad * rad;
-        else { const c = Math.cos(angle); const s = Math.sin(angle); const u = dx * c + dy * s; const v = -dx * s + dy * c; inside = Math.abs(u) <= rad && Math.abs(v) <= rad; }
-        if (inside) px[y * W + x] = 1;
+        const c = Math.cos(angle); const s = Math.sin(angle); const u = dx * c + dy * s; const v = -dx * s + dy * c;
+        if (shape === 'ball') {
+          // A stripe across the ball, so a spin or a roll is visible (Codex review on #917: a plain disc looked still).
+          if (dx * dx + dy * dy <= rad * rad) px[y * W + x] = Math.abs(v) <= rad * 0.22 ? 2 : 1;
+        } else if (Math.abs(u) <= rad && Math.abs(v) <= rad) px[y * W + x] = 1;
       }
     }
     frames.push(px);
