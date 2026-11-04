@@ -33,7 +33,7 @@
     "id": "challenge-status-05",
     "category": "self_development",
     "difficulty": "easy",
-    "question": "Why did coding job fa1d318a fail? Show its exact error and how many attempts and continuations it used.",
+    "question": "What happened to coding job 09b806cc? Show its exact error and how many attempts and continuations it used.",
     "expected": {
       "criteria": "Read-only failure record of the named job.",
       "must_contain_any": [
