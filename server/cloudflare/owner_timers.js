@@ -121,7 +121,10 @@ function recurLabel(message) {
 export function timerIntent(message) {
   const text = String(message || '').trim();
   if (!text || QUESTION_ONLY.test(text)) return null;
-  if (!CANCEL.test(text) && !LIST.test(text) && recurrenceOf(text) && RECUR_VERB.test(text)) return { action: 'set', recur: true };
+  // "Did you schedule a weekly review every Monday at 10?" asks about one; "Can you schedule ...?" asks for one (Codex
+  // review on #916).
+  const asksAbout = /^(?:did|have|has|had|was|were|is|are|do|does|what|which|when|why|how|who|where)\b/i.test(text) || (/\?\s*$/.test(text) && !/^(?:(?:che|chey|chay)[,\s]+)?(?:can|could|would|will)\s+you\b|^please\b/i.test(text));
+  if (!CANCEL.test(text) && !LIST.test(text) && recurrenceOf(text) && RECUR_VERB.test(text)) return asksAbout ? { action: 'list' } : { action: 'set', recur: true };
   if (!ABOUT.test(text)) return null;
   if (CANCEL.test(text)) return { action: 'cancel' };
   if (LIST.test(text)) return { action: 'list' };
@@ -157,8 +160,13 @@ export async function setTimer(storage, { ms = 0, at = 0, label = '', kind = 'ti
   const fireAt = at || now + ms;
   const span = fireAt - now;
   if (!(span >= MIN_MS)) return { error: 'too_short' };
-  if (span > MAX_MS) return { error: 'too_long' };
-  const list = await load(storage, key);
+  // A weekly rule's next occurrence is at most seven calendar days away, which is up to an hour longer than 7 x 24 hours
+  // in the week the clocks go back (Codex review on #916).
+  if (span > MAX_MS + (recur ? 2 * 3600_000 : 0)) return { error: 'too_long' };
+  let list = await load(storage, key);
+  // Probe timers from earlier certification runs are no longer shown and must not hold the twenty-timer limit (Codex
+  // review on #916): they are dropped when a new probe timer is set.
+  if (key === PROBE_TIMERS_KEY) list = list.filter((t) => t.status !== 'scheduled' || now - Date.parse(t.set_at) < PROBE_WINDOW_MS);
   if (list.filter((t) => t.status === 'scheduled').length >= MAX_ACTIVE) return { error: 'too_many' };
   const timer = { id: makeId(now), kind, label: String(label || '').slice(0, 80), set_at: new Date(now).toISOString(), fire_at: new Date(fireAt).toISOString(), duration_ms: span, status: 'scheduled', ...(recur ? { recur, fired_count: 0 } : {}), receipts: [{ kind: 'timer_set', at: new Date(now).toISOString() }] };
   await storage.put(key, [...list, timer]);
@@ -194,7 +202,7 @@ export async function fireDueTimers(storage, now = Date.now(), key = TIMERS_KEY)
   if (!due.length) return [];
   const fired = [];
   for (const t of due) {
-    if (t.recur) {
+    if (t.recur && key !== PROBE_TIMERS_KEY) {
       // A recurring reminder: this occurrence is recorded as its own fired entry (announced like any timer), and the
       // rule stays scheduled for its next occurrence.
       const n = Number(t.fired_count || 0) + 1;

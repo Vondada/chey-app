@@ -212,3 +212,26 @@ test('a weekly reminder is saved and read back, fires on the alarm, is announced
   assert.deepEqual(cancel.meta.cancelled, [id]);
   assert.equal(await nextTimerAt(storage), 0);
 });
+
+test('Codex review on #916: questions list, probe rules fire once and expire, the fall-back week still sets', async () => {
+  const storage = memory();
+  // A question about a schedule lists, it does not create one.
+  for (const q of ['Did you schedule a weekly review every Monday at 10?', 'Have I set a reminder every Monday at 10?']) {
+    assert.equal(timerIntent(q)?.action, 'list', q);
+    await timerChatTurn(storage, q, { now: T0, timeZone: 'UTC' });
+  }
+  assert.equal((storage.map.get(TIMERS_KEY) || []).length, 0);
+  assert.equal(timerIntent('Can you schedule a weekly review every Monday at 10?')?.action, 'set');
+  // A probe's recurring rule fires once and is not re-armed.
+  const probe = await timerChatTurn(storage, 'Schedule a weekly review every Monday at 10.', { now: T0, timeZone: 'UTC', key: PROBE_TIMERS_KEY });
+  assert.equal(probe.meta.execution_receipt.status, 'success');
+  await fireDueTimers(storage, Date.parse('2026-11-02T10:00:30Z'), PROBE_TIMERS_KEY);
+  assert.equal(await nextTimerAt(storage, PROBE_TIMERS_KEY), 0);
+  // Twenty probe rules from earlier runs do not block a new probe timer a day later.
+  for (let i = 0; i < 20; i += 1) await timerChatTurn(storage, `Schedule check ${i} every Friday at 9.`, { now: T0, timeZone: 'UTC', key: PROBE_TIMERS_KEY });
+  const later = await timerChatTurn(storage, 'Set a timer for 10 minutes.', { now: T0 + 86_400_000, timeZone: 'UTC', key: PROBE_TIMERS_KEY });
+  assert.equal(later.meta.ok, true, later.text);
+  // Set on 25 October (Chicago, CDT), the next Sunday 10:00 is 1 November (CST): more than 7 x 24 hours away, still set.
+  const fallBack = await timerChatTurn(memory(), 'Schedule a weekly review every Sunday at 10.', { now: Date.parse('2026-10-25T15:01:00Z'), timeZone: 'America/Chicago' });
+  assert.equal(fallBack.meta.execution_receipt?.fire_at, '2026-11-01T16:00:00.000Z', fallBack.text);
+});
