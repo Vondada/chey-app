@@ -54,6 +54,7 @@ import { capabilityGap, capabilityReply } from './capability_gap.js';
 import { acquireCapability as acquireAbility, acquisitionRequest } from './capability_acquisition.js';
 import { multiToolRequest, multiToolTurn } from './multi_tool.js';
 import { retailPriceTurn } from './retail_prices.js';
+import { crewThreadTurn } from './crew_chat.js';
 import { futuresPaperApi, futuresPaperBusy, futuresPaperChat, futuresPaperTick } from './futures_paper_desk.js';
 import { INTERNAL_SOURCE, LAST_RENDER_KEY, internalSceneIntent, internalSceneTurn } from './internal_studio.js';
 import { CHAT_IMAGE_SOURCE, chatImageInline, chatImageMedia, chatImageReply, makeChatImages, pretendToolCall, requestedImageCount } from './chat_images.js';
@@ -11435,6 +11436,8 @@ export class CheState extends DurableObject {
             source: 'che_media_library', ok: true, media_total: report.total, media_playable: report.playable, ...report.chat,
           });
         }
+        const crewThread = ownerDevice ? await crewThreadTurn(message, this.ctx.storage, data) : null;
+        if (crewThread) return crewThread;
         const directRepositoryInspection = repositoryInspectionIntent(message);
         const recentRepositoryEvidenceRequest = [...ownerHistory]
           .reverse()
@@ -16270,7 +16273,7 @@ export class CheState extends DurableObject {
     // exactly as the foreground path passes intentRequest, so recalled text
     // that names other files can never become an owner-named target.
     const prepared = await prepareSelfUpdate(this.env, groundedPrompt, fetch, this.ctx.storage, { ownerInitiated: true, intentRequest: prompt, checkpoint: job.checkpoint || null, deadline: Date.now() + SELF_DEV_RUN_MS });
-    await recordCrewThread(this.ctx.storage, { request: job.request || job.prompt, discussion: prepared?.discussion, outcome: crewOutcome(prepared) }).catch(() => null);
+    await recordCrewThread(this.ctx.storage, { request: job.request || job.prompt, discussion: prepared?.discussion, outcome: crewOutcome(prepared), jobId: job.id }).catch(() => null);
     if (prepared.status === 200 && prepared.proposal) {
       await recordReceipt(this.ctx.storage, { kind: 'proposal_ready', key: `proposal:${job.id}`, job_id: job.id, files: prepared.proposal.files.map((f) => f.path) });
       const reviewed = {
