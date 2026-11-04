@@ -8,7 +8,7 @@ const MAX_CREW_THREADS = 60;
 const clip = (v, n) => String(v ?? '').slice(0, n);
 
 // Saves one coding job's crew discussion (planners, engineers, reviewers).
-export async function recordCrewThread(storage, { request, discussion, outcome }) {
+export async function recordCrewThread(storage, { request, discussion, outcome, jobId = '' }) {
   if (!storage?.put || !Array.isArray(discussion) || !discussion.length) return;
   let threads = [];
   try { threads = (await storage.get(CREW_THREADS_KEY)) || []; } catch (_) {}
@@ -16,6 +16,7 @@ export async function recordCrewThread(storage, { request, discussion, outcome }
   const at = new Date().toISOString();
   threads.push({
     id: crypto.randomUUID(),
+    ...(jobId ? { job_id: String(jobId) } : {}),
     title: clip(String(request || 'Coding job').replace(/^\s*(?:update|change) your code\s*:?\s*/i, ''), 90),
     outcome: clip(outcome, 200),
     at,
