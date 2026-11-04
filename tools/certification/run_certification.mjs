@@ -472,7 +472,9 @@ export async function runCertification({
       const res = await fetchImpl(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Accept: 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ message: item.question, history: [], client: { platform: 'web' } }),
+        // CHE_AUTHORIZE_BUILD=true (the workflow's owner-only authorize_build input) lets a turn queue one real coding job
+        // that opens a pull request; without it a certification turn never starts code work.
+        body: JSON.stringify({ message: item.question, history: [], client: { platform: 'web' }, ...(process.env.CHE_AUTHORIZE_BUILD === 'true' ? { authorize_build: true } : {}) }),
         signal: controller.signal,
       });
       status = res.status;

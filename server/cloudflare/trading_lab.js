@@ -827,11 +827,11 @@ export function speakBook(book) {
 // ─── Voice intents ────────────────────────────────────────────────────────
 
 // A question or explanation request, as opposed to a command ("backtest bitcoin", "analyze the ETH chart").
-const CONCEPT_ASK = /^(?:(?:hey\s+)?(?:che|chey|chay)[,:]?\s+)?(?:what|why|how|when|which|explain|describe|define|give|list|name|tell\s+me\s+(?:what|why|how|about)|is|are|was|were|does|do|did|has|have|should|can|could)\b/i;
+const CONCEPT_ASK = /^(?:(?:hey\s+)?(?:che|chey|chay|jay|shay)[,:]?\s+)?(?:what|why|how|when|which|explain|describe|define|give|list|name|tell\s+me\s+(?:what|why|how|about)|is|are|was|were|does|do|did|has|have|should|can|could)\b/i;
 const NOT_A_RUN = /\b(?:pretend|make\s+up|made[\s-]up|fabricat\w*|invent|fake|realistic[\s-]looking)\b/i;
 const NOT_TICKERS = new Set(['I', 'CHE', 'AI', 'OK', 'CAGR', 'ETF', 'USD', 'P', 'L', 'PNL', 'R', 'RSI', 'MACD', 'EMA', 'SMA', 'VWAP', 'ATR', 'ADX', 'OBV']);
 // A polite command ("Can you backtest aapl?", spoken in lower case) is a command, not a question about the idea.
-const POLITE_COMMAND = /^(?:(?:hey\s+)?(?:che|chey|chay)[,:]?\s+)?(?:can|could|would|will)\s+you\s+(?:please\s+)?(?:backtest|analy[sz]e|scan|run|test)\b/i;
+const POLITE_COMMAND = /^(?:(?:hey\s+)?(?:che|chey|chay|jay|shay)[,:]?\s+)?(?:can|could|would|will)\s+you\s+(?:please\s+)?(?:backtest|analy[sz]e|scan|run|test)\b/i;
 // Words after the verb that are not a market ("backtest a crossover", "the bitcoin backtest result").
 const FILLER_HINT = /^(?:a|an|the|my|your|our|this|that|it|its|of|some|me|result|results|strategy|strategies|crossover|data|history|everything|all)\b/i;
 // Common English words in the market slot. Certification thb-26, thb-35 and thb-46 fetched "shows", "pair" and "with" as
@@ -863,13 +863,13 @@ function inMarketSlot(text, word) {
 }
 // A command to run something: the request opens with the verb ("Backtest SPY", "Run a backtest of ...", "Che, please test
 // bitcoin"), or asks politely (POLITE_COMMAND). "A backtest shows a Sharpe of 2.5 ... What does that suggest?" is not one.
-const RUN_COMMAND = /^(?:(?:hey\s+)?(?:che|chey|chay)[,:]?\s+)?(?:please\s+)?(?:(?:i\s+(?:want|need|would\s+like)\s+(?:you\s+)?to|i'd\s+like\s+(?:you\s+)?to|let's|go\s+ahead\s+and|now)\s+)?(?:back-?test|re-?run|run|re-?do|test|do|perform|try|start|launch|execute|kick\s+off|simulate|show|give|report|get|compute|calculate|check)\b/i;
+const RUN_COMMAND = /^(?:(?:hey\s+)?(?:che|chey|chay|jay|shay)[,:]?\s+)?(?:please\s+)?(?:(?:i\s+(?:want|need|would\s+like)\s+(?:you\s+)?to|i'd\s+like\s+(?:you\s+)?to|let's|go\s+ahead\s+and|now)\s+)?(?:back-?test|re-?run|run|re-?do|test|do|perform|try|start|launch|execute|kick\s+off|simulate|show|give|report|get|compute|calculate|check)\b/i;
 // A question about how backtests work ("Why can a backtest not predict next year?"), not a request for a result.
-const IDEA_QUESTION = /^(?:(?:hey\s+)?(?:che|chey|chay)[,:]?\s+)?(?:why|how|explain|describe|define|is|are|does|do|can|could|should)\b/i;
+const IDEA_QUESTION = /^(?:(?:hey\s+)?(?:che|chey|chay|jay|shay)[,:]?\s+)?(?:why|how|explain|describe|define|is|are|does|do|can|could|should)\b/i;
 // A question sentence after a statement ("... only with fills at the same bar. What does that suggest?") asks about it.
 const LATER_QUESTION = /[.!;:]\s+(?:so\s+|and\s+)?(?:what|why|how|is|are|was|were|does|do|did|should|can|could|would|which)\b[^.!]*\?/i;
 // A strategy across two or more markets at once. The lab tests one market at a time, so these are declined, never faked.
-const MULTI_MARKET = /\b(?:pairs?[\s-]+trad\w*|spread[\s-]+trad\w*|stat(?:istical)?[\s-]*arb\w*|cointegrat\w*|long[\s/-]+short\s+(?:pairs?|spread)|(?:two|2|several|multiple)\s+(?:correlated\s+)?(?:etfs|stocks|assets|markets|tickers|coins|instruments))\b/i;
+export const MULTI_MARKET = /\b(?:pairs?[\s-]+trad\w*|spread[\s-]+trad\w*|stat(?:istical)?[\s-]*arb\w*|cointegrat\w*|long[\s/-]+short\s+(?:pairs?|spread)|(?:two|2|several|multiple)\s+(?:correlated\s+)?(?:etfs|stocks|assets|markets|tickers|coins|instruments))\b/i;
 // A past period said in words ("over the last five years", "the past 6 months", "since the 2020 crash", "year to date"):
 // a historical run was asked for, even with no calendar year (Codex review on #863).
 const PAST_PERIOD = /\b(?:(?:last|past|previous|prior)\s+(?:(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten|twelve|fifteen|twenty|few|several|couple(?:\s+of)?)\s+)?(?:years?|months?|weeks?|days?|decades?|quarters?)|since\s+(?!then\b)\w+|(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten)\s+years?\s+(?:ago|back|of\s+(?:data|history))|year[\s-]to[\s-]date|ytd|this\s+(?:year|month)|so\s+far|historical(?:ly)?|history)\b/i;
@@ -973,7 +973,7 @@ export function tradingIntent(message, { followup = '', referent = '', now = Dat
   // ti-21): a book request names it as CHE's or the owner's ("my/your/the paper trading journal") or is a command.
   // Only a question about the idea: "can you show me a trading report" and "give me a trading summary" ask for the book
   // (Codex review on #821), so polite requests are not idea questions.
-  const ideaOfJournal = /^(?:(?:hey\s+)?(?:che|chey|chay)[,:]?\s+)?(?:what|why|how|when|which|explain|describe|define|tell\s+me\s+(?:what|why|how|about)|is|are|does|do|should)\b/i.test(text) && /\b(?:a|an|any|one's)\s+(?:trading|paper)\s+(?:report|summary|journal)\b/i.test(text) && !/\b(?:my|your|our|che's)\b/i.test(text);
+  const ideaOfJournal = /^(?:(?:hey\s+)?(?:che|chey|chay|jay|shay)[,:]?\s+)?(?:what|why|how|when|which|explain|describe|define|tell\s+me\s+(?:what|why|how|about)|is|are|does|do|should)\b/i.test(text) && /\b(?:a|an|any|one's)\s+(?:trading|paper)\s+(?:report|summary|journal)\b/i.test(text) && !/\b(?:my|your|our|che's)\b/i.test(text);
   if (!ideaOfJournal && /\bhow(?:'s| is| are)\b[\s\S]{0,20}\b(?:trades?|trading|paper)\b|\b(?:trading|paper) (?:report|summary|journal)\b/i.test(text)) return { kind: 'book' };
   const futures = NASDAQ_FUTURES.exec(text)?.[1].replace(/\s/g, '') || '';
   // A content word after the verb whose role is unclear ("Backtest high momentum"): asked about, not replaced by bitcoin.

@@ -33,6 +33,10 @@ on:
         description: Another question set in the repo (blank = the 600-question baseline). For unseen regression sets, for example tools/certification/unseen_tool_questions.json
         type: string
         default: ""
+      authorize_build:
+        description: "Owner-authorized only: lets this run's turns queue real coding jobs that open a pull request (never merge or deploy). Needs questions_file; never for the 600 baseline."
+        type: boolean
+        default: false
 
 # Same group as the Worker deploy (che-worker-deploy.yml). Both set CHE_VOICE_PROBE_TOKEN, so a deploy that starts while a
 # certification runs rotates the token mid-run: the probe then answers 404 and the rows are blocked (run 41112199301:
@@ -56,6 +60,7 @@ jobs:
       CLOUDFLARE_ACCOUNT_ID: c49b395e8f1138b5fae36ab88222542c
       CATEGORY: ${{ inputs.category }}
       QUESTIONS_FILE: ${{ inputs.questions_file }}
+      CHE_AUTHORIZE_BUILD: ${{ inputs.authorize_build && 'true' || 'false' }}
       LIMIT: ${{ inputs.limit }}
     steps:
       - uses: actions/checkout@v4
@@ -66,6 +71,12 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+
+      - name: A build-authorized run is a small named question set, never the 600 baseline
+        if: inputs.authorize_build
+        run: |
+          [ -n "$QUESTIONS_FILE" ] || { echo "::error::authorize_build needs questions_file"; exit 1; }
+          echo "::warning::Owner-authorized build run: turns in $QUESTIONS_FILE may queue real coding jobs (pull requests only)."
 
       - name: "1. The probe route is closed without a token (must answer 404)"
         run: |
