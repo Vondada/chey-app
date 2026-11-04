@@ -12,6 +12,7 @@ import * as OBJ from './creation_objects.js';
 import { listMedia, readBlob, saveMadeImage, verifyMediaFile } from './media.js';
 import { ANIMATION_MOTIONS, ANIMATION_SHAPES, animationSpec, inspectGif, makeAnimation } from './gif_encoder.js';
 import { dayRange, mediaChatFields, mediaSearchIntent, searchMedia } from './media_library.js';
+import { issueTurn } from './github_issues.js';
 export { dayRange, mediaSearchIntent, searchMedia };
 
 const DATA_KEY = 'che';
@@ -308,6 +309,7 @@ export const OWNER_TOOLS = [
   { id: 'che_media_search', turn: (storage, message, opts) => mediaSearchTurn(storage, message, opts) },
   { id: 'che_create_object', turn: (storage, message, opts) => objectTurn(storage, message, opts) },
   { id: 'che_gif', turn: (storage, message, opts) => gifTurn(storage, message, opts) },
+  { id: 'che_github_issue', turn: (storage, message, opts) => issueTurn(storage, message, opts) },
 ];
 
 /** The first owner tool that answers [message], or null. */
