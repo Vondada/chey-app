@@ -53,6 +53,7 @@ import { mediaHoldAnswer, mediaHoldIntent, mediaKeepFor, mediaLatestReply, media
 import { capabilityGap, capabilityReply } from './capability_gap.js';
 import { acquireCapability as acquireAbility, acquisitionRequest } from './capability_acquisition.js';
 import { multiToolRequest, multiToolTurn } from './multi_tool.js';
+import { futuresPaperApi, futuresPaperBusy, futuresPaperChat, futuresPaperTick } from './futures_paper_desk.js';
 import { INTERNAL_SOURCE, LAST_RENDER_KEY, internalSceneIntent, internalSceneTurn } from './internal_studio.js';
 import { CHAT_IMAGE_SOURCE, chatImageInline, chatImageMedia, chatImageReply, makeChatImages, pretendToolCall, requestedImageCount } from './chat_images.js';
 import { realPersonHarmIntent, REAL_PERSON_REFUSAL } from './real_person_images.js';
@@ -1429,6 +1430,9 @@ export function busyError(error) {
 // that were interrupted by a Worker restart), so a job that keeps crashing the
 // isolate cannot be re-run forever.
 export const MAX_JOB_ATTEMPTS = 4;
+// One built-in coding run's wall-time budget, under the 15-minute alarm limit, and how often a job may continue.
+const SELF_DEV_RUN_MS = 9 * 60_000;
+const MAX_CONTINUATIONS = 8;
 // One line about how a coding run ended, for its group-chat thread.
 function crewOutcome(prepared) {
   if (prepared?.proposal) return 'Reviewed change ready for your approval';
@@ -2515,7 +2519,7 @@ export function selfUpdateChatIntent(message) {
   }
   // "Is live trading on?" asks about the trading mode, not a deployment (comprehension audit).
   // "Is the MNQ data live?" / "Is the crypto feed live?" ask about market-data freshness in the other word order.
-  const marketLive = /\b(?:data|feed|chart|prices?|quotes?|candles?|stream|ticker|market)\s+(?:still\s+)?live\b/i.test(text);
+  const marketLive = /\b(?:data|feed|chart|prices?|quotes?|candles?|stream|ticker|market)\s+(?:still\s+)?live\b|\blive\s+or\s+delayed\b|\bdelayed\s+or\s+live\b|\bmarket\s+data\s+feed\b/i.test(text);
   if (!marketLive && /\b(?:is|did|was|has)\b[\s\S]{0,30}\b(?:deploy(?:ed|ment)?|live(?!\s+(?:trading|trades?|account|orders?|mode|feed|data|chart|prices?|stream|market|money|broker))|in production)\b|\b(?:deploy(?:ment)?|production)\s+(?:status|check|health)\b|\bverify\s+(?:the\s+)?deploy(?:ment)?\b/i.test(text)) {
     return { kind: 'deploy-status' };
   }
@@ -4127,6 +4131,12 @@ export class CheState extends DurableObject {
     return { ok: response.ok, status: response.status, reply, done, execution_receipts: receipts, error };
   }
 
+  async futuresPaperProbe({ path, method, body, query }) {
+    const out = await futuresPaperApi(path, method, body, this.ctx.storage, { probe: true, query: new URLSearchParams(query || '') });
+    await this.scheduleWork();
+    return out || { status: 404, body: { detail: 'Unknown futures paper route.' } };
+  }
+
   async modalCubeProbe(body) { return modalCubeProbe(this.keyEnv || this.env, this.ctx.storage, body); }
 
   async modalCubeResult(body) { return modalCubeResult(this.keyEnv || this.env, this.ctx.storage, body); }
@@ -4227,6 +4237,8 @@ export class CheState extends DurableObject {
     // autonomy on or off: recovery only corrects statuses, it never starts work.
     times.push(...officeTasks.filter((t) => ['running', 'reviewing'].includes(t.status))
       .map((t) => Math.max(Date.now() + 250, (Date.parse(t.updated_at) || Date.now()) + 5 * 60_000 + 1000)));
+    // Resting futures paper orders and open positions are worked every minute.
+    if (await futuresPaperBusy(this.ctx.storage).catch(() => false)) times.push(Date.now() + 60_000);
     // Film and creation share the alarm.
     for (const key of TIMER_KEYS) {
       const at = await nextTimerAt(this.ctx.storage, key).catch(() => 0);
@@ -8554,6 +8566,12 @@ export class CheState extends DurableObject {
         const out = path.endsWith('learning') ? await learningWindows(this.ctx.storage) : await tradingCalendar(this.ctx.storage, { month: q.get('month') || '', day: q.get('day') || '', source: q.get('source') || 'paper', basis: q.get('basis') || 'owner', env: this.env });
         return json(out, out.status || 200);
       }
+      if (path.startsWith('/api/futures/paper/') || path === '/api/futures/paper') {
+        if (!ownerDevice) return tradingOwnerOnly();
+        const out = await futuresPaperApi(path, request.method, body, this.ctx.storage, { query: new URL(request.url).searchParams });
+        await this.scheduleWork();
+        return json(out.body, out.status);
+      }
       if (path === '/api/trading/visual' && request.method === 'GET') {
         if (!ownerDevice) return tradingOwnerOnly();
         return json(await this.tradingVisualView(new URL(request.url).searchParams));
@@ -11711,6 +11729,9 @@ export class CheState extends DurableObject {
           return ndjsonReply(youtubeStatusSpeech(st, uploads), { source: 'che_youtube_status', ok: Boolean(st.connected), uploads: uploads.length, model_calls: 0 });
         }
         // "Buy 1 MNQ at 21,400" from the chart: no futures paper broker is connected, so nothing is sent.
+        // MNQ, NQ, MES and ES on CHE's own paper simulator (futures_paper_desk.js), after the owner's yes for an order; live wording is refused there.
+        const futuresTurn = ownerDevice && !body.attachment ? await futuresPaperChat(this.ctx.storage, message, { probe: PROBE_CHAT_REQUESTS.has(request), wake: () => this.scheduleWork() }) : null;
+        if (futuresTurn) return ndjsonReply(futuresTurn.text, futuresTurn.meta);
         const futuresAsk = ownerDevice && !body.attachment && !/\bfund\s*your\s*edge|\bfye\b|\brithmic\b/i.test(message) ? futuresOrderIntent(message) : null;
         if (futuresAsk) return ndjsonReply(futuresAsk.reply, { source: 'che_trading_chart', ok: false, model_calls: 0, order_sent: false });
         // FundYourEdge has no licensed Rithmic connection, so CHE says so and never
@@ -14669,12 +14690,15 @@ export class CheState extends DurableObject {
     const minute = await this.minuteOnlyWake(minuteNow).catch(() => null);
     if (minute) {
       await strategySimTick(this.ctx.storage, { now: minuteNow }).catch((error) => console.error('Strategy simulation tick failed:', error?.message || error));
+      // Resting futures paper orders are worked on the minute wake too (Codex review on #925).
+      const futuresBusy = await futuresPaperTick(this.ctx.storage).catch(() => false);
       const simNext = await nextStrategySimTickAt(this.ctx.storage, Date.now()).catch(() => null);
-      const kept = [...minute.others, ...(minute.liveNext ? [minute.liveNext] : []), ...(simNext ? [simNext] : []), ...await modalImageCheckTimes(this.ctx.storage).catch(() => [])];
+      const kept = [...minute.others, ...(minute.liveNext ? [minute.liveNext] : []), ...(simNext ? [simNext] : []), ...(futuresBusy ? [Date.now() + 60_000] : []), ...await modalImageCheckTimes(this.ctx.storage).catch(() => [])];
       if (kept.length) await this.ctx.storage.setAlarm(Math.min(...kept));
       return;
     }
     await recoverCreations(this.env, { storage: this.ctx.storage }).catch(() => null);
+    await futuresPaperTick(this.ctx.storage).catch((error) => console.error('Futures paper tick failed:', error?.message || error));
     await this.filmPass().catch((error) => console.error('Film Studio pass failed:', error?.message || error));
     await alarmStudy(this.ctx.storage, this.env).catch(() => null);
     await reapPaid(this.env, { storage: this.ctx.storage }).catch(() => null);
@@ -15922,6 +15946,7 @@ export class CheState extends DurableObject {
       if (outcome.step_results) { job.step_results = outcome.step_results; job.step_index = outcome.step_index; }
       noteJobActivity(job, outcome.cloud?.log?.length
         ? String(outcome.cloud.log.at(-1)).slice(9)
+        : outcome.continuations !== undefined ? `Run time limit reached; progress saved (continuation ${outcome.continuations}). Continuing in the next run.`
         : outcome.error
         ? `Problem: ${outcome.error}${outcome.status === 'queued' ? ' Trying again.' : ''}`
         : outcome.status === 'complete'
@@ -15930,6 +15955,7 @@ export class CheState extends DurableObject {
             ? `Step ${outcome.step_index} done. Moving to the next step.`
             : 'Result received.');
       if (outcome.attempts !== undefined) job.attempts = outcome.attempts;
+      if (outcome.continuations !== undefined) job.continuations = outcome.continuations;
       job.retry_count = outcome.retry_count ?? job.retry_count ?? 0;
       job.retry_at = outcome.retry_at || null;
       job.dead_letter = outcome.dead_letter === true;
@@ -15985,6 +16011,12 @@ export class CheState extends DurableObject {
   // failures back off exponentially (5, 10, 20 min) up to MAX_JOB_RETRIES and
   // then dead-letter; everything else is terminal immediately.
   jobFailureOutcome(job, error) {
+    // A run that stopped at its time limit with a checkpoint is the same job continuing, not a failure: it does not
+    // use a retry or an attempt, and the next run starts in a minute, at most MAX_CONTINUATIONS times.
+    const continued = Number(job.continuations || 0);
+    if (error?.continuation && error?.checkpoint && continued < MAX_CONTINUATIONS) {
+      return { id: job.id, checkpoint: error.checkpoint, status: 'queued', result: '', continuations: continued + 1, attempts: Math.max(0, Number(job.attempts || 1) - 1), retry_at: Date.now() + 60_000, error: '' };
+    }
     const retryCount = Number(job.retry_count || 0);
     const temporary = busyError(error) || error?.failure_class === FAILURE_CLASS.TEMPORARY_EXTERNAL;
     const retry = temporary && retryCount < MAX_JOB_RETRIES && Number(job.attempts || 0) < MAX_JOB_ATTEMPTS;
@@ -16223,7 +16255,7 @@ export class CheState extends DurableObject {
     // UI vs server, the retained failure record) stays the ungrounded prompt,
     // exactly as the foreground path passes intentRequest, so recalled text
     // that names other files can never become an owner-named target.
-    const prepared = await prepareSelfUpdate(this.env, groundedPrompt, fetch, this.ctx.storage, { ownerInitiated: true, intentRequest: prompt, checkpoint: job.checkpoint || null });
+    const prepared = await prepareSelfUpdate(this.env, groundedPrompt, fetch, this.ctx.storage, { ownerInitiated: true, intentRequest: prompt, checkpoint: job.checkpoint || null, deadline: Date.now() + SELF_DEV_RUN_MS });
     await recordCrewThread(this.ctx.storage, { request: job.request || job.prompt, discussion: prepared?.discussion, outcome: crewOutcome(prepared) }).catch(() => null);
     if (prepared.status === 200 && prepared.proposal) {
       await recordReceipt(this.ctx.storage, { kind: 'proposal_ready', key: `proposal:${job.id}`, job_id: job.id, files: prepared.proposal.files.map((f) => f.path) });
@@ -16278,6 +16310,7 @@ export class CheState extends DurableObject {
       error.failure_class = FAILURE_CLASS.TEMPORARY_EXTERNAL;
       // The retry continues this job from its checkpoint on other engines.
       if (prepared.checkpoint) error.checkpoint = prepared.checkpoint;
+      if (prepared.continuation) error.continuation = true;
       throw error;
     }
     if (prepared.engineering_record) {
@@ -16368,6 +16401,13 @@ async function routeRequest(request, env, ctx) {
   if (path === '/api/probe/modal' && request.method === 'POST') return voiceProbeAuthorized(request, env) ? json(await env.CHE_STATE.getByName('owner').modalProbe()) : json({ detail: 'Not found.' }, 404);
   // The certification harness's owner chat turn (tools/certification): one /api/chat turn as the owner, returning the
   // reply, the done frame's fields and the execution receipts. Behind the probe token; never in guestRouteAllowed.
+  // The deploy's futures paper end-to-end check: the separate test account only (futures_paper_desk.js PROBE_STATE_KEY).
+  if (path.startsWith('/api/probe/futures-paper')) {
+    if (!voiceProbeAuthorized(request, env)) return json({ detail: 'Not found.' }, 404);
+    const body = request.method === 'POST' ? await request.json().catch(() => ({})) : {};
+    const out = await env.CHE_STATE.getByName('owner').futuresPaperProbe({ path: path.replace('/api/probe/futures-paper', '/api/futures/paper'), method: request.method, body, query: new URL(request.url).search });
+    return json(out.body, out.status);
+  }
   if (path === '/api/probe/chat' && request.method === 'POST') {
     if (!voiceProbeAuthorized(request, env)) return json({ detail: 'Not found.' }, 404);
     const body = await request.json().catch(() => ({}));

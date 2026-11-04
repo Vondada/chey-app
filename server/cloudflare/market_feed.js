@@ -13,6 +13,9 @@
 export const FEED_ROOTS = Object.freeze({
   MNQ: { yahoo: 'MNQ=F', name: 'Micro E-mini Nasdaq-100' },
   NQ: { yahoo: 'NQ=F', name: 'E-mini Nasdaq-100' },
+  // The S&P 500 contracts, for the futures paper simulator (futures_paper.js); same public, delayed source.
+  MES: { yahoo: 'MES=F', name: 'Micro E-mini S&P 500' },
+  ES: { yahoo: 'ES=F', name: 'E-mini S&P 500' },
 });
 const MONTH_CODES = { 3: 'H', 6: 'M', 9: 'U', 12: 'Z' };
 

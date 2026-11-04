@@ -191,3 +191,15 @@ test('alarm with autonomy paused: the owner-requested coding job runs; other pau
   assert.equal(jobs.self.attempts, 0, 'a job the owner did not ask for waits for "resume"');
   assert.equal(jobs.self.status, 'queued');
 });
+
+test('a coding run that stopped at its time limit continues: no retry or attempt is used, and continuations are bounded', () => {
+  const { state } = setup();
+  const error = Object.assign(new Error('time limit'), { failure_class: 'B', continuation: true, checkpoint: { genuine_passes: 1, round_offset: 1 } });
+  const out = state.jobFailureOutcome({ id: 'j', attempts: 4, retry_count: 2, continuations: 0 }, error);
+  assert.deepEqual([out.status, out.attempts, out.continuations, out.retry_count], ['queued', 3, 1, undefined]);
+  assert.equal(out.checkpoint.round_offset, 1);
+  assert.ok(out.retry_at - Date.now() <= 60_000);
+  // After eight continuations the ordinary retry rule applies again.
+  const capped = state.jobFailureOutcome({ id: 'j', attempts: 4, retry_count: 2, continuations: 8 }, error);
+  assert.equal(capped.dead_letter, true);
+});
