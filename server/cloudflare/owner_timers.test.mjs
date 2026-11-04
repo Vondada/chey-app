@@ -167,3 +167,48 @@ test('a day-scoped timer question survives a daylight-saving change', async () =
     assert.match(out.text, /call Sam/i, ask);
   }
 });
+
+// Recurring reminders (certification run 24, oac-19: "Schedule a weekly review every Monday at 10" was refused).
+import { nextOccurrenceMs, recurrenceOf } from './owner_timers.js';
+
+test('a recurrence is read from the request and placed on the next matching local day', () => {
+  assert.deepEqual(recurrenceOf('Schedule a weekly review every Monday at 10.'), { days: [1], hour: 10, minute: 0, words: 'monday' });
+  assert.deepEqual(recurrenceOf('Remind me each weekday at 9 am to stretch.')?.days, [1, 2, 3, 4, 5]);
+  assert.equal(recurrenceOf('Every day at 7:30 pm')?.hour, 19);
+  assert.equal(recurrenceOf('Schedule a review every Monday'), null, 'no time, no rule');
+  assert.equal(timerIntent('Schedule a weekly review every Monday at 10.')?.action, 'set');
+  assert.equal(timerIntent('What happens every Monday at 10?'), null, 'a question about a schedule sets nothing');
+  // T0 is Saturday 2026-10-31 06:00 UTC. In Chicago, Monday 10:00 is 15:00 UTC (CST from 1 November).
+  const monday = nextOccurrenceMs({ days: [1], hour: 10, minute: 0 }, 'America/Chicago', T0);
+  assert.equal(new Date(monday).toISOString(), '2026-11-02T16:00:00.000Z');
+});
+
+test('a weekly reminder is saved and read back, fires on the alarm, is announced, and re-arms for the next week', async () => {
+  const storage = memory();
+  const set = await timerChatTurn(storage, 'Schedule a weekly review every Monday at 10.', { now: T0, timeZone: 'UTC' });
+  assert.match(set.text, /^Recurring reminder set, sir: weekly review, every Monday at 10:00 AM \(UTC\), so weekly\. The next one is Monday, November 2 at 10:00 AM\./);
+  const r = set.meta.execution_receipt;
+  assert.equal(r.status, 'success');
+  assert.equal(r.operation, 'set_recurring');
+  assert.equal(r.fire_at, '2026-11-02T10:00:00.000Z');
+  const id = r.timer_id;
+  assert.equal(await nextTimerAt(storage), Date.parse('2026-11-02T10:00:00Z'));
+  // The alarm runs a minute late: one occurrence fires and the rule moves to the next Monday.
+  const firedAt = Date.parse('2026-11-02T10:01:00Z');
+  const fired = await fireDueTimers(storage, firedAt);
+  assert.equal(fired.length, 1);
+  assert.equal(fired[0].id, `${id}:1`);
+  const list = storage.map.get(TIMERS_KEY);
+  const rule = list.find((t) => t.id === id);
+  assert.equal(rule.status, 'scheduled');
+  assert.equal(rule.fire_at, '2026-11-09T10:00:00.000Z');
+  assert.equal(await nextTimerAt(storage), Date.parse('2026-11-09T10:00:00Z'));
+  assert.match(await takeTimerAnnouncement(storage, 'UTC'), /Your reminder \(weekly review\) went off at 10:01 AM/);
+  assert.equal(await takeTimerAnnouncement(storage, 'UTC'), '', 'announced once');
+  // It is listed with its rule, and cancelling stops it.
+  const listed = await timerChatTurn(storage, 'What timers do I have?', { now: firedAt + 60_000, timeZone: 'UTC' });
+  assert.match(listed.text, /recurring reminder \(weekly review\), every Monday at 10:00 AM: goes off at 10:00 AM/);
+  const cancel = await timerChatTurn(storage, 'Cancel my weekly review reminder.', { now: firedAt + 120_000, timeZone: 'UTC' });
+  assert.deepEqual(cancel.meta.cancelled, [id]);
+  assert.equal(await nextTimerAt(storage), 0);
+});
