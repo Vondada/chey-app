@@ -2733,7 +2733,7 @@ export async function prepareSelfUpdate(env, request, fetcher = fetch, memory = 
       if (genuinePasses >= maxRounds) break;
       // The engineering budget ran out: a budget stop, never "engines failed".
       if (ctx.outcomes.some((o) => o.round === round + 1 && o.outcome === 'budget_exhausted') || !ctx.budget.canSpend('engineer', 7000)) {
-        budgetStop = true;
+        budgetStop = ctx.budget.stopReason('engineer', 7000) || 'a call in this pass hit a budget limit';
         break;
       }
       if (!producedRounds.has(round) && unproductivePasses >= MAX_UNPRODUCTIVE_PASSES) { enginesFailed = true; break; }
@@ -2901,7 +2901,7 @@ export async function prepareSelfUpdate(env, request, fetcher = fetch, memory = 
         status: 422,
         failure_class: FAILURE_CLASS.INTERNAL,
         detail: (budgetStop
-          ? `The coding team stopped at its engineering budget after ${genuinePasses} implementation passes; no safe reviewed change was produced. ${engineering}`
+          ? `The coding team stopped at its engineering budget after ${genuinePasses} implementation passes (${budgetStop}); no safe reviewed change was produced. ${engineering}`
           : enginesFailed
             ? `The coding team stopped after ${genuinePasses} implementation passes because the engines then returned no usable output (empty or malformed answers). ${engineering}`
             : `The coding team exhausted ${genuinePasses} implementation passes and re-inspected the source but could not produce a safe reviewed change. ${engineering || 'No safe diff passed review.'}`).trim().slice(0, 800),

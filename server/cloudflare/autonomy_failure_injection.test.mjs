@@ -1041,7 +1041,25 @@ test('review: hitting the engineering budget is reported as a budget stop, never
   const out = await prepareSelfUpdate(env(ai), 'change the home status wording', fakeGitHub(), memoryStore(), { budgetLimits: { maxCalls: 9 } });
   assert.equal(out.status, 422);
   assert.match(out.detail, /stopped at its engineering budget/);
+  // It says which limit ended it (challenge job 09b806cc only said "engineering budget").
+  assert.match(out.detail, /\(all 9 model calls used\)/);
   assert.doesNotMatch(out.detail, /no usable output|exhausted/);
+});
+
+test('a budget names the limit that stops a spend: calls, time, a repeated engine error, a stage, tokens', async () => {
+  const { AgentBudget } = await import('./recovery_policy.js');
+  let clock = 0;
+  const b = new AgentBudget({ maxCalls: 3, maxTokens: 1000, maxElapsedMs: 60_000, stageLimits: { engineer: 2 }, now: () => clock });
+  assert.equal(b.stopReason('engineer', 10), '');
+  assert.equal(new AgentBudget({ maxTokens: 1000 }).stopReason('engineer', 5000), 'the 1,000-token limit would be passed');
+  b.spend('engineer', 10); b.spend('engineer', 10);
+  assert.equal(b.stopReason('engineer', 10), 'all 2 engineer calls used');
+  for (let i = 0; i < 4; i += 1) b.recordError('openrouter:rate_limited');
+  assert.equal(b.stopReason('planner', 10), 'the same engine error came back more than 3 times: openrouter:rate_limited');
+  clock = 61_000;
+  assert.equal(b.stopReason('planner', 10), 'the 1-minute time limit passed');
+  b.calls = 3;
+  assert.equal(b.stopReason('planner', 10), 'all 3 model calls used');
 });
 
 test('review: a failed site repair keeps the first draft', async () => {
