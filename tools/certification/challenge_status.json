@@ -1,0 +1,4 @@
+[
+  {"id":"challenge-status-01","category":"self_development","difficulty":"easy","question":"Coding status","expected":{"criteria":"Read-only status of CHE's coding jobs, from stored records.","must_contain_any":["job","coding"],"must_not_contain":[]},"receipt_required":false},
+  {"id":"challenge-status-02","category":"self_development","difficulty":"easy","question":"What happened to coding job 98238043? Tell me its status, its last step and any error.","expected":{"criteria":"Read-only status of the challenge's coding job, from stored records.","must_contain_any":["98238043","job"],"must_not_contain":[]},"receipt_required":false}
+]
