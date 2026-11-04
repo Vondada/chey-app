@@ -105,12 +105,18 @@ test('a timer is cancelled for real: the record is cancelled and the alarm never
 test('an action with no connector is answered by the gate: no model call, nothing stored, no receipt', async () => {
   const c = await che();
   const before = c.models();
-  for (const ask of ['Open the calendar app.', 'Turn off the living room light.', 'Use the image tool, the email tool and the timer tool at the same time.']) {
+  for (const ask of ['Open the calendar app.', 'Turn off the living room light.']) {
     const out = await c.say(ask);
     assert.equal(out.done.source, 'che_connector_gate', ask);
     assert.equal(out.done.model_calls, 0, ask);
     assert.ok(!out.done.execution_receipt, ask);
   }
+  // ter-36 (certification run 24) is now a multi-tool turn (multi_tool.js): each tool's own route answers it, the image
+  // tool is not run without a subject, and with Gmail unconnected and no timers nothing is stored or sent.
+  const chain = await c.say('Use the image tool, the email tool and the timer tool at the same time.');
+  assert.equal(chain.done.source, 'che_multi_tool');
+  assert.deepEqual(chain.done.tools.map((t) => t.status), ['not_run', 'blocked', 'no_receipt']);
+  assert.ok(chain.done.execution_receipts.every((r) => r.status !== 'success'));
   assert.equal(c.models(), before);
   assert.equal(c.storage.saved.get('owner_timers'), undefined);
 });
