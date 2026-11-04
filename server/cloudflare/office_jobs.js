@@ -46,8 +46,15 @@ const norm = (value) => String(value || '').toLowerCase().replace(/\s+/g, ' ').t
 const jobId = () => `oj-${crypto.randomUUID().slice(0, 8)}`;
 
 /** The departments a request needs, in working order. Engineering brings a security review; every job ends with Vale. */
-export function disciplinesFor(request, explicit = []) {
+export function disciplinesFor(request, explicit = [], { ordered = false } = {}) {
   const text = String(request || '');
+  // The owner's own hand-off order ("the coding agent, then the office agent"): kept as he said it, with security after
+  // engineering and verification last, as in every job.
+  if (ordered && Array.isArray(explicit) && explicit.length) {
+    const own = [...new Set(explicit.filter((d) => d !== 'qa' && (DISCIPLINES[d] || d === 'operations')))];
+    if (own.includes('engineering') && !own.includes('security')) own.splice(own.indexOf('engineering') + 1, 0, 'security');
+    return [...own, 'qa'];
+  }
   const wanted = new Set((Array.isArray(explicit) ? explicit : []).filter((d) => DISCIPLINES[d]));
   if (!wanted.size) for (const [id, spec] of Object.entries(DISCIPLINES)) if (spec.words.test(text)) wanted.add(id);
   if (wanted.has('engineering')) wanted.add('security');
@@ -73,7 +80,7 @@ function valeBrief(job) {
 function stageTask(job, stage, priorResults) {
   const lines = [
     `Office job ${job.id} (coordinated by Nova; accountable: ${job.accountable}). Request: ${job.request}`,
-    stage.discipline === 'qa' ? valeBrief(job) : DISCIPLINES[stage.discipline]?.brief || '',
+    stage.discipline === 'qa' ? valeBrief(job) : DISCIPLINES[stage.discipline]?.brief || (stage.discipline === 'operations' ? 'Take the work handed to you: record what was done and what is still open, and write the summary for the owner. Claim nothing the earlier stages did not record.' : ''),
     job.acceptance_criteria.length && stage.discipline !== 'qa' ? `Acceptance criteria for the whole job:\n${job.acceptance_criteria.map((c, i) => `${i + 1}. ${c}`).join('\n')}` : '',
     stage.correction ? `CORRECTION REQUESTED BY VALE:\n${stage.correction}` : '',
     priorResults.length ? `WORK SO FAR (handed to you with its evidence):\n${priorResults.join('\n\n')}` : '',
@@ -106,7 +113,7 @@ function overlapping(data, job) {
 export function planOfficeJob(data, body = {}) {
   const request = clip(body.request || body.goal, 2000);
   if (!request) return { error: 'Describe the work for the Office.' };
-  const disciplines = disciplinesFor(request, body.disciplines);
+  const disciplines = disciplinesFor(request, body.disciplines, { ordered: body.ordered === true });
   const stages = disciplines.map((discipline, i) => ({
     id: `s${i + 1}`,
     discipline,
@@ -380,4 +387,31 @@ export function speakOfficeJob(job) {
     refused ? `Blocked handoff: ${refused.note}` : '',
     verdict,
   ].filter(Boolean).join(' ');
+}
+
+// ─── Hand-off chains from chat (office_phrases.js handoffChain; certification run 24, ter-30) ───
+const DEPARTMENT_NAMES = { engineering: 'engineering', operations: 'operations', research: 'research', security: 'security', experience: 'design', creative: 'creative', markets: 'markets', qa: 'testing' };
+
+/** The work a chain hands off: its own words, or for "this" the owner's previous message; '' when there is none. */
+export function handoffWork(phrase, history = []) {
+  if (!phrase?.chain || phrase.request) return String(phrase?.request || '');
+  const last = [...(Array.isArray(history) ? history : [])].reverse().find((h) => h?.role === 'user');
+  return clip(last?.content || last?.text || '', 2000).trim();
+}
+
+/** The Office job request for a chain: the work, the owner's order of departments, and his summary ask. */
+export function handoffRequest(work, phrase) {
+  const order = phrase.disciplines.map((d) => DEPARTMENT_NAMES[d] || d).join(', then ');
+  return `${work}\n\nThe owner asked for this hand-off order: ${order}${phrase.summary ? ', then a summary back to him' : ''}.`;
+}
+
+export function handoffAskReply(phrase) {
+  return `What should I route to ${phrase.chain.join(', then ')}, sir? "This" needs something before it in our conversation, and there is nothing. Nothing was routed.`;
+}
+
+/** A chain naming a desk the Office does not have: say which, name the real ones, route nothing. */
+export function handoffUnknownReply(phrase) {
+  const missing = phrase.legs.filter((_, i) => !phrase.departments[i]);
+  const desks = Object.values(LA_AGENCIA_ROLES).map((r) => r.department?.id).filter(Boolean).map((d) => DEPARTMENT_NAMES[d] || d);
+  return `My Office has no ${missing.map((leg) => leg.replace(/^the\s+/i, '')).join(' or ')}, sir, so I routed nothing rather than hand it to the wrong desk. The departments are ${[...new Set(desks)].join(', ')}. Tell me which of those should take it.`;
 }

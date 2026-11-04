@@ -43,6 +43,31 @@ function agentRefs(t) {
   return refs.sort((a, b) => a.at - b.at);
 }
 
+// "Route this to the coding agent, then the office agent, then return a summary to me" (certification run 24, ter-30):
+// a hand-off chain is a coordinated Office job whose departments are the ones the owner named, in his order. "This" or
+// "it" with nothing else is the work of the owner's previous message; the caller resolves it (subject: '').
+const DESKS = [
+  ['engineering', /\b(?:coding|code|engineering|developer|dev|atlas)\b/],
+  ['operations', /\b(?:office|operations|ops|nova)\b/],
+  ['research', /\b(?:research|researcher|sage)\b/],
+  ['security', /\b(?:security|knox)\b/],
+  ['experience', /\b(?:design|designer|ux|ui)\b/],
+  ['creative', /\b(?:creative|content|marketing|iris)\b/],
+  ['markets', /\b(?:markets?|trading)\b/],
+  ['qa', /\b(?:qa|testing|test|tester|quality|vale)\b/],
+];
+export function handoffChain(raw) {
+  const text = String(raw || '').replace(/[’‘]/g, "'").replace(/\s+/g, ' ').trim();
+  const m = /^(?:(?:hey )?(?:che|chay|chey|jay)[, ]+)?(?:please )?(?:route|send|hand|pass|give|forward|take)\s+(this|it|that|.{3,300}?)\s+(?:to|over to)\s+(.+?)(?:[,;]?\s+(?:and\s+)?then\s+(?:return|send|give|bring|report)\b(.*))?[.!?]?$/i.exec(text);
+  if (!m || !/\bthen\b/i.test(text)) return null;
+  const legs = m[2].split(/[,;]?\s+(?:and\s+)?then\s+(?:to\s+)?|,\s*/i).map((leg) => leg.trim()).filter(Boolean);
+  if (legs.length < 2 || !legs.every((leg) => /\b(?:agent|desk|team|department|atlas|nova|knox|sage|iris|vale)\b/i.test(leg))) return null;
+  const departments = legs.map((leg) => DESKS.find(([, words]) => words.test(leg.toLowerCase()))?.[0] || null);
+  if (departments.some((d) => !d)) return { type: 'unknownDesk', legs, departments };
+  const subject = /^(?:this|it|that)$/i.test(m[1]) ? '' : m[1].trim();
+  return { type: 'officeJob', request: subject, disciplines: [...new Set(departments)], chain: legs, summary: Boolean(m[3] !== undefined) };
+}
+
 export function matchOfficePhrase(raw) {
   const original = String(raw || '').trim();
   const t = original.toLowerCase().replace(/[’‘]/g, "'").replace(/[^a-z0-9 ?']/g, ' ').replace(/\s+/g, ' ').trim()
@@ -95,6 +120,8 @@ export function matchOfficePhrase(raw) {
   // engineering, security and testing".
   const coordinate = original.match(/^(?:(?:hey )?(?:che|chay|chey)[, ]+)?(?:please )?(?:have|ask|get|let) (?:nova|the office) (?:to )?(?:coordinate|run|work together on) (.{6,})$/i);
   if (coordinate) return { type: 'officeJob', request: coordinate[1].replace(/[.!?]+$/, '').trim() };
+  const chain = handoffChain(original);
+  if (chain) return chain;
   const jobId = t.match(/\boffice job (oj [0-9a-f]{8}|oj-[0-9a-f]{8})\b/) || original.match(/\b(oj-[0-9a-f]{8})\b/i);
   if (jobId || /\b(?:status of (?:the |my )?(?:coordinated )?office jobs?|(?:coordinated )?office jobs? status|how (?:is|are) (?:the |my )?(?:coordinated )?office jobs? (?:going|doing))\b/.test(t)) {
     return { type: 'officeJobStatus', id: jobId ? jobId[1].replace(' ', '-').toLowerCase() : '' };
