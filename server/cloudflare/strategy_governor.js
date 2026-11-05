@@ -12,7 +12,7 @@ import { queueRoomEvent } from './room_events.js';
 export const GOV_SETTINGS = 'gov_settings';
 export const GOV_STATE = 'gov_state';
 export const GOV_DECISION_PREFIX = 'gd:';
-export const DEFAULT_GOV_SETTINGS = Object.freeze({ enabled: true, min_trades: MIN_CLOSED_TRADES, z_pause: 1.645, z_watch: 1.0, streak_p: 0.01 });
+export const DEFAULT_GOV_SETTINGS = Object.freeze({ enabled: true, min_trades: MIN_CLOSED_TRADES, z_pause: 1.645, z_watch: 1.0, streak_p: 0.01, streak_pause: 8, early_trades: 15 });
 export const REVALIDATION_RULE = '30+ out-of-sample trades with expectancy > 0, ≥60% profitable walk-forward folds, look-ahead audit passed';
 const EVEN_SIM_SHARE = 0.5; // half the research budget is spread evenly, so no strategy stops being simulated
 
@@ -31,7 +31,7 @@ export async function readGovSettings(storage) {
 export function cleanSettings(input = {}) {
   const out = {};
   const num = (k, lo, hi) => { const v = Number(input[k]); if (input[k] !== undefined && finite(v)) out[k] = Math.min(hi, Math.max(lo, v)); };
-  num('min_trades', 15, 500); num('z_pause', 0.5, 4); num('z_watch', 0, 4); num('streak_p', 0.0001, 0.2);
+  num('min_trades', 15, 500); num('z_pause', 0.5, 4); num('z_watch', 0, 4); num('streak_p', 0.0001, 0.2); num('streak_pause', 4, 50); num('early_trades', 10, 500);
   if (typeof input.enabled === 'boolean') out.enabled = input.enabled;
   return out;
 }
@@ -188,6 +188,12 @@ export function verdict(stats, { prior = null, settings = DEFAULT_GOV_SETTINGS, 
   if (prior?.status === 'paused') {
     if (research.met) return { status: 'active', reason: `Revalidated in research: ${REVALIDATION_RULE}.` };
     return { status: 'paused', reason: prior.reason || 'Paused until it is revalidated in research.' };
+  }
+  // Early stops (2026-11-05 loss audit): a unit stayed 'gathering' through 13 and 38 losses in a row because it had not
+  // reached min_trades. A long streak, or a losing bound already below zero on early_trades, pauses it before then.
+  if (stats.current_consecutive_losses >= s.streak_pause) return { status: 'paused', reason: `${stats.current_consecutive_losses} losses in a row (limit ${s.streak_pause}); paused until it is revalidated in research.` };
+  if (n >= s.early_trades && n < s.min_trades && stats.expectancy_r_upper != null && stats.expectancy_r_upper < 0) {
+    return { status: 'paused', reason: `Expectancy ${fmtR(stats.expectancy_r)} per trade on ${n} independent trades; the optimistic bound (${fmtR(stats.expectancy_r_upper)}) is already below zero.` };
   }
   if (n < s.min_trades) return { status: 'gathering', reason: `${n} of ${s.min_trades} independent closed trades: not enough to judge yet.` };
   const upper = stats.expectancy_r_upper;

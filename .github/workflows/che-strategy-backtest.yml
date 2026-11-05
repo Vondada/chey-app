@@ -9,6 +9,9 @@ on:
       - server/cloudflare/trading_evidence.js
       - server/cloudflare/trading_research.js
       - tools/che_strategy_backtest.mjs
+      - tools/che_quality_replay.mjs
+      - server/cloudflare/strategy_governor.js
+      - server/cloudflare/crypto_markets.js
 
 permissions:
   contents: read
@@ -32,3 +35,20 @@ jobs:
         with:
           name: backtest-${{ matrix.market }}
           path: backtest-${{ matrix.market }}.json
+
+  quality-replay:
+    # Before/after replay of the forward paper desks with the trade-quality rules (MNQ, BTC, ETH), on the same real bars.
+    name: Trade-quality replay (real bars, informational)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node tools/che_quality_replay.mjs --json quality-replay.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: quality-replay
+          path: quality-replay.json

@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import { readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import test from 'node:test';
 import {
-  COINS, CRYPTO_BUDGET, CRYPTO_COSTS, CRYPTO_RUNS, DAILY_REQUEST_LIMIT, TIMEFRAMES, backtestSeries, cryptoIntent, cryptoTick, cryptoView,
+  COINS, CRYPTO_BUDGET, cryptoDesk, CRYPTO_COSTS, CRYPTO_RUNS, DAILY_REQUEST_LIMIT, TIMEFRAMES, backtestSeries, cryptoIntent, cryptoTick, cryptoView,
   feedStatus, fetchCoinbaseCandles, fetchKrakenCandles, marketStudy, nextCryptoTickAt, setCryptoPaper, speakCrypto,
 } from './crypto_markets.js';
 import { COSTS, CRYPTO_CONTRACTS, RECORD_PREFIX, newPortfolio, readTrades, settleTrade } from './trading_evidence.js';
@@ -160,7 +160,9 @@ test('the daily request budget stops fetching instead of overspending', async ()
   assert.equal(run.budget_exhausted, true);
 });
 
-test('a weekend of passes: crypto trades reach the shared journal labelled crypto, and futures readers never see them', async () => {
+test('a weekend of passes: crypto trades reach the shared journal labelled crypto, and futures readers never see them', async (t) => {
+  // Journal plumbing only: at 0.60% taker fees the quality rules refuse every crypto plan (next test), so they are off here.
+  const rules = cryptoDesk.quality; cryptoDesk.quality = null; t.after(() => { cryptoDesk.quality = rules; });
   const storage = memoryStorage();
   let now = SAT - 3 * 86_400_000; // start Wednesday so stored history covers the weekend
   const fetcher = exchange({ now: () => now });
@@ -188,6 +190,19 @@ test('a weekend of passes: crypto trades reach the shared journal labelled crypt
   assert.match(text, /Paper only/);
   assert.match(text, new RegExp(`Simulated trades closed: ${crypto.length}`));
   if (crypto.length < 30) assert.match(text, /not enough data/);
+});
+
+test('under the quality rules, crypto setups whose fees exceed 0.25 R are skipped with that reason, never traded', async () => {
+  const storage = memoryStorage();
+  let now = SAT - 3 * 86_400_000;
+  const fetcher = exchange({ now: () => now });
+  await setCryptoPaper(storage, true, now);
+  for (let i = 0; i < 700; i++) { await cryptoTick(storage, { fetcher, now }); now += 300_000; }
+  assert.equal((await readTrades(storage, () => true, { market: 'crypto' })).length, 0, 'no trade that loses on fees is taken');
+  const pfs = [...storage.saved.entries()].filter(([k]) => k.startsWith('crypto_pf:')).flatMap(([, v]) => Object.values(v || {}));
+  const skips = pfs.flatMap((pf) => pf?.skips || []);
+  assert.ok(pfs.length > 0 && pfs.every((pf) => pf.params?.quality?.max_cost_r === 0.25), 'every new portfolio carries the rules');
+  assert.ok(skips.some((s) => /costs would be [\d.]+ R of the risk/.test(s.reason)), 'skips say the costs were too large');
 });
 
 test('research: volatility regime, liquidity screen, sessions and an out-of-sample split from stored bars', () => {

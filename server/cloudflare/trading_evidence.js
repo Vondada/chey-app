@@ -697,6 +697,31 @@ export function newPortfolio(candidateId, filterId, {
 // trade fills at the next bar's open. Returns the trades that closed in this step.
 // Portfolio state persists, so a later step continues where this one stopped.
 // A skipped or blocked signal is kept with its reason (live portfolios carry a skips list).
+// Trade quality (2026-11-05 loss audit, CHE audit run 42121530880): 327 simulated trades paid more in costs than their
+// whole risk, and crypto target hits closed as net losses because 0.6% taker fees were larger than a 0.1% to 1% stop.
+// A plan is taken only when (a) a stop-out's round-trip costs are at most MAX_PLAN_COST_R of its risk, the same limit
+// as the strategy simulation's cost gate, and (b) a target hit still nets at least MIN_TARGET_NET_R after costs.
+export const MAX_PLAN_COST_R = 0.25;
+export const MIN_TARGET_NET_R = 1;
+// After a stop-out the same strategy waits this long before a new signal (51 quick re-entries in the futures journal).
+export const STOP_COOLDOWN_MIN = 30;
+// The forward paper desks (trading_live.js, crypto_markets.js) put this in a portfolio's params. It is part of the
+// strategy version, so trades under these rules never share a result with trades from before them. Engine fixtures
+// that test fills with tight stops leave it out.
+export const QUALITY_RULES = Object.freeze({ max_cost_r: MAX_PLAN_COST_R, min_target_net_r: MIN_TARGET_NET_R, stop_cooldown_min: STOP_COOLDOWN_MIN });
+
+/** Why a planned trade is not worth taking after costs, or null. Costs are priced at the planned prices. */
+export function planEconomics({ side = 'long', ref, stop, target }, contract, costs = COSTS, qty = 1, rules = QUALITY_RULES) {
+  const pos = { side, entry: fillEntry({ o: ref }, contract, costs, side), stop };
+  const atStop = settleTrade(pos, fillExit(stop, 'stop', contract, costs, side), qty, contract, costs, 'stop');
+  const atTarget = settleTrade(pos, fillExit(target, 'target', contract, costs, side), qty, contract, costs, 'target');
+  if (!(atStop.risk_dollars > 0)) return null;
+  const costR = (atStop.gross_before_costs - atStop.net_pnl) / atStop.risk_dollars;
+  if (costR > rules.max_cost_r) return `costs would be ${r2(costR)} R of the risk (limit ${rules.max_cost_r} R), so the stop is too tight for the fees`;
+  if (atTarget.r_net < rules.min_target_net_r) return `a target hit would net only ${r2(atTarget.r_net)} R after costs (at least ${rules.min_target_net_r} R needed)`;
+  return null;
+}
+
 function noteSkip(pf, time, reason, sig) {
   if (!Array.isArray(pf.skips)) return;
   pf.skips = [...pf.skips, { time, reason, side: sig?.side || 'long', why: sig?.why || '' }].slice(-40);
@@ -771,7 +796,7 @@ function stepBars(pf, candles, ctx, gate, { allowEntries = true, blockReason = n
         pf.open.max_high = Math.max(pf.open.max_high, bar.h);
         pf.open.min_low = Math.min(pf.open.min_low, bar.l);
       }
-      if (hit) { closed.push(closeAt(pf, bar, hit)); pf.last_exit_time = bar.t; }
+      if (hit) { closed.push(closeAt(pf, bar, hit)); pf.last_exit_time = bar.t; pf.last_exit_reason = hit.reason; }
     }
     const late = ctx.td && ctx.td[k] >= FLAT_TD - 5;
     // The real-time gate is closed: a valid setup is not traded, but it is still journalled as skipped with its
@@ -791,13 +816,21 @@ function stepBars(pf, candles, ctx, gate, { allowEntries = true, blockReason = n
         const R = pf.params?.target_r ?? TARGET_R;
         const target = finite(sig.target) ? sig.target : r4(side === 'short' ? sig.ref - R * risk : sig.ref + R * risk);
         const reward = side === 'short' ? sig.ref - target : target - sig.ref;
-        const blocked = reward >= 0.5 && gate ? gate(pf, { stage: 'signal', time: bar.t, day: ctx.day?.[k] }) : null;
+        const rules = pf.params?.quality;
+        const cooling = rules && pf.last_exit_reason === 'stop' && pf.last_exit_time != null
+          && Date.parse(bar.t) - Date.parse(pf.last_exit_time) < rules.stop_cooldown_min * 60000;
+        const poor = rules && reward >= 0.5 ? (cooling ? `it is inside the ${rules.stop_cooldown_min}-minute wait after a stop-out` : planEconomics({ side, ref: sig.ref, stop: sig.stop, target }, contract, pf.costs, pf.qty, rules)) : null;
+        const blocked = reward >= 0.5 && !poor && gate ? gate(pf, { stage: 'signal', time: bar.t, day: ctx.day?.[k] }) : null;
         if (reward < 0.5) noteSkip(pf, bar.t, 'the target was too close to the entry', { side, why: sig.why });
+        if (poor) {
+          pf.counts.poor_plans = (pf.counts.poor_plans || 0) + 1;
+          noteSkip(pf, bar.t, `not taken: ${poor}`, { side, why: sig.why });
+        }
         if (blocked) {
           pf.counts.skipped = (pf.counts.skipped || 0) + 1;
           noteSkip(pf, bar.t, `blocked: ${blocked}`, { side, why: sig.why });
         }
-        if (reward >= 0.5 && !blocked) {
+        if (reward >= 0.5 && !poor && !blocked) {
           pf.pending = {
             side, signal_time: bar.t, why: sig.why, ref: sig.ref, stop: sig.stop,
             target, condition: conditionOf(candles, k, ctx),

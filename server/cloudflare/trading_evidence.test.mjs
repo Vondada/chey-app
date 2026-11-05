@@ -4,6 +4,7 @@ import {
   CONTRACTS, COSTS, MIN_TRADES, candleProblems, causalContext, evaluateWalkForward, fillEntry, fillExit,
   newPortfolio, promotionVerdict, appendTrades, readTrades, recordKey, sessionOf, settleTrade, stepPortfolio,
   summarize, validateTradeRecord, walkForwardFolds, wilsonInterval, exitOn,
+  CRYPTO_CONTRACTS, QUALITY_RULES, planEconomics,
 } from './trading_evidence.js';
 
 const day = (i) => new Date(Date.UTC(2026, 0, 1) + i * 86400000).toISOString().slice(0, 10);
@@ -395,4 +396,35 @@ test('backtest and paper records of the same rules are kept apart', async () => 
   assert.equal((await appendTrades(store, [paper, backtest])).written, 2);
   const rows = await readTrades(store);
   assert.deepEqual(rows.map((r) => r.environment).sort(), ['backtest', 'paper']);
+});
+
+test('quality rules: a plan whose costs exceed 0.25 R of its risk, or whose target nets under 1 R, is not taken', () => {
+  const mnq = CONTRACTS.MNQ;
+  assert.match(planEconomics({ ref: 20000, stop: 19994, target: 20012 }, mnq), /costs would be 0\.46 R of the risk \(limit 0\.25 R\)/);
+  assert.equal(planEconomics({ ref: 20000, stop: 19988, target: 20024 }, mnq), null, 'a 12-point stop with a 2R target is worth taking');
+  assert.match(planEconomics({ ref: 20000, stop: 19988, target: 20010 }, mnq), /target hit would net only 0\.63 R/, 'a VWAP target under 1R is refused');
+  assert.equal(planEconomics({ side: 'short', ref: 20000, stop: 20012, target: 19976 }, mnq), null);
+  // Crypto at 0.60% taker / 0.40% maker: even a 1% stop pays more than its risk in fees.
+  const fees = { ...COSTS, commissionPerSide: 0, feePerSide: 0, takerPct: 0.006, makerPct: 0.004 };
+  assert.match(planEconomics({ ref: 100000, stop: 99000, target: 102000 }, CRYPTO_CONTRACTS.BTC, fees, 0.01), /costs would be 1\.19 R/);
+});
+
+test('quality rules in the engine: a costly plan is journalled as skipped, and a stop-out starts a 30-minute wait', () => {
+  // The pdh-break SETUP risks 1.85 points (stop 99.75): on MNQ the costs are about 1.5 R, so under the rules it is skipped.
+  const rows = [...SETUP, WIN_BAR];
+  const plain = runPortfolio(rows);
+  assert.equal(plain.trades.length, 1, 'without the rules the fixture trades');
+  const pf = newPortfolio('pdh-break', 'any', { contract: 'MNQ', qty: 1, source: 'paper', params: { quality: QUALITY_RULES } });
+  pf.skips = [];
+  assert.notEqual(pf.strategy_version, plain.pf.strategy_version, 'the rules are a new strategy version');
+  assert.equal(stepPortfolio(pf, bars(rows)).length, 0);
+  assert.ok(pf.counts.poor_plans >= 1, 'each costly setup is counted (the second one only shows once no trade is open)');
+  assert.match(pf.skips[0].reason, /^not taken: costs would be [\d.]+ R of the risk/);
+  // Cooldown: right after a stop-out the next signal waits; after 30 minutes it is judged on its costs again.
+  const cool = newPortfolio('pdh-break', 'any', { contract: 'MNQ', qty: 1, source: 'paper', params: { quality: { ...QUALITY_RULES, max_cost_r: 99, min_target_net_r: -99 } } });
+  cool.skips = [];
+  const c = intraday([...SETUP, STOP_BAR, ...SETUP.map(([o, h, l, cl]) => [o - 2, h - 2, l - 2, cl - 2])], '2026-01-05T15:00:00Z');
+  stepPortfolio(cool, c, causalContext(c));
+  assert.equal(cool.last_exit_reason, 'stop');
+  assert.ok(cool.skips.some((k) => /inside the 30-minute wait after a stop-out/.test(k.reason)), 'a signal within 30 minutes of the stop-out waits');
 });
