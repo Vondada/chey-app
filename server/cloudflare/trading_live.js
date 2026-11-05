@@ -10,6 +10,7 @@ import { aggregate, cmeSession, frontMonth, liveFeedBlocker, loadIntraday } from
 import {
   CONTRACTS, COSTS, INTRADAY_CANDIDATES, INTRADAY_COMMON_RULES, INTRADAY_FILTERS, MIN_TRADES, appendTrades, breakdown, candleProblems,
   evaluateWalkForward, intradayContext, newPortfolio, readTrades, stepPortfolio, summarize, validateTradeRecord, tradeDayOf,
+  QUALITY_RULES,
 } from './trading_evidence.js';
 import { makeEntryGate, readControls } from './trading_controls.js';
 import { decisionsEvent, governedGate, pausedUnits, runGovernor, tradeDecisions } from './strategy_governor.js';
@@ -47,7 +48,7 @@ export function liveSpecs() {
 
 const seriesName = (source) => `Yahoo ${source === 'backtest' ? 'MNQ=F 5-minute history' : 'MNQ=F 1-minute bars to 5 minutes'} (DELAYED)`;
 function freshPortfolio(spec, source = 'paper') {
-  const pf = newPortfolio(spec.c, spec.f, { contract: 'MNQ', qty: 1, source, resolution: RESOLUTION, priceSeries: seriesName(source), params: { target_r: spec.target_r } });
+  const pf = newPortfolio(spec.c, spec.f, { contract: 'MNQ', qty: 1, source, resolution: RESOLUTION, priceSeries: seriesName(source), params: { target_r: spec.target_r, quality: QUALITY_RULES } });
   pf.signals = [];
   pf.skips = [];
   return pf;
