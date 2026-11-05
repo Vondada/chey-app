@@ -14,6 +14,7 @@ changes them. Do not delete the old values: the change is recorded in `docs/CHE_
 
 | Fact | State | Time | Evidence |
 |---|---|---|---|
+| `main` is `f3d512ab` (#933; after #932 `3f96fdba` and #931 `192c8572`); deploy `41833035772` verified live commit `3f96fdba`; unknown-capability challenge finished: diagnosis yes, build no (31/100, history 2026-11-04 13:35) | verified | 2026-11-04 13:35 UTC | merge receipts, deploy and probe `41838600828` |
 | `main` is `79781469` (#929, restarted jobs keep their attempts; after #928 `86ad2170` shop prices and #927 docs); deploys `41793305692` and `41804905428` verified the live commit; Jay's challenge job `09b806cc` queued by run `41806329835` | verified | 2026-11-04 09:30 UTC | merge receipts, deploy and certification runs |
 | `main` is `133b3615` (#926, iPhone paper futures desk; after #925 `ad77aa3f` futures paper simulator and #920-#924); deploy `41780219980` verified live commit `ad77aa3f`; live futures paper e2e `41782752211` passed 19/19 | verified | 2026-11-04 06:30 UTC | merge receipts, deploy and e2e runs |
 | `main` is `1598930d` (#906, clock arithmetic to the reasoning route); live commit verified by deploy `41659439388` (live code-switching step passed); last certification is run 25 `41657004307`, 501/600 (run 24 506/600) | verified | 2026-11-03 16:10 UTC | merge receipt, deploy run |
