@@ -45,7 +45,17 @@ export function replay(bars, portfolios) {
       trades.push(...stepPortfolio(pf, bars, ctx));
       skipped += pf.counts.poor_plans || 0;
     }
+    // Per strategy (candidate, filter and target), each half separately, so a strategy is judged on unseen bars too.
+    const groups = {};
+    for (const t of trades) {
+      const k = `${t.strategy}|${t.filter}|${t.params?.target_r ?? ''}R`;
+      (groups[k] ||= []).push(t);
+    }
+    const by_strategy = Object.fromEntries(Object.entries(groups).map(([k, list]) => [k, {
+      all: tally(list), first_70: tally(list.filter((t) => t.entry.time < cut)), last_30: tally(list.filter((t) => t.entry.time >= cut)),
+    }]));
     result[variant] = {
+      by_strategy,
       all: tally(trades), first_70: tally(trades.filter((t) => t.entry.time < cut)), last_30: tally(trades.filter((t) => t.entry.time >= cut)), skipped_by_rules: skipped,
     };
   }
@@ -102,6 +112,13 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   }
   const text = lines.join('\n');
   console.log(text);
+  for (const d of desks) {
+    if (!d.ok) continue;
+    for (const [k, v] of Object.entries(d.after.by_strategy).sort((a, b) => (b[1].all.expectancy_r ?? -9) - (a[1].all.expectancy_r ?? -9))) {
+      const b = d.before.by_strategy[k];
+      console.log(`strat ${d.desk} ${k} after n=${v.all.trades} R=${f(v.all.expectancy_r, 3)} first70 n=${v.first_70.trades} R=${f(v.first_70.expectancy_r, 3)} last30 n=${v.last_30.trades} R=${f(v.last_30.expectancy_r, 3)} gross$=${f(v.all.net_pnl + v.all.costs)} | before n=${b?.all.trades ?? 0} R=${f(b?.all.expectancy_r, 3)}`);
+    }
+  }
   for (const d of desks) if (d.ok) console.log(`replay ${d.desk}: before ${JSON.stringify(d.before.all)} after ${JSON.stringify(d.after.all)} last30 before ${JSON.stringify(d.before.last_30)} after ${JSON.stringify(d.after.last_30)}`);
   if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, `${text}\n`);
 }
