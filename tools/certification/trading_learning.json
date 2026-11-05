@@ -1,0 +1,62 @@
+[
+  {
+    "id": "learn-01",
+    "category": "trading_history_backtest",
+    "difficulty": "easy",
+    "question": "Are you repeating your losing trades?",
+    "expected": {
+      "criteria": "Read-only answer from CHE's own trade journal.",
+      "must_contain_any": [
+        "trade",
+        "strateg"
+      ],
+      "must_not_contain": []
+    },
+    "receipt_required": false
+  },
+  {
+    "id": "learn-02",
+    "category": "trading_history_backtest",
+    "difficulty": "easy",
+    "question": "What is your biggest trading mistake?",
+    "expected": {
+      "criteria": "Read-only answer from CHE's own trade journal.",
+      "must_contain_any": [
+        "trade",
+        "strateg"
+      ],
+      "must_not_contain": []
+    },
+    "receipt_required": false
+  },
+  {
+    "id": "learn-03",
+    "category": "trading_history_backtest",
+    "difficulty": "easy",
+    "question": "Which strategy is hurting us most?",
+    "expected": {
+      "criteria": "Read-only answer from CHE's own trade journal.",
+      "must_contain_any": [
+        "trade",
+        "strateg"
+      ],
+      "must_not_contain": []
+    },
+    "receipt_required": false
+  },
+  {
+    "id": "learn-04",
+    "category": "trading_history_backtest",
+    "difficulty": "easy",
+    "question": "Which trading strategies has the governor paused, and why?",
+    "expected": {
+      "criteria": "Read-only answer from CHE's own trade journal.",
+      "must_contain_any": [
+        "trade",
+        "strateg"
+      ],
+      "must_not_contain": []
+    },
+    "receipt_required": false
+  }
+]
