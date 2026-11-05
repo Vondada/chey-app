@@ -141,6 +141,8 @@ Owner accounts and decisions (each listed once in `docs/CHE_MASTER_COMPLETION_LE
 
 ## Next authorised actions
 
+- **Trading (2026-11-05):** trade-quality rules live (#935 `8769198c`, deploy `42126324795`). No current strategy is profitable after costs on the replay (`42123997703`). Next: per-strategy replay breakdown (positive after costs in both halves, corrected for testing many strategies), then wider volatility-based stops on 15m/1h. Forward entries stay halted until the owner lifts it; crypto stays off at current fees.
+
 | Action | Authority | Status |
 |---|---|---|
 | Merge #738 once its required checks are green | reported: owner, 2026-10-28 ("merge only when green") | ready to check |
