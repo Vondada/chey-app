@@ -1,0 +1,36 @@
+[
+  {
+    "id": "rith-01",
+    "category": "trading_history_backtest",
+    "difficulty": "easy",
+    "question": "Is my Rithmic feed connected and recording?",
+    "expected": {
+      "criteria": "Read-only feed status from stored records.",
+      "must_contain_any": [
+        "rithmic",
+        "feed",
+        "delayed",
+        "live"
+      ],
+      "must_not_contain": []
+    },
+    "receipt_required": false
+  },
+  {
+    "id": "rith-02",
+    "category": "trading_history_backtest",
+    "difficulty": "easy",
+    "question": "What data feed is MNQ using, and is it live or delayed?",
+    "expected": {
+      "criteria": "Read-only feed status from stored records.",
+      "must_contain_any": [
+        "rithmic",
+        "feed",
+        "delayed",
+        "live"
+      ],
+      "must_not_contain": []
+    },
+    "receipt_required": false
+  }
+]
