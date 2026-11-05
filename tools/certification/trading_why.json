@@ -1,0 +1,66 @@
+[
+  {
+    "id": "why-01",
+    "category": "trading_history_backtest",
+    "difficulty": "easy",
+    "question": "Why are you losing so many trades?",
+    "expected": {
+      "criteria": "Read-only answer from the journal.",
+      "must_contain_any": [
+        "trade",
+        "strateg",
+        "journal"
+      ],
+      "must_not_contain": []
+    },
+    "receipt_required": false
+  },
+  {
+    "id": "why-02",
+    "category": "trading_history_backtest",
+    "difficulty": "easy",
+    "question": "What is my expectancy on the paper journal?",
+    "expected": {
+      "criteria": "Read-only answer from the journal.",
+      "must_contain_any": [
+        "trade",
+        "strateg",
+        "journal"
+      ],
+      "must_not_contain": []
+    },
+    "receipt_required": false
+  },
+  {
+    "id": "why-03",
+    "category": "trading_history_backtest",
+    "difficulty": "easy",
+    "question": "Which strategy will do better tomorrow?",
+    "expected": {
+      "criteria": "Read-only answer from the journal.",
+      "must_contain_any": [
+        "trade",
+        "strateg",
+        "journal"
+      ],
+      "must_not_contain": []
+    },
+    "receipt_required": false
+  },
+  {
+    "id": "why-04",
+    "category": "trading_history_backtest",
+    "difficulty": "easy",
+    "question": "Audit the trades.",
+    "expected": {
+      "criteria": "Read-only answer from the journal.",
+      "must_contain_any": [
+        "trade",
+        "strateg",
+        "journal"
+      ],
+      "must_not_contain": []
+    },
+    "receipt_required": false
+  }
+]
