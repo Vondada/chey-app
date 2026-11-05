@@ -769,9 +769,16 @@ function stepBars(pf, candles, ctx, gate, { allowEntries = true, blockReason = n
       // An intraday plan is void across the CME daily break: it never fills at the next session's open.
       const sameDay = !ctx.day || !sig.trade_day || ctx.day[k] === sig.trade_day;
       const blocked = gate ? gate(pf, { stage: 'fill', time: bar.t, day: ctx.day?.[k] }) : null;
+      // The quality rules are checked again at the real entry (the next bar's open), which can sit nearer the target
+      // than the signal close did (Codex on #935).
+      const poorFill = !blocked && inside && sameDay && pf.params?.quality
+        ? planEconomics({ side, ref: bar.o, stop: sig.stop, target: sig.target }, contract, pf.costs, pf.qty, pf.params.quality) : null;
       if (blocked) {
         pf.counts.skipped = (pf.counts.skipped || 0) + 1;
         noteSkip(pf, sig.signal_time, `the order was cancelled before it filled: ${blocked}`, sig);
+      } else if (poorFill) {
+        pf.counts.poor_plans = (pf.counts.poor_plans || 0) + 1;
+        noteSkip(pf, sig.signal_time, `not taken at the next bar's open ${bar.o}: ${poorFill}`, sig);
       } else if (inside && sameDay) {
         pf.open = {
           side, signal_time: sig.signal_time, signal_why: sig.why, signal_ref: sig.ref, condition: sig.condition,

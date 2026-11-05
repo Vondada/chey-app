@@ -428,3 +428,22 @@ test('quality rules in the engine: a costly plan is journalled as skipped, and a
   assert.equal(cool.last_exit_reason, 'stop');
   assert.ok(cool.skips.some((k) => /inside the 30-minute wait after a stop-out/.test(k.reason)), 'a signal within 30 minutes of the stop-out waits');
 });
+
+test('quality rules are checked again at the next-bar open: an entry that gaps toward the target is not filled', () => {
+  // Codex on #935: inside-bar signal at 20000, stop 19988, target 20024; an open of 20018 would net about 0.12 R.
+  const pf = newPortfolio('pdh-break', 'any', { contract: 'MNQ', qty: 1, source: 'paper', params: { quality: QUALITY_RULES } });
+  pf.skips = [];
+  pf.pending = { side: 'long', signal_time: '2026-01-05T15:00:00.000Z', why: 'test', ref: 20000, stop: 19988, target: 20024 };
+  pf.last_bar_time = '2026-01-05T15:00:00.000Z';
+  const c = [{ t: '2026-01-05T15:05:00.000Z', o: 20018, h: 20019, l: 20017, c: 20018 }];
+  assert.equal(stepPortfolio(pf, c, { }).length, 0);
+  assert.equal(pf.open, null, 'not filled');
+  assert.equal(pf.counts.filled, 0);
+  assert.match(pf.skips.at(-1).reason, /^not taken at the next bar's open 20018: a target hit would net only [\d.]+ R/);
+  // The same plan with an open near the signal price fills.
+  const ok = newPortfolio('pdh-break', 'any', { contract: 'MNQ', qty: 1, source: 'paper', params: { quality: QUALITY_RULES } });
+  ok.pending = { ...pf.skips.at(-1), side: 'long', signal_time: '2026-01-05T15:00:00.000Z', ref: 20000, stop: 19988, target: 20024 };
+  ok.last_bar_time = '2026-01-05T15:00:00.000Z';
+  stepPortfolio(ok, [{ t: '2026-01-05T15:05:00.000Z', o: 20000.5, h: 20001, l: 20000, c: 20000.5 }], {});
+  assert.equal(ok.counts.filled, 1);
+});
