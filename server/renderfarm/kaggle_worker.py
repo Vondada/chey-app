@@ -5,12 +5,13 @@
 # shots are then lip-synced to their voice lines (LatentSync 1.5) and uploaded the same way.
 # The token is a film-scoped farm token: it opens only this film's farm jobs, expires, and CHE can revoke it.
 # It is never the owner's device token. Model weights download from Hugging Face inside the session.
-import json, os, subprocess, sys, time, urllib.request
+import json, os, subprocess, sys, threading, time, urllib.request
 
 CHE_BASE = "__CHE_BASE__"
 FILM_ID = "__FILM_ID__"
 FARM_TOKEN = "__FARM_TOKEN__"
 DEADLINE_S = int("__DEADLINE_S__")
+LIPSYNC = "__LIPSYNC__" == "1"  # this film has talking shots to lip-sync
 STARTED = time.time()
 MODEL = "Lightricks/LTX-Video"  # LTXV open-weights license; see server/renderfarm/LICENSES.md
 
@@ -77,78 +78,148 @@ def lipsync_setup():
     if not os.path.isdir(root):
         subprocess.run(["git", "clone", "-q", LATENTSYNC_REPO, root], check=True)
     subprocess.run(["git", "-C", root, "checkout", "-q", LATENTSYNC_COMMIT], check=True)
-    subprocess.run([sys.executable, "-m", "venv", env], check=True)
+    # uv installs the pinned packages in parallel, several times faster than pip; pip stays the fallback.
     py = os.path.join(env, "bin", "python")
-    subprocess.run([py, "-m", "pip", "install", "-q", "-r", os.path.join(root, "requirements.txt")], check=True)
+    try:
+        subprocess.run([sys.executable, "-m", "pip", "install", "-q", "uv"], check=True)
+        subprocess.run([sys.executable, "-m", "uv", "venv", "-q", "--python", sys.executable, env], check=True)
+        subprocess.run([sys.executable, "-m", "uv", "pip", "install", "-q", "--python", py, "-r", os.path.join(root, "requirements.txt")], check=True)
+    except Exception:
+        subprocess.run([sys.executable, "-m", "venv", "--clear", env], check=True)
+        subprocess.run([py, "-m", "pip", "install", "-q", "-r", os.path.join(root, "requirements.txt")], check=True)
     get = "from huggingface_hub import hf_hub_download as d; [d('%s', f, local_dir='checkpoints') for f in ('latentsync_unet.pt', 'whisper/tiny.pt')]" % LATENTSYNC_WEIGHTS
     subprocess.run([py, "-c", get], check=True, cwd=root)
     return root, py
 
 
-def lipsync(job, setup):
+def lipsync(job, setup, gpu=None):
     root, py = setup
     ff = ffmpeg()
     seconds = float(job["seconds"])
+    work = os.path.abspath(f"lip{int(job['shot'])}")  # each shot in its own folder: two GPUs may work at once
+    os.makedirs(work, exist_ok=True)
+    at = lambda name: os.path.join(work, name)
     # The voice track at the same times the film's edit puts each line (film_studio.voiceTimes), silence elsewhere.
     inputs, chains = [], []
     for i, line in enumerate(job["audio"]):
-        fetch(line["url"], f"line{i}.mp3")
-        inputs += ["-i", f"line{i}.mp3"]
+        fetch(line["url"], at(f"line{i}.mp3"))
+        inputs += ["-i", at(f"line{i}.mp3")]
         chains.append(f"[{i}:a]adelay={int(float(line['at']) * 1000)}:all=1[a{i}]")
     mix = "".join(f"[a{i}]" for i in range(len(job["audio"]))) + f"amix=inputs={len(job['audio'])}:normalize=0,apad,atrim=0:{seconds}[voice]"
-    subprocess.run([ff, "-y", "-loglevel", "error", *inputs, "-filter_complex", ";".join(chains + [mix]), "-map", "[voice]", "-ar", "16000", "-ac", "1", "voice.wav"], check=True)
+    subprocess.run([ff, "-y", "-loglevel", "error", *inputs, "-filter_complex", ";".join(chains + [mix]), "-map", "[voice]", "-ar", "16000", "-ac", "1", at("voice.wav")], check=True)
     # The picture: the shot's moving clip looped to the shot's length, or its still held for it.
     if job.get("video_url"):
-        fetch(job["video_url"], "base.mp4")
-        source = ["-stream_loop", "-1", "-i", "base.mp4"]
+        fetch(job["video_url"], at("base.mp4"))
+        source = ["-stream_loop", "-1", "-i", at("base.mp4")]
     else:
-        fetch(job["image_url"], "base.jpg")
-        source = ["-loop", "1", "-i", "base.jpg"]
+        fetch(job["image_url"], at("base.jpg"))
+        source = ["-loop", "1", "-i", at("base.jpg")]
     subprocess.run([ff, "-y", "-loglevel", "error", *source, "-t", str(seconds), "-r", str(int(job.get("fps", 25))),
-                    "-vf", "scale=768:432:force_original_aspect_ratio=increase,crop=768:432", "-pix_fmt", "yuv420p", "-c:v", "libx264", "-an", "face.mp4"], check=True)
+                    "-vf", "scale=768:432:force_original_aspect_ratio=increase,crop=768:432", "-pix_fmt", "yuv420p", "-c:v", "libx264", "-an", at("face.mp4")], check=True)
+    # DeepCache reuses work between denoising steps (about twice as fast), as LatentSync's own inference.sh does.
+    run_env = dict(os.environ, **({"CUDA_VISIBLE_DEVICES": str(gpu)} if gpu is not None else {}))
     subprocess.run([py, "-m", "scripts.inference", "--unet_config_path", "configs/unet/stage2.yaml", "--inference_ckpt_path", "checkpoints/latentsync_unet.pt",
-                    "--inference_steps", "20", "--guidance_scale", "1.5", "--video_path", os.path.abspath("face.mp4"),
-                    "--audio_path", os.path.abspath("voice.wav"), "--video_out_path", os.path.abspath("synced.mp4")], check=True, cwd=root)
+                    "--inference_steps", "20", "--guidance_scale", "1.5", "--enable_deepcache", "--video_path", at("face.mp4"),
+                    "--audio_path", at("voice.wav"), "--video_out_path", at("synced.mp4"), "--temp_dir", at("temp")], check=True, cwd=root, env=run_env)
     # Voices are mixed by the edit, so the clip goes back silent, H.264, exactly the shot's length.
-    subprocess.run([ff, "-y", "-loglevel", "error", "-i", "synced.mp4", "-t", str(seconds), "-an", "-c:v", "libx264", "-pix_fmt", "yuv420p", "lipsync.mp4"], check=True)
-    return "lipsync.mp4"
+    subprocess.run([ff, "-y", "-loglevel", "error", "-i", at("synced.mp4"), "-t", str(seconds), "-an", "-c:v", "libx264", "-pix_fmt", "yuv420p", at("lipsync.mp4")], check=True)
+    return at("lipsync.mp4")
 
 
-def main():
-    pipe, setup = None, None
-    made, synced = 0, 0
-    while time_left() > 600:
-        job = che("GET", "/next")
+def gpu_count():
+    try:
+        import torch
+        return torch.cuda.device_count()
+    except Exception:
+        return 1
+
+
+# Lip sync's own install starts with the session, in the background, while the clip model loads: it is never waited
+# for on the way to the first clip.
+SETUP = {}
+
+
+def prepare():
+    began = time.time()
+    try:
+        SETUP["ready"] = lipsync_setup()
+    except Exception as error:
+        SETUP["error"] = error
+    SETUP["seconds"] = time.time() - began
+
+
+PREPARING = threading.Thread(target=prepare, daemon=True)
+TOTALS = {"made": 0, "lip_synced": 0}
+LOCK = threading.Lock()
+STOP = threading.Event()  # set when either GPU loop fails, so the other stops too
+FAILED = []
+
+
+def work(kind, gpu):
+    """Asks CHE for jobs of one kind ("clip", "lipsync" or "any") and does them on one GPU until there are none."""
+    pipe = None
+    reported = False
+    while time_left() > 600 and not STOP.is_set():
+        job = che("GET", f"/next?kind={kind}&gpus={gpu_count()}")
         if not job or job.get("done"):
             break
-        if job.get("wait"):  # pictures or voices are still being made
+        if job.get("wait"):  # pictures or voices are still being made, or the other GPU holds the last job
             time.sleep(min(60, int(job["wait"])))
             continue
         started = time.time()
         if job.get("kind") == "lipsync":
-            if pipe is not None:  # free the GPU for LatentSync
+            if pipe is not None:  # one GPU only: free it for LatentSync
                 import torch
                 pipe = None
                 torch.cuda.empty_cache()
             try:
-                if setup is None:
-                    setup = lipsync_setup()
-                if isinstance(setup, Exception):
-                    raise setup
-                with open(lipsync(job, setup), "rb") as f:
-                    che("PUT", f"/result?shot={int(job['shot'])}&kind=lipsync&seconds={time.time() - started:.1f}", raw=f.read(), timeout=300)
-                synced += 1
+                if not PREPARING.is_alive() and "seconds" not in SETUP:
+                    PREPARING.start()
+                PREPARING.join()
+                if "error" in SETUP:
+                    raise SETUP["error"]
+                setup_s = "" if reported else f"&setup={SETUP['seconds']:.1f}"
+                with open(lipsync(job, SETUP["ready"], gpu), "rb") as f:
+                    che("PUT", f"/result?shot={int(job['shot'])}&kind=lipsync&seconds={time.time() - started:.1f}{setup_s}", raw=f.read(), timeout=300)
+                reported = True
+                with LOCK:
+                    TOTALS["lip_synced"] += 1
             except Exception as error:  # that shot keeps its picture; the rest of the film goes on
-                if setup is None:
-                    setup = error
                 che("POST", "/lipfail", body={"shot": int(job["shot"]), "error": str(error)[:300]})
             continue
-        if pipe is None:
+        if pipe is None:  # the clip model runs on the first GPU (LatentSync gets the second when there are two)
             pipe = ltx()
         with open(make_clip(pipe, job), "rb") as f:
             che("PUT", f"/result?shot={int(job['shot'])}&seconds={time.time() - started:.1f}", raw=f.read(), timeout=300)
-        made += 1
-    che("POST", "/done", body={"made": made, "lip_synced": synced, "seconds": round(time.time() - STARTED)})
+        with LOCK:
+            TOTALS["made"] += 1
+
+
+def guarded(kind, gpu):
+    """One GPU loop on its own thread: its failure is kept for main() and stops the other loop (join() drops it)."""
+    try:
+        work(kind, gpu)
+    except Exception as error:
+        FAILED.append(error)
+        STOP.set()
+
+
+def main():
+    che("GET", f"/next?kind=hello&gpus={gpu_count()}&boot={time.time() - STARTED:.1f}")
+    if LIPSYNC:
+        PREPARING.start()
+    if LIPSYNC and gpu_count() >= 2:
+        # Two GPUs (Kaggle's T4 x2): moving clips on the first, lip sync on the second, at the same time.
+        loops = [threading.Thread(target=guarded, args=("clip", 0)), threading.Thread(target=guarded, args=("lipsync", 1))]
+        for t in loops:
+            t.start()
+        for t in loops:
+            t.join()
+        if FAILED:  # reported to CHE by the handler below, so the farm's fallback starts at once
+            raise FAILED[0]
+    else:
+        work("any", None)
+    che("POST", "/done", body={**TOTALS, "gpus": gpu_count(), "seconds": round(time.time() - STARTED)})
 
 
 if __name__ == "__main__":
