@@ -11,6 +11,7 @@
 import {
   CRYPTO_CONTRACTS, INTRADAY_CANDIDATES, MIN_TRADES, appendTrades, candleProblems, evaluateWalkForward, intradayContext,
   newPortfolio, readTrades, sessionOf, stepPortfolio, summarize, validateTradeRecord,
+  QUALITY_RULES,
 } from './trading_evidence.js';
 import { governedGate, pausedUnits, runGovernor } from './strategy_governor.js';
 import { leakageAudit } from './historical_intelligence.js';
@@ -52,6 +53,11 @@ export const CRYPTO_COSTS = Object.freeze({
   ETH: Object.freeze({ spreadTicks: 10, slippageTicks: 10, commissionPerSide: 0, feePerSide: 0, takerPct: 0.006, makerPct: 0.004 }),
 });
 
+// The trade-quality rules new crypto portfolios carry (trading_evidence.js QUALITY_RULES). At 0.60% taker fees a stop
+// inside the 0.1% to 1% band always costs more than 0.25 R, so under these rules the desk records setups as skipped for
+// costs instead of taking trades that lose on fees. Journal-plumbing tests switch it off and restore it.
+export const cryptoDesk = { quality: QUALITY_RULES };
+
 const r2 = (x) => Math.round(x * 100) / 100;
 const r4 = (x) => Math.round(x * 10000) / 10000;
 const iso = (ms) => new Date(ms).toISOString();
@@ -63,7 +69,7 @@ export function cryptoSpecs() {
 }
 const seriesLabel = (coin, tf, status) => `Coinbase Exchange ${COINS[coin].product} ${tf} (${status})`;
 function freshPortfolio(coin, tf, spec, source = 'paper') {
-  const pf = newPortfolio(spec.c, spec.f, { contract: coin, qty: COINS[coin].qty, source, resolution: tf, priceSeries: seriesLabel(coin, tf, 'LIVE'), costs: CRYPTO_COSTS[coin], params: { target_r: spec.target_r } });
+  const pf = newPortfolio(spec.c, spec.f, { contract: coin, qty: COINS[coin].qty, source, resolution: tf, priceSeries: seriesLabel(coin, tf, 'LIVE'), costs: CRYPTO_COSTS[coin], params: { target_r: spec.target_r, ...(cryptoDesk.quality ? { quality: cryptoDesk.quality } : {}) } });
   pf.signals = [];
   pf.skips = [];
   return pf;

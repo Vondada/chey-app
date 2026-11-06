@@ -90,6 +90,24 @@ test('a verdict needs 30 independent trades, uses the confidence bound (not win 
   assert.equal(verdict(performance(big), { prior, research: { met: true } }).status, 'active');
 });
 
+test('early stops: 8 losses in a row, or a bound already below zero after 15 trades, pause before 30 trades', () => {
+  // The audit's case: FVG retest lost 24 of 30 and the 20-EMA crypto unit lost 38 in a row while still "gathering".
+  const streak = Array.from({ length: 12 }, (_, i) => trade(i, i < 4 ? 2 : -1));
+  const v = verdict(performance(streak));
+  assert.equal(v.status, 'paused');
+  assert.match(v.reason, /8 losses in a row \(limit 8\)/);
+  assert.equal(verdict(performance(streak.slice(0, 11))).status, 'gathering', '7 in a row is not yet a pause');
+  const bleeding = Array.from({ length: 16 }, (_, i) => trade(i, i % 5 === 0 ? 1 : -1));
+  const early = verdict(performance(bleeding));
+  assert.equal(early.status, 'paused');
+  assert.match(early.reason, /already below zero/);
+  assert.equal(verdict(performance(bleeding.slice(0, 14))).status, 'gathering', 'below 15 trades it still gathers');
+  // A winning unit with a short losing run is not paused early.
+  const fine = Array.from({ length: 20 }, (_, i) => trade(i, i % 3 === 0 ? -1 : 2));
+  assert.notEqual(verdict(performance(fine)).status, 'paused');
+  assert.deepEqual(cleanSettings({ streak_pause: 1, early_trades: 2 }), { streak_pause: 4, early_trades: 10 });
+});
+
 test('one setup traded by four portfolio variants counts once; duplicate records count once', () => {
   const variants = [['any', 2], ['trend', 2], ['any', 1.5], ['any', 3]].map(([filter, target_r]) => trade(1, -1, { filter, target_r }));
   const dup = trade(2, 1);

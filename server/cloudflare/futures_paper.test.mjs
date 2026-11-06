@@ -264,7 +264,7 @@ function storageMap() {
   };
 }
 
-test('/api/chat and /api/futures/paper: order, ack, fill, position, connection loss, flatten and reconcile end to end', { skip: (() => { const d = new Date(); const day = d.getUTCDay(); return day === 6 || (day === 0 && d.getUTCHours() < 23) || (day === 5 && d.getUTCHours() >= 21); })() && 'the CME session is closed now, so market orders are correctly rejected' }, async () => {
+test('/api/chat and /api/futures/paper: order, ack, fill, position, connection loss, flatten and reconcile end to end', { skip: (() => { const d = new Date(); const day = d.getUTCDay(); const etHour = Number(new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hour: 'numeric', hourCycle: 'h23' }).format(d)); return day === 6 || (day === 0 && d.getUTCHours() < 23) || (day === 5 && d.getUTCHours() >= 21) || etHour === 17; })() && 'the CME session is closed now (weekend or the 5–6 pm New York daily break), so market orders are correctly rejected' }, async () => {
   const env = { CHE_PAIR_CODE: '123456', CHE_DISABLE_KEYLESS_AI: '1', AI: { run: async () => ({ response: 'MODEL TEXT' }) } };
   const storage = storageMap();
   const state = new CheState({ storage, waitUntil: () => {} }, env);

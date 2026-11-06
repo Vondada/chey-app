@@ -7,6 +7,7 @@ Owner, 2026-10-23: "Stop repeating losing trading strategies." The governor (`se
 - **Evidence unit:** strategy × market × timeframe (each strategy version separately). The tracking breakdowns also split by session and market condition.
 - **Independent trades only.** Forward paper runs each strategy in several portfolios: with and without the trend filter, and with two target sizes. One setup can therefore close as up to four trades. For statistics the governor counts one trade per setup (strategy + signal bar + side), preferring the `any` filter and the 2R target. Raw counts are still shown.
 - **Pause (restricted from forward paper):** at least `min_trades` independent closed trades (default 30, `MIN_CLOSED_TRADES`), *and* the one-sided upper confidence bound of expectancy in R is below 0. The default confidence is 95% (z = 1.645). Win rate alone never decides.
+- **Early pause (2026-11-05 loss audit):** before `min_trades`, a unit is also paused after `streak_pause` losses in a row (default 8), or once it has `early_trades` independent trades (default 15) and the same upper bound is already below 0. The audit found units that stayed "gathering" through 13 and 38 losses in a row.
 - **Watch:** the same test fails only at a looser bound (z = 1.0), or the run of consecutive losses is longer than a strategy with its own measured win rate would produce 1 time in 100 (`streak_p`). Watch is shown and recorded, but it does not restrict trading.
 - **Resume (revalidation):** a paused strategy returns to forward paper only when CHE's research shows, for that strategy, market and timeframe:
   - at least 30 out-of-sample trades with expectancy > 0;
@@ -22,7 +23,21 @@ Owner, 2026-10-23: "Stop repeating losing trading strategies." The governor (`se
   - a record the journal validator refuses.
 - **Duplicates:** the journal is already append-only, one key per trade (`recordKey`). The governor also refuses to count two records with the same portfolio and entry time.
 
-Settings, stored under `gov_settings` and changeable by the owner: `min_trades` 30, `z_pause` 1.645, `z_watch` 1.0, `streak_p` 0.01, `enabled` true.
+Settings, stored under `gov_settings` and changeable by the owner: `min_trades` 30, `z_pause` 1.645, `z_watch` 1.0, `streak_p` 0.01, `streak_pause` 8 (bounded 4–50), `early_trades` 15 (bounded 10–500), `enabled` true.
+
+## Trade-quality rules (forward paper)
+
+The forward paper desks (`trading_live.js` for MNQ, `crypto_markets.js` for BTC and ETH) give every new portfolio
+`params.quality` = `QUALITY_RULES` from `trading_evidence.js`. A setup is journalled as skipped ("not taken: …") when:
+
+- a stop-out's round-trip costs would be more than 0.25 R of its risk (the strategy simulation's cost gate);
+- a target hit would net less than 1 R after costs (VWAP reversion targets can sit under 1 R); or
+- the same portfolio was stopped out less than 30 minutes earlier.
+
+The rules are part of the strategy version, so results under them never mix with the journal from before
+2026-10-28. At Coinbase's 0.60% taker fee no crypto stop inside the desk's 0.1%–1% band passes, so the crypto desk
+records skips for costs instead of trades that lose on fees. `tools/che_quality_replay.mjs` (in
+`che-strategy-backtest.yml`) replays every desk on real bars with and without the rules.
 
 ## Simulation allocation
 
