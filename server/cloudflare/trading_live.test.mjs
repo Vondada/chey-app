@@ -4,7 +4,7 @@ import { readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import test from 'node:test';
 import { aggregate, cmeSession, frontMonth, parseYahooChart } from './market_feed.js';
 import { CONTRACTS, COSTS, INTRADAY_CANDIDATES, fillEntry, exitOn, newPortfolio, readTrades, settleTrade, stepPortfolio, intradayContext } from './trading_evidence.js';
-import { LIVE_EXCLUDED, LIVE_PORTFOLIOS, liveDashboard, liveTick, setLivePaper } from './trading_live.js';
+import { LIVE_EXCLUDED, LIVE_PORTFOLIOS, isPrimaryVariant, liveDashboard, liveTick, readLivePortfolios, setLivePaper } from './trading_live.js';
 import { liveIntent } from './trading_live_chat.js';
 import { evidenceReport } from './trading_evidence_runner.js';
 import { haltState, learnedState } from './strategy_governor.js';
@@ -660,4 +660,35 @@ test('a valid setup seen while the feed is not verified is journalled as skipped
   const skip = (portfolio.skips || []).find((s) => s.time === DAY2[0].t);
   assert.ok(skip, `the sweep setup is journalled as skipped: ${JSON.stringify(portfolio.skips)}`);
   assert.match(skip.reason, /real-time CME data was not verified/);
+});
+
+test('one trade per signal: the any and trend copies of a setup no longer both enter (owner\'s recording, 2026-11-06)', async () => {
+  const storage = memoryStorage();
+  await setLivePaper(storage, true, Date.parse('2026-10-19T21:59:00Z'));
+  await liveTick(storage, { force: true, load: feedOf(DAY1), now: after(DAY1) });
+  await liveTick(storage, { force: true, load: feedOf([...DAY1, ...DAY2]), now: after(DAY2) });
+  const trades = await readTrades(storage, (t) => t.data?.resolution === '5m');
+  const byEntry = new Map();
+  for (const t of trades) {
+    const k = `${t.strategy}|${t.side}|${t.entry.time}`;
+    byEntry.set(k, (byEntry.get(k) || 0) + 1);
+  }
+  assert.ok(trades.length >= 1, 'the fixture still trades');
+  assert.deepEqual([...byEntry.values()].filter((n) => n > 1), [], 'no market entry is journalled twice');
+  for (const t of trades) assert.equal(t.filter, 'any', `${t.strategy} traded only its primary copy`);
+});
+
+test('the gate lets the primary copy enter and keeps every other copy in research, with the reason', async () => {
+  const { oneTradePerSignal } = await import('./trading_live.js');
+  const gate = oneTradePerSignal(() => null);
+  const pf = (candidate, filter, target_r) => ({ candidate, filter, params: { target_r } });
+  assert.equal(gate(pf('ema-pullback-5m', 'any', 2), { stage: 'signal' }), null, 'the primary copy enters');
+  assert.equal(gate(pf('rsi-revert-5m', 'any', 1.5), { stage: 'signal' }), null, 'RSI reversal\'s primary target is 1.5R');
+  assert.match(gate(pf('ema-pullback-5m', 'trend', 2), { stage: 'signal' }), /one trade per signal: this copy \(trend filter, 2R\) stays in research/);
+  assert.match(gate(pf('fvg-retest-5m', 'any', 3), { stage: 'signal' }), /\(any filter, 3R\)/);
+  assert.equal(gate(pf('ema-pullback-5m', 'trend', 2), { stage: 'fill' }), null, 'an order already placed is never cancelled by this rule');
+  const portfolios = await readLivePortfolios(memoryStorage());
+  const primaries = portfolios.filter(isPrimaryVariant);
+  assert.equal(new Set(primaries.map((p) => p.candidate)).size, primaries.length, 'exactly one primary copy per setup');
+  assert.equal(primaries.length, new Set(portfolios.map((p) => p.candidate)).size, 'every setup keeps one copy that trades');
 });
