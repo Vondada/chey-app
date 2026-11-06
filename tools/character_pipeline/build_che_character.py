@@ -3,6 +3,7 @@
 Run with Blender's Python module (bpy 5.x, Python 3.11):
   python build_che_character.py -- <out.glb> [character_id]
   python build_che_character.py -- <out_dir>/ all        # every character, <id>.glb each
+  python build_che_character.py -- <out_dir>/ all usdz   # also <id>.usdz for iPhone AR
 
 character_id is one of CHARACTERS below (default: che). The looks follow the owner's
 reference images in assets/characters/reference/ (ref-02, ref-04, ref-05): big round
@@ -26,6 +27,7 @@ from mathutils.noise import noise as pnoise
 ARGS = sys.argv[sys.argv.index("--") + 1:]
 OUT = ARGS[0]
 WHICH = ARGS[1] if len(ARGS) > 1 else "che"
+USDZ = "usdz" in ARGS[2:]          # also write <name>.usdz next to each GLB (iPhone AR Quick Look)
 FPS = 30
 META_RES = 0.008
 
@@ -45,50 +47,60 @@ def mix(a, b, t):
 
 
 # ---------------------------------------------------------------- the crew
-# Roles come from lib/che_ui/che_brain.dart (CHE's office). Looks come from the reference
-# images: ref-04 (CHE, the orange-jacket runner, the headphones coder, purple bun,
-# glasses bun, beanie, curly glasses) and ref-02 (the agents list cards).
+# Roles come from lib/che_ui/che_brain.dart (CHE's office). Looks follow the owner's CHE WORLD character sheets
+# (2026-11-06), written down in server/cloudflare/film_cast.js CREW_LOOKS. The chibi proportions stay (big head, short
+# body): these are the sheets' skin, hair, colours and outfits on the existing rig, not their realistic proportions.
 CHARACTERS = {
-    "che": dict(
+    "che": dict(  # long voluminous black wavy hair, gold hoops, white blazer and trousers over a black top, gold belt
         name="CHE", role="Office Boss",
-        skin="#c98b62", eyes="#3a2216", hair="#1c1210", hair_hi="#4a3022",
-        hair_style="long_wavy", top="jacket", top_color="#1f6f78", inner="#15171a",
-        pants="#17191d", shoes="#222429", sole="#e9ecef", earrings="#d8b25a"),
-    "nova": dict(
+        skin="#8d5a3b", eyes="#2a170e", hair="#141010", hair_hi="#3a2a22",
+        hair_style="long_wavy", top="jacket", top_color="#f1eee8", inner="#141416",
+        pants="#ece8e1", shoes="#e9e4dc", sole="#f4f1ec", earrings="#d8b25a", belt="#c9a227"),
+    "nova": dict(  # long sleek black high ponytail, black leather track jacket with white stripes, white crop top
         name="Nova", role="Product / listings",
-        skin="#f0c8a8", eyes="#3b2a4a", hair="#8d64d6", hair_hi="#c6a6f5",
-        hair_style="bun_high", top="hoodie", top_color="#b79be6", inner="#b79be6",
-        pants="#2a2633", shoes="#f2f2f4", sole="#f2f2f4"),
-    "atlas": dict(
+        skin="#8a5638", eyes="#2a170e", hair="#121010", hair_hi="#3a3030",
+        hair_style="ponytail_high", top="jacket", top_color="#161618", inner="#f3f1ec", stripes="#f2f2f2",
+        pants="#141416", shoes="#f2f2f4", sole="#f2f2f4"),
+    "atlas": dict(  # dark brown skin, short black curly hair, full trimmed beard, black hoodie
         name="Atlas", role="Research / sourcing",
-        skin="#d29a72", eyes="#2e1c12", hair="#2a1a12", hair_hi="#5a3a26",
-        hair_style="curly_short", top="jacket", top_color="#e8732e", inner="#f1f1ef",
-        pants="#18191c", shoes="#f4f4f4", sole="#f4f4f4"),
-    "mira": dict(
+        skin="#5e3a24", eyes="#24160e", hair="#121010", hair_hi="#2e2420",
+        hair_style="curly_short", top="hoodie", top_color="#1b1c1f", inner="#1b1c1f",
+        pants="#17181b", shoes="#f4f4f4", sole="#f4f4f4", beard=True),
+    "mira": dict(  # light brown skin, platinum blonde high bun, gold hoops, sleek black outfit, gold jewelry
         name="Mira", role="Support copy / translation",
-        skin="#e7b48e", eyes="#3a2416", hair="#4a2c1c", hair_hi="#7d5236",
-        hair_style="bun_low", top="sweater", top_color="#e9dcc8", inner="#e9dcc8",
-        pants="#3b3f47", shoes="#2a2a2e", sole="#d9d9d9", glasses="#2a1d18"),
-    "knox": dict(
+        skin="#c08a62", eyes="#3a2416", hair="#e6dcc4", hair_hi="#fffaee",
+        hair_style="bun_high", top="sweater", top_color="#151517", inner="#151517",
+        pants="#151517", shoes="#151517", sole="#d9d9d9", earrings="#d8b25a"),
+    "knox": dict(  # dark brown skin, dark sunglasses, short hair, trimmed beard, black tactical jacket with patches
         name="Knox", role="Engineering",
-        skin="#7a4a2e", eyes="#24160e", hair="#141010", hair_hi="#2e2420",
-        hair_style="afro", top="jacket", top_color="#3e5f86", inner="#e8e8e8",
-        pants="#1d2028", shoes="#2a2d33", sole="#eeeeee", headphones="#2f5fd0"),
-    "sage": dict(
+        skin="#5a3622", eyes="#24160e", hair="#121010", hair_hi="#2a2220",
+        hair_style="short", top="jacket", top_color="#1f2226", inner="#2a2d31", patches="#5b6146",
+        pants="#1d2028", shoes="#2a2d33", sole="#3a3d42", glasses="#0d0d0f", lenses="#101114", beard=True),
+    "sage": dict(  # brown skin, long dark wavy hair, clear glasses, black turtleneck under a black jacket
         name="Sage", role="Finance (read-only)",
-        skin="#8c5a3c", eyes="#24160e", hair="#1a1210", hair_hi="#3a2a20",
-        hair_style="curly_short", top="jacket", top_color="#56603e", inner="#d9d4c6",
-        pants="#22242a", shoes="#3a2c22", sole="#d8d0c0", glasses="#1d1a18", beard=True),
-    "lyra": dict(
+        skin="#8c5a3c", eyes="#24160e", hair="#1d1412", hair_hi="#4a3428",
+        hair_style="long_wavy", top="jacket", top_color="#18181a", inner="#101012",
+        pants="#18181a", shoes="#1d1d20", sole="#d8d0c0", glasses="#c9c9cf"),
+    "lyra": dict(  # brown skin, long wavy crimson-red hair, headphones around her neck, black crop top and outfit
         name="Lyra", role="Content / social",
-        skin="#dca27a", eyes="#331f14", hair="#3b2416", hair_hi="#7a4e30",
-        hair_style="wavy_medium", top="jacket", top_color="#d89a2a", inner="#f3efe6",
-        pants="#262a33", shoes="#f0f0f0", sole="#f0f0f0"),
-    "iris": dict(
+        skin="#8a5638", eyes="#331f14", hair="#8e1626", hair_hi="#d23a4a",
+        hair_style="long_wavy", top="sweater", top_color="#141416", inner="#141416",
+        pants="#141416", shoes="#141416", sole="#f0f0f0", neck_headphones="#26272b"),
+    "iris": dict(  # light brown skin, long silver-white high ponytail, hoop earrings, sleek black outfit
         name="Iris", role="Ad Studio",
-        skin="#f1cdb0", eyes="#3d6ea8", hair="#d8b46a", hair_hi="#f0d79a",
-        hair_style="beanie", top="jacket", top_color="#3a5574", inner="#e5e5e5",
-        pants="#1d2129", shoes="#1f1f22", sole="#e5e5e5", beanie="#1b1c20"),
+        skin="#c08a62", eyes="#3a2416", hair="#cfd1d8", hair_hi="#ffffff",
+        hair_style="ponytail_high", top="sweater", top_color="#151517", inner="#151517",
+        pants="#151517", shoes="#1f1f22", sole="#e5e5e5", earrings="#d8d8dc"),
+    "orion": dict(  # olive skin, wavy dark hair swept back, short beard, black leather jacket
+        name="Orion", role="Markets / crypto",
+        skin="#b58660", eyes="#2a1a10", hair="#1c1512", hair_hi="#4a382c",
+        hair_style="swept_back", top="jacket", top_color="#19191b", inner="#2b2c30",
+        pants="#1b1d22", shoes="#1d1d20", sole="#d8d8d8", beard=True),
+    "vale": dict(  # light brown skin, long black hair with blunt bangs, black leather jacket over a white crop top
+        name="Vale", role="Operations",
+        skin="#c08a62", eyes="#2a170e", hair="#121010", hair_hi="#33302e",
+        hair_style="long_bangs", top="jacket", top_color="#19191b", inner="#f3f1ec",
+        pants="#141416", shoes="#141416", sole="#e5e5e5"),
 }
 
 # ---------------------------------------------------------------- proportions (chibi)
@@ -98,6 +110,19 @@ H = Vector((0, 0, 0.885))         # head centre
 HA = (0.200, 0.186, 0.190)        # head semi-axes x (width), y (depth), z (height)
 EYE_X, EYE_DZ = 0.080, -0.040     # eye centre: sideways offset, height below head centre
 SIT_DROP = -0.19
+MOUTH_COLS = 13
+MOUTH_ROWS = 6
+# Visemes (mouth shapes) as (half-width, half-open, centre drop, smile curve); "rest" is the neutral small smile.
+# Names are stable: the app, the renderer and tests read them as glTF morph targets "viseme_<name>" and "blink".
+VISEMES = {
+    "rest": (0.026, 0.0016, 0.0, 1.0),
+    "A": (0.025, 0.028, -0.009, 0.3),
+    "E": (0.031, 0.008, -0.002, 0.7),
+    "O": (0.015, 0.016, -0.005, 0.0),
+    "U": (0.010, 0.008, -0.003, -0.2),
+    "MBP": (0.024, 0.0, 0.0, 0.3),
+    "FV": (0.024, 0.004, -0.002, 0.1),
+}
 FINGER_BONES = {
     "thumb": ((0.138, -0.02, 0.338), (0.134, -0.034, 0.316)),
     "index": ((0.148, -0.013, 0.315), (0.15, -0.014, 0.293)),
@@ -143,7 +168,7 @@ def make_materials(c):
         "glint": material("glint", rough=0.05, rgb=(1, 1, 1), emit=(1, 1, 1), emit_strength=2.5, vcol=False),
         "lash": material("lash", rough=0.5, rgb=srgb("#100a08"), vcol=False),
         "brow": material("brow", rough=0.7, rgb=mix(srgb(c["hair"]), srgb("#100a08"), 0.5), vcol=False),
-        "mouth": material("mouth", rough=0.4, rgb=srgb("#8a3530"), vcol=False),
+        "mouth": material("mouth", rough=0.4, rgb=srgb("#5e1d1d"), vcol=False, double=True),
         "nose": material("nose", rough=0.6, rgb=mix(srgb(c["skin"]), srgb("#7a3f2a"), 0.22), vcol=False),
         "acc": material("acc", rough=0.35, metal=0.2, rgb=(0.02, 0.02, 0.02), vcol=False),
     }
@@ -542,6 +567,24 @@ def build_hair(c, M):
         parts += [hair_cap(M, 1.02, 1.6, 2.3, off=0.012, top=0.012, part=-0.3),
                   meta_curls(M, [(H + Vector((0, 0.17, 0.12)), 0.08), (H + Vector((0.03, 0.17, 0.17)), 0.045)], "hair_bun"),
                   hair_fringe(M, 1.15, 1.0, span=0.8, off=0.022, scallop=0.04)]
+    elif style == "ponytail_high":
+        # Sleek cap pulled back, a tie at the crown and a tail falling down the back.
+        tail = [H + Vector((0, 0.10, 0.20)), H + Vector((0, 0.19, 0.19)), H + Vector((0, 0.24, 0.10)),
+                H + Vector((0, 0.25, -0.04)), H + Vector((0, 0.23, -0.18)), H + Vector((0, 0.20, -0.28))]
+        parts += [hair_cap(M, 1.0, 1.62, 2.35, off=0.010, top=0.008, part=0.0),
+                  tube("ponytail", tail, [0.038, 0.046, 0.044, 0.038, 0.028, 0.012], M["hair"], sides=14),
+                  meta_curls(M, [(H + Vector((0, 0.11, 0.20)), 0.042)], "hair_tie")]
+    elif style == "short":
+        parts += [hair_cap(M, 1.0, 1.45, 2.0, off=0.012, top=0.012)]
+    elif style == "swept_back":
+        # Volume on top, combed back from the forehead; no fringe.
+        parts += [hair_cap(M, 0.95, 1.45, 2.1, off=0.02, top=0.05),
+                  meta_curls(M, [(head_point(sph(0.55 + 0.1 * (k % 2), -0.5 + 0.25 * k), 0.035), 0.04) for k in range(5)], "hair_quiff")]
+    elif style == "long_bangs":
+        # Long straight hair with blunt bangs cut straight across the forehead.
+        parts += [hair_cap(M, 1.05, 1.55, 2.3),
+                  hair_skirt(M, 0.38, 0.08, phi0=0.98, wave=0.006),
+                  hair_fringe(M, 1.22, 1.22, span=0.95, off=0.03, scallop=0.0)]
     elif style == "beanie":
         parts += [hair_cap(M, 1.15, 1.85, 2.25, off=0.014, top=0.0),
                   hair_fringe(M, 1.38, 1.28, span=0.9, off=0.026, scallop=0.08)]
@@ -673,6 +716,10 @@ def build(cid):
             if abs(co.x) < 0.1 and e < 0.008:
                 t = max(0.0, min(1.0, (e + 0.008) / 0.016))
                 return mix(inner_c, mix(top_c, (0, 0, 0), 0.3 * (1 - t)), t)
+        if c.get("stripes") and abs(co.x) > 0.1 and abs(co.y) < 0.012:
+            return srgb(c["stripes"])                                           # track-jacket stripe down each sleeve
+        if c.get("patches") and abs(co.x) > 0.1 and co.y < 0 and 0.52 < co.z < 0.57:
+            return srgb(c["patches"])                                           # tactical patch on each upper arm
         if kind == "hoodie" and co.y < 0 and abs(co.x) < 0.07 and 0.42 < co.z < 0.48:
             return mix(top_c, (0, 0, 0), 0.12)                                  # front pocket
         return base
@@ -708,12 +755,14 @@ def build(cid):
     ER = (0.052, 0.03, 0.06)                     # eye semi-axes: width, depth, height
 
     eye_mat = eye_material(cid, white, iris_c, iris_light, iris_dark, pupil)
+    eye_centre = {}
 
     for s, sx in (("L", 1), ("R", -1)):
         p, n = on_face(EYES[s].x, EYES[s].z)
         n = (n + Vector((0, -1.2, 0))).normalized()                 # chibi eyes look forward
         R = surface_frame(n)
         centre = p - n * 0.016
+        eye_centre[s] = centre
         eye, local = ellipsoid(f"eye.{s}", centre, ER, eye_mat, R, seg=(40, 28), keep_bm=True)
         uv = eye.data.uv_layers.new(name="UVMap")
         for loop in eye.data.loops:
@@ -754,12 +803,46 @@ def build(cid):
 
     p, n = on_face(0, H.z - 0.088)
     rigid(ellipsoid("nose", p, (0.009, 0.006, 0.007), M["nose"], surface_frame(n)), "head")
-    mouth = []
-    for k in range(9):
-        t = (k - 4) / 4
-        mp, mn = on_face(0.026 * t, H.z - 0.128 + 0.011 * t * t)
-        mouth.append(mp + mn * 0.0015)
-    rigid(tube("mouth", mouth, [0.002, 0.003, 0.0036, 0.004, 0.004, 0.004, 0.0036, 0.003, 0.002], M["mouth"]), "head")
+    # Mouth: a lip shape on the face whose shape keys are the visemes (glTF morph targets with these exact names), so
+    # a renderer or the app drives lip sync by weight. The upper and lower lip lines meet at the corners; "open" is half
+    # the gap between them at the centre.
+    def mouth_shape(w, o, dz, smile):
+        # MOUTH_ROWS + 1 rows from the upper lip line to the lower one, every point on the face surface, so an open
+        # mouth stays a filled shape on the curved face instead of a flat cut into it.
+        pts = []
+        for r in range(MOUTH_ROWS + 1):
+            row = 1 - 2 * r / MOUTH_ROWS
+            for k in range(MOUTH_COLS):
+                t = (k - (MOUTH_COLS - 1) / 2) / ((MOUTH_COLS - 1) / 2)
+                z = H.z - 0.128 + 0.011 * smile * t * t + dz
+                gap = o * math.sqrt(max(0.0, 1 - t * t)) + 0.0012
+                mp, mn = on_face(w * t, z + row * gap)
+                pts.append(mp + mn * 0.0018)
+        return pts
+
+    bm = bmesh.new()
+    vs = [bm.verts.new(v) for v in mouth_shape(*VISEMES["rest"])]
+    for r in range(MOUTH_ROWS):
+        for k in range(MOUTH_COLS - 1):
+            a = r * MOUTH_COLS + k
+            bm.faces.new((vs[a], vs[a + 1], vs[a + MOUTH_COLS + 1], vs[a + MOUTH_COLS]))
+    mouth = bm_to_obj(bm, "mouth", M["mouth"])
+    mouth.shape_key_add(name="Basis")
+    for vname, shape in VISEMES.items():
+        key = mouth.shape_key_add(name=f"viseme_{vname}")
+        key.value = 0.0                         # glTF default weight 0: the rest face unless a renderer drives it
+        for i, co in enumerate(mouth_shape(*shape)):
+            key.data[i].co = co
+    rigid(mouth, "head")
+
+    # Blink: each eye, its glints and its lash line close onto the eye's middle height.
+    for obj in [o for o in bpy.data.objects if o.type == "MESH" and o.name.split(".")[0] in ("eye", "lash", "glint0", "glint1")]:
+        cz = eye_centre[obj.name.split(".")[-1]].z
+        obj.shape_key_add(name="Basis")
+        key = obj.shape_key_add(name="blink")
+        key.value = 0.0
+        for i, v in enumerate(obj.data.vertices):
+            key.data[i].co = Vector((v.co.x, v.co.y, cz + (v.co.z - cz) * 0.12 - (0.004 if obj.name.startswith("lash") else 0.0)))
 
     # ---- accessories
     def acc_mat(o, hexc, rough=0.35, metal=0.3):
@@ -789,6 +872,15 @@ def build(cid):
         g = join(objs, "glasses")
         acc_mat(g, c["glasses"], 0.3, 0.2)
         rigid(g, "head")
+        if c.get("lenses"):
+            lens = []
+            for s, sx in (("L", 1), ("R", -1)):
+                p, n = on_face(EYES[s].x, EYES[s].z)
+                R = surface_frame((n + Vector((0, -1.5, 0))).normalized())
+                lens.append(ellipsoid(f"lens.{s}", p + R @ Vector((0, -0.03, 0)), (0.056, 0.004, 0.05), M["acc"], R, seg=(24, 8)))
+            lg = join(lens, "lenses")
+            acc_mat(lg, c["lenses"], 0.08, 0.6)
+            rigid(lg, "head")
     if c.get("headphones"):
         band = [H + Vector((0.255 * math.cos(math.pi * k / 20), 0.0, 0.0 + 0.335 * math.sin(math.pi * k / 20))) for k in range(21)]
         objs = [tube("hp_band", band, 0.016, M["acc"], sides=10)]
@@ -798,6 +890,21 @@ def build(cid):
         g = join(objs, "headphones")
         acc_mat(g, c["headphones"], 0.3, 0.4)
         rigid(g, "head")
+    if c.get("neck_headphones"):
+        # Headphones resting around the neck: the band behind the neck, the cups on the collarbones.
+        band = [Vector((0.085 * math.cos(math.pi * k / 20), 0.03 + 0.05 * math.sin(math.pi * k / 20), 0.655)) for k in range(21)]
+        objs = [tube("nhp_band", band, 0.012, M["acc"], sides=10)]
+        for sx in (1, -1):
+            objs.append(ellipsoid(f"nhp_cup{sx}", Vector((0.088 * sx, -0.035, 0.635)), (0.022, 0.042, 0.046), M["acc"]))
+        g = join(objs, "neck_headphones")
+        acc_mat(g, c["neck_headphones"], 0.3, 0.4)
+        rigid(g, "chest")
+    if c.get("belt"):
+        ring = [Vector((0.112 * math.cos(2 * math.pi * k / 40), 0.104 * math.sin(2 * math.pi * k / 40), 0.392)) for k in range(40)]
+        g = join([tube("belt", ring, 0.011, M["acc"], closed=True, sides=6),
+                  ellipsoid("buckle", Vector((0, -0.112, 0.392)), (0.022, 0.006, 0.016), M["acc"])], "belt_all")
+        acc_mat(g, c["belt"], 0.25, 0.9)
+        rigid(g, "pelvis")
     if c.get("beanie"):
         def bf(u, v):
             phi = -math.pi + 2 * math.pi * u
@@ -1012,6 +1119,126 @@ def think(t):
     return fingers(P, 0.35)
 
 
+def dance(t):
+    # A simple two-step: weight shifts side to side with a bounce, arms pumping in time, head bobbing.
+    a = S(t, 2)
+    P = {
+        "pelvis": (0, 0, 0.12 * S(t)),
+        "spine": (0, 0.08 * S(t), -0.1 * S(t)),
+        "chest": (0.05 * abs(a), 0.1 * S(t), 0),
+        "thigh.L": (-0.25 * max(0.0, S(t)), 0, 0),
+        "thigh.R": (-0.25 * max(0.0, -S(t)), 0, 0),
+        "shin.L": (0.45 * max(0.0, S(t)), 0, 0),
+        "shin.R": (0.45 * max(0.0, -S(t)), 0, 0),
+        "upper_arm.L": (-0.9 + 0.35 * a, 0, mz("L", 0.5)),
+        "upper_arm.R": (-0.9 - 0.35 * a, 0, mz("R", 0.5)),
+        "forearm.L": (-1.4, 0, 0),
+        "forearm.R": (-1.4, 0, 0),
+        "head": (0.08 * abs(a), 0.06 * S(t), 0.08 * S(t)),
+        "_loc": (0.02 * S(t), 0, 0.025 * abs(a)),
+    }
+    return fingers(P, 0.5)
+
+
+def happy(t):
+    # Upright and bouncy, a little head tilt, hands loose and open.
+    P = {
+        "chest": (-0.06, 0, 0),
+        "head": (-0.1, 0.05 * S(t), 0.1 + 0.03 * S(t, 2)),
+        "upper_arm.L": (0.05, 0, mz("L", 0.35 + 0.05 * S(t, 2))),
+        "upper_arm.R": (0.05, 0, mz("R", 0.35 + 0.05 * S(t, 2))),
+        "forearm.L": (-0.5, 0, 0),
+        "forearm.R": (-0.5, 0, 0),
+        "_loc": (0, 0, 0.012 * abs(S(t, 2))),
+    }
+    return fingers(P, 0.05)
+
+
+def sad(t):
+    # Head down, shoulders forward and dropped, arms hanging, a slow sigh.
+    P = {
+        "chest": (0.22 + 0.02 * S(t), 0, 0),
+        "spine": (0.08, 0, 0),
+        "neck": (0.15, 0, 0),
+        "head": (0.32 + 0.02 * S(t), 0, 0.05),
+        "shoulder.L": (0.15, 0, mz("L", -0.1)),
+        "shoulder.R": (0.15, 0, mz("R", -0.1)),
+        "upper_arm.L": (0.1, 0, mz("L", 0.05)),
+        "upper_arm.R": (0.1, 0, mz("R", 0.05)),
+        "forearm.L": (-0.05, 0, 0),
+        "forearm.R": (-0.05, 0, 0),
+        "_loc": (0, 0, -0.01),
+    }
+    return fingers(P, 0.35)
+
+
+def surprised(t):
+    # A quick start back: head and chest lean back, hands come up open, then settle.
+    e = smooth(min(1.0, t / 0.25))
+    P = {
+        "chest": (-0.16 * e, 0, 0),
+        "head": (-0.22 * e, 0, 0),
+        "upper_arm.L": (-0.6 * e, 0, mz("L", 0.6 * e)),
+        "upper_arm.R": (-0.6 * e, 0, mz("R", 0.6 * e)),
+        "forearm.L": (-1.6 * e, 0, 0),
+        "forearm.R": (-1.6 * e, 0, 0),
+        "hand.L": (-0.4 * e, 0, 0),
+        "hand.R": (-0.4 * e, 0, 0),
+        "_loc": (0, 0.02 * e, 0.01 * e),
+    }
+    return fingers(P, 0.0)
+
+
+def angry(t):
+    # Fists clenched, shoulders up, chest forward, a sharp head shake now and then.
+    P = {
+        "chest": (0.1, 0, 0),
+        "head": (0.12, 0.12 * S(t, 3) * max(0.0, S(t)), 0),
+        "shoulder.L": (0, 0, mz("L", 0.18)),
+        "shoulder.R": (0, 0, mz("R", 0.18)),
+        "upper_arm.L": (-0.15, 0, mz("L", 0.25)),
+        "upper_arm.R": (-0.15, 0, mz("R", 0.25)),
+        "forearm.L": (-1.3 + 0.1 * S(t, 2), 0, 0),
+        "forearm.R": (-1.3 - 0.1 * S(t, 2), 0, 0),
+    }
+    return fingers(P, 1.2)
+
+
+def point(t):
+    # Right arm points forward at shoulder height, index finger straight; the head follows.
+    e = smooth(min(1.0, t / 0.3))
+    P = {
+        "upper_arm.R": (-1.45 * e, 0, mz("R", 0.25 * e)),
+        "forearm.R": (-0.1 * e, 0, 0),
+        "hand.R": (0, 0, 0),
+        "upper_arm.L": (0.02, 0, mz("L", 0.12)),
+        "forearm.L": (-0.15, 0, 0),
+        "chest": (0.03 * e, mz("R", -0.12 * e), 0),
+        "head": (0.04 * e, mz("R", -0.1 * e), 0),
+    }
+    P = fingers(P, 0.25)
+    for f in ("middle", "ring", "pinky", "thumb"):
+        P[f"{f}.R"] = (1.2 * e, 0, 0)
+    P["index.R"] = (0, 0, 0)
+    return P
+
+
+def clap(t):
+    # Hands meet in front of the chest twice a loop.
+    c = 0.5 + 0.5 * math.cos(TAU * 2 * t)          # 1 = hands together
+    P = {
+        "upper_arm.L": (-0.95, 0, mz("L", 0.15 + 0.25 * (1 - c))),
+        "upper_arm.R": (-0.95, 0, mz("R", 0.15 + 0.25 * (1 - c))),
+        "forearm.L": (-0.9, mz("L", 0.7 * c), 0),
+        "forearm.R": (-0.9, mz("R", 0.7 * c), 0),
+        "hand.L": (0, mz("L", 0.3), 0),
+        "hand.R": (0, mz("R", 0.3), 0),
+        "head": (-0.05, 0, 0.03 * S(t)),
+        "_loc": (0, 0, 0.004 * c),
+    }
+    return fingers(P, 0.05)
+
+
 # name, frames (the clip runs 0..n and frame n equals frame 0 when looping), function, loops
 CLIPS = [
     ("idle", 120, idle, True),
@@ -1025,6 +1252,13 @@ CLIPS = [
     ("nod", 40, nod, True),
     ("shake", 40, shake, True),
     ("think", 60, think, True),
+    ("dance", 60, dance, True),
+    ("happy", 60, happy, True),
+    ("sad", 90, sad, True),
+    ("surprised", 36, surprised, False),
+    ("angry", 60, angry, True),
+    ("point", 30, point, False),
+    ("clap", 30, clap, True),
 ]
 
 
@@ -1072,6 +1306,13 @@ def export(path):
     tris = sum(len(p.vertices) - 2 for o in bpy.data.objects if o.type == "MESH" for p in o.data.polygons)
     bones = len(bpy.data.objects["CHE_Rig"].data.bones)
     print("EXPORTED", path, "triangles", tris, "bones", bones, "clips", len(CLIPS))
+    if USDZ:
+        # The same scene through Blender's USD exporter: meshes, skeleton, clips and shape keys (tools/character_pipeline/
+        # glb_to_usdz.py converts an existing GLB and re-opens the file to check it).
+        usdz = path[:-4] + ".usdz"
+        bpy.ops.wm.usd_export(filepath=usdz, export_animation=True, export_armatures=True, export_shapekeys=True,
+                              export_materials=True, export_mesh_colors=True)
+        print("EXPORTED", usdz)
 
 
 if WHICH == "all":

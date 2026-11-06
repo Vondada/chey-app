@@ -4,8 +4,9 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-export const crewIds = ['che', 'nova', 'atlas', 'mira', 'knox', 'sage', 'lyra', 'iris'];
-export const requiredClips = ['idle', 'walk', 'run', 'wave', 'sit', 'stand', 'talk', 'think', 'celebrate', 'nod', 'shake'];
+export const crewIds = ['che', 'nova', 'atlas', 'mira', 'knox', 'sage', 'lyra', 'iris', 'orion', 'vale'];
+export const requiredClips = ['idle', 'walk', 'run', 'wave', 'sit', 'stand', 'talk', 'think', 'celebrate', 'nod', 'shake',
+  'dance', 'happy', 'sad', 'surprised', 'angry', 'point', 'clap'];
 
 export function validateGlb(bytes) {
   assert.ok(bytes.length >= 20, 'GLB header is truncated');

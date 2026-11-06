@@ -60,8 +60,10 @@ const CLIPS = [
   ['idle', 'Idle'], ['walk', 'Walk'], ['run', 'Run'], ['wave', 'Wave'], ['talk', 'Talk'],
   ['think', 'Think'], ['celebrate', 'Celebrate'], ['nod', 'Nod'], ['shake', 'Shake head'],
   ['sit', 'Sit'], ['stand', 'Stand'],
+  ['dance', 'Dance'], ['happy', 'Happy'], ['sad', 'Sad'], ['surprised', 'Surprised'], ['angry', 'Angry'],
+  ['point', 'Point'], ['clap', 'Clap'],
 ];
-const ONE_SHOT = new Set(['sit', 'stand']);
+const ONE_SHOT = new Set(['sit', 'stand', 'surprised', 'point']);
 const ROOM = 5.5;
 const DESK = { x: 2.2, z: -2.5, hx: 0.8, hz: 0.35 };
 // CHE's office agents, each at a spot with a looping clip. Roles follow the server roster

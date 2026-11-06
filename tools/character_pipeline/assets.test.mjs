@@ -18,10 +18,10 @@ function changedModel(edit) {
   return result;
 }
 
-test('all eight real characters and both offline scene dependency sets are packaged', () => {
+test('all ten real characters (Orion and Vale included) and both offline scene dependency sets are packaged', () => {
   const results = validateCrew();
-  assert.equal(results.length, 8);
-  for (const model of results) assert.equal(model.clips, 11);
+  assert.equal(results.length, 10);
+  for (const model of results) assert.equal(model.clips, 18);
 });
 
 test('a truncated export fails before it can be packaged', () => {

@@ -38,7 +38,10 @@ test('steps longer than the requested length are refused, not cut', () => {
 });
 
 test('a character with no model is blocked and the reason names the missing asset', () => {
-  const plan = planScene('Create Orion in a studio, make him walk to the desk, render a 10-second video', registry);
+  // Every named character has a bundled model now, so this registry takes Orion's away.
+  const noModel = structuredClone(registry);
+  for (const v of noModel.characters.orion.versions) Object.assign(v, { model: null, note: 'No model yet.' });
+  const plan = planScene('Create Orion in a studio, make him walk to the desk, render a 10-second video', noModel);
   assert.equal(plan.status, 'blocked');
   assert.ok(plan.reasons.some((r) => /no model/i.test(r)), plan.reasons.join(' | '));
 });
