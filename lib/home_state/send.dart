@@ -338,6 +338,9 @@ extension _CheHomeSend on _CHEHomeState {
       case SceneVoiceRoute.newCharacter:
         _openNewCharacter();
         return true;
+      case SceneVoiceRoute.scenePreview:
+        _openScenePreview();
+        return true;
       case null:
         break;
     }
