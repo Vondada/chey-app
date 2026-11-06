@@ -579,5 +579,11 @@ export function cryptoIntent(message, { followup = '', referent = '' } = {}) {
   const OBJ = "(?:the\\s+|orion'?s?\\s+|my\\s+|your\\s+|weekend\\s+|24\\/7\\s+)*(?:orion|crypto|bitcoin|btc|ethereum|eth|research|paper|trading|desk|simulat)";
   if (new RegExp(`\\b(?:pause|stop|halt|turn off|switch off|disable)\\s+${OBJ}`).test(t)) return { kind: 'pause' };
   if (new RegExp(`\\b(?:resume|restart|start|turn on|switch on|enable|continue|keep)\\s+(?:\\w+\\s+){0,2}${OBJ}`).test(t)) return { kind: 'resume' };
+  // A request to audit or fix the app that only mentions the desk ("audit the screens: the crypto desk shows grey boxes")
+  // is coding work, not a status question (certification run 42153285881). Pause and resume above stay the desk's,
+  // whatever reason they give ("pause Orion crypto research because Bitcoin crashed"; Codex on #940).
+  const appWork = /\b(?:audit\w*|grey\s+box(?:es)?|gray\s+box(?:es)?|pull\s+request|file\s+and\s+line)\b/.test(t)
+    || (/\b(?:bugs?|crash\w*|navigation)\b/.test(t) && /\b(?:screens?|app|code|files?|fix|find|line)\b/.test(t));
+  if (appWork) return null;
   return { kind: 'status' };
 }
