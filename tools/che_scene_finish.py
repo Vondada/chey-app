@@ -148,6 +148,7 @@ def main():
         streams.get("audio", {}).get("codec_name") != "aac" and "the sound is not AAC",
         abs(got - total) > 0.25 and f"it lasts {got:.2f} s, not {total:.2f} s",
         int(streams.get("video", {}).get("width", 0)) != int(spec.get("width", 720)) and "the frame size is wrong",
+        *[l["at_out"] + l["seconds"] > total + 0.05 and f'the line "{l["text"][:40]}" runs past the end of the video' for l in lines],
     ) if p]
     manifest = {
         "status": "failed" if problems else "verified", "problems": problems, "job": spec.get("job", ""),

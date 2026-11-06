@@ -22,6 +22,7 @@ export const WORKFLOW = 'che-scene-render.yml';
 const REPO = 'Vondada/chey-app';
 const MAX_PROJECTS = 20;
 const MAX_VERSIONS = 40;
+
 const RECENT_MS = 6 * 3600_000; // edits like "change her outfit" go to the scene the owner worked on in the last six hours
 
 export const CREW_MODELS = Object.freeze(['che', 'nova', 'atlas', 'mira', 'knox', 'sage', 'lyra', 'iris']);
@@ -54,6 +55,8 @@ const GREETING = {
 
 const clean = (v, n = 300) => String(v ?? '').replace(/\s+/g, ' ').trim().slice(0, n);
 const round = (x, d = 3) => Math.round(x * 10 ** d) / 10 ** d;
+/** How long a spoken line needs: about 2.5 words a second, plus room to start and finish. */
+const talkSeconds = (line) => round(Math.max(3, String(line).split(/\s+/).length / 2.5 + 1.2), 2);
 const num = (w) => (/^\d+$/.test(w) ? Number(w) : NUMBERS[String(w).toLowerCase()] ?? null);
 
 // ─── Words → a scene ─────────────────────────────────────────────────────────
@@ -116,7 +119,7 @@ export function sceneFromWords(text) {
       t = round(t + 1.5, 2);
     } else if (s.action === 'talk') {
       const line = clean(s.line || GREETING[id], 240);
-      const len = round(Math.max(3, line.split(/\s+/).length / 2.5 + 1.2), 2);
+      const len = talkSeconds(line);
       timeline.push({ actor: id, action: 'talk', line, t0: t, t1: round(t + len, 2) });
       t = round(t + len, 2);
     } else {
@@ -201,50 +204,92 @@ export function applyEdits(prev, text) {
   const say = String(text || '').match(/\b(?:make|have|let) (?:her|him|them) say[:,]?\s*["“]?([^"”]{2,240})["”]?\s*$/i);
   if (say) {
     const talk = spec.timeline.find((s) => s.action === 'talk');
-    if (talk) { talk.line = clean(say[1], 240); said.push(`${who} now says: "${talk.line}"`); }
+    if (talk) {
+      talk.line = clean(say[1], 240);
+      // A longer line gets a longer talk: the talk step, everything after it and the scene grow to fit the words.
+      const grow = round(Math.max(0, talkSeconds(talk.line) - (talk.t1 - talk.t0)), 2);
+      if (grow > 0) {
+        const end = spec.seconds;
+        for (const s of spec.timeline) { if (s.t0 >= talk.t1) s.t0 = round(s.t0 + grow, 2); if (s.t1 >= talk.t1) s.t1 = round(s.t1 + grow, 2); }
+        spec.seconds = round(end + grow, 2);
+        if (spec.camera?.move === 'orbit' && spec.camera.t1 >= end) spec.camera.t1 = spec.seconds;
+        spec.time_remap = (spec.time_remap || []).map((r) => (r.to >= end ? { ...r, from: round(r.from + grow, 2), to: spec.seconds } : r));
+      }
+      said.push(`${who} now says: "${talk.line}"${grow > 0 ? ` (the scene is ${grow} seconds longer to fit the words)` : ''}`);
+    }
   }
   return { spec, said, three_d: threeDKey(spec) !== threeDKey(prev), pron };
 }
 
 // ─── Projects ────────────────────────────────────────────────────────────────
 
-export async function loadProjects(storage) { return (await storage.get(DIRECTOR_KEY)) || []; }
-async function saveProjects(storage, list) { await storage.put(DIRECTOR_KEY, list.slice(0, MAX_PROJECTS)); }
+// Each project is its own storage value (a Durable Object value holds at most 128 KiB); the index lists their ids.
+// A project keeps its last MAX_VERSIONS versions and MAX_RENDERS renders, and is trimmed further if it would still
+// pass PROJECT_BYTES, so a save can never be refused for size.
+const PROJECT_BYTES = 96_000;
+const MAX_RENDERS = 20;
+const projectKey = (id) => `director:project:${id}`;
+export async function loadProjects(storage) {
+  const ids = (await storage.get(DIRECTOR_KEY)) || [];
+  const got = await Promise.all(ids.map((x) => storage.get(projectKey(x.id))));
+  return got.filter(Boolean);
+}
+export function boundProject(project) {
+  project.renders = project.renders.slice(0, MAX_RENDERS);
+  const trim = () => {
+    if (project.versions.length <= 1) return false;
+    const drop = project.at > 0 ? 0 : project.versions.length - 1; // the oldest, unless that is the one on screen
+    project.versions.splice(drop, 1);
+    if (drop < project.at) project.at -= 1;
+    return true;
+  };
+  while (project.versions.length > MAX_VERSIONS && trim());
+  while (JSON.stringify(project).length > PROJECT_BYTES && (trim() || (project.renders.length > 1 && project.renders.pop())));
+  return project;
+}
+async function saveProject(storage, project, now) {
+  boundProject(project);
+  await storage.put(projectKey(project.id), project);
+  const ids = ((await storage.get(DIRECTOR_KEY)) || []).filter((x) => x.id !== project.id);
+  const keep = [{ id: project.id, title: project.title }, ...ids];
+  for (const old of keep.slice(MAX_PROJECTS)) await storage.delete(projectKey(old.id));
+  await storage.put(DIRECTOR_KEY, keep.slice(0, MAX_PROJECTS));
+  await storage.put(DIRECTOR_LAST, { id: project.id, at: now });
+}
 export function current(project) { return project.versions[project.at]; }
 
 export async function newProject(storage, spec, now = Date.now()) {
   const id = 'scp_' + crypto.randomUUID().replaceAll('-', '').slice(0, 16);
   const project = { id, title: spec.title, created_at: new Date(now).toISOString(), versions: [{ ...spec, project: id, version: 1 }], at: 0, renders: [] };
-  await saveProjects(storage, [project, ...(await loadProjects(storage))]);
-  await storage.put(DIRECTOR_LAST, { id, at: now });
+  await saveProject(storage, project, now);
   return project;
 }
 
-async function updateProject(storage, project, now = Date.now()) {
-  const list = (await loadProjects(storage)).filter((p) => p.id !== project.id);
-  await saveProjects(storage, [project, ...list]);
-  await storage.put(DIRECTOR_LAST, { id: project.id, at: now });
-}
+async function updateProject(storage, project, now = Date.now()) { await saveProject(storage, project, now); }
 
 /** The scene the owner worked on most recently, if it was within the last six hours. */
 export async function recentProject(storage, now = Date.now()) {
   const last = await storage.get(DIRECTOR_LAST);
   if (!last?.id || now - Number(last.at || 0) > RECENT_MS) return null;
-  return (await loadProjects(storage)).find((p) => p.id === last.id) || null;
+  return (await storage.get(projectKey(last.id))) || null;
 }
 
 // ─── Render on GitHub, and collect ───────────────────────────────────────────
 
-function lastGoodRender(project, spec) {
+// GitHub keeps the frame artifacts for 7 days (che-scene-render.yml); after 6, the 3D is drawn again.
+const FRAMES_KEEP_MS = 6 * 86_400_000;
+/** The run whose frame artifacts this spec can reuse: the run that drew them, even through a chain of reuses. */
+function framesFor(project, spec, now) {
   const key = threeDKey(spec);
-  return project.renders.find((r) => r.status === 'ready' && r.run_id && r.three_d === key) || null;
+  const r = project.renders.find((x) => x.status === 'ready' && x.run_id && x.three_d === key && now - Number(x.frames_at || x.at || 0) < FRAMES_KEEP_MS);
+  return r ? { run_id: r.reused_run || r.run_id, at: r.frames_at || r.at } : null;
 }
 
 export async function dispatchRender(env, project, fetcher = fetch, now = Date.now()) {
   if (!env.CHE_GITHUB_TOKEN || !env.CHE_GITHUB_REPO) return { ok: false, error: 'The free GitHub renderer needs CHE_GITHUB_TOKEN and CHE_GITHUB_REPO on the Worker.' };
   const spec = current(project);
   const job = 'scj_' + crypto.randomUUID().replaceAll('-', '').slice(0, 24);
-  const reuse = lastGoodRender(project, spec);
+  const reuse = framesFor(project, spec, now);
   const payload = JSON.stringify({ ...spec, job });
   if (payload.length > 16000) return { ok: false, error: 'This scene is too large for one render request.' };
   const frames = Math.round(spec.seconds * spec.fps);
@@ -257,7 +302,7 @@ export async function dispatchRender(env, project, fetcher = fetch, now = Date.n
     });
   } catch { return { ok: false, error: 'GitHub Actions could not be reached, so nothing was started.' }; }
   if (res.status !== 204) return { ok: false, error: (await refusalOf(res, 'the scene workflow', env)).error };
-  project.renders = [{ job, version: spec.version, status: 'queued', at: now, three_d: threeDKey(spec), reused_run: reuse?.run_id || null, segments: Number(segments) }, ...project.renders].slice(0, 20);
+  project.renders = [{ job, version: spec.version, status: 'queued', at: now, three_d: threeDKey(spec), reused_run: reuse?.run_id || null, frames_at: reuse ? reuse.at : now, segments: Number(segments) }, ...project.renders].slice(0, 20);
   return { ok: true, job, reused: Boolean(reuse), segments: Number(segments) };
 }
 

@@ -45,6 +45,16 @@ class RealEncode(unittest.TestCase):
             self.assertTrue(manifest["music"])
             self.assertAlmostEqual(manifest["voices"][0]["at"], 0.8, delta=0.01)
 
+            # A line longer than the video is never cut off and called verified.
+            spec["timeline"][0]["line"] = "one two three four five six seven eight nine ten eleven twelve"
+            (tmp / "spec.json").write_text(json.dumps(spec))
+            done = subprocess.run([sys.executable, str(Path(finish.__file__)), "--spec", str(tmp / "spec.json"), "--frames", str(frames),
+                                   "--out", str(tmp / "long"), "--voice", "tone"], capture_output=True, text=True)
+            self.assertNotEqual(done.returncode, 0)
+            manifest = json.loads((tmp / "long" / "manifest.json").read_text())
+            self.assertEqual(manifest["status"], "failed")
+            self.assertIn("runs past the end", " ".join(manifest["problems"]))
+
 
 if __name__ == "__main__":
     unittest.main()

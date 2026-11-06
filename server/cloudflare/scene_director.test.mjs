@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import { readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import test from 'node:test';
-import { SEATS, applyEdits, directorCreateIntent, directorEditIntent, directorTurn, sceneFromWords } from './scene_director.js';
+import { SEATS, applyEdits, directorCreateIntent, directorEditIntent, directorTurn, loadProjects, sceneFromWords } from './scene_director.js';
+const round2 = (x) => Math.round(x * 100) / 100;
 import { listMedia } from './media.js';
 import { replyFromNdjson } from './brain_memory.js';
 
@@ -133,19 +134,52 @@ test('through the Director: start, check, edit by voice; a timing or sound edit 
   const music = await directorTurn({ ...ctx, now: NOW + 60_000 }, 'add some calm music');
   assert.equal(music.meta.reused_frames, true, music.text);
   assert.equal(gh.dispatches[1].frames_run, String(run));
+  // A second sound edit after the first one finished still points at the run that drew the frames (Codex, #952).
+  gh.finish(gh.dispatches[1].job_id, { seconds: spec.seconds });
+  assert.equal((await directorTurn({ ...ctx, now: NOW + 70_000 }, 'is my scene ready?')).meta.scene_status, 'ready');
+  const louder = await directorTurn({ ...ctx, now: NOW + 80_000 }, 'make her say "Hi"');
+  assert.equal(louder.meta.reused_frames, true, louder.text);
+  assert.equal(gh.dispatches[2].frames_run, String(run), 'not the finish-only run, which has no frames');
+  await directorTurn({ ...ctx, now: NOW + 90_000 }, 'undo');
+  gh.dispatches.splice(2, 2);
   // The owner's full edit: the outfit and camera change the 3D, so it is drawn again.
   const edit = await directorTurn({ ...ctx, now: NOW + 120_000 }, OWNER_EDIT);
-  assert.equal(edit.meta.version, 3);
+  assert.equal(edit.meta.version, 4, 'versions keep counting after an undone one');
   assert.equal(edit.meta.reused_frames, false);
   assert.match(edit.text, /outfit is now .*, the camera circles around you both once she sits, the last 5 seconds play at half speed and warm music plays/);
   assert.equal(gh.dispatches[2].frames_run, '');
   const v3 = JSON.parse(gh.dispatches[2].spec);
-  assert.equal(v3.version, 3);
+  assert.equal(v3.version, 4);
   assert.equal(v3.camera.move, 'orbit');
   // Undo goes back to version 2 and renders it again, reusing version 1's frames (only music differs).
   const undo = await directorTurn({ ...ctx, now: NOW + 180_000 }, 'undo');
   assert.match(undo.text, /^Undone: back to version 2/);
   assert.equal(gh.dispatches[3].frames_run, String(run));
+});
+
+test('a longer spoken line makes the scene longer instead of being cut off', async () => {
+  const { spec } = sceneFromWords(OWNER_MAKE);
+  const line = 'I went through every clip you sent me last night, and I think the second one is the strongest, so let us start there and build the whole story around it.';
+  const out = applyEdits(spec, `make her say "${line}"`);
+  const talk = out.spec.timeline.find((s) => s.action === 'talk');
+  assert.ok(talk.t1 - talk.t0 >= line.split(' ').length / 2.5, `${talk.t1 - talk.t0} s is enough for the words`);
+  assert.equal(out.spec.seconds, round2(talk.t1 + 0.5));
+  assert.equal(out.three_d, true, 'a longer scene needs more frames');
+  assert.match(out.said[0], /seconds longer to fit the words/);
+  const slowed = applyEdits(applyEdits(spec, 'slow down the last five seconds').spec, `make her say "${line}"`).spec;
+  assert.equal(slowed.time_remap[0].to, slowed.seconds, 'the slow ending still ends at the end');
+});
+
+test('a project is stored on its own and kept under the storage limit, however many edits', async () => {
+  const storage = memory(); const gh = github();
+  for (let p = 0; p < 3; p += 1) {
+    await directorTurn({ storage, env: ENV, fetcher: gh.fetch, now: NOW + p }, OWNER_MAKE);
+    for (let i = 0; i < 60; i += 1) await directorTurn({ storage, env: ENV, fetcher: gh.fetch, now: NOW + p + i }, i % 2 ? 'add some calm music' : `make her say "Take ${i}: ${'and this goes on a while '.repeat(8)}"`);
+  }
+  for (const [key, value] of storage.kv) assert.ok(JSON.stringify(value).length < 128 * 1024, `${key} fits in one value`);
+  const projects = await loadProjects(storage);
+  assert.equal(projects.length, 3);
+  assert.ok(projects.every((p) => p.versions.length >= 2 && p.at === p.versions.length - 1));
 });
 
 test('a render that fails CHE\'s own check is never called ready', async () => {
