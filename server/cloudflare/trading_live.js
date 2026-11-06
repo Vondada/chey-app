@@ -235,6 +235,9 @@ export async function liveTick(storage, { fetcher = fetch, now = Date.now(), for
           closed.push(...stepPortfolio(pf, bars, ctx, gate, { allowEntries, blockReason }));
           run.signals = (run.signals || 0) + pf.counts.signals - before;
         }
+        // New paper signals this pass, for the owner's inbox (paper only: a signal is information, never an order).
+        run.new_signals = portfolios.flatMap((pf) => (pf.signals || []).filter((x) => x.time > (before.get(pf.key) || ''))
+          .map((x) => ({ strategy: pf.candidate, filter: pf.filter, contract: pf.contract, ...x })));
         // This pass's enter and skip decisions, one bounded Brain event (the full list stays in each portfolio).
         const fresh = tradeDecisions(portfolios.map((pf) => ({ ...pf, signals: (pf.signals || []).filter((x) => x.time > (before.get(pf.key) || '')), skips: (pf.skips || []).filter((x) => x.time > (before.get(pf.key) || '')) })), { limit: 500 });
         run.decisions = { entered: fresh.filter((x) => x.decision === 'taken').length, skipped: fresh.filter((x) => x.decision === 'skipped').length };
@@ -627,4 +630,15 @@ export async function strategyLearning(storage, { now = Date.now() } = {}) {
   return { paper_only: true, day: today, timezone: 'CME research day, America/New_York 18:00 boundary', strategies, research, diagnostics,
     leader: eligible[0] ? { id: eligible[0].id, metric: 'forward baseline expectancy after costs', provisional: true } : null,
     daily_report: `${today}: ${strategies.reduce((n, r) => n + r.today.trades, 0)} unique baseline forward trades closed; ${strategies.reduce((n, r) => n + r.today.studied, 0)} outcomes in today's latest historical baseline. ${eligible[0] ? `Provisional forward expectancy leader: ${eligible[0].name}.` : 'No strategy has the minimum forward sample for a ranking.'} Live trading remains disabled.` };
+}
+
+/** The owner's inbox note for one new forward-paper signal: plain numbers and the honest record behind it. */
+export function signalNote(sig) {
+  const side = sig.side === 'short' ? 'Sell' : 'Buy';
+  const name = INTRADAY_CANDIDATES[sig.strategy]?.name || sig.strategy;
+  return {
+    subject: `Paper signal: ${side} ${sig.contract || 'MNQ'} near ${sig.ref}`,
+    body: `${side} 1 ${sig.contract || 'MNQ'} near ${sig.ref}, stop ${sig.stop}, target ${sig.target} (${name}${sig.filter && sig.filter !== 'any' ? `, ${sig.filter} filter` : ''}; ${sig.why}). `
+      + 'I took it on paper at the next bar\'s open, from delayed CME bars. This is not advice: none of my strategies has yet shown a profit after costs, and no real order was placed.',
+  };
 }
