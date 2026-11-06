@@ -1,0 +1,14 @@
+[
+  {
+    "id": "oct-01",
+    "category": "trading_history_backtest",
+    "difficulty": "hard",
+    "question": "What did you do wrong trading in October, the whole month? Why were you trading so badly, and what are you going to do to improve?",
+    "expected": {
+      "criteria": "Owner question (2026-11-06). Read-only: the causes from the journal and what changed.",
+      "must_contain_any": ["October", "trade", "strateg"],
+      "must_not_contain": []
+    },
+    "receipt_required": false
+  }
+]
