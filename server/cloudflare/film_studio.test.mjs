@@ -632,7 +632,19 @@ test('farm routes: only this film\'s farm token opens them, and a clip must be a
 test('lip sync is planned at its real GPU cost: with Kaggle, talking shots get it; as fast as possible or without GPU time they do not, and the plan says so', () => {
   const one = planFilm({ targetSeconds: 60, deadlineSeconds: 7200, providers: providers(kaggleOn), talkingShots: 4, now: NOW });
   assert.equal(one.lip_sync, 4);
-  assert.ok(one.parts.lip_sync_s >= DEFAULT_RATES.lipsync_setup_s + 4 * DEFAULT_RATES.kaggle_lipsync_s - 1, 'its install and each shot are in the ETA');
+  // One GPU: the install runs beside the session start and the clips, then the four talking shots one after another.
+  const r = DEFAULT_RATES;
+  const clipsS = one.tier_a ? r.kaggle_startup_s + one.tier_a * r.kaggle_clip_s : 0;
+  assert.equal(one.parts.lip_sync_s, Math.round(Math.max(clipsS, r.kaggle_startup_s + r.lipsync_setup_s) + 4 * r.kaggle_lipsync_s - clipsS), 'its install and each shot are in the ETA');
+  // Two GPUs (measured): the talking shots are lip-synced while the clips are made, so the film is ready sooner.
+  const two = planFilm({ targetSeconds: 60, deadlineSeconds: 7200, providers: providers(kaggleOn), talkingShots: 4, rates: { ...r, kaggle_gpus: 2 }, now: NOW });
+  assert.equal(two.lip_sync, 4);
+  assert.ok(two.eta_s <= one.eta_s, `two GPUs ${two.eta_s} s, one GPU ${one.eta_s} s`);
+  // Where the clips take longer than the install, the second GPU takes the talking shots off the clip GPU's queue.
+  const slowClips = { ...r, kaggle_clip_s: 900 };
+  const one2 = planFilm({ targetSeconds: 60, deadlineSeconds: 7200, providers: providers(kaggleOn), talkingShots: 4, rates: slowClips, now: NOW });
+  const two2 = planFilm({ targetSeconds: 60, deadlineSeconds: 7200, providers: providers(kaggleOn), talkingShots: 4, rates: { ...slowClips, kaggle_gpus: 2 }, now: NOW });
+  assert.ok(one2.tier_a > 0 && two2.eta_s < one2.eta_s, `two GPUs ${two2.eta_s} s, one GPU ${one2.eta_s} s`);
   assert.match(speakPlan(one), /4 talking shots get lip sync on the free Kaggle GPU\./);
   assert.equal(planFilm({ targetSeconds: 60, deadlineSeconds: 7200, providers: providers(), now: NOW }).lip_sync, 0, 'no Kaggle, no lip sync');
   assert.equal(planFilm({ targetSeconds: 60, deadlineSeconds: 0, providers: providers(kaggleOn), now: NOW }).lip_sync, 0, 'as fast as possible uses no GPU');
@@ -719,6 +731,36 @@ test('lip sync results reach the film: a clip that lands during a pass is used, 
   assert.equal((await store.film(film.id)).notes.filter((n) => /Shot 2 has no lip sync/.test(n)).length, 1, 'said once');
 });
 
+test('two GPUs: the clip loop gets only clips and the lip-sync loop only talking shots; the worker reports its real start-up, install time and GPU count', async () => {
+  const storage = memory(); const bucket = r2();
+  const store = new FilmStore(storage);
+  const { token, record } = await newFarmToken(NOW);
+  const film = { id: 'film_00000000000000dd', state: 'making', shot_count: 2, outline: validOutline(OUTLINE, { shots: 2 }), plan: { lip_sync: 1, segments: 1, parts: {} }, farm: { ...record, provider: 'kaggle', started_ms: NOW - 240_000 }, stats: { clips_made: 0 } };
+  await store.save(film, { force: true });
+  await store.putShots(film.id, [
+    { n: 1, tier: 'A', still_of: 1, still_key: `film/${film.id}/stills/1.jpg`, status: 'planned', dialogue: [], description: 'The sea', characters: [], setting: 'sea' },
+    { n: 2, tier: 'B', still_of: 2, still_key: `film/${film.id}/stills/2.jpg`, status: 'planned', dialogue: [{ character: 'mara', line: 'Hi.', audio_key: `film/${film.id}/voice/2-0.mp3`, audio_s: 1 }], description: 'Mara talks', characters: ['mara'], setting: 'stairs' },
+  ]);
+  const ctx = { storage, env: { CHE_DATA_BUCKET: bucket }, base: 'https://che.example', now: NOW };
+  const next = async (q) => (await filmTokenRoute(ctx, `/api/film/farm/${film.id}/next`, req(`/api/film/farm/${film.id}/next?${q}`, { header: 'X-CHE-Farm-Token', token }))).json();
+  assert.deepEqual(await next('kind=hello&gpus=2&boot=35'), { ok: true });
+  const { rates, measured } = await loadRates(storage);
+  assert.deepEqual([rates.kaggle_startup_s, rates.kaggle_gpus, measured.kaggle_startup_s], [240, 2, true], 'start-up is measured from the session start to the worker\'s hello');
+  await next('kind=hello&gpus=2');
+  assert.equal((await loadRates(storage)).rates.kaggle_startup_s, 240, 'a second hello is not counted again');
+  const lip = await next('kind=lipsync&gpus=2');
+  assert.deepEqual([lip.kind, lip.shot], ['lipsync', 2], 'the lip-sync loop never gets the clip');
+  const clip = await next('kind=clip&gpus=2');
+  assert.equal(clip.shot, 1);
+  assert.equal(clip.kind, undefined);
+  assert.deepEqual(await next('kind=clip&gpus=2'), { wait: 30 }, 'the clip loop waits for its claimed clip, not for lip sync');
+  assert.deepEqual(await next('kind=lipsync&gpus=2'), { wait: 30 });
+  const put = (q, body) => filmTokenRoute(ctx, `/api/film/farm/${film.id}/result`, req(`/api/film/farm/${film.id}/result?${q}`, { header: 'X-CHE-Farm-Token', token, method: 'PUT', body }));
+  assert.equal((await put('shot=2&kind=lipsync&seconds=80&setup=410', mp4({ seconds: 6, codecs: 'avc1' }))).status, 200);
+  assert.equal((await loadRates(storage)).rates.lipsync_setup_s, 410, 'the real install time is measured');
+  assert.deepEqual(await next('kind=lipsync&gpus=2'), { done: true }, 'the lip-sync loop stops when its work is done, while the clip is still coming');
+});
+
 test('the Kaggle worker is valid Python that waits for work, frees the GPU for lip sync, and pins LatentSync 1.5', async () => {
   const { execFileSync } = await import('node:child_process');
   const { writeFileSync, unlinkSync } = await import('node:fs');
@@ -731,6 +773,12 @@ test('the Kaggle worker is valid Python that waits for work, frees the GPU for l
   assert.match(KAGGLE_WORKER_PY, /configs\/unet\/stage2\.yaml/, 'the 256-pixel 1.5 config, not 1.6\'s 512 (18 GB)');
   assert.match(KAGGLE_WORKER_PY, /torch\.cuda\.empty_cache\(\)/);
   assert.match(KAGGLE_WORKER_PY, /\/lipfail/);
+  assert.match(KAGGLE_WORKER_PY, /"--enable_deepcache"/, 'DeepCache, as in the inference.sh LatentSync ships');
+  assert.match(KAGGLE_WORKER_PY, /"uv", "pip", "install"/, 'the install uses uv, with pip as the fallback');
+  assert.match(KAGGLE_WORKER_PY, /threading\.Thread\(target=work, args=\("clip", 0\)\), threading\.Thread\(target=work, args=\("lipsync", 1\)\)/, 'one loop per GPU on a T4 x2');
+  assert.match(KAGGLE_WORKER_PY, /CUDA_VISIBLE_DEVICES/);
+  assert.match(kaggleWorkerScript({ base: 'b', filmId: 'f', token: 't', deadlineS: 10, lipsync: true }), /LIPSYNC = "1" == "1"/);
+  assert.match(kaggleWorkerScript({ base: 'b', filmId: 'f', token: 't', deadlineS: 10 }), /LIPSYNC = "0" == "1"/);
 });
 
 test('through /api/chat: the owner\'s words start a film with its ETA, status answers from the stored state, and guests cannot', async () => {
