@@ -115,3 +115,14 @@ The governor runs inside the forward paper tick (`trading_live.liveTick`), befor
 ## Brain
 
 Every governor decision is queued as a Trading-room Brain event (`room_events.queueRoomEvent`, kind `governor`). The event carries the reason, the evidence numbers and `refs.decision` / `refs.route`, so the Brain can open the log entry. Each forward-paper pass with new decisions queues one bounded `trade_decision` event, listing up to 12 lines of entered and skipped setups with their reasons; `refs.route` points to the full list. Both are status `verified`, because they restate CHE's own records.
+
+## Hourly volatility test (owner, 2026-11-06)
+
+The volatility-stop replay (`tools/che_volatility_replay.mjs`, run 42242981300) tried 127 setup, timeframe and stop
+combinations on real MNQ bars; 5 were positive after costs in both the first 70% and the last 30% of the bars. The owner
+put the two strongest on paper: inside bar and previous-day high/low sweep on 1-hour bars, with the stop at least 2 ATR(14)
+away (`params.stop_atr`, `trading_evidence.widenStop`). `hourlyTick` in `trading_live.js` runs them after each
+forward-paper pass, only when a new 1-hour bar can have closed. Their trades are journalled with resolution `1h`, apart
+from the 5-minute desk's record, and are judged only on trades from their start. The 5-minute learned exclusions do not
+apply to them (they were learned on 5-minute bars); the owner's controls, the account limits and the governor's pauses
+do. Paper only: no broker order.

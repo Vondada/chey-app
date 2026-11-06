@@ -701,6 +701,16 @@ export function newPortfolio(candidateId, filterId, {
 // whole risk, and crypto target hits closed as net losses because 0.6% taker fees were larger than a 0.1% to 1% stop.
 // A plan is taken only when (a) a stop-out's round-trip costs are at most MAX_PLAN_COST_R of its risk, the same limit
 // as the strategy simulation's cost gate, and (b) a target hit still nets at least MIN_TARGET_NET_R after costs.
+// Volatility stops (owner, 2026-11-06: "test the wider volatility"). With params.stop_atr = m, a setup's stop sits at
+// least m x ATR(14) from its entry, never nearer than its own structural stop; the target scales with the wider risk.
+// Off unless a portfolio's params set it; it is part of the strategy version like every other parameter.
+export function widenStop(sig, mult, atr) {
+  if (!sig || !(mult > 0) || !(atr > 0) || !finite(sig.ref) || !finite(sig.stop)) return sig;
+  const d = mult * atr;
+  const tick = (x, up) => (up ? Math.ceil(x * 4) : Math.floor(x * 4)) / 4;
+  const stop = sig.side === 'short' ? Math.max(sig.stop, tick(sig.ref + d, true)) : Math.min(sig.stop, tick(sig.ref - d, false));
+  return stop === sig.stop ? sig : { ...sig, stop, why: `${sig.why}; stop widened to ${mult} ATR` };
+}
 export const MAX_PLAN_COST_R = 0.25;
 export const MIN_TARGET_NET_R = 1;
 // After a stop-out the same strategy waits this long before a new signal (51 quick re-entries in the futures journal).
@@ -814,7 +824,7 @@ function stepBars(pf, candles, ctx, gate, { allowEntries = true, blockReason = n
       if (sig && finite(sig.ref) && finite(sig.stop)) noteSkip(pf, bar.t, `${blockReason || 'real-time CME data was not verified'}, so this setup was not traded`, { side, why: sig.why });
     }
     if (allowEntries && !pf.open && !pf.pending && cand && !late) {
-      const sig = cand.entry(candles, k, ctx);
+      const sig = widenStop(cand.entry(candles, k, ctx), pf.params?.stop_atr, ctx.atr14?.[k]);
       const side = sig?.side || 'long';
       const risk = sig ? (side === 'short' ? sig.stop - sig.ref : sig.ref - sig.stop) : 0;
       const filterOk = sig && finite(sig.ref) && finite(sig.stop) && risk >= 0.25 && filter.ok(candles, k, ctx, side);
