@@ -1,7 +1,8 @@
 // Owner screenshots (2026-11-06): grey boxes in the Trading room's crypto desk and setup board, at their expandable
 // sections. A release build draws a widget that throws as a grey box. An ExpansionTile restores its open state from
-// PageStorage; with no PageStorageKey of its own it shares the slot a scroll view saves its offset in, so a tile
-// created after a scroll can read a number where it expects true/false. Every ExpansionTile carries a PageStorageKey.
+// PageStorage; with no PageStorageKey of its own it shared the slot the Trading room list saves its scroll offset in,
+// and threw "type 'double' is not a subtype of type 'bool?'" (reproduced in test/che_trading_room_grey_box_test.dart,
+// diagnostic run 42154237391). Every ExpansionTile carries a PageStorageKey, and this guard keeps it that way.
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -34,12 +35,6 @@ Future<Object?> _scrollThenShow(WidgetTester tester, {Key? tileKey}) async {
 void main() {
   testWidgets('an ExpansionTile with a PageStorageKey, created after a scroll, builds without an error', (tester) async {
     expect(await _scrollThenShow(tester, tileKey: const PageStorageKey<String>('recent')), isNull);
-  });
-
-  testWidgets('diagnostic: the same without a PageStorageKey (prints the exception, if any, for the record)', (tester) async {
-    final error = await _scrollThenShow(tester);
-    // ignore: avoid_print
-    print('REPRO_EXCEPTION: $error');
   });
 
   test('every ExpansionTile in lib/ has a PageStorageKey, so none can share a scroll view\'s saved state', () {
