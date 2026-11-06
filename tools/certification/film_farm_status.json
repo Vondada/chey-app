@@ -1,0 +1,3 @@
+[
+  {"id": "film-farm-01", "category": "creative", "difficulty": "easy", "question": "Che, which free providers can your Film Studio use right now for pictures, voices and moving clips? Just tell me their status, do not start a film.", "expected": {"criteria": "Provider status from the film studio.", "must_contain_any": ["Kaggle", "Workers AI", "GitHub"], "must_not_contain": []}}
+]
