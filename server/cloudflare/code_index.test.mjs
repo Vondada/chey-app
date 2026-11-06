@@ -5,8 +5,10 @@ import { fileURLToPath } from 'node:url';
 import { _clearCodeIndexCache, buildCodeIndex, loadCodeIndex, parseTar } from './code_index.js';
 
 const ROOT = fileURLToPath(new URL('../../', import.meta.url));
-// A real GitHub-style tarball of this repository (top folder + pax header).
-const TARBALL = execSync('git -c core.autocrlf=false archive --format=tar.gz --prefix=Vondada-chey-app-abc1234/ HEAD', { cwd: ROOT, maxBuffer: 256 * 1024 * 1024 });
+// A real GitHub-style tarball (top folder + pax header) of this repository's code, with a binary and a minified bundle
+// to be skipped. The whole repository (~90 MB compressed with the 3D characters and goldens) is over
+// MAX_TARBALL_BYTES, which is the point: it reset the 128 MB Durable Object (log capture run 42176827333).
+const TARBALL = execSync('git -c core.autocrlf=false archive --format=tar.gz --prefix=Vondada-chey-app-abc1234/ HEAD lib server/cloudflare tools assets/avatars/che.png assets/office3d/three.min.js', { cwd: ROOT, maxBuffer: 256 * 1024 * 1024 });
 const HEAD_SHA = execSync('git rev-parse HEAD', { cwd: ROOT }).toString().trim();
 const ENV = { CHE_GITHUB_TOKEN: 't', CHE_GITHUB_REPO: 'o/r' };
 

@@ -107,6 +107,32 @@ export function makeIndex(sha, entries) {
   };
 }
 
+export const MAX_TARBALL_BYTES = 16 * 1024 * 1024;
+
+/** The body as bytes, or null once it is larger than [max] (the download is cancelled, nothing more is held). */
+export async function boundedBody(response, max) {
+  const declared = Number(response.headers?.get?.('content-length'));
+  if (Number.isFinite(declared) && declared > max) { await response.body?.cancel?.().catch(() => {}); return null; }
+  if (!response.body?.getReader) {
+    const whole = new Uint8Array(await response.arrayBuffer());
+    return whole.byteLength > max ? null : whole.buffer;
+  }
+  const reader = response.body.getReader();
+  const parts = [];
+  let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > max) { await reader.cancel().catch(() => {}); return null; }
+    parts.push(value);
+  }
+  const out = new Uint8Array(size);
+  let at = 0;
+  for (const p of parts) { out.set(p, at); at += p.byteLength; }
+  return out.buffer;
+}
+
 export async function buildCodeIndex(env, sha, fetcher = fetch) {
   const repo = repoOf(env);
   if (!repo || !sha) return null;
@@ -115,7 +141,13 @@ export async function buildCodeIndex(env, sha, fetcher = fetch) {
     redirect: 'follow',
   });
   if (!response.ok) return null;
-  const tar = await gunzip(await response.arrayBuffer());
+  // The whole repository as one tarball is ~90 MB compressed and ~123 MB unpacked (3D characters, goldens), more than
+  // the Durable Object's 128 MB: reading it reset the isolate ("exceeded its memory limit", log capture run
+  // 42176827333) and the owner's source questions answered HTTP 500 (R-16). Read it as a stream and give up past
+  // MAX_TARBALL_BYTES; callers then read single files instead.
+  const bytes = await boundedBody(response, MAX_TARBALL_BYTES);
+  if (!bytes) return null;
+  const tar = await gunzip(bytes);
   // Keep a BOM if a file has one, and take git's blob id from the raw bytes,
   // so contents and ids match GitHub exactly.
   const dec = new TextDecoder('utf-8', { ignoreBOM: true });
