@@ -149,6 +149,23 @@ def piper_narration(text, out, name='narration.wav'):
 def duration_of(path):
     return float(subprocess.check_output(['ffprobe','-v','error','-show_entries',
         'format=duration','-of','default=noprint_wrappers=1:nokey=1',str(path)],text=True).strip())
+# Neural voices speak about 2.5 words a second; the renderer refuses narration longer than 1.32 x the video.
+WORDS_PER_SECOND=2.3
+def fit_narration(topic, seconds):
+    """Narration that fits the requested length (owner's 8-second video, run 42262895334, was refused because the
+    fixed three-sentence script ran past it). Whole sentences are dropped, never words cut; a topic too long for the
+    first sentence keeps its first clause."""
+    budget=max(5,int(seconds*WORDS_PER_SECOND))
+    words=lambda s: len(s.split())
+    t=topic.strip()
+    if words(f'Discover {t}.')>budget:
+        t=re.split(r'[:;,.—-]',t)[0].strip() or t
+    if words(f'Discover {t}.')>budget:
+        t=' '.join(t.split()[:budget-1])
+    out=[f'Discover {t}.']
+    for extra in ('Explore the big picture, key ideas, and questions worth asking.','Check reliable sources to learn more.'):
+        if words(' '.join(out+[extra]))<=budget: out.append(extra)
+    return ' '.join(out)
 def render(topic, seconds, out):
     out.mkdir(parents=True,exist_ok=True)
     space='space' in topic.lower() or 'planet' in topic.lower()
@@ -163,7 +180,7 @@ def render(topic, seconds, out):
     else:
         t=topic.strip()[:90]
         facts=[('THE TOPIC',t),('LOOK CLOSER','Explore the important details.'),('LEARN MORE','Follow reliable sources and keep discovering.')]
-        narration=f"Discover {t}. Explore the big picture, key ideas, and questions worth asking. Check reliable sources to learn more."
+        narration=fit_narration(t, seconds)
         title=('DISCOVER '+t).upper()
     for i,(heading,detail) in enumerate(facts):
         im=art((720,1280),130+i*31,i);d=ImageDraw.Draw(im)

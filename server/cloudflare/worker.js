@@ -13894,7 +13894,8 @@ export class CheState extends DurableObject {
             if (running?.task_id && running.task_id !== made.job_id) {
               const kept = (await this.ctx.storage.get('che_video_earlier')) || [];
               await this.ctx.storage.put('che_video_earlier', [running, ...kept.filter((v) => v.task_id !== running.task_id)].slice(0, 3));
-              alsoNote = ` Your video${running.topic ? ` about ${running.topic}` : ''} keeps rendering too (task ${running.task_id}).`;
+              // Only a render under 30 min old is still rendering.
+              if (Date.now() - Date.parse(running.created_at || 0) < 1800000) alsoNote = ` Your video${running.topic ? ` about ${running.topic}` : ''} keeps rendering too (task ${running.task_id}).`;
             }
             await this.ctx.storage.put('che_video_pending', {
               task_id: made.job_id, prompt: message.slice(0, 8000), title: message.slice(0, 60), topic,
