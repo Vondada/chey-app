@@ -23,6 +23,10 @@ class CheCharactersRoom extends StatefulWidget {
   /// The Office's live runtime. Without it every character stands idle: nothing is shown as working.
   final CheAgentRuntimeController? runtime;
 
+  /// While the room is open: plays a clip by name ("dance", "make CHE clap") and lists them ("options"); null
+  /// for words that are not a room command. lib/home_state/send.dart consults it before the chat.
+  static Future<String?> Function(String words)? voiceHandler;
+
   static Future<void> open(BuildContext context, {CheAgentRuntimeController? runtime}) {
     return Navigator.of(context).push(
       MaterialPageRoute<void>(builder: (_) => CheCharactersRoom(runtime: runtime)),
@@ -37,10 +41,12 @@ class _CheCharactersRoomState extends State<CheCharactersRoom> with WidgetsBindi
   WebViewController? _controller;
   String _status = 'Loading the crew.';
   Map<String, CheCrewState> _sent = const {};
+  bool _ready = false;
 
   @override
   void initState() {
     super.initState();
+    CheCharactersRoom.voiceHandler = _voice;
     WidgetsBinding.instance.addObserver(this);
     widget.runtime?.addListener(_sendStates);
     try {
@@ -61,6 +67,7 @@ class _CheCharactersRoomState extends State<CheCharactersRoom> with WidgetsBindi
 
   @override
   void dispose() {
+    if (CheCharactersRoom.voiceHandler == _voice) CheCharactersRoom.voiceHandler = null;
     WidgetsBinding.instance.removeObserver(this);
     widget.runtime?.removeListener(_sendStates);
     super.dispose();
@@ -81,6 +88,7 @@ class _CheCharactersRoomState extends State<CheCharactersRoom> with WidgetsBindi
     } catch (_) {}
     if (msg == null || !mounted) return;
     if (msg['type'] == 'ready') {
+      _ready = true;
       setState(() => _status = widget.runtime == null
           ? 'The crew is ready. Each one stands idle until the Office reports their work.'
           : 'The crew is ready. Each one shows their real work right now.');
@@ -107,6 +115,26 @@ class _CheCharactersRoomState extends State<CheCharactersRoom> with WidgetsBindi
     }
     // "Ready" is said only when the page reports every model parsed (_onPageMessage).
     if (mounted) setState(() => _status = 'Building the crew.');
+  }
+
+  /// The room's voice route: the same clips as its buttons, with the result said back. The reply is spoken by the
+  /// caller, so the status line is not changed (it is a live region and would be announced twice).
+  Future<String?> _voice(String words) async {
+    final t = words.toLowerCase().replaceAll(RegExp(r'[?.!]'), '').trim();
+    if (RegExp(r'^(?:options|what can (?:che|she|you) do|which animations|list (?:the )?animations)$').hasMatch(t)) {
+      return cheCrewClipOptions();
+    }
+    final clip = cheCrewClipCommand(words);
+    if (clip == null) return null;
+    final controller = _controller;
+    if (controller == null) return 'The 3D crew needs the iPhone app, so nothing played.';
+    if (!_ready) return 'The crew is still loading, so nothing played yet. Say it again in a moment.';
+    try {
+      await controller.runJavaScript("window.CHE && window.CHE.play && window.CHE.play('$clip');");
+    } catch (_) {
+      return 'The crew page did not answer, so nothing played.';
+    }
+    return cheCrewClipSaid(clip);
   }
 
   /// Sends each character's clip from the live runtime, only when something changed.

@@ -3,15 +3,16 @@
 //
 //   node tools/studio_lipsync_check.mjs
 //
-// No bundled model has face shape keys (the crew GLBs have none), so this check builds a tiny test GLB by hand:
-// one triangle with the morph targets mouth_open, smile, blink_l and blink_r, named the way the MPFB2 full-body export
-// names them. It proves the page drives those morph targets; it does NOT test the real full-body character.
+// Part of it builds a tiny test GLB by hand: one triangle with the morph targets mouth_open, smile, blink_l and blink_r,
+// named the way the MPFB2 full-body export names them. Since Stage 4 (2026-11-06) the bundled crew GLBs carry viseme
+// and blink morph targets too, so the last part loads the real che.glb and checks its mouth and blink move.
 // It reads the influences three.js really set on the mesh (window.CHE.face()) and checks that:
 //   - the page reports the mouth shape key it found;
 //   - mouth cues move mouth_open over time (wide cue open, closed cue shut) and stop_speaking returns it to 0;
 //   - an amplitude envelope moves it, and it returns to 0 by itself when the envelope ends;
 //   - automatic blinking moves blink_l and blink_r;
-//   - a model without a mouth shape key is refused with ok:false and a plain note, including the bundled crew che.glb.
+//   - a model without a mouth shape key is refused with ok:false and a plain note;
+//   - the bundled crew che.glb lip-syncs on its viseme_A shape and blinks on its blink shapes.
 import { createRequire } from 'node:module';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import path from 'node:path';
@@ -141,16 +142,26 @@ try {
   const d4 = await command({ action: 'blink', on: true });
   check('no blink shape keys: refused', d4.ok === false, d4.note);
 
-  // 6. The bundled crew model CHE really ships (assets/characters/crew/che.glb) has no face shape keys: refused honestly.
+  // 6. The bundled crew model CHE really ships (assets/characters/crew/che.glb): viseme_A opens her mouth, blink blinks.
   const { readFileSync } = await import('node:fs');
   const m3 = await load(readFileSync(path.join(root, 'assets/characters/crew/che.glb')));
+  check('bundled crew che.glb reports its viseme mouth and blink', m3.type === 'model' && m3.mouth_morph === 'viseme_A' && m3.blink === true, JSON.stringify({ morphs: m3.morphs, mouth_morph: m3.mouth_morph, blink: m3.blink }));
+  await command({ action: 'blink', on: false });
   const d5 = m3.type === 'model' ? await command({ action: 'lipsync', cues }) : { ok: null, note: m3.message };
-  check('bundled crew che.glb: no mouth shape key, refused', m3.type === 'model' && m3.mouth_morph === null && d5.ok === false, `${(m3.morphs || []).length} shape keys; ${d5.note}`);
+  check('bundled crew che.glb: lip sync accepted on viseme_A', d5.ok === true && /viseme_A/.test(d5.note), d5.note);
+  const s4 = await sample(1200);
+  const open4 = Math.max(...s4.filter((x) => x.t >= 150 && x.t < 380).map((x) => x.mouth));
+  check('bundled crew che.glb: the mouth really opens on a wide cue', open4 > 0.6, `peak ${open4.toFixed(3)}`);
+  await command({ action: 'stop_speaking' });
+  await command({ action: 'blink', on: true });
+  const s5 = await sample(7500, 15);
+  const blink5 = Math.max(...s5.map((x) => Math.max(x.blink_l, x.blink_r)));
+  check('bundled crew che.glb: auto-blink moves its blink shapes', blink5 > 0.5, `peak ${blink5.toFixed(3)}`);
 
   check('no page errors', errors.length === 0, errors.join(' | '));
 } finally {
   await browser.close();
 }
 const failed = results.filter((r) => !r.ok).length;
-console.log(`\n${results.length - failed} of ${results.length} checks passed. Tested on a hand-built one-triangle GLB, not the real full-body character.`);
+console.log(`\n${results.length - failed} of ${results.length} checks passed. Tested on a hand-built one-triangle GLB and on the bundled crew che.glb (not a full-body MPFB2 character).`);
 process.exit(failed ? 1 : 0);

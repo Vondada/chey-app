@@ -43,7 +43,7 @@ function loadGlb(id, cb) { glbHandlers[id] = cb; }
 // Messages to the app (Flutter JavaScriptChannel 'CheBridge'); silent when the page is opened on its own.
 function tellApp(msg) { try { if (window.CheBridge) window.CheBridge.postMessage(JSON.stringify(msg)); } catch (_) {} }
 const loadedIds = new Set();
-const TOTAL_MODELS = 8;
+const TOTAL_MODELS = 10;
 function markLoaded(id) {
   loadedIds.add(id);
   if (loadedIds.size === TOTAL_MODELS) tellApp({ type: 'ready', loaded: loadedIds.size });
@@ -77,6 +77,8 @@ const CREW = [
   { id: 'sage', name: 'Sage', role: 'Intelligence and strategy', at: [3.0, 0.2], clip: 'idle', face: -1.2 },
   { id: 'lyra', name: 'Lyra', role: 'Creative production', at: [-3.0, 0.0], clip: 'idle', face: 1.2 },
   { id: 'iris', name: 'Iris', role: 'Experience and accessibility', at: [-2.4, 1.6], clip: 'idle', face: 2.2 },
+  { id: 'orion', name: 'Orion', role: 'Markets and trading research', at: [1.6, 2.6], clip: 'idle', face: -2.6 },
+  { id: 'vale', name: 'Vale', role: 'Quality assurance and verification', at: [3.0, 1.8], clip: 'idle', face: -2.0 },
 ];
 // Named workstations: the owner taps one (or taps while standing within WS_REACH of it) and the app is told
 // { type: 'workstationTap', id }, so it can show that agent's real task. Atlas's desk sits in front of him.

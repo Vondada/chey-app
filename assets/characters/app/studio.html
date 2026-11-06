@@ -68,7 +68,8 @@ let dirty = true, paused = false, last = performance.now();
 // E rounded (AO), F puckered (OO, W), G teeth on lip (F, V), H tongue (L), X rest.
 const VISEME_OPEN = { A: 0, B: 0.22, C: 0.5, D: 0.85, E: 0.6, F: 0.32, G: 0.14, H: 0.4, X: 0 };
 const VISEME_SMILE = { B: 0.06, C: 0.2, D: 0.12, H: 0.08 };
-const MOUTH_NAMES = ['mouth_open', 'mouthopen', 'jaw_open', 'jawopen', 'viseme_aa'];
+// viseme_a: the crew GLBs' open-mouth shape (tools/character_pipeline, Stage 4); their blink is one `blink` per eye part.
+const MOUTH_NAMES = ['mouth_open', 'mouthopen', 'jaw_open', 'jawopen', 'viseme_aa', 'viseme_a'];
 const face = { meshes: [], mouth: null, smile: null, blinkL: null, blinkR: null, blinkOn: false,
   speech: null, open: 0, grin: 0, written: false, nextBlink: 0, blinkAt: -1 };
 const norm = (n) => String(n).toLowerCase().replace(/[^a-z0-9_]/g, '');
@@ -87,7 +88,7 @@ function scanFace() {
   const pick = (wanted) => { for (const w of wanted) { const hit = names.find((n) => norm(n) === w); if (hit) return hit; } return null; };
   face.mouth = pick(MOUTH_NAMES);
   face.smile = pick(['smile', 'mouth_smile', 'mouthsmile']);
-  face.blinkL = pick(['blink_l', 'eyeblink_l', 'eyeblinkleft', 'blink_left']);
+  face.blinkL = pick(['blink_l', 'eyeblink_l', 'eyeblinkleft', 'blink_left', 'blink']);
   face.blinkR = pick(['blink_r', 'eyeblink_r', 'eyeblinkright', 'blink_right']);
   face.blinkOn = Boolean(face.blinkL || face.blinkR);
   face.nextBlink = performance.now() / 1000 + 1.5 + Math.random() * 2;

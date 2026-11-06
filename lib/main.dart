@@ -40,6 +40,7 @@ import 'brain/che_brain_overview.dart';
 import 'brain/che_brain_regions.dart' show CheBrainNav, CheBrainSourceKind, CheBrainSourceLink;
 import 'brain/che_brain_reliability_screen.dart';
 import 'brain/che_brain_truth_screen.dart';
+import 'rooms/che_characters_room.dart' show CheCharactersRoom;
 import 'rooms/che_cloud_computer_room.dart';
 import 'brain/che_brain_list.dart' show CheBrainRecordLinks;
 import 'brain/che_brain_sections.dart' show CheBrainEvidence, CheEvidenceKind, cheRecordIdsOf;

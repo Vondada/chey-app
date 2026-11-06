@@ -991,6 +991,17 @@ extension _CheHomeSend on _CHEHomeState {
       }
     }
 
+    // The 3D crew room, while it is open, plays an animation by name ("dance", "make CHE clap") and lists them.
+    final crewVoice = CheCharactersRoom.voiceHandler;
+    if (crewVoice != null && _pendingAttachment == null) {
+      final reply = await crewVoice(message);
+      if (reply != null) {
+        if (mounted) _set(() => controller.clear());
+        if (reply.isNotEmpty) await speakText(reply, record: false);
+        return;
+      }
+    }
+
     // The Code Studio workspace and the project manager, while open, take their own spoken actions.
     for (final pageVoice in [CheCodeWorkspace.voiceHandler, CheProjectManager.voiceHandler]) {
       if (pageVoice == null || _pendingAttachment != null) continue;
