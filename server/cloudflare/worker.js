@@ -6401,7 +6401,8 @@ export class CheState extends DurableObject {
     const env = this.keyEnv || this.env;
     const writer = async (messages) => {
       const out = await this.env.AI.run(this.env.CHE_STRONG_MODEL || STRONG_MODEL, { messages, max_tokens: 3000 });
-      return String(out?.response ?? out ?? '');
+      const reply = out?.response ?? out ?? '';
+      return typeof reply === 'string' ? reply : JSON.stringify(reply);
     };
     return { storage, env, keys, writer, base: (await storage.get('film:base')) || '', internalOnly, noExport, fetcher: fetch };
   }
