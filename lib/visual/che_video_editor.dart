@@ -491,7 +491,7 @@ class _CheVideoEditorState extends State<CheVideoEditor> {
         _tool(Icons.delete_outline_rounded, 'Delete', id == null ? null : () => _op({'op': 'delete_clip', 'clip': id})),
         _tool(Icons.add_photo_alternate_outlined, 'Add clip', widget.pickMedia == null ? null : _addClip),
         _tool(Icons.queue_music_rounded, 'Add song', widget.pickMedia == null ? null : _addSong),
-        _tool(Icons.layers_outlined, 'Add overlay', widget.pickMedia == null ? null : _addOverlay),
+        _tool(Icons.photo_library_outlined, 'Add overlay', widget.pickMedia == null ? null : _addOverlay),
       ]),
     );
   }
@@ -716,7 +716,7 @@ class _CheVideoEditorState extends State<CheVideoEditor> {
   Widget _overlayPanel() {
     final o = _selOverlay;
     return _wrap([
-      if (widget.pickMedia != null) FilledButton.icon(onPressed: _addOverlay, icon: const Icon(Icons.layers_outlined), label: const Text('Add overlay')),
+      if (widget.pickMedia != null) FilledButton.icon(onPressed: _addOverlay, icon: const Icon(Icons.photo_library_outlined), label: const Text('Add overlay')),
       OutlinedButton(onPressed: () => _words('add the logo on top in the corner'), child: const Text('Logo in the corner')),
       if (o == null)
         const Text('Select an overlay on the timeline to animate it.')
