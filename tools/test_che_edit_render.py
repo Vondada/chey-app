@@ -102,6 +102,35 @@ class EditRender(unittest.TestCase):
         self.assertEqual(spec['doc']['template'], 'music-promo')
         self.assertAlmostEqual(m['duration_seconds'], 5, delta=0.35)
 
+    def region(self, path, at, box=(0.57, 0.12, 0.75, 0.30)):
+        x0, y0, x1, y1 = box
+        vf = f'crop=iw*{x1 - x0}:ih*{y1 - y0}:iw*{x0}:ih*{y0},scale=32:16,format=rgb24'
+        return subprocess.run(['ffmpeg', '-v', 'error', '-ss', str(at), '-i', str(path), '-frames:v', '1', '-vf', vf, '-f', 'rawvideo', '-'], check=True, capture_output=True).stdout
+
+    def test_stage3_two_tracks_keyframes_speed_ramp_and_lut_render_a_checked_mp4(self):
+        spec, m, out = self.render('multitrack')
+        _, plain_m, plain = self.render('multitrack_plain')
+        video = out / 'video.mp4'
+        self.assertEqual(m['status'], 'verified')
+        info = R.probe(video)
+        self.assertEqual({s['codec_type']: s['codec_name'] for s in info['streams']}, {'video': 'h264', 'audio': 'aac'})
+        self.assertEqual((m['video_width'], m['video_height']), (640, 360))
+        # The speed ramp: clip B (3 s of source) plays 1.5 s at 1x, then 0.5 s each at 1.25x, 1.6x and 2x = 2.4625 s.
+        # The editor's own timeline and the rendered file agree on the whole length.
+        self.assertAlmostEqual(spec['duration'], 4 + 1.5 + 0.4 + 0.3125 + 0.25, delta=0.01)
+        self.assertAlmostEqual(m['duration_seconds'], spec['duration'], delta=0.1)
+        self.assertAlmostEqual(plain_m['duration_seconds'], spec['duration'], delta=0.1)
+        diff = lambda x, y: sum(abs(p - q) for p, q in zip(x, y)) / len(x)
+        # The teal-and-orange LUT (and the contrast curve) change the pixels before any overlay starts.
+        self.assertGreater(diff(self.region(video, 0.2, (0, 0, 1, 1)), self.region(plain / 'video.mp4', 0.2, (0, 0, 1, 1))), 4)
+        # The overlay track: nothing over the bars at 0.2 s, the photo there at 3 s (it slid in and faded up by 1.5 s).
+        p = plain / 'video.mp4'
+        self.assertLess(diff(self.region(p, 0.2), self.region(p, 0.4)), 6, 'the bars alone barely change')
+        self.assertGreater(diff(self.region(p, 0.2), self.region(p, 3.0)), 25, 'the photo covers the bars at 3 s')
+        # The second track's picture-in-picture video is drawn from 2 s.
+        pip = (0.06, 0.62, 0.28, 0.85)
+        self.assertGreater(diff(self.region(p, 1.0, pip), self.region(p, 3.0, pip)), 20)
+
     def test_a_missing_source_fails_with_its_reason_and_no_ready_file(self):
         spec = json.loads(subprocess.run(['node', str(ROOT / 'tools' / 'che_edit_doc.mjs'), 'video', json.dumps({'clipA': 'nope', 'clipB': 'clipB', 'photo': 'photo', 'song': 'song'})], check=True, capture_output=True, text=True).stdout)
         out = self.dir / 'broken'
@@ -117,6 +146,46 @@ class EditRender(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class Stage3Math(unittest.TestCase):
+    """The renderer's keyframe expressions and ramp cuts, checked without ffmpeg against the editor's numbers."""
+
+    def ffeval(self, expr, t):
+        import re
+        py = re.sub(r'\bif\(', 'iff(', expr)
+        return eval(py, {'iff': lambda c, a, b: a if c else b, 'lt': lambda a, b: a < b, 't': t, 'T': t, 'max': max, 'trunc': int})
+
+    def test_keyframes_linear_and_eased_match_the_editor(self):
+        ov = {'start': 2.0, 'x': 0.5, 'keys': {'x': [{'t': 0, 'v': 0.0}, {'t': 1, 'v': 1.0, 'ease': 'linear'}, {'t': 3, 'v': 0.0, 'ease': 'ease_in_out'}]}}
+        e = R.key_expr(ov, 'x', 't')
+        self.assertAlmostEqual(self.ffeval(e, 1.0), 0.0, places=4, msg='before the overlay: the first keyframe holds')
+        self.assertAlmostEqual(self.ffeval(e, 2.5), 0.5, places=4, msg='linear halfway')
+        self.assertAlmostEqual(self.ffeval(e, 3.5), 1 - (0.25 * 0.25 * (3 - 2 * 0.25)), places=4, msg='smoothstep a quarter of the way down')
+        self.assertAlmostEqual(self.ffeval(e, 4.0), 0.5, places=4, msg='smoothstep halfway')
+        self.assertAlmostEqual(self.ffeval(e, 9.0), 0.0, places=4, msg='after the last keyframe it holds')
+        self.assertEqual(R.key_expr({'start': 0, 'x': 0.3, 'keys': {}}, 'x', 't'), '0.30000')
+
+    def test_ramp_cuts_a_clip_into_pieces_whose_lengths_add_up(self):
+        c = {'id': 'c', 'in': 1.0, 'out': 4.0, 'speed': 1, 'ramp': [{'at': 1.5, 'speed': 1.25}, {'at': 2.0, 'speed': 1.6}, {'at': 2.5, 'speed': 2}], 'transition': {'type': 'fade', 'duration': 0.5}}
+        pieces = R.expand_ramps([c])
+        self.assertEqual([(p['in'], p['out'], p['speed']) for p in pieces], [(1.0, 2.5, 1), (2.5, 3.0, 1.25), (3.0, 3.5, 1.6), (3.5, 4.0, 2)])
+        self.assertEqual([p['transition']['type'] for p in pieces], ['cut', 'cut', 'cut', 'fade'], 'the clip\'s own transition stays on its last piece')
+        self.assertAlmostEqual(sum(R.clip_len(p) for p in pieces), 1.5 + 0.4 + 0.3125 + 0.25)
+
+    def test_look_luts_are_valid_cube_files_and_mono_has_no_colour(self):
+        d = Path(tempfile.mkdtemp())
+        for name in R.LOOKS:
+            lines = R.write_cube(name, d / f'{name}.cube').read_text().splitlines()
+            self.assertEqual(lines[1], 'LUT_3D_SIZE 17')
+            rows = [tuple(map(float, l.split())) for l in lines[2:]]
+            self.assertEqual(len(rows), 17 ** 3)
+            self.assertTrue(all(0 <= v <= 1 for r in rows for v in r))
+        mono = [tuple(map(float, l.split())) for l in (d / 'mono.cube').read_text().splitlines()[2:]]
+        self.assertTrue(all(r[0] == r[1] == r[2] for r in mono))
+        self.assertNotEqual(R.look_rgb('teal_orange', 0.1, 0.1, 0.1), R.look_rgb('teal_orange', 0.9, 0.9, 0.9)[::-1], 'shadows and highlights are tinted differently')
+        self.assertGreater(R.look_rgb('teal_orange', 0.1, 0.1, 0.1)[2], R.look_rgb('teal_orange', 0.1, 0.1, 0.1)[0], 'shadows lean teal')
+        self.assertGreater(R.look_rgb('teal_orange', 0.9, 0.9, 0.9)[0], R.look_rgb('teal_orange', 0.9, 0.9, 0.9)[2], 'highlights lean orange')
 
 
 class FilterGraphArgs(unittest.TestCase):

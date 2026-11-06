@@ -1,6 +1,7 @@
-// Visual Studio video editor. Top: the preview. Middle: a visual timeline (clips, waveforms, text, captions,
-// playhead). Bottom: one context toolbar (Edit · Adjust · Audio · Text · Captions · Effects). Every action is a real
-// operation on the stored timeline; every drag has a button; every control has a spoken label.
+// Visual Studio video editor. Top: the preview. Middle: a visual timeline (overlay tracks with keyframe markers, clips,
+// waveforms, text, captions, playhead). Bottom: one context toolbar (Edit · Overlays · Adjust · Audio · Text · Captions ·
+// Effects). Every action is a real operation on the stored timeline; every drag has a button; every control has a
+// spoken label. Overlay, look and ramp controls send the same words the owner can say, so each is also a voice edit.
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
@@ -10,6 +11,7 @@ import 'package:flutter/services.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
 import '../che_ui/che_chrome_status.dart';
+import 'che_timeline_tracks.dart';
 import 'che_visual_adjust.dart';
 import 'che_visual_client.dart';
 import 'che_visual_session.dart';
@@ -52,6 +54,8 @@ class _CheVideoEditorState extends State<CheVideoEditor> {
   List<Map<String, dynamic>> get _rows => [for (final r in (_view?['timeline'] as List? ?? const [])) Map<String, dynamic>.from(r as Map)];
   double get _duration => _rows.isEmpty ? 0 : (_rows.last['end'] as num).toDouble();
   Map<String, dynamic>? get _selClip => _clips.where((c) => c['id'] == _selected).firstOrNull;
+  List<CheOverlayRow> get _overlayRows => cheOverlayRows(_doc);
+  CheOverlayRow? get _selOverlay => _overlayRows.where((o) => o.id == _selected).firstOrNull;
 
   @override
   void initState() {
@@ -79,7 +83,7 @@ class _CheVideoEditorState extends State<CheVideoEditor> {
 
   void _apply(Map<String, dynamic> v) {
     _view = v;
-    if (_selected != null && !_clips.any((c) => c['id'] == _selected) && !(_doc['audio'] as List? ?? const []).any((a) => (a as Map)['id'] == _selected)) _selected = null;
+    if (_selected != null && !_clips.any((c) => c['id'] == _selected) && !(_doc['audio'] as List? ?? const []).any((a) => (a as Map)['id'] == _selected) && !_overlayRows.any((o) => o.id == _selected)) _selected = null;
     _selected ??= _clips.firstOrNull?['id'] as String?;
     CheVisualSession.selection = _selected;
     for (final a in (_doc['audio'] as List? ?? const [])) {
@@ -244,7 +248,7 @@ class _CheVideoEditorState extends State<CheVideoEditor> {
               Expanded(flex: 4, child: _preview(project)),
               _transport(),
               _statusLine(project),
-              SizedBox(height: 150, child: _timeline()),
+              SizedBox(height: 150 + 24.0 * cheOverlayTracks(_overlayRows).length.clamp(0, 4).toDouble(), child: _timeline()),
               _toolRow(),
               _askBar(),
               _tabs(),
@@ -325,6 +329,12 @@ class _CheVideoEditorState extends State<CheVideoEditor> {
           child: Stack(children: [
             Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
               SizedBox(height: 16, child: CustomPaint(painter: _RulerPainter(_duration), size: Size(width, 16))),
+              // Overlay tracks above the main track: the top lane draws on top in the render.
+              for (final track in cheOverlayTracks(_overlayRows).take(4))
+                SizedBox(
+                  height: 24,
+                  child: Stack(children: [for (final o in _overlayRows.where((o) => o.track == track)) _overlayBand(o)]),
+                ),
               SizedBox(
                 height: 52,
                 child: Stack(children: [
@@ -405,6 +415,44 @@ class _CheVideoEditorState extends State<CheVideoEditor> {
     );
   }
 
+  Widget _overlayBand(CheOverlayRow o) {
+    final selected = _selected == o.id;
+    return Positioned(
+      left: o.start * _pxPerSecond,
+      width: ((o.end - o.start) * _pxPerSecond).clamp(14, double.infinity).toDouble(),
+      top: 2,
+      bottom: 2,
+      child: Semantics(
+        button: true,
+        selected: selected,
+        label: '${o.label}${selected ? ', selected' : ''}',
+        child: GestureDetector(
+          onTap: () => setState(() {
+            _selected = o.id;
+            CheVisualSession.selection = _selected;
+            _tab = 'Overlays';
+          }),
+          child: Container(
+            decoration: BoxDecoration(color: const Color(0xFF3B2F6B), borderRadius: BorderRadius.circular(5), border: Border.all(color: selected ? _accent : Colors.white24, width: selected ? 2 : 1)),
+            child: Stack(children: [
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 4),
+                child: ExcludeSemantics(child: Text(o.name, maxLines: 1, overflow: TextOverflow.fade, softWrap: false, style: const TextStyle(fontSize: 10, color: Colors.white))),
+              ),
+              // Keyframe markers where they fall on the timeline.
+              for (final t in o.keyTimes)
+                Positioned(
+                  left: ((t - o.start) * _pxPerSecond - 4).clamp(0, double.infinity).toDouble(),
+                  bottom: 1,
+                  child: ExcludeSemantics(child: Transform.rotate(angle: 0.785, child: Container(width: 7, height: 7, color: _accent))),
+                ),
+            ]),
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _band(Map<String, dynamic> item, String label, Color color, String kind) {
     final start = ((item['start'] as num?) ?? 0).toDouble();
     final end = ((item['end'] as num?) ?? start + 1).toDouble();
@@ -440,6 +488,7 @@ class _CheVideoEditorState extends State<CheVideoEditor> {
         _tool(Icons.delete_outline_rounded, 'Delete', id == null ? null : () => _op({'op': 'delete_clip', 'clip': id})),
         _tool(Icons.add_photo_alternate_outlined, 'Add clip', widget.pickMedia == null ? null : _addClip),
         _tool(Icons.queue_music_rounded, 'Add song', widget.pickMedia == null ? null : _addSong),
+        _tool(Icons.layers_outlined, 'Add overlay', widget.pickMedia == null ? null : _addOverlay),
       ]),
     );
   }
@@ -455,6 +504,19 @@ class _CheVideoEditorState extends State<CheVideoEditor> {
     final video = '${item['mime_type']}'.startsWith('video/');
     await _op({'op': 'add_clip', 'clip': {'asset': item['id'], 'name': '${item['title'] ?? 'Clip'}', 'kind': video ? 'video' : 'image', 'duration': ((item['duration_seconds'] as num?) ?? (video ? 5 : 3)).toDouble()}});
   }
+
+  /// A picture or video from the library on the next free overlay track, from the playhead.
+  Future<void> _addOverlay() async {
+    final item = await widget.pickMedia!(context, kind: 'visual');
+    if (item == null) return;
+    final video = '${item['mime_type']}'.startsWith('video/');
+    final track = (_overlayRows.isEmpty ? 0 : cheOverlayTracks(_overlayRows).first) + 1;
+    final length = video ? ((item['duration_seconds'] as num?) ?? 5).toDouble() : 3.0;
+    await _op({'op': 'add_overlay', 'overlay': {'asset': item['id'], 'name': '${item['title'] ?? 'Overlay'}', 'kind': video ? 'video' : 'image', 'track': track.clamp(1, 8), 'start': _playhead, 'duration': length.clamp(0.5, (_duration - _playhead).clamp(0.5, 600)), 'x': 0.2, 'y': 0.3, 'scale': 0.6}});
+  }
+
+  /// A touch control that is also a voice edit: the same words go through CHE's edit path, on the selection.
+  Future<void> _words(String text) => _run(() => widget.client.words(widget.projectId, text, selection: _selected, playhead: _playhead));
 
   Future<void> _addSong() async {
     final item = await widget.pickMedia!(context, kind: 'audio');
@@ -483,7 +545,7 @@ class _CheVideoEditorState extends State<CheVideoEditor> {
         scrollDirection: Axis.horizontal,
         padding: const EdgeInsets.symmetric(horizontal: 8),
         child: Row(children: [
-          for (final t in const ['Edit', 'Adjust', 'Audio', 'Text', 'Captions', 'Effects'])
+          for (final t in const ['Edit', 'Overlays', 'Adjust', 'Audio', 'Text', 'Captions', 'Effects'])
             Padding(padding: const EdgeInsets.all(4), child: ChoiceChip(label: Text(t), selected: _tab == t, onSelected: (_) => setState(() => _tab = t))),
         ]),
       );
@@ -501,6 +563,8 @@ class _CheVideoEditorState extends State<CheVideoEditor> {
         return _captionsPanel();
       case 'Effects':
         return _effectsPanel(c);
+      case 'Overlays':
+        return _overlayPanel();
       default:
         return _editPanel(c);
     }
@@ -646,6 +710,21 @@ class _CheVideoEditorState extends State<CheVideoEditor> {
   static const _transitions = [['cut', 'Cut'], ['fade', 'Fade'], ['dissolve', 'Cross dissolve'], ['slide', 'Slide'], ['zoom', 'Zoom']];
   static const _looks = [['original', 'Original'], ['clean', 'Clean'], ['warm', 'Warm'], ['cool', 'Cool'], ['cinematic', 'Cinematic'], ['vibrant', 'Vibrant'], ['dark', 'Dark'], ['vintage', 'Vintage'], ['bw', 'B&W']];
 
+  Widget _overlayPanel() {
+    final o = _selOverlay;
+    return _wrap([
+      if (widget.pickMedia != null) FilledButton.icon(onPressed: _addOverlay, icon: const Icon(Icons.layers_outlined), label: const Text('Add overlay')),
+      OutlinedButton(onPressed: () => _words('add the logo on top in the corner'), child: const Text('Logo in the corner')),
+      if (o == null)
+        const Text('Select an overlay on the timeline to animate it.')
+      else ...[
+        Text('${o.name}:', style: const TextStyle(fontWeight: FontWeight.w600)),
+        for (final e in cheOverlayEdits) OutlinedButton(onPressed: () => _words(e[1]), child: Text(e[0])),
+        OutlinedButton(onPressed: () => _op({'op': 'delete_overlay', 'id': o.id}), child: const Text('Remove overlay')),
+      ],
+    ]);
+  }
+
   Widget _effectsPanel(Map<String, dynamic>? c) => _wrap([
         if (c != null) ...[
           Text('After ${c['name']}:', style: const TextStyle(fontWeight: FontWeight.w600)),
@@ -653,6 +732,10 @@ class _CheVideoEditorState extends State<CheVideoEditor> {
             ChoiceChip(label: Text(t[1]), selected: (c['transition'] as Map?)?['type'] == t[0], onSelected: (_) => _op({'op': 'transition', 'clip': c['id'], 'type': t[0], 'duration': 0.5})),
         ],
         for (final l in _looks) ChoiceChip(label: Text('${l[1]} look'), selected: _doc['filter'] == l[0], onSelected: (_) => _op({'op': 'filter', 'name': l[0]})),
+        // Colour LUT looks and curve presets (applied when rendering), and speed ramps, as the words CHE understands.
+        for (final l in cheLookEdits) ChoiceChip(label: Text('${l[1]} LUT'), selected: _doc['look'] == l[0], onSelected: (_) => _words(l[2])),
+        for (final l in cheCurveEdits) ChoiceChip(label: Text(l[1]), selected: _doc['curves'] == l[0], onSelected: (_) => _words(l[2])),
+        for (final r in cheRampEdits) OutlinedButton(onPressed: () => _words(r[1]), child: Text(r[0])),
         for (final i in const [['auto_enhance', 'Auto Enhance'], ['improve_lighting', 'Improve Lighting'], ['improve_audio', 'Improve Audio'], ['clean_voice', 'Clean Voice']])
           OutlinedButton(onPressed: () => _run(() => widget.client.post({'action': 'improve', 'project_id': widget.projectId, 'id': i[0]})), child: Text(i[1])),
       ]);

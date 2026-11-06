@@ -74,6 +74,15 @@ so "make her bigger" acts on what is touched.
 **Stage 3: one timeline.** Scene renders and films open as Visual Studio projects; add overlay tracks,
 keyframes (position, scale, opacity), speed ramps and colour curves/LUTs to the document and to
 `tools/che_edit_render.py`. Masks and tracking come after, with a segmentation model on the GPU farm.
+- Stage 3a (built): "edit my scene in the studio" / "open my film in the editor" open the newest scene render or
+  film as a Visual Studio project (`projectFromMedia`, API action `from_media`); video documents are version 2 with
+  overlay tracks (pictures or videos with start, length, position, size, opacity, track order) and keyframes on
+  position, size and opacity (linear or eased), migrated from one-track documents on load; speed ramps play as
+  steps (the renderer cuts the clip into pieces, audio follows with atempo); four LUT looks (warm film, teal and
+  orange, mono, film; .cube files built by the renderer) and six ffmpeg curve presets. All are voice edits ("add the
+  sunset photo on top", "fade it in over two seconds", "slide it in from the left", "ramp the speed up at the end",
+  "give it a warm film look"); the app's controls send the same words. Evidence: a real two-track render with
+  keyframes, a ramp and a LUT in `tools/test_che_edit_render.py`, its length matching the editor's timeline.
 
 **Stage 4: identity everywhere.** One rig and clip library for crew and created people (retarget or rebuild); add
 dance, emotion and gesture clips; face shapes on the crew for real lip sync; rebuild the crew to the CHE WORLD sheets;

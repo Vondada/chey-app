@@ -6,7 +6,7 @@ import test from 'node:test';
 import {
   newImageDoc, newVideoDoc, editState, edit, undo, redo, saveVersion, restoreVersion, compareDocs, timeline, duration,
   smartResize, useTemplate, templateFromDoc, TEMPLATES, FILTERS, brandKit, applyBrand, improve, suggestions, wordsToOps,
-  renderSpec, nextRenderStage, compact, visualIntent, PRESETS,
+  renderSpec, nextRenderStage, compact, visualIntent, PRESETS, keyValue, migrateDoc, rampSegments, clipLength, applyOp,
 } from './visual_studio.js';
 import { checkOutput, newRenderJob, tokenOpens } from './visual_render.js';
 import { visualApi } from './visual_api.js';
@@ -550,4 +550,131 @@ test('Worker: a verified render is archived to R2 when the bucket is bound, so i
   assert.equal(failed.body.project.render.stage, 'failed');
   assert.match(failed.body.project.render.error, /could not be archived/);
   assert.equal(saved.get('media_index'), undefined);
+});
+
+// ─── Creative Studio stage 3: overlay tracks, keyframes, speed ramps, looks; scenes and films open here ──────────
+
+const round3 = (x) => Math.round(x * 1000) / 1000;
+
+test('stage 3: overlay tracks with keyframes, a speed ramp and looks are versioned edits with undo; old one-track documents migrate', () => {
+  const { s, A, C } = video();
+  const ov = must(edit(s, { op: 'add_overlay', overlay: { asset: 'logo1', name: 'Logo', track: 2, start: 1, duration: 4, x: 0.8, y: 0.05, scale: 0.15 } }));
+  assert.match(ov.said, /Logo on overlay track 2, from 1 s for 4 s/);
+  must(edit(s, { op: 'keyframe', id: ov.id, prop: 'opacity', keys: [{ t: 0, v: 0 }, { t: 2, v: 1, ease: 'linear' }] }));
+  assert.equal(keyValue(s.doc.overlays[0], 'opacity', 1), 0.5, 'linear halfway');
+  must(edit(s, { op: 'keyframe', id: ov.id, prop: 'x', keys: [{ t: 0, v: 0 }, { t: 2, v: 1 }] }));
+  assert.equal(keyValue(s.doc.overlays[0], 'x', 0.5), 0.1563, 'eased: a quarter of the time is 15.6% of the way');
+  assert.equal(keyValue(s.doc.overlays[0], 'y', 3), 0.05, 'no keyframes: the overlay\'s own value');
+  assert.match(edit(s, { op: 'keyframe', id: ov.id, prop: 'x', keys: [{ t: 1, v: 0.2 }] }).error, /at least two keyframes/);
+  // A ramp: Outro (3 s at 1x) plays its last 1.5 s faster; the timeline and the render length follow.
+  const before = duration(s.doc);
+  const r = must(edit(s, { op: 'ramp', clip: C, points: [{ at: 1.5, speed: 2 }, { at: 2.25, speed: 3 }] }));
+  assert.match(r.said, /2x from 1.5 s, 3x from 2.3 s/);
+  assert.deepEqual(rampSegments(s.doc.clips.find((c) => c.id === C)), [{ from: 0, to: 1.5, speed: 1 }, { from: 1.5, to: 2.25, speed: 2 }, { from: 2.25, to: 3, speed: 3 }]);
+  assert.equal(round3(duration(s.doc)), round3(before - 3 + 1.5 + 0.375 + 0.25));
+  assert.match(edit(s, { op: 'split', at: duration(s.doc) - 0.5 }).error, /speed ramp; remove the ramp before splitting/);
+  must(edit(s, { op: 'look', name: 'teal_orange' }));
+  must(edit(s, { op: 'curves', name: 'strong_contrast', scope: `clip:${A}` }));
+  assert.equal(s.doc.look, 'teal_orange');
+  assert.equal(s.doc.clips[0].curves, 'strong_contrast');
+  assert.match(edit(s, { op: 'look', name: 'sepia_dream' }).error, /Looks: Warm film, Teal and orange, Mono, Film/);
+  must(undo(s)); must(undo(s));
+  assert.equal(s.doc.look, null, 'undo takes the look back off');
+  must(redo(s));
+  assert.equal(s.doc.look, 'teal_orange');
+  // The render spec carries the overlay's media.
+  const spec = renderSpec(s.doc);
+  assert.ok(spec.ok && spec.spec.assets.includes('logo1'));
+  // A document saved before stage 3 (v1, one track) opens and edits as before, with the new fields added.
+  const old = JSON.parse(JSON.stringify(video().s.doc));
+  delete old.overlays; delete old.look; delete old.curves; old.v = 1;
+  for (const c of old.clips) { delete c.ramp; delete c.look; delete c.curves; }
+  const migrated = migrateDoc(JSON.parse(JSON.stringify(old)));
+  assert.deepEqual([migrated.v, migrated.overlays, migrated.look, migrated.clips[0].ramp], [2, [], null, null]);
+  assert.equal(duration(migrated), duration(old), 'nothing in an old document changes');
+  const s2 = editState(old);
+  must(edit(s2, { op: 'add_overlay', overlay: { asset: 'logo1', name: 'Logo' } }));
+  assert.equal(s2.doc.overlays.length, 1);
+});
+
+test('stage 3 by voice: looks, curves, overlays on top, fades, slides, growth and speed ramps, each said as done', () => {
+  const { s } = video();
+  assert.deepEqual(wordsToOps('give it a warm film look', s.doc).ops, [{ op: 'look', name: 'warm_film', scope: 'all' }]);
+  assert.equal(wordsToOps('give it a teal and orange look', s.doc).ops[0].name, 'teal_orange');
+  assert.equal(wordsToOps('give it a cinematic look', s.doc).ops[0].op, 'filter', 'the older looks still work');
+  assert.equal(wordsToOps('give the second clip a mono look', s.doc).ops[0].scope, `clip:${s.doc.clips[1].id}`);
+  assert.equal(wordsToOps('add a strong contrast curve', s.doc).ops[0].name, 'strong_contrast');
+  assert.deepEqual(wordsToOps('add the logo on top in the corner', s.doc).ops, [{ op: 'brand_logo', corner: 'right', top: true }]);
+  assert.deepEqual(wordsToOps('add the sunset photo on top', s.doc, { playhead: 2 }).ops, [{ op: 'add_overlay_named', name: 'sunset photo', corner: null, start: 2 }]);
+  assert.match(wordsToOps('fade it in over two seconds', s.doc).unsupported[0], /no overlay to fade/);
+  const ov = must(edit(s, { op: 'add_overlay', overlay: { asset: 'p', name: 'Sunset', start: 0, duration: 5, x: 0.5, y: 0.5, scale: 0.3 } }));
+  const fade = wordsToOps('fade it in over two seconds', s.doc, { selection: ov.id });
+  assert.deepEqual(fade.ops, [{ op: 'keyframe', id: ov.id, prop: 'opacity', keys: [{ t: 0, v: 0 }, { t: 2, v: 1, ease: 'ease_in_out' }] }]);
+  assert.deepEqual(fade.understood, ['fade Sunset in over 2 s']);
+  assert.deepEqual(wordsToOps('fade it out over one second', s.doc).ops[0].keys, [{ t: 4, v: 1 }, { t: 5, v: 0, ease: 'ease_in_out' }]);
+  assert.deepEqual(wordsToOps('slide it in from the right', s.doc).ops[0], { op: 'keyframe', id: ov.id, prop: 'x', keys: [{ t: 0, v: 1 }, { t: 1, v: 0.5, ease: 'ease_in_out' }] });
+  assert.equal(wordsToOps('make it grow over three seconds', s.doc).ops[0].keys[1].v, 0.48);
+  const ramp = wordsToOps('ramp the speed up at the end', s.doc);
+  const last = s.doc.clips.at(-1);
+  assert.deepEqual(ramp.ops, [{ op: 'ramp', clip: last.id, points: [{ at: 1.5, speed: 1.25 }, { at: 2, speed: 1.6 }, { at: 2.5, speed: 2 }] }]);
+  for (const op of ramp.ops) must(edit(s, op));
+  assert.equal(round3(clipLength(s.doc.clips.at(-1))), round3(1.5 + 0.5 / 1.25 + 0.5 / 1.6 + 0.5 / 2));
+  const slowStart = wordsToOps('ramp it down at the start', s.doc);
+  assert.deepEqual(slowStart.ops.map((o) => o.op), ['clip', 'ramp'], 'at the start the clip begins slow and steps back to its own speed');
+  assert.equal(slowStart.ops[0].speed, 0.4);
+});
+
+test('stage 3, Worker: "edit my scene in the studio" opens the newest scene render as a project; "open my film in the editor" the newest film; overlays by name', async () => {
+  const saved = new Map();
+  seedMedia(saved, [
+    ['scene1', { kind: 'video', mode: 'scene', mime_type: 'video/mp4', title: 'Nova in the office (v1)', seconds: 11.1, width: 540, height: 960, scene_project_id: 'scp_1', scene_version: 1, verified: true }],
+    ['film1', { kind: 'video', mode: 'film', mime_type: 'video/mp4', title: 'The Coffee Machine', seconds: 60, width: 1280, height: 720, film_id: 'film_1', verified: true }],
+    ['sunset', { title: 'Sunset photo' }],
+  ]);
+  const che = await owner(saved);
+  assert.deepEqual(visualIntent('Edit my scene in the studio'), { kind: 'open_media', source: 'scene' });
+  assert.deepEqual(visualIntent('open my film in the editor'), { kind: 'open_media', source: 'film' });
+  const scene = await che.say('Edit my scene in the studio');
+  assert.equal(scene.route, 'che_visual_studio');
+  assert.equal(scene.done.open, 'visual_editor');
+  assert.match(scene.reply, /"Nova in the office \(v1\) \(edit\)" is open in Visual Studio: the scene \(11.1 s\) is on the main track/);
+  const pid = scene.done.visual_project_id;
+  const view = await che.get(`/api/visual?project_id=${pid}`);
+  assert.equal(view.doc.clips[0].asset, 'scene1');
+  assert.equal(view.doc.preset, 'tiktok', 'a portrait scene opens in a 9:16 project');
+  assert.equal(view.timeline[0].length, 11.1);
+  assert.deepEqual(view.doc.overlays, []);
+  // Voice edits on the open project: a picture from the library on top, faded in, then a look; all undoable.
+  const on = await che.say('Add the sunset photo on top', { visual_project_id: pid, visual_playhead: 1 });
+  assert.match(on.reply, /Added Sunset photo on overlay track 1, from 1 s/);
+  assert.match((await che.say('Add the dragon photo on top', { visual_project_id: pid })).reply, /found nothing called "dragon photo"/);
+  const fade = await che.say('Fade it in over two seconds and give it a warm film look', { visual_project_id: pid });
+  assert.match(fade.reply, /Sunset photo: opacity keyframed from 0 at 0 s to 1 at 2 s \(eased\)\. Warm film look, applied as a colour LUT when rendering/);
+  const after = await che.get(`/api/visual?project_id=${pid}`);
+  assert.equal(after.doc.look, 'warm_film');
+  assert.equal(after.doc.overlays[0].keys.opacity.length, 2);
+  assert.equal((await che.post({ action: 'undo', project_id: pid })).body.doc.look, null);
+  // The film, from the app's route.
+  const film = await che.post({ action: 'from_media', source: 'film' });
+  assert.equal(film.status, 200);
+  assert.equal(film.body.doc.preset, 'youtube');
+  assert.equal(film.body.doc.clips[0].asset, 'film1');
+  assert.match(film.body.said, /the film \(60 s\) is on the main track/);
+  assert.equal((await che.post({ action: 'from_media', media_id: 'nope' })).status, 404);
+});
+
+const applyOpOk = (doc, op) => !applyOp(doc, op).error;
+
+test('stage 3: every touch control in the app (lib/visual/che_timeline_tracks.dart) sends words this parser turns into a real edit', () => {
+  const dart = readFileSync(new URL('../../lib/visual/che_timeline_tracks.dart', import.meta.url), 'utf8');
+  const phrases = [...dart.matchAll(/\[(?:'[^']*', )+'([^']*)'\]/g)].map((m) => m[1]);
+  assert.ok(phrases.length >= 17, `found ${phrases.length} control phrases`);
+  const { s } = video();
+  must(edit(s, { op: 'add_overlay', overlay: { asset: 'p', name: 'Sunset', start: 0, duration: 5 } }));
+  for (const words of phrases) {
+    const w = wordsToOps(words, s.doc, { selection: s.doc.overlays[0].id });
+    assert.equal(w.unsupported.length, 0, `"${words}": ${w.unsupported.join(' ')}`);
+    assert.ok(w.ops.length >= 1, `"${words}" makes an edit`);
+    for (const op of w.ops.filter((o) => !['brand_logo', 'add_overlay_named'].includes(o.op))) assert.ok(applyOpOk(s.doc, op), `"${words}" → ${op.op} applies`);
+  }
 });

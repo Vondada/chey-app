@@ -99,7 +99,7 @@ export function newImageDoc({ preset = 'square', asset = null, w, h } = {}) {
 
 export function newVideoDoc({ preset = 'tiktok', fps = 30 } = {}) {
   const p = PRESETS[preset] || PRESETS.tiktok;
-  return { kind: 'video', v: 1, preset, canvas: { w: p.w, h: p.h, fps }, adjust: neutral(), filter: 'original', clips: [], audio: [], text: [], captions: { cues: [], style: 'caption_clean', position: 0.78, source: null } };
+  return { kind: 'video', v: 2, preset, canvas: { w: p.w, h: p.h, fps }, adjust: neutral(), filter: 'original', look: null, curves: null, clips: [], overlays: [], audio: [], text: [], captions: { cues: [], style: 'caption_clean', position: 0.78, source: null } };
 }
 
 export function layer(input = {}) {
@@ -121,12 +121,70 @@ export function videoClip(input = {}) {
     id: input.id || uid('cl'), asset: input.asset || null, kind: input.kind === 'image' ? 'image' : 'video', name: clip(input.name || 'Clip', 40),
     in: Number(input.in) || 0, out: Number(input.out) || dur, source_duration: dur, speed: Number(input.speed) || 1,
     volume: Number(input.volume ?? 1), muted: input.muted === true, opacity: 1, rotate: 0, crop: null, focus: input.focus || { x: 0.5, y: 0.5 },
-    adjust: {}, transition: { type: 'cut', duration: 0 }, freeze: null, reverse: false,
+    adjust: {}, transition: { type: 'cut', duration: 0 }, freeze: null, reverse: false, ramp: null, look: null, curves: null,
   };
 }
 
-/// Seconds a clip occupies on the timeline after speed.
-export const clipLength = (c) => round(Math.max(0, (c.out - c.in) / (c.speed || 1)) + (c.freeze ? c.freeze.duration : 0));
+/// A speed ramp as stretches of the clip's source, each at one speed: [{ from, to, speed }] in seconds after `in`.
+/// `ramp` points say "from `at` seconds into the clip, play at `speed`"; before the first point the clip's own speed
+/// holds. A ramp is played as these steps (the renderer cuts the clip into them), never as a guessed curve.
+export function rampSegments(c) {
+  const len = Math.max(0, c.out - c.in);
+  const pts = (Array.isArray(c.ramp) ? c.ramp : []).filter((p) => p.at > 0.01 && p.at < len - 0.01).sort((a, b) => a.at - b.at);
+  const out = [];
+  let from = 0; let speed = c.speed || 1;
+  for (const p of pts) { if (p.at - from > 0.01) out.push({ from: round(from), to: round(p.at), speed }); from = p.at; speed = clamp(+p.speed || 1, 0.25, 4); }
+  if (len - from > 0.001) out.push({ from: round(from), to: round(len), speed });
+  return out;
+}
+
+/// Seconds a clip occupies on the timeline after speed (and its speed ramp).
+export const clipLength = (c) => round(rampSegments(c).reduce((n, g) => n + (g.to - g.from) / g.speed, 0) + (c.freeze ? c.freeze.duration : 0));
+
+// ─── Overlay tracks, keyframes and looks (Creative Studio stage 3) ─────────
+
+/// LUT looks the renderer builds as .cube files (tools/che_edit_render.py), and ffmpeg's built-in curve presets.
+export const LOOKS = Object.freeze({ warm_film: 'Warm film', teal_orange: 'Teal and orange', mono: 'Mono', film: 'Film' });
+export const CURVES = Object.freeze({ strong_contrast: 'Strong contrast', medium_contrast: 'Medium contrast', lighter: 'Lighter', darker: 'Darker', vintage: 'Vintage', cross_process: 'Cross process' });
+export const KEYFRAME_PROPS = Object.freeze(['x', 'y', 'scale', 'opacity']);
+export const EASES = Object.freeze(['linear', 'ease_in_out']);
+
+/// A picture or video on an overlay track above the main track. `track` 1 is just above the main video; a higher
+/// track draws on top. x/y are the overlay's top-left corner as a fraction of the frame, `scale` its width as a
+/// fraction of the frame width (its height follows its own aspect). Keyframe times are seconds after `start`.
+export function overlay(input = {}) {
+  const dur = Number(input.duration) || 3;
+  return {
+    id: input.id || uid('ov'), asset: input.asset || null, kind: input.kind === 'video' ? 'video' : 'image', name: clip(input.name || 'Overlay', 40),
+    track: clamp(Math.round(Number(input.track) || 1), 1, 8), start: round(Math.max(0, Number(input.start) || 0)), duration: round(clamp(dur, 0.1, 600)), in: Math.max(0, Number(input.in) || 0),
+    x: round(clamp(Number(input.x ?? 0.05), -1, 1)), y: round(clamp(Number(input.y ?? 0.05), -1, 1)), scale: round(clamp(Number(input.scale ?? 0.25), 0.02, 2)),
+    opacity: clamp(Number(input.opacity ?? 1), 0, 1), keys: { x: [], y: [], scale: [], opacity: [] },
+  };
+}
+
+/// Older video documents (one track) gain the stage-3 fields on load; nothing in them changes.
+export function migrateDoc(doc) {
+  if (!doc || doc.kind !== 'video') return doc;
+  if (!Array.isArray(doc.overlays)) doc.overlays = [];
+  if (doc.look === undefined) doc.look = null;
+  if (doc.curves === undefined) doc.curves = null;
+  for (const c of doc.clips || []) { if (c.ramp === undefined) c.ramp = null; if (c.look === undefined) c.look = null; if (c.curves === undefined) c.curves = null; }
+  doc.v = Math.max(2, Number(doc.v) || 1);
+  return doc;
+}
+
+/// The value of one keyframed property at `u` seconds into the overlay (the renderer builds the same curve as an
+/// ffmpeg expression). With no keyframes the overlay's own value holds.
+export function keyValue(ov, prop, u) {
+  const ks = ov.keys?.[prop] || [];
+  if (!ks.length) return ov[prop];
+  if (u <= ks[0].t) return ks[0].v;
+  for (let i = 1; i < ks.length; i += 1) {
+    const a = ks[i - 1]; const b = ks[i];
+    if (u <= b.t) { const p = (u - a.t) / Math.max(1e-6, b.t - a.t); const e = b.ease === 'linear' ? p : p * p * (3 - 2 * p); return round(a.v + (b.v - a.v) * e, 4); }
+  }
+  return ks.at(-1).v;
+}
 
 /// Each clip's start on the timeline; transitions overlap the clips they join.
 export function timeline(doc) {
@@ -145,7 +203,7 @@ export const duration = (doc) => (doc.kind === 'video' ? (timeline(doc).at(-1)?.
 
 /// Applies one operation to a copy of the document. Returns { doc, said } or { error }.
 export function applyOp(input, op) {
-  const doc = copy(input);
+  const doc = migrateDoc(copy(input));
   const find = (id) => doc.layers?.find((l) => l.id === id) || null;
   const clipBy = (id) => doc.clips?.find((c) => c.id === id) || null;
   const target = (scope) => {
@@ -269,6 +327,7 @@ export function applyOp(input, op) {
       const row = rows.find((r) => op.at > r.start + 0.05 && op.at < r.end - 0.05);
       if (!row) return { error: 'The playhead is not inside a clip, or too close to its edge to split.' };
       const c = clipBy(row.id);
+      if (c.ramp?.length) return { error: `${c.name} has a speed ramp; remove the ramp before splitting it.` };
       const cut = round(c.in + (op.at - row.start) * c.speed);
       const right = { ...copy(c), id: uid('cl'), name: `${c.name} (2)`, in: cut };
       c.out = cut;
@@ -370,6 +429,67 @@ export function applyOp(input, op) {
         over = round(over - take, 3);
       }
       return { doc, said: `Now ${round(duration(doc), 1)} s.` };
+    }
+    case 'add_overlay': {
+      if (doc.kind !== 'video') return { error: 'Overlay tracks belong to a video project.' };
+      const total = duration(doc);
+      const o = overlay({ ...(op.overlay || {}), duration: op.overlay?.duration ?? Math.max(1, total - (Number(op.overlay?.start) || 0)) });
+      if (!o.asset) return { error: 'An overlay needs a picture or video from your library.' };
+      doc.overlays.push(o);
+      return { doc, said: `Added ${o.name} on overlay track ${o.track}, from ${round(o.start, 1)} s for ${round(o.duration, 1)} s.`, id: o.id };
+    }
+    case 'edit_overlay': {
+      const o = doc.overlays?.find((x) => x.id === op.id);
+      if (!o) return { error: 'That overlay is not in the project.' };
+      for (const k of ['x', 'y']) if (op[k] !== undefined) o[k] = round(clamp(+op[k], -1, 1));
+      if (op.scale !== undefined) o.scale = round(clamp(+op.scale, 0.02, 2));
+      if (op.opacity !== undefined) o.opacity = clamp(+op.opacity, 0, 1);
+      if (op.start !== undefined) o.start = round(Math.max(0, +op.start));
+      if (op.duration !== undefined) o.duration = round(clamp(+op.duration, 0.1, 600));
+      if (op.track !== undefined) o.track = clamp(Math.round(+op.track), 1, 8);
+      if (op.name !== undefined) o.name = clip(op.name, 40);
+      return { doc, said: `${o.name} updated.` };
+    }
+    case 'delete_overlay': {
+      const i = (doc.overlays || []).findIndex((x) => x.id === op.id);
+      if (i < 0) return { error: 'That overlay is not in the project.' };
+      const [o] = doc.overlays.splice(i, 1);
+      return { doc, said: `Removed ${o.name}.` };
+    }
+    case 'keyframe': {
+      // Sets one property's keyframes on an overlay: [{ t, v, ease }], t in seconds after the overlay starts.
+      const o = doc.overlays?.find((x) => x.id === op.id);
+      if (!o) return { error: 'That overlay is not in the project.' };
+      if (!KEYFRAME_PROPS.includes(op.prop)) return { error: `Keyframes work on ${KEYFRAME_PROPS.join(', ')}.` };
+      const lim = { x: [-1, 1], y: [-1, 1], scale: [0.02, 2], opacity: [0, 1] }[op.prop];
+      const keys = (Array.isArray(op.keys) ? op.keys : []).map((k) => ({ t: round(clamp(+k.t || 0, 0, o.duration), 3), v: round(clamp(+k.v, lim[0], lim[1]), 4), ease: EASES.includes(k.ease) ? k.ease : 'ease_in_out' }))
+        .filter((k) => Number.isFinite(k.v)).sort((a, b) => a.t - b.t).filter((k, i, a) => i === 0 || k.t > a[i - 1].t);
+      if (op.keys?.length && keys.length < 2) return { error: 'A keyframed change needs at least two keyframes at different times.' };
+      o.keys = { ...(o.keys || {}), [op.prop]: keys };
+      return { doc, said: keys.length ? `${o.name}: ${op.prop} keyframed from ${keys[0].v} at ${keys[0].t} s to ${keys.at(-1).v} at ${keys.at(-1).t} s (${keys.at(-1).ease === 'linear' ? 'linear' : 'eased'}).` : `${o.name}: ${op.prop} keyframes removed.` };
+    }
+    case 'ramp': {
+      const c = clipBy(op.clip);
+      if (!c) return { error: 'That clip is not in the project.' };
+      const len = c.out - c.in;
+      const pts = (Array.isArray(op.points) ? op.points : []).map((p) => ({ at: round(clamp(+p.at, 0, len), 3), speed: round(clamp(+p.speed, 0.25, 4), 3) })).filter((p) => p.at > 0.01 && p.at < len - 0.01).sort((a, b) => a.at - b.at);
+      c.ramp = pts.length ? pts : null;
+      if (c.ramp) { c.freeze = null; c.reverse = false; }
+      return { doc, said: c.ramp ? `${c.name} speed ramp: ${pts.map((p) => `${p.speed}x from ${round(p.at, 1)} s`).join(', ')}; it now runs ${round(clipLength(c), 2)} s.` : `${c.name} has no speed ramp.` };
+    }
+    case 'look': {
+      if (op.name && !LOOKS[op.name]) return { error: `Looks: ${Object.values(LOOKS).join(', ')}.` };
+      const where = target(op.scope);
+      if (!where) return { error: 'That clip is not in the project.' };
+      where.look = op.name || null;
+      return { doc, said: op.name ? `${LOOKS[op.name]} look${where === doc ? '' : ` on ${where.name}`}, applied as a colour LUT when rendering.` : 'Look removed.' };
+    }
+    case 'curves': {
+      if (op.name && !CURVES[op.name]) return { error: `Curves: ${Object.values(CURVES).join(', ')}.` };
+      const where = target(op.scope);
+      if (!where) return { error: 'That clip is not in the project.' };
+      where.curves = op.name || null;
+      return { doc, said: op.name ? `${CURVES[op.name]} curve${where === doc ? '' : ` on ${where.name}`}.` : 'Curve removed.' };
     }
     default:
       return { error: `Unknown edit ${op.op}.` };
@@ -684,7 +804,7 @@ export function suggestions(doc) {
 
 // ─── Words → operations ───────────────────────────────────────────────────
 
-const NUMBER_WORDS = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, fifteen: 15, twenty: 20, thirty: 30, sixty: 60, half: 0.5 };
+const NUMBER_WORDS = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, fifteen: 15, twenty: 20, thirty: 30, sixty: 60, half: 0.5, 'half a': 0.5 };
 const num = (s) => (s === undefined ? null : NUMBER_WORDS[String(s).toLowerCase()] ?? Number(s));
 const ORDINAL = { first: 0, second: 1, third: 2, fourth: 3, fifth: 4, last: -1 };
 
@@ -725,6 +845,64 @@ export function wordsToOps(text, doc, { selection = null, playhead = 0 } = {}) {
       if (doc.kind === 'image' && doc.layers.some((l) => l.type === 'background')) { ops.push({ op: 'edit_layer', id: doc.layers.find((l) => l.type === 'background').id, opacity: 0.7 }); understood.push('darker background layer'); }
       else unsupported.push('Darkening only the background needs it separated from the subject (no segmentation engine connected). Say "darker" to darken everything.');
       continue;
+    }
+    // Stage 3: colour LUT looks and curves, overlays and their keyframes, speed ramps.
+    if ((m = p.match(/\b(warm film|teal (?:and|&) orange|teal[- ]orange|mono(?:chrome)?|film(?:ic)?)\s+(?:look|lut|grade|colou?r)\b/i)) || (m = p.match(/\b(?:grade|colou?r) it (warm film|teal (?:and|&) orange|mono(?:chrome)?|like film)\b/i))) {
+      const w = m[1].toLowerCase();
+      const name = /warm/.test(w) ? 'warm_film' : /teal/.test(w) ? 'teal_orange' : /mono/.test(w) ? 'mono' : 'film';
+      if (doc.kind !== 'video') { unsupported.push('LUT looks are for video projects; for a picture, say a look like "warm" or "vintage".'); continue; }
+      ops.push({ op: 'look', name, scope }); understood.push(`${LOOKS[name].toLowerCase()} look`); continue;
+    }
+    if ((m = p.match(/\b(strong|medium|more) contrast curves?\b|\b(vintage|cross[- ]process(?:ed)?|lighter|darker) curves?\b|\bcross[- ]process(?:ed)?\b(?: look)?/i))) {
+      const w = (m[1] || m[2] || m[0]).toLowerCase();
+      const name = /strong|more/.test(w) ? 'strong_contrast' : /medium/.test(w) ? 'medium_contrast' : /vintage/.test(w) ? 'vintage' : /cross/.test(w) ? 'cross_process' : /lighter/.test(w) ? 'lighter' : 'darker';
+      if (doc.kind !== 'video') { unsupported.push('Curve presets are for video projects.'); continue; }
+      ops.push({ op: 'curves', name, scope }); understood.push(`${CURVES[name].toLowerCase()} curve`); continue;
+    }
+    if (doc.kind === 'video' && (m = p.match(/\b(?:add|put|place)\s+(?:the |my )?(.+?)\s+(?:on top|as an overlay|over the video|over it)(?:\s+(?:in|at) the\s+(top|bottom)?\s*(left|right)?\s*corner)?\b/i)) && !/^(?:text|title|captions?)$/i.test(m[1].trim())) {
+      const corner = /\bcorner\b/i.test(p) ? { top: !/bottom/i.test(p), left: /left/i.test(p) } : null;
+      if (/^logo$/i.test(m[1].trim())) ops.push({ op: 'brand_logo', corner: corner?.left ? 'left' : 'right', top: corner ? corner.top : true });
+      else ops.push({ op: 'add_overlay_named', name: m[1].trim(), corner, start: playhead });
+      understood.push(`${m[1].trim()} on an overlay track${corner ? ' in the corner' : ''}`); continue;
+    }
+    const ovTarget = () => (selection && doc.overlays?.find((o) => o.id === selection)) || doc.overlays?.at(-1) || null;
+    if (doc.kind === 'video' && (m = p.match(/\b(?:make (?:it|the [a-z ]+?) )?fade (?:it |the [a-z ]+? )?(in|out)(?: over (half a|\w+(?:\.\d+)?) seconds?)?\b/i))) {
+      const o = ovTarget();
+      if (!o) { unsupported.push('There is no overlay to fade. Add a picture or your logo on top first.'); continue; }
+      const secs = clamp(num(m[2]) || 1, 0.1, o.duration);
+      const inn = /in/i.test(m[1]);
+      ops.push({ op: 'keyframe', id: o.id, prop: 'opacity', keys: inn ? [{ t: 0, v: 0 }, { t: secs, v: o.opacity, ease: /linear/i.test(p) ? 'linear' : 'ease_in_out' }] : [{ t: o.duration - secs, v: o.opacity }, { t: o.duration, v: 0, ease: /linear/i.test(p) ? 'linear' : 'ease_in_out' }] });
+      understood.push(`fade ${o.name} ${m[1]} over ${secs} s`); continue;
+    }
+    if (doc.kind === 'video' && (m = p.match(/\bslide (?:it |the [a-z ]+? )?in from the (left|right|top|bottom)(?: over (\w+(?:\.\d+)?) seconds?)?\b/i))) {
+      const o = ovTarget();
+      if (!o) { unsupported.push('There is no overlay to slide in. Add a picture or your logo on top first.'); continue; }
+      const secs = clamp(num(m[2]) || 1, 0.1, o.duration);
+      const side = m[1].toLowerCase(); const prop = side === 'left' || side === 'right' ? 'x' : 'y';
+      const from = side === 'left' ? -o.scale : side === 'right' ? 1 : side === 'top' ? -0.3 : 1;
+      ops.push({ op: 'keyframe', id: o.id, prop, keys: [{ t: 0, v: from }, { t: secs, v: o[prop], ease: /linear/i.test(p) ? 'linear' : 'ease_in_out' }] });
+      understood.push(`slide ${o.name} in from the ${side}`); continue;
+    }
+    if (doc.kind === 'video' && (m = p.match(/\b(?:make (?:it|the [a-z ]+?) )?(grow|shrink|zoom in|zoom out)(?: over (\w+(?:\.\d+)?) seconds?)?\b/i)) && (doc.overlays?.length)) {
+      const o = ovTarget();
+      const secs = clamp(num(m[2]) || 2, 0.1, o.duration);
+      const up = /grow|zoom in/i.test(m[1]);
+      ops.push({ op: 'keyframe', id: o.id, prop: 'scale', keys: [{ t: 0, v: o.scale }, { t: secs, v: round(clamp(o.scale * (up ? 1.6 : 0.6), 0.02, 2), 3), ease: /linear/i.test(p) ? 'linear' : 'ease_in_out' }] });
+      understood.push(`${o.name} ${up ? 'grows' : 'shrinks'} over ${secs} s`); continue;
+    }
+    if (doc.kind === 'video' && (m = p.match(/\bramp (?:the speed |it |the clip )?(up|down)(?: (?:at|over) the (end|start|beginning)(?: over (\w+(?:\.\d+)?) seconds?)?)?\b|\bspeed ramp(?: (up|down))?(?: (?:at|over) the (end|start|beginning))?\b/i))) {
+      const up = !/down/i.test(m[1] || m[4] || 'up');
+      const atStart = /start|beginning/i.test(m[2] || m[5] || '');
+      const c = (selection && doc.clips.find((x) => x.id === selection)) || (atStart ? doc.clips[0] : doc.clips.at(-1));
+      if (!c) { unsupported.push('There is no clip to ramp.'); continue; }
+      const len = c.out - c.in; const span = clamp(num(m[3]) || Math.min(2, len / 2), 0.3, len - 0.1);
+      const steps = up ? [1.25, 1.6, 2] : [0.8, 0.6, 0.4];
+      // At the end the clip climbs (or falls) to the new speed in three steps over its last seconds; at the start it
+      // begins at that speed and steps back to its own speed.
+      const base = c.speed || 1;
+      if (atStart) ops.push({ op: 'clip', clip: c.id, speed: steps[2] }, { op: 'ramp', clip: c.id, points: [{ at: round(span / 3, 3), speed: steps[1] }, { at: round((2 * span) / 3, 3), speed: steps[0] }, { at: round(span, 3), speed: base }] });
+      else ops.push({ op: 'ramp', clip: c.id, points: steps.map((sp, i) => ({ at: round(len - span + (span * i) / 3, 3), speed: sp })) });
+      understood.push(`speed ramp ${up ? 'up' : 'down'} at the ${atStart ? 'start' : 'end'} of ${c.name}`); continue;
     }
     if ((m = p.match(/\b(?:give it |make it |use )?(?:a |an )?(darker |dark )?(cinematic|warm|cool|vintage|vibrant|clean|black and white|b&w|dark|moody)\b(?: look| feel| vibe)?/i)) && /\blook|feel|vibe|style|cinematic|vintage|black and white/i.test(p)) {
       const name = { 'black and white': 'bw', 'b&w': 'bw', moody: 'dark' }[m[2].toLowerCase()] || m[2].toLowerCase();
@@ -777,7 +955,7 @@ export function wordsToOps(text, doc, { selection = null, playhead = 0 } = {}) {
       for (const l of all) ops.push({ op: 'edit_layer', id: l.id, text: { outline: { color: '#000000', width: 0.004 }, shadow: { color: '#000000CC', blur: 8 } } });
       understood.push('easier-to-read text'); continue;
     }
-    if (/\b(?:put|add|place) my logo\b/i.test(p)) { ops.push({ op: 'brand_logo', corner: /left/i.test(p) ? 'left' : 'right', top: !/bottom/i.test(p) }); understood.push('logo in the corner'); continue; }
+    if (/\b(?:put|add|place) (?:my|the) logo\b/i.test(p)) { ops.push({ op: 'brand_logo', corner: /left/i.test(p) ? 'left' : 'right', top: !/bottom/i.test(p) }); understood.push('logo in the corner'); continue; }
     if ((m = p.match(/\bmake (?:this|it) look like an? (album cover|single cover|thumbnail|ad)\b/i))) { ops.push({ op: 'template_look', template: { 'album cover': 'album-cover', 'single cover': 'single-cover', thumbnail: 'yt-thumb-bold', ad: 'ad-square' }[m[1].toLowerCase()] }); understood.push(`${m[1]} look`); continue; }
     if (/\b(?:more )?professional\b/i.test(p)) { ops.push({ op: 'improve', id: 'auto_enhance' }); if (doc.kind === 'image') ops.push({ op: 'filter', name: 'clean', scope: 'all' }); understood.push('a cleaner, more professional look'); continue; }
     if ((m = p.match(/\b(?:turn|make) (?:the )?(music|voice)\s+(up|down|louder|quieter|softer)\b|\b(music|voice)\s+(?:volume\s+)?(up|down|louder|quieter)\b/i))) {
@@ -801,17 +979,19 @@ export function wordsToOps(text, doc, { selection = null, playhead = 0 } = {}) {
 /// The render specification for the ffmpeg renderer (tools/che_edit_render.py): every clip, trim, speed,
 /// adjustment, transition, text, caption, audio level and visualizer, with sources as asset ids the render job
 /// downloads through a one-time token. Nothing here is drawn by a model.
-export function renderSpec(doc, { title = 'CHE edit' } = {}) {
+export function renderSpec(input, { title = 'CHE edit' } = {}) {
+  const doc = migrateDoc(copy(input));
   const missing = [];
   if (doc.kind === 'video') {
     if (!doc.clips.length) missing.push('the timeline has no clips');
     for (const c of doc.clips) if (!c.asset) missing.push(`${c.name} has no media`);
     for (const a of doc.audio) if (!a.asset) missing.push(`${a.name} has no audio file`);
+    for (const o of doc.overlays || []) if (!o.asset) missing.push(`${o.name} has no media`);
   } else {
     for (const l of doc.layers) if (['photo', 'logo', 'image'].includes(l.type) && !l.asset && !l.hidden) missing.push(`${l.name} has no picture`);
   }
   if (missing.length) return { ok: false, why: `Not ready to render: ${missing.join('; ')}.` };
-  const assets = [...new Set([...(doc.clips || []).map((c) => c.asset), ...(doc.audio || []).map((a) => a.asset), ...(doc.layers || []).map((l) => l.asset), ...(doc.text || []).map((t) => t.layer.asset)].filter(Boolean))];
+  const assets = [...new Set([...(doc.clips || []).map((c) => c.asset), ...(doc.overlays || []).map((o) => o.asset), ...(doc.audio || []).map((a) => a.asset), ...(doc.layers || []).map((l) => l.asset), ...(doc.text || []).map((t) => t.layer.asset)].filter(Boolean))];
   return { ok: true, spec: { v: 1, title: clip(title, 80), doc: copy(doc), assets, duration: doc.kind === 'video' ? round(duration(doc), 3) : 0 } };
 }
 
@@ -847,6 +1027,7 @@ export function visualIntent(message) {
   if ((m = t.match(/\buse my (.+?) template(?: but (.+))?$/i))) return { kind: 'use_template', name: m[1], tweak: m[2] || null };
   if ((m = t.match(/\bsave (?:this|it) as (?:a )?template(?: called (.+))?$/i))) return { kind: 'save_template', name: m[1] || null };
   if (/\buse my (?:artist )?brand\b/i.test(t)) return { kind: 'apply_brand' };
+  if ((m = t.match(/\b(?:edit|open|cut|put)\s+(?:my |the )?(?:latest |last |new )?(scene|film|movie)(?: video)?\s+(?:in(?:to)?|with) (?:the )?(?:visual )?(?:studio|editor|timeline)\b/i)) || (m = t.match(/\b(?:open|edit) (?:my |the )?(?:latest |last )?(scene|film|movie) (?:video )?(?:to edit|for editing)\b/i))) return { kind: 'open_media', source: /scene/i.test(m[1]) ? 'scene' : 'film' };
   if (/^(?:che,?\s*)?edit(?: it| this| that)?$/i.test(t)) return { kind: 'open_editor' };
   if (/^(?:render|export)(?: it| this| the video| the project)?$/i.test(t)) return { kind: 'render' };
   return null;
