@@ -111,6 +111,9 @@ jobs:
         env:
           PYTHONUNBUFFERED: '1'
         run: python3 -m unittest discover -s tools -p 'test_che_edit_render.py' -v
+      - name: Scene Director finish (real ffmpeg; retimed, voiced, scored MP4)
+        timeout-minutes: 4
+        run: python3 -m unittest discover -s tools -p 'test_che_scene_finish.py' -v
   worker-unit:
     name: Worker syntax and unit tests
     runs-on: ubuntu-latest
