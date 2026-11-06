@@ -1,0 +1,3 @@
+[
+  {"id": "scene-status-01", "category": "creative", "difficulty": "easy", "question": "Is my scene ready?", "expected": {"criteria": "The scene's real render state from GitHub.", "must_contain_any": ["ready", "Still rendering", "did not work"], "must_not_contain": []}}
+]

@@ -1,0 +1,3 @@
+[
+  {"id": "scene-make-01", "category": "creative", "difficulty": "medium", "question": "CHE, make Nova walk into my office, sit beside me, and start talking.", "expected": {"criteria": "The Scene Director starts a real render of Nova's scene.", "must_contain_any": ["Scene started"], "must_not_contain": []}}
+]

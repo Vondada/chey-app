@@ -1,0 +1,3 @@
+[
+  {"id": "scene-edit-01", "category": "creative", "difficulty": "medium", "question": "Change her outfit, make the camera circle around us, slow down the last five seconds, and add music.", "expected": {"criteria": "All four edits applied to the scene project and a re-render started.", "must_contain_any": ["Done in the project"], "must_not_contain": []}}
+]
