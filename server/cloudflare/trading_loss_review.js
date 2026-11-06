@@ -3,7 +3,8 @@
 // strategy's recent stretch is worse than the one before. Pure over trade records (trading_evidence.js summaries), so it
 // never calls a model and never invents a figure. Market direction and choppiness are not in the records, so they are
 // reported as not measured rather than guessed. Backtests and paper trades are never combined: the caller reads one journal.
-import { INTRADAY_CANDIDATES, MIN_TRADES, readTrades, sessionOf, summarize } from './trading_evidence.js';
+import { INTRADAY_CANDIDATES, MIN_TRADES, QUALITY_RULES, readTrades, sessionOf, summarize } from './trading_evidence.js';
+import { DEFAULT_GOV_SETTINGS, FORWARD_ENTRIES_HALTED, LEARNED_EXCLUSIONS, readGovSettings } from './strategy_governor.js';
 import { RESOLUTION } from './trading_live.js';
 
 export const STREAK = 3;            // three or more losses in a row from one setup is a pattern to flag
@@ -103,9 +104,16 @@ const MISTAKE = /\b(?:biggest|main|worst|big)\s+(?:trading\s+)?mistake\b/i;
 const REPEAT = /\b(?:keep|keeps|kept|repeat\w*|again\s+and\s+again)\b[\s\S]{0,30}\b(?:losing|losses?|mistakes?)\b|\bare you repeating\b/i;
 const WORST = /\b(?:which|what)\s+(?:strategy|setup)\b[\s\S]{0,40}\b(?:hurt\w*|costing)\b/i;
 const BEST = /\b(?:which|what)\s+(?:strategy|setup)\b[\s\S]{0,40}\b(?:do\s+better|will\s+do\s+better|likely\s+to\s+do\s+better|tomorrow)\b/i;
+// The owner's look-back (2026-11-06, certification run 42171612444): "What did you do wrong trading in October ... why were
+// you trading so badly, and what are you going to do to improve?" went to a small model with no journal, which said it
+// was "a blank slate". A review question gets the journal's causes and what changed since, from the rules in force.
+const REVIEW = /\b(?:what\s+(?:did\s+(?:you|she|che)\s+do|(?:you|she|che)\s+did|(?:have\s+you|has\s+(?:she|che))\s+done|went)\s+wrong|trad\w*\s+(?:so\s+)?(?:badly|bad|poorly|terribly)|(?:what|how)\s+(?:are\s+you\s+(?:going\s+to|gonna)|will\s+you|do\s+you\s+plan\s+to)\s+(?:do\s+to\s+)?improve|learn\w*\s+from\s+(?:your\s+)?(?:past\s+|bad\s+|losing\s+)?(?:mistakes|trades|losses))\b/i;
+const TRADING_WORD = /\b(?:trad\w*|paper|journal|strateg\w*|setups?|losses|losing)\b/i;
+const MONTHS = ['january', 'february', 'march', 'april', 'may', 'june', 'july', 'august', 'september', 'october', 'november', 'december'];
+const MONTH = new RegExp(`\\b(${MONTHS.join('|')})\\b`, 'i');
 
 /** The loss question in [message], or null. Pure. Questions about other things keep their own routes. */
-export function lossIntent(message) {
+export function lossIntent(message, now = Date.now()) {
   const text = String(message || '').trim().replace(/[’']/g, "'");
   if (!text || text.length > MAX_LOSS_TURN) return null;
   if (MISTAKE.test(text)) return { kind: 'mistake' };
@@ -113,6 +121,22 @@ export function lossIntent(message) {
   if (WORST.test(text)) return { kind: 'worst' };
   if (BEST.test(text)) return { kind: 'best' };
   if (WHY_LOSING.test(text)) return { kind: 'why_losing' };
+  if (REVIEW.test(text) && TRADING_WORD.test(text)) {
+    // A named month is its most recent one up to now unless a year is given; "last month" is the calendar month before
+    // now. The review reads that one month of that one year (Codex on #939).
+    const d = new Date(now);
+    const m = text.match(MONTH);
+    const year = text.match(/\b(20\d\d)\b/);
+    if (m) {
+      const month = MONTHS.indexOf(m[1].toLowerCase());
+      return { kind: 'review', month, year: year ? Number(year[1]) : (month > d.getUTCMonth() ? d.getUTCFullYear() - 1 : d.getUTCFullYear()) };
+    }
+    if (/\blast\s+month\b/i.test(text)) {
+      const month = (d.getUTCMonth() + 11) % 12;
+      return { kind: 'review', month, year: month === 11 ? d.getUTCFullYear() - 1 : d.getUTCFullYear() };
+    }
+    return { kind: 'review', month: null, year: null };
+  }
   return null;
 }
 
@@ -152,6 +176,12 @@ export function lossReply(kind, review) {
     const worstLine = worst && worst.net_pnl < 0 ? ` The setup that cost most is ${worst.name}, at ${money(worst.net_pnl)} across ${plural(worst.trades, 'entry')}.` : '';
     return `${head} ${patternSentence(p)}${worstLine} Not measured from these records: market direction and choppy conditions.`;
   }
+  if (kind === 'review') {
+    const worst = r.strategies[0];
+    const worstLine = worst && worst.net_pnl < 0 ? ` The setup that cost most was ${worst.name}, at ${money(worst.net_pnl)} across ${plural(worst.trades, 'entry')}.` : '';
+    const costs = r.flipped_by_costs.count ? ` ${plural(r.flipped_by_costs.count, 'loss')} would have been wins before fees and slippage.` : '';
+    return `${head} ${patternSentence(mainPattern(r))}${worstLine}${costs}`;
+  }
   if (kind === 'mistake') return `${head} ${patternSentence(mainPattern(r))}`;
   if (kind === 'repeat') {
     if (!r.streaks.length && !r.quick_reentries.length) return `${head} I did not find three losses in a row from one setup, or a too-quick re-entry after a stop, so I do not flag a repeated mistake.`;
@@ -180,9 +210,35 @@ export function lossReply(kind, review) {
 export async function lossAnswer(storage, message) {
   const ask = lossIntent(message);
   if (!ask) return null;
-  const isPaper = (t) => t.environment === 'paper' && t.data?.resolution === RESOLUTION;
+  const inMonth = (t) => {
+    if (ask.month == null) return true;
+    const at = new Date(t.entry?.time || 0);
+    return at.getUTCMonth() === ask.month && at.getUTCFullYear() === ask.year;
+  };
+  const isPaper = (t) => t.environment === 'paper' && t.data?.resolution === RESOLUTION && inMonth(t);
   const nameOf = (id) => INTRADAY_CANDIDATES[id]?.name || id;
   const { futures, crypto } = await gatherLossReview(storage, { readTrades, isPaper, nameOf });
+  const scope = ask.month == null ? '' : `For ${MONTHS[ask.month][0].toUpperCase()}${MONTHS[ask.month].slice(1)} ${ask.year}: `;
   const crypto_line = crypto.entries ? ` Crypto paper journal, kept separate: ${lossReply(ask.kind, crypto)}` : '';
-  return `${lossReply(ask.kind, futures)}${crypto_line}`;
+  const answer = `${scope}${lossReply(ask.kind, futures)}${crypto_line}`;
+  // The governor's settings in force, as the owner saved them (Codex on #939): a switched-off governor is said so.
+  return ask.kind === 'review' ? `${answer} ${improvementPlan(nameOf, { gov: await readGovSettings(storage) })}` : answer;
+}
+
+/** What changed after the losses, read from the rules in force (never from a model). Pure. */
+export function improvementPlan(nameOf = (id) => id, { exclusions = LEARNED_EXCLUSIONS, rules = QUALITY_RULES, gov: govIn = DEFAULT_GOV_SETTINGS, halted = FORWARD_ENTRIES_HALTED } = {}) {
+  const gov = { ...DEFAULT_GOV_SETTINGS, ...govIn };
+  const skipped = Object.keys(exclusions).map(nameOf);
+  const parts = [
+    'What I changed:',
+    skipped.length ? `I no longer take ${skipped.length} setups that lost after costs in both halves of the replay on real MNQ bars: ${skipped.join(', ')}.` : '',
+    `I skip a trade when its costs would be more than ${rules.max_cost_r} R of the risk or a winning trade would net under ${rules.min_target_net_r} R, checked again at the fill.`,
+    `I wait ${rules.stop_cooldown_min} minutes after a stop-out before the same setup trades again.`,
+    gov.enabled === false
+      ? 'The strategy governor is switched off, so no setup is paused automatically for a losing run.'
+      : `A setup is paused after ${gov.streak_pause} losses in a row, or once ${gov.early_trades} trades show it losing.`,
+    'None of the setups I still trade has yet shown a profit after costs, so I am proving them on paper first;',
+    halted ? 'new paper entries are paused right now.' : 'paper trading is on and real money stays off.',
+  ];
+  return parts.filter(Boolean).join(' ');
 }
