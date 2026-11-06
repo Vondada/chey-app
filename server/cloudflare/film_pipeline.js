@@ -5,7 +5,7 @@
 import {
   FilmStore, FILM_VALIDATION_KEY, MAX_CAST, NEURONS, PORTRAIT_SIZE, REFERENCE_MODEL, STILL_MODEL, TTS_MODEL,
   assemblyPlan, checkPortrait, checkStill, farmProviders, learnFromCheck, loadRates, loadUsage, mp3Seconds, newFilm, outlineMessages, planFilm,
-  portraitPrompt, recordRate, reserve, sceneMessages, seedFor, shotSeconds, voiceTimes, segmentSpec, shotList, spend, speakPlan, stillPrompt, validOutline, validSceneShots,
+  portraitPrompt, recordRate, reserve, sceneMessages, seedFor, shotSeconds, voiceTimes, segmentSpec, shotList, spend, speakPlan, stillPrompt, validOutline, validSceneShots, outlineShots,
   _internals,
 } from './film_studio.js';
 import { imagePayload } from './image_payload.js';
@@ -87,7 +87,7 @@ async function writeStep(ctx, store, film) {
   const now = ctx.now || Date.now();
   if (!film.outline) {
     const raw = await ctx.writer(outlineMessages({ topic: film.topic, targetSeconds: film.target_s, shots: film.plan.shots, roster: film.roster }));
-    const outline = validOutline(_internals.firstJson(raw), { shots: film.plan.shots, roster: film.roster });
+    const outline = validOutline(_internals.writerJson(raw), { shots: film.plan.shots, roster: film.roster });
     if (outline.error) {
       film.write_attempts = (film.write_attempts || 0) + 1;
       if (film.write_attempts >= MAX_ATTEMPTS) return fail(store, film, `I couldn't write a usable screenplay (${outline.error}).`);
@@ -101,16 +101,22 @@ async function writeStep(ctx, store, film) {
   const scenes = film.outline.scenes;
   const todo = scenes.slice(film.scene_next, film.scene_next + SCENE_BATCH);
   const started = Date.now();
+  // Two tries for the whole scene, then one asking for fewer shots (a long shot list is where a small model's JSON
+  // breaks). Shots that can be read from a broken reply are kept. Only if all three fail does the scene fall back to
+  // the outline's own description, and the film's notes say so; one scene never stops the film.
   const written = await Promise.all(todo.map(async (scene) => {
-    for (let attempt = 0; attempt < 2; attempt += 1) {
-      const out = validSceneShots(_internals.firstJson(await ctx.writer(sceneMessages(film.outline, scene))), scene, film.outline.characters);
-      if (!out.error) return out.shots;
+    let reason = '';
+    for (const count of [scene.shots, scene.shots, Math.max(1, Math.min(3, Math.ceil(scene.shots / 2)))]) {
+      const raw = await ctx.writer(sceneMessages(film.outline, scene, count));
+      const out = validSceneShots(_internals.writerJson(raw), scene, film.outline.characters);
+      if (!out.error) return { shots: out.shots };
+      reason = String(raw || '').trim() ? `${out.error} (reply of ${String(raw).length} characters)` : 'the writer returned nothing';
     }
-    return null;
+    return { shots: outlineShots(scene, film.outline.characters), reason };
   }));
   for (let i = 0; i < todo.length; i += 1) {
-    if (!written[i]) return fail(store, film, `scene ${todo[i].id} could not be written after two tries`);
-    await ctx.storage.put(`film:${film.id}:scene:${todo[i].id}`, written[i]);
+    if (written[i].reason) film.notes = [...(film.notes || []), safe(`Scene ${todo[i].id} was not written as a shot list (${written[i].reason}), so its shots show the outline's description without dialogue.`)];
+    await ctx.storage.put(`film:${film.id}:scene:${todo[i].id}`, written[i].shots);
   }
   await recordRate(ctx.storage, 'script_s_per_shot', ((Date.now() - started) / 1000) / Math.max(1, todo.reduce((n, s) => n + s.shots, 0)), now);
   film.scene_next += todo.length;

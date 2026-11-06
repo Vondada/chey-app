@@ -932,3 +932,48 @@ test('a fixed cast: the writer picks who appears, never their names or looks; a 
   assert.equal(validOutline({ title: 'T', characters: [{ id: 'ghost' }], scenes: [{ setting: 'Office', summary: 'x', shots: 2 }] }, { shots: 4, roster }).error, 'the outline used none of the cast');
   assert.match(outlineMessages({ topic: 'x', targetSeconds: 60, shots: 10, roster })[1].content, /fixed cast of office members.*che \(CHE, Office Boss\); nova \(Nova, Product\)/);
 });
+
+// ─── A writer reply that is not valid JSON (live, 2026-11-06: "scene 2 could not be written after two tries") ──────
+
+test('shots are read from a writer reply cut off at its token limit or broken by a quote in one line; broken shots are dropped, never guessed', () => {
+  const good = (n) => `{"description":"shot ${n} at the desk","camera":"static","characters":["nova"],"dialogue":[{"character":"nova","line":"Line ${n}"}],"sound":"hum"}`;
+  const cut = `{"shots":[${good(1)},${good(2)},{"description":"shot 3 is cut off mid`;
+  assert.equal(_internals.firstJson(cut), null, 'the whole reply does not parse');
+  assert.deepEqual(_internals.writerJson(cut).shots.map((s) => s.description), ['shot 1 at the desk', 'shot 2 at the desk']);
+  const quoted = `Sure!\n{"shots":[${good(1)},{"description":"she says "hi" loudly","camera":"static"},${good(3)},]}`;
+  assert.deepEqual(_internals.writerJson(quoted).shots.map((s) => s.description), ['shot 1 at the desk', 'shot 3 at the desk']);
+  assert.equal(_internals.writerJson('I cannot help with that.'), null);
+  assert.deepEqual(_internals.writerJson({ shots: [{ description: 'already parsed' }] }).shots[0].description, 'already parsed', 'Workers AI can return parsed JSON');
+});
+
+test('a scene the writer never gets right does not stop the film: fewer shots are asked for, then the outline describes the scene, and the notes say so', async () => {
+  const { ctx } = await studio({ seconds: 60 });
+  const base = ctx.writer; const asked = [];
+  ctx.writer = async (messages) => {
+    const last = messages.at(-1).content;
+    if (/Scene 2 of/.test(last)) { asked.push(Number(/Write exactly (\d+) shots/.exec(last)[1])); return '{"shots":[{"description":"cut'; }
+    return base(messages);
+  };
+  const film = await runUntil(ctx, ['making', 'assembling', 'failed']);
+  assert.notEqual(film.state, 'failed', film.error || '');
+  assert.equal(asked.length, 3);
+  assert.ok(asked[2] < asked[0], `the third try asks for fewer shots (${asked.join(', ')})`);
+  assert.ok(film.notes.some((n) => /^Scene 2 was not written as a shot list \(scene 2 came back with no usable shots \(reply of \d+ characters\)\)/.test(n)), film.notes.join(' | '));
+  const scene2 = await ctx.storage.get(`film:${film.id}:scene:2`);
+  assert.equal(scene2.length, film.outline.scenes[1].shots);
+  assert.ok(scene2.every((s) => s.description.includes(film.outline.scenes[1].summary) && s.dialogue.length === 0));
+});
+
+test('a writer reply cut off after some shots keeps those shots instead of failing the scene', async () => {
+  const { ctx } = await studio({ seconds: 60 });
+  const base = ctx.writer;
+  ctx.writer = async (messages) => {
+    const out = await base(messages);
+    return /Scene 1 of/.test(messages.at(-1).content) ? out.slice(0, out.lastIndexOf('{"description"') - 1) : out;
+  };
+  const film = await runUntil(ctx, ['making', 'assembling', 'failed']);
+  assert.notEqual(film.state, 'failed');
+  const scene1 = await ctx.storage.get(`film:${film.id}:scene:1`);
+  assert.ok(scene1.length >= 1 && scene1.every((s) => /\w/.test(s.description) && !s.description.includes(film.outline.scenes[0].summary)));
+  assert.ok(!(film.notes || []).some((n) => /^Scene 1 /.test(n)));
+});
