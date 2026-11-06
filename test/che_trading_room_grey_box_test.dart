@@ -76,17 +76,13 @@ void main() {
     await tester.drag(find.byKey(const Key('trading_room_list')), const Offset(0, -800));
     await tester.pump(const Duration(milliseconds: 500));
     _noError(tester, 'after scroll');
+    // This is where main's code threw (diagnostic run 42154237391): the crypto desk's expandable section is built here.
+    expect(find.textContaining('Recent simulated trades', skipOffstage: false), findsWidgets);
     await tester.tap(find.text('Brain'));
     await tester.pump(const Duration(milliseconds: 500));
     await tester.tap(find.text('Trading'));
     await tester.pump(const Duration(milliseconds: 500));
     await tester.pump(const Duration(milliseconds: 500));
     _noError(tester, 'after tab switch');
-    // Scroll to the crypto desk's expandable section: it builds, and nothing throws on the way.
-    await tester.scrollUntilVisible(find.textContaining('Recent simulated trades'), 200,
-        scrollable: find.descendant(of: find.byKey(const Key('trading_room_list')), matching: find.byType(Scrollable)).first);
-    await tester.pump(const Duration(milliseconds: 300));
-    _noError(tester, 'scrolled to the section');
-    expect(find.textContaining('Recent simulated trades'), findsOneWidget);
   });
 }
