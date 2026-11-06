@@ -454,5 +454,9 @@ test('an audit of the app\'s screens is a reasoned read of the source, even when
   assert.equal(inspects(ask), true);
   assert.equal(analytical(ask), true);
   assert.equal(inspects('Audit my shopping list'), false, 'an audit of something else is not a source read');
+  // Only CHE's own app (Codex on #940).
+  assert.equal(inspects('Audit my banking app screens'), false, 'the owner\'s other app is not CHE\'s source');
+  assert.equal(inspects('Review your navigation instructions for my trip'), false, 'trip directions are not app navigation');
+  assert.equal(inspects('Audit your screens for grey boxes'), true);
   assert.equal(inspects('Show me the trading screen'), false, 'opening a screen is not an audit');
 });

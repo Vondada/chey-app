@@ -817,7 +817,10 @@ export function repositoryInspectionIntent(message) {
   // it because it mentioned the crypto desk (certification run 42153285881).
   const appScreenAudit = /\b(?:audit\w*|investigat\w*|inspect\w*|diagnos\w*|review)\b/i.test(text)
     && /\b(?:screens?|navigation|grey\s+box(?:es)?|gray\s+box(?:es)?|error\s+box(?:es)?)\b/i.test(text)
-    && /\b(?:app|che(?:'s)?|your|every)\b/i.test(text);
+    // CHE's own app only (Codex on #940): "audit my banking app screens" or "review your navigation instructions for my
+    // trip" are not a read of her source.
+    && /\b(?:(?:the\s+)?che(?:'s)?\s+app(?:'s)?|your\s+(?:own\s+)?(?:app(?:'s)?|screens)|(?:this|the)\s+app(?:'s)?\s+(?:screens|navigation)|every\s+screen\s+(?:in|of)\s+(?:the\s+|your\s+)?app)\b/i.test(text)
+    && !/\bmy\s+(?:\w+\s+){0,2}(?:app|project|site|website|repo)\b/i.test(text);
   return Boolean((directInspection && repoTarget) || architectureAnalysis || namedAreaInvestigation || appScreenAudit || exactHeadQuestion || repositoryStateQuestion || guardedDiagnostic || selfDiagnosticSource);
 }
 

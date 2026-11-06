@@ -572,9 +572,6 @@ export function cryptoIntent(message, { followup = '', referent = '' } = {}) {
   const orion = /\borion\b/.test(t);
   if (!CRYPTO_WORD.test(t) && !(orion && /\bcrypto|weekend\b/.test(t))) return null;
   if (!DESK_WORD.test(t)) return null;
-  // A request to audit or fix the app that only mentions the desk ("audit the screens: the crypto desk shows grey boxes")
-  // is coding work, not a question for Orion's desk (certification run 42153285881).
-  if (/\b(?:audit\w*|grey\s+box(?:es)?|gray\s+box(?:es)?|navigation|pull\s+request|file\s+and\s+line|crash\w*|bugs?)\b/.test(t)) return null;
   // A backtest of a rule on a coin ("run a backtest of buying ETH when RSI is below 30") is the strategy lab's work, not a
   // question about Orion's desk; only one that names Orion or the desk stays here (certification run 41256280478, thb-18).
   if (/\bback[\s-]?test/.test(t) && !orion && !/\bdesk\b/.test(t)) return null;
@@ -582,5 +579,11 @@ export function cryptoIntent(message, { followup = '', referent = '' } = {}) {
   const OBJ = "(?:the\\s+|orion'?s?\\s+|my\\s+|your\\s+|weekend\\s+|24\\/7\\s+)*(?:orion|crypto|bitcoin|btc|ethereum|eth|research|paper|trading|desk|simulat)";
   if (new RegExp(`\\b(?:pause|stop|halt|turn off|switch off|disable)\\s+${OBJ}`).test(t)) return { kind: 'pause' };
   if (new RegExp(`\\b(?:resume|restart|start|turn on|switch on|enable|continue|keep)\\s+(?:\\w+\\s+){0,2}${OBJ}`).test(t)) return { kind: 'resume' };
+  // A request to audit or fix the app that only mentions the desk ("audit the screens: the crypto desk shows grey boxes")
+  // is coding work, not a status question (certification run 42153285881). Pause and resume above stay the desk's,
+  // whatever reason they give ("pause Orion crypto research because Bitcoin crashed"; Codex on #940).
+  const appWork = /\b(?:audit\w*|grey\s+box(?:es)?|gray\s+box(?:es)?|pull\s+request|file\s+and\s+line)\b/.test(t)
+    || (/\b(?:bugs?|crash\w*|navigation)\b/.test(t) && /\b(?:screens?|app|code|files?|fix|find|line)\b/.test(t));
+  if (appWork) return null;
   return { kind: 'status' };
 }
