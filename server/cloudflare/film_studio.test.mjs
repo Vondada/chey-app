@@ -964,7 +964,7 @@ test('a scene the writer never gets right does not stop the film: fewer shots ar
   assert.ok(scene2.every((s) => s.description.includes(film.outline.scenes[1].summary) && s.dialogue.length === 0));
 });
 
-test('a writer reply cut off after some shots keeps those shots instead of failing the scene', async () => {
+test('a writer reply cut off after some shots keeps those shots, fills the rest from the outline and keeps the film\'s length', async () => {
   const { ctx } = await studio({ seconds: 60 });
   const base = ctx.writer;
   ctx.writer = async (messages) => {
@@ -973,7 +973,28 @@ test('a writer reply cut off after some shots keeps those shots instead of faili
   };
   const film = await runUntil(ctx, ['making', 'assembling', 'failed']);
   assert.notEqual(film.state, 'failed');
+  const planned = film.outline.scenes[0].shots;
   const scene1 = await ctx.storage.get(`film:${film.id}:scene:1`);
-  assert.ok(scene1.length >= 1 && scene1.every((s) => /\w/.test(s.description) && !s.description.includes(film.outline.scenes[0].summary)));
-  assert.ok(!(film.notes || []).some((n) => /^Scene 1 /.test(n)));
+  assert.equal(scene1.length, planned, 'every planned shot is there');
+  const fromOutline = scene1.filter((s) => s.description.includes(film.outline.scenes[0].summary));
+  assert.equal(fromOutline.length, 1, 'only the cut-off shot comes from the outline');
+  assert.ok(film.notes.some((n) => n === `Scene 1: the writer gave ${planned - 1} of ${planned} shots, so the other 1 show the outline's description without dialogue.`), film.notes.join(' | '));
+});
+
+test('when only the shorter third ask works, the film still has every planned shot (Codex, #953)', async () => {
+  const { ctx } = await studio({ seconds: 60 });
+  const base = ctx.writer; const planned = {};
+  ctx.writer = async (messages) => {
+    const last = messages.at(-1).content;
+    const m = /Scene (\d+) of/.exec(last);
+    if (m) { const n = Number(/Write exactly (\d+) shots/.exec(last)[1]); planned[m[1]] = Math.max(planned[m[1]] || 0, n); if (n === planned[m[1]]) return 'not json'; }
+    return base(messages);
+  };
+  const film = await runUntil(ctx, ['making', 'assembling', 'failed']);
+  assert.notEqual(film.state, 'failed');
+  const want = film.outline.scenes.reduce((n, s) => n + s.shots, 0);
+  let got = 0;
+  for (const s of film.outline.scenes) got += (await ctx.storage.get(`film:${film.id}:scene:${s.id}`)).length;
+  assert.equal(got, want);
+  assert.equal(film.notes.filter((n) => /the writer gave \d+ of \d+ shots/.test(n)).length, film.outline.scenes.length);
 });

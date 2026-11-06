@@ -102,21 +102,25 @@ async function writeStep(ctx, store, film) {
   const todo = scenes.slice(film.scene_next, film.scene_next + SCENE_BATCH);
   const started = Date.now();
   // Two tries for the whole scene, then one asking for fewer shots (a long shot list is where a small model's JSON
-  // breaks). Shots that can be read from a broken reply are kept. Only if all three fail does the scene fall back to
-  // the outline's own description, and the film's notes say so; one scene never stops the film.
+  // breaks). Shots that can be read from a broken reply are kept, the longest list wins, and any planned shots still
+  // missing show the outline's own description without dialogue, so the film keeps its length. The film's notes say
+  // when that happens; one scene never stops the film.
   const written = await Promise.all(todo.map(async (scene) => {
-    let reason = '';
+    let best = []; let reason = '';
     for (const count of [scene.shots, scene.shots, Math.max(1, Math.min(3, Math.ceil(scene.shots / 2)))]) {
       const raw = await ctx.writer(sceneMessages(film.outline, scene, count));
       const out = validSceneShots(_internals.writerJson(raw), scene, film.outline.characters);
-      if (!out.error) return { shots: out.shots };
-      reason = String(raw || '').trim() ? `${out.error} (reply of ${String(raw).length} characters)` : 'the writer returned nothing';
+      if (!out.error && out.shots.length >= scene.shots) return { shots: out.shots };
+      if (!out.error && out.shots.length > best.length) best = out.shots;
+      reason = out.error ? (String(raw || '').trim() ? `${out.error} (reply of ${String(raw).length} characters)` : 'the writer returned nothing') : `the writer gave ${out.shots.length} of ${scene.shots} shots`;
     }
-    return { shots: outlineShots(scene, film.outline.characters), reason };
+    const filler = outlineShots(scene, film.outline.characters).slice(best.length);
+    return { shots: [...best, ...filler], reason: best.length ? `the writer gave ${best.length} of ${scene.shots} shots` : reason, filled: filler.length };
   }));
   for (let i = 0; i < todo.length; i += 1) {
-    if (written[i].reason) film.notes = [...(film.notes || []), safe(`Scene ${todo[i].id} was not written as a shot list (${written[i].reason}), so its shots show the outline's description without dialogue.`)];
-    await ctx.storage.put(`film:${film.id}:scene:${todo[i].id}`, written[i].shots);
+    const w = written[i];
+    if (w.reason) film.notes = [...(film.notes || []), safe(w.filled === todo[i].shots ? `Scene ${todo[i].id} was not written as a shot list (${w.reason}), so its shots show the outline's description without dialogue.` : `Scene ${todo[i].id}: ${w.reason}, so the other ${w.filled} show the outline's description without dialogue.`)];
+    await ctx.storage.put(`film:${film.id}:scene:${todo[i].id}`, w.shots);
   }
   await recordRate(ctx.storage, 'script_s_per_shot', ((Date.now() - started) / 1000) / Math.max(1, todo.reduce((n, s) => n + s.shots, 0)), now);
   film.scene_next += todo.length;
