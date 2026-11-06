@@ -1,0 +1,5 @@
+[
+  {"id": "paper-today-01", "category": "trading", "difficulty": "medium", "question": "Che, how did your paper trades do today? List each trade you closed today with its result.", "expected": {"criteria": "Journal-backed list of today's closed paper trades.", "must_contain_any": ["trade", "paper"], "must_not_contain": []}},
+  {"id": "paper-today-02", "category": "trading", "difficulty": "medium", "question": "What is my expectancy on the paper journal?", "expected": {"criteria": "Journal numbers.", "must_contain_any": ["R", "expectancy"], "must_not_contain": []}},
+  {"id": "paper-today-03", "category": "trading", "difficulty": "medium", "question": "Show me your paper trades since you were unpaused this morning, wins and losses.", "expected": {"criteria": "Journal-backed.", "must_contain_any": ["trade"], "must_not_contain": []}}
+]
