@@ -214,9 +214,9 @@ class CheFuturesPaperDeskState extends State<CheFuturesPaperDesk> {
   Widget build(BuildContext context) {
     final view = _view;
     final feed = _feed;
-    final positions = ((view?['positions'] as List?) ?? const []).cast<Map>();
-    final working = ((view?['working'] as List?) ?? const []).cast<Map>();
-    final fills = ((view?['recent_fills'] as List?) ?? const []).cast<Map>();
+    final positions = ((view?['positions'] as List?) ?? const []).whereType<Map>().toList();
+    final working = ((view?['working'] as List?) ?? const []).whereType<Map>().toList();
+    final fills = ((view?['recent_fills'] as List?) ?? const []).whereType<Map>().toList();
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -264,7 +264,7 @@ class CheFuturesPaperDeskState extends State<CheFuturesPaperDesk> {
           for (final t in const ['market', 'limit', 'stop'])
             ChoiceChip(
               key: Key('futures_type_$t'),
-              label: Padding(padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6), child: Text(t[0].toUpperCase() + t.substring(1), style: const TextStyle(fontSize: 17))),
+              label: Padding(padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6), child: Text(t.isEmpty ? '' : t[0].toUpperCase() + t.substring(1), style: const TextStyle(fontSize: 17))),
               selected: _type == t,
               onSelected: (_) => setState(() { _type = t; _pending = null; }),
             ),
@@ -288,7 +288,7 @@ class CheFuturesPaperDeskState extends State<CheFuturesPaperDesk> {
           if (positions.isEmpty) const Text('No open paper positions.', style: TextStyle(color: Colors.white70, fontSize: 16)),
           for (final p in positions)
             Text(
-              '${(p['qty'] as num) > 0 ? 'Long' : 'Short'} ${(p['qty'] as num).abs()} ${p['root']} at ${_num(p['avg'] as num?)}; mark ${_num(p['mark'] as num?)}; open P&L ${_money(p['open_pnl'] as num?)}',
+              '${(_asNum(p['qty']) ?? 0) > 0 ? 'Long' : 'Short'} ${(_asNum(p['qty']) ?? 0).abs()} ${p['root']} at ${_num(_asNum(p['avg']))}; mark ${_num(_asNum(p['mark']))}; open P&L ${_money(_asNum(p['open_pnl']))}',
               key: Key('futures_position_${p['root']}'),
               style: const TextStyle(color: Colors.white, fontSize: 17),
             ),
@@ -297,7 +297,7 @@ class CheFuturesPaperDeskState extends State<CheFuturesPaperDesk> {
           if (working.isEmpty) const Text('No working paper orders.', style: TextStyle(color: Colors.white70, fontSize: 16)),
           for (final o in working)
             Wrap(spacing: 10, runSpacing: 6, crossAxisAlignment: WrapCrossAlignment.center, children: [
-              Text('${o['id']}: ${o['side']} ${o['qty']} ${o['root']} ${o['type']} ${_num(o['price'] as num?)}${o['role'] != null && o['role'] != 'entry' ? ' (${'${o['role']}'.replaceAll('_', ' ')})' : ''}',
+              Text('${o['id']}: ${o['side']} ${o['qty']} ${o['root']} ${o['type']} ${_num(_asNum(o['price']))}${o['role'] != null && o['role'] != 'entry' ? ' (${'${o['role']}'.replaceAll('_', ' ')})' : ''}',
                   style: const TextStyle(color: Colors.white, fontSize: 16)),
               _SmallButton(key: Key('futures_cancel_${o['id']}'), label: 'Cancel', semantics: 'Cancel paper order ${o['id']}', onTap: _busy ? null : () => _cancel('${o['id']}', '${o['root']}')),
             ]),
@@ -306,12 +306,12 @@ class CheFuturesPaperDeskState extends State<CheFuturesPaperDesk> {
           Text(
             view == null
                 ? 'Reading the paper account…'
-                : 'Cash ${_money(view['cash'] as num?)} · realized ${_money(view['realized'] as num?)} · open ${_money(view['open_pnl'] as num?)} · equity ${_money(view['equity'] as num?)} · commissions ${_money(view['commissions'] as num?)}',
+                : 'Cash ${_money(_asNum(view['cash']))} · realized ${_money(_asNum(view['realized']))} · open ${_money(_asNum(view['open_pnl']))} · equity ${_money(_asNum(view['equity']))} · commissions ${_money(_asNum(view['commissions']))}',
             key: const Key('futures_account_line'),
             style: const TextStyle(color: Colors.white, fontSize: 16),
           ),
           if (view != null)
-            Text('Today ${_money(((view['limits'] as Map?)?['today']) as num?)} against a ${_money(((view['limits'] as Map?)?['daily_loss']) as num?)} daily loss limit.',
+            Text('Today ${_money(_asNum((view['limits'] as Map?)?['today']))} against a ${_money(_asNum((view['limits'] as Map?)?['daily_loss']))} daily loss limit.',
                 style: const TextStyle(color: Colors.white70, fontSize: 15)),
           if (_readAt != null)
             Text('Read ${_readAt!.toLocal().toIso8601String().substring(11, 19)}${_connection.isNotEmpty ? ' (old)' : ''}.', style: const TextStyle(color: Colors.white54, fontSize: 14)),
@@ -319,7 +319,7 @@ class CheFuturesPaperDeskState extends State<CheFuturesPaperDesk> {
         _Section(title: 'RECENT FILLS', children: [
           if (fills.isEmpty) const Text('No paper fills yet.', style: TextStyle(color: Colors.white70, fontSize: 16)),
           for (final f in fills.take(8))
-            Text('${f['id']}: ${f['side']} ${f['qty']} ${f['root']} at ${_num(f['price'] as num?)} · ${'${f['time']}'.replaceFirst('T', ' ').substring(0, 16)} UTC', style: const TextStyle(color: Colors.white, fontSize: 15)),
+            Text('${f['id']}: ${f['side']} ${f['qty']} ${f['root']} at ${_num(_asNum(f['price']))} · ${_stamp(f['time'])} UTC', style: const TextStyle(color: Colors.white, fontSize: 15)),
         ]),
         const SizedBox(height: 12),
         _BigButton(key: const Key('futures_flatten'), label: 'FLATTEN ALL', semantics: 'Flatten all paper positions and cancel every paper order', color: _red, onTap: _busy ? null : _flatten),
@@ -338,7 +338,7 @@ class _FeedLine extends StatelessWidget {
     final age = feed['age_s'] is num ? ' (${((feed['age_s'] as num) / 60).round()} min old)' : '';
     final fresh = feed['fresh'] == true;
     final text = status == 'DELAYED'
-        ? 'DELAYED · ${feed['source'] ?? ''} · ${feed['contract'] ?? ''} · ${_num(feed['price'] as num?)} at ${'${feed['bar_time'] ?? ''}'.replaceFirst('T', ' ').replaceFirst(':00.000Z', ' UTC')}$age · ${fresh ? 'market orders allowed' : 'too old for market orders'}'
+        ? 'DELAYED · ${feed['source'] ?? ''} · ${feed['contract'] ?? ''} · ${_num(_asNum(feed['price']))} at ${'${feed['bar_time'] ?? ''}'.replaceFirst('T', ' ').replaceFirst(':00.000Z', ' UTC')}$age · ${fresh ? 'market orders allowed' : 'too old for market orders'}'
         : '$status · ${feed['error'] ?? 'no price read yet'} · market orders refused';
     return Semantics(
       label: '$root data: $text',
@@ -463,4 +463,12 @@ class _ConfirmSheet extends StatelessWidget {
           ]),
         ),
       );
+}
+
+// Server values read defensively (audit 2026-11-06): a number sent as a string, a missing value or a short time must
+// never throw in build, because a release build shows a thrown build as a grey box.
+num? _asNum(Object? v) => v is num ? v : num.tryParse('${v ?? ''}');
+String _stamp(Object? v) {
+  final t = '${v ?? ''}'.replaceFirst('T', ' ');
+  return t.length >= 16 ? t.substring(0, 16) : (t.isEmpty ? 'time unknown' : t);
 }

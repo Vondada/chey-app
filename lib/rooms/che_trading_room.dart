@@ -423,8 +423,12 @@ class _CheTradingRoomState extends State<CheTradingRoom> {
 
   @override
   Widget build(BuildContext context) {
+    // No PageStorageKey (owner screenshots, 2026-11-06): under one, every ExpansionTile in the room shared the list's
+    // PageStorage slot, read the saved scroll offset as its open state ("type 'double' is not a subtype of type
+    // 'bool?'") and a release build drew a grey box. The room opens at the top after a tab switch. A plain Key is not a
+    // PageStorageKey and stores nothing.
     return ListView(
-      key: const PageStorageKey('trading_room_list'),
+      key: const Key('trading_room_list'),
       padding: const EdgeInsets.only(bottom: 32),
       children: [
         ?widget.header,

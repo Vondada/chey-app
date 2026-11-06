@@ -516,6 +516,7 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
 
   bool _isSending = false;
   bool _assistantHubOpen = false;
+  int _hubSheetGeneration = 0;
   bool _brainCommandBusy = false;
   bool _isSpeaking = false;
   bool _autoSentCurrentTurn = false;

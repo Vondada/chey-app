@@ -1343,6 +1343,10 @@ extension _CheHomeMemory on _CHEHomeState {
   }
 
   void _openAssistantHub({int tab = 0}) {
+    // One rooms sheet at a time: a voice command that opens a room while the sheet is up replaces it instead of
+    // stacking a second one (audit 2026-11-06). The generation stops the old sheet's close from marking the new one shut.
+    if (_assistantHubOpen && mounted) Navigator.of(context).popUntil((r) => r.isFirst);
+    final generation = ++_hubSheetGeneration;
     _selectedTab = tab < 0 ? 0 : (tab > 9 ? 9 : tab);
     _assistantHubOpen = true;
     showModalBottomSheet<void>(
@@ -1412,7 +1416,9 @@ extension _CheHomeMemory on _CHEHomeState {
           ),
         );
       },
-    ).whenComplete(() => _assistantHubOpen = false);
+    ).whenComplete(() {
+      if (generation == _hubSheetGeneration) _assistantHubOpen = false;
+    });
   }
 
   String _mediaTypeFromName(String name) {

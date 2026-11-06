@@ -290,7 +290,7 @@ class _LearningEquity extends CustomPainter {
   final List<Map<String, dynamic>> points;
   @override
   void paint(Canvas canvas, Size size) {
-    final values = <double>[0, ...points.map((p) => (p['value'] as num).toDouble())];
+    final values = <double>[0, ...points.map((p) => (p['value'] is num ? (p['value'] as num).toDouble() : 0.0))];
     final lo = values.reduce(math.min); final hi = values.reduce(math.max);
     final range = math.max(1.0, hi - lo);
     final path = Path();
