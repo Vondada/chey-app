@@ -212,7 +212,7 @@ function agentProfileTraits(agent) {
   };
 }
 
-function agentAppearance(data, agent) {
+export function agentAppearance(data, agent) {
   const core = agentProfileTraits(agent).appearance;
   const h = hashOf(agent.id || agent.name);
   const fallback = {

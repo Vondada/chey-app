@@ -436,6 +436,10 @@ export function deadlineFrom(text) {
   return s == null ? null : { seconds: s, words: m[1] };
 }
 
+// A crew story talks, so without a deadline it may take up to two hours: time for the free Kaggle GPU to start, make
+// its moving clips and lip-sync the talking shots (owner, 2026-11-06: "do lip sync next"). "As fast as possible" still
+// makes the quick all-stills version.
+export const OFFICE_STORY_DEADLINE = Object.freeze({ seconds: 7200, words: 'two hours' });
 const FILM_WORD = /\b(?:movie|film)\b/i; // not "feature": "build the search feature" is a coding order
 /**
  * The owner's Film Studio words, or null. Strict on purpose: "what's a good movie" and "watch a film" are not orders.
@@ -448,6 +452,14 @@ export function filmIntent(message = '') {
   if (/\b(?:render farm|gpu farm|free gpus?|gpu (?:quota|status))\b/i.test(t) && /\b(?:status|how|what|which|show|check|left|quota)\b/i.test(t)) return { kind: 'farm' };
   const shot = /\b(?:remake|redo|regenerate|re-?render)\s+shot\s+(?:number\s+)?(\d{1,5})\b/i.exec(t);
   if (shot) return { kind: 'remake', shot: Number(shot[1]) };
+  // A story set in the office is a film played by the crew, even when the owner calls it a video.
+  const office = /\b(?:the|my|our|your|che'?s)\s+(?:office|crew|team)\b|\bla agencia\b/i.test(t);
+  if (office && /\b(?:make|create|produce|shoot|render|generate)\b/i.test(t) && /\b(?:story|episode|skit|movie|film)\b/i.test(t) && !/\b(?:how(?:'s| is)|status|ready)\b/i.test(t)) {
+    // Asking how long one would take only plans it; it never starts a film.
+    if (/\bhow long\b|\bhow fast\b|\bcould you\b.*\bin\b|\bcan you make\b.*\bin\b/i.test(t) && !/\b(?:please|now|go ahead)\b/i.test(t)) return { kind: 'plan', seconds: lengthFrom(t) || 60, deadline: deadlineFrom(t) };
+    const about = /\b(?:about|on|of|starring|featuring|where|in which)\s+(.{3,300}?)[.!?]*$/i.exec(t);
+    return { kind: 'make', seconds: lengthFrom(t) || 60, deadline: deadlineFrom(t) || OFFICE_STORY_DEADLINE, topic: clean(about ? about[1] : 'something that happens in the office', 300), office: true };
+  }
   if (!FILM_WORD.test(t)) return null;
   if (/\b(?:cancel|stop|pause|halt)\b.*\b(?:movie|film)\b/i.test(t)) return { kind: /\bpause\b/i.test(t) ? 'pause' : 'cancel' };
   if (/\b(?:resume|continue|carry on with|pick up)\b.*\b(?:movie|film)\b/i.test(t)) return { kind: 'resume' };
@@ -479,14 +491,21 @@ function firstJson(text) {
 const clean = (v, n = 300) => String(v ?? '').replace(/\s+/g, ' ').trim().slice(0, n);
 
 /** Checks an outline from the writer; returns the cleaned outline or a reason it is unusable. */
-export function validOutline(raw, { shots }) {
+export function validOutline(raw, { shots, roster = null }) {
   const o = raw && typeof raw === 'object' ? raw : null;
   if (!o) return { error: 'the writer did not return a screenplay outline' };
-  const characters = (Array.isArray(o.characters) ? o.characters : []).slice(0, 12).map((c, i) => ({
+  let characters = (Array.isArray(o.characters) ? o.characters : []).slice(0, 12).map((c, i) => ({
     id: clean(c.id || `c${i + 1}`, 24).toLowerCase().replace(/[^a-z0-9_]/g, '') || `c${i + 1}`,
     name: clean(c.name, 60), look: clean(c.look || c.appearance || c.description, 400), voice: clean(c.voice, 60),
     seed: Math.abs(hash(`${c.name}|${c.look}`)) % 2 ** 31,
   })).filter((c) => c.name && c.look);
+  if (roster?.length) {
+    // A fixed cast: the writer picks who appears; names and looks come from the cast, never from the writer.
+    const picked = (Array.isArray(o.characters) ? o.characters : []).map((c) => clean(typeof c === 'string' ? c : c?.id || c?.name, 60).toLowerCase());
+    characters = roster.filter((r) => picked.includes(r.id) || picked.includes(r.name.toLowerCase())).slice(0, 6)
+      .map((r) => ({ id: r.id, name: r.name, look: r.look, voice: '', seed: Math.abs(hash(`${r.name}|${r.look}`)) % 2 ** 31 }));
+    if (!characters.length) return { error: 'the outline used none of the cast' };
+  }
   const scenes = (Array.isArray(o.scenes) ? o.scenes : []).slice(0, 400).map((s, i) => ({
     id: i + 1, setting: clean(s.setting || s.location, 300), summary: clean(s.summary, 500), shots: Math.max(1, Math.min(60, Math.round(Number(s.shots) || 1))),
   })).filter((s) => s.setting && s.summary);
@@ -518,7 +537,14 @@ export function validSceneShots(raw, scene, characters) {
   return { shots };
 }
 
-export function outlineMessages({ topic, targetSeconds, shots }) {
+export function outlineMessages({ topic, targetSeconds, shots, roster = null }) {
+  if (roster?.length) {
+    const cast = roster.map((r) => `${r.id} (${r.name}${r.role ? `, ${r.role}` : ''})`).join('; ');
+    return [
+      { role: 'system', content: 'You are a screenwriter. Reply with JSON only, no prose. Original work only: no real people, no copyrighted characters.' },
+      { role: 'user', content: `Write the outline of an original ${spokenDuration(targetSeconds)} film about: ${topic}. It is played by this fixed cast of office members; pick the 2 to 5 the story needs and use their exact ids: ${cast}. Their looks are fixed, so do not describe them. It has about ${shots} shots of about 6 seconds each. JSON: {"title":"","logline":"","characters":[{"id":"cast id"}],"scenes":[{"setting":"place in the office, time of day, look","summary":"what happens","shots":number}]}. Use ${Math.max(2, Math.round(shots / 12))} scenes.` },
+    ];
+  }
   return [
     { role: 'system', content: 'You are a screenwriter. Reply with JSON only, no prose. Original work only: no real people, no copyrighted characters.' },
     { role: 'user', content: `Write the outline of an original ${spokenDuration(targetSeconds)} film about: ${topic}. It has about ${shots} shots of about 6 seconds each. JSON: {"title":"","logline":"","characters":[{"id":"short_id","name":"","look":"fixed visual description: age, face, hair, clothes","voice":"male/female, age, tone"}],"scenes":[{"setting":"place, time of day, look","summary":"what happens","shots":number}]}. Use ${Math.max(2, Math.round(shots / 12))} scenes and at most 6 characters.` },
@@ -575,8 +601,9 @@ export class FilmStore {
   }
 }
 
-export function newFilm({ topic, targetSeconds, deadline, plan, now = Date.now() }) {
+export function newFilm({ topic, targetSeconds, deadline, plan, roster = null, now = Date.now() }) {
   return {
+    ...(roster?.length ? { roster } : {}),
     id: 'film_' + crypto.randomUUID().replaceAll('-', '').slice(0, 16), topic: clean(topic, 300), title: '',
     target_s: plan.target_s, deadline_s: plan.deadline_s, deadline_words: deadline?.words || '', plan,
     state: 'scripting', scene_next: 0, shot_count: 0, outline: null,

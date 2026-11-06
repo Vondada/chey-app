@@ -58,7 +58,7 @@ export async function startFilm(ctx, ask) {
   const { plan } = await filmPlan(ctx, ask);
   const said = speakPlan(plan, { asked: ask.deadline?.words });
   if (!plan.ok) return { ok: false, said };
-  const film = await store.save(newFilm({ topic: ask.topic, targetSeconds: ask.seconds, deadline: ask.deadline, plan, now: ctx.now || Date.now() }));
+  const film = await store.save(newFilm({ topic: ask.topic, targetSeconds: ask.seconds, deadline: ask.deadline, plan, roster: ask.roster, now: ctx.now || Date.now() }));
   return { ok: true, film, said: `${said} Starting now.` };
 }
 
@@ -86,8 +86,8 @@ export async function filmTick(ctx) {
 async function writeStep(ctx, store, film) {
   const now = ctx.now || Date.now();
   if (!film.outline) {
-    const raw = await ctx.writer(outlineMessages({ topic: film.topic, targetSeconds: film.target_s, shots: film.plan.shots }));
-    const outline = validOutline(_internals.firstJson(raw), { shots: film.plan.shots });
+    const raw = await ctx.writer(outlineMessages({ topic: film.topic, targetSeconds: film.target_s, shots: film.plan.shots, roster: film.roster }));
+    const outline = validOutline(_internals.firstJson(raw), { shots: film.plan.shots, roster: film.roster });
     if (outline.error) {
       film.write_attempts = (film.write_attempts || 0) + 1;
       if (film.write_attempts >= MAX_ATTEMPTS) return fail(store, film, `I couldn't write a usable screenplay (${outline.error}).`);
