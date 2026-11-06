@@ -1,4 +1,4 @@
-// Code citations checked against the source CHE actually read (owner, 2026-11-06). Jay's screen audit (certification
+// Code citations checked against the source CHE actually read (owner, 2026-11-06). CHE's screen audit (certification
 // run 42179558904) answered from the source-analysis route with six findings that quoted code which is not in CHE's
 // files ("che_desk: _desk", "ChartBar(feed: _feed)", "conversation ?? CheOfficeConversation()") at line numbers that
 // do not hold it. The model saw only excerpts, so every quoted snippet, code name and line it cites must be in those
@@ -37,7 +37,7 @@ export function citationsOf(text) {
   for (const m of t.replace(/```[\s\S]*?```/g, ' ').matchAll(/`([^`\n]+)`/g)) quoted.push(m[1]);
   for (const q of quoted) (PATH_ONLY.test(q.trim()) ? paths : snippets).push(q.trim());
   const lines = [];
-  for (const m of t.matchAll(new RegExp(`([\\w./-]+\\.${EXT})\`?\\**\\s*(?:\\(?\\s*(?:line|ln|l\\.)\\s*|:)(\\d+)`, 'gi'))) lines.push({ path: m[1], line: Number(m[2]) });
+  for (const m of t.matchAll(new RegExp(`([\\w./-]+\\.${EXT})[\`*]*\\s*(?:[,(\u2013\u2014-]\\s*)?(?:\\(?\\s*(?:(?:at|on)\\s+)?(?:line|ln|l\\.)\\s*|:)(\\d+)`, 'gi'))) lines.push({ path: m[1], line: Number(m[2]) });
   for (const p of paths) { const m = p.match(/^(.*?)(?::(\d+))?$/); if (!m[2]) lines.push({ path: m[1], line: null }); }
   return { snippets, names: [...new Set(snippets.flatMap(codeNames))], lines };
 }
