@@ -1,0 +1,4 @@
+[
+  {"id": "office-media-01", "category": "creative", "difficulty": "medium", "question": "Che, make a realistic picture of your office: a modern glass-walled AI agency office at night, city lights outside, desks with monitors showing charts and code, warm lamps, cinematic photo.", "expected": {"criteria": "A generated picture with a receipt.", "must_contain_any": ["picture", "image"], "must_not_contain": []}, "receipt_required": true},
+  {"id": "office-media-02", "category": "creative", "difficulty": "medium", "question": "Che, make a short 8 second video of your office: a modern AI agency office at night with city lights, slowly panning across the desks.", "expected": {"criteria": "A video job or file with a receipt.", "must_contain_any": ["video"], "must_not_contain": []}, "receipt_required": true}
+]
