@@ -120,3 +120,55 @@ test('hourly signals reach the inbox with the 5-minute ones, marked as the hourl
   await notifySignals({ new_signals: [], hourly: { skipped: 'no new hourly bar yet', new_signals: [sig] } }, (a, b) => sent.push([a, b]));
   assert.equal(sent.length, 0, 'a skipped hourly pass sends nothing again');
 });
+
+// Codex on #946: Emergency Stop, Flatten, stop/restart and the account limits cover the hourly desk too.
+async function withHourlyPosition() {
+  const storage = memoryStorage();
+  await setLivePaper(storage, true, Date.UTC(2026, 9, 5));
+  const pfs = await readHourlyPortfolios(storage);
+  pfs[0].open = { side: 'long', entry: { raw: 20000 }, stop: 19950, target: 20100, entry_time: '2026-10-08T14:00:00.000Z' };
+  pfs[1].pending = { side: 'short', ref: 20000, stop: 20050, target: 19900, signal_time: '2026-10-08T14:00:00.000Z' };
+  pfs[0].last_bar_time = pfs[1].last_bar_time = '2026-10-08T14:00:00.000Z';
+  await storage.put(HOURLY_PORTFOLIOS, Object.fromEntries(pfs.map((pf) => [pf.key, pf])));
+  return storage;
+}
+
+test('Emergency Stop cancels hourly orders and lists the hourly position; Flatten voids it', async () => {
+  const { haltLivePaper } = await import('./trading_live.js');
+  const storage = await withHourlyPosition();
+  const stop = await haltLivePaper(storage);
+  assert.equal(stop.cancelled, 1);
+  assert.equal(stop.open.length, 1);
+  assert.equal(stop.open[0].strategy, 'inside-bar-5m');
+  const flat = await haltLivePaper(storage, { flatten: true });
+  assert.equal(flat.flattened, 1);
+  assert.ok((await readHourlyPortfolios(storage)).every((pf) => !pf.open && !pf.pending));
+});
+
+test('stopping paper trading voids the hourly position, and a restart begins at the newest bar', async () => {
+  const storage = await withHourlyPosition();
+  await setLivePaper(storage, false, Date.UTC(2026, 9, 9));
+  assert.ok((await readHourlyPortfolios(storage)).every((pf) => !pf.open && !pf.pending));
+  await setLivePaper(storage, true, Date.UTC(2026, 9, 12));
+  assert.ok((await readHourlyPortfolios(storage)).every((pf) => pf.last_bar_time == null), 'the stopped period is never traded');
+});
+
+test('the account limits see both desks: hourly positions and losses count for the 5-minute desk and the other way round', async () => {
+  const { accountExposure } = await import('./trading_live.js');
+  const storage = await withHourlyPosition();
+  const fiveMinute = [{ key: 'a', open: { side: 'long' } }, { key: 'b' }];
+  const now = Date.UTC(2026, 9, 8, 16);
+  let e = await accountExposure(storage, now, { live_paper_portfolios: fiveMinute });
+  assert.equal(e.open_positions, 3, 'one 5-minute position, one hourly position and one hourly pending order');
+  // An hourly loss closed today counts toward the daily loss limit of the 5-minute desk.
+  const all = hourlyBars(10);
+  await hourlyTick(storage, { force: true, load: feed(all.slice(0, 72)), now: after(all.slice(0, 72)) });
+  await hourlyTick(storage, { force: true, load: feed(all), now: after(all) });
+  const hourly = await readTrades(storage, (t) => t.data?.resolution === '1h');
+  assert.ok(hourly.length, 'hourly trades closed');
+  const last = hourly.at(-1);
+  e = await accountExposure(storage, Date.parse(last.exit.time), { live_paper_portfolios: [] });
+  const { tradeDayOf } = await import('./trading_evidence.js');
+  const expected = hourly.filter((t) => tradeDayOf(t.exit.time) === tradeDayOf(Date.parse(last.exit.time))).reduce((s, t) => s + t.net_pnl, 0);
+  assert.ok(Math.abs(e.realized_today - expected) < 1e-6);
+});

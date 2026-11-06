@@ -90,7 +90,9 @@ async function exclude(storage, entries) {
  */
 export async function setLivePaper(storage, enabled, now = Date.now()) {
   const state = (await storage.get(LIVE_STATE)) || {};
-  const saved = (await storage.get(LIVE_PORTFOLIOS)) || null;
+  // Both desks (the 5-minute one and the hourly volatility test, Codex on #946) follow the same stop and restart rules.
+  for (const key of [LIVE_PORTFOLIOS, HOURLY_PORTFOLIOS]) {
+  const saved = (await storage.get(key)) || null;
   if (saved && (!enabled || !state.enabled)) {
     const voided = [];
     for (const pf of Object.values(saved)) {
@@ -99,7 +101,8 @@ export async function setLivePaper(storage, enabled, now = Date.now()) {
       if (enabled) { pf.last_bar_time = null; pf.pending = null; pf.open = null; }
     }
     await exclude(storage, voided);
-    await storage.put(LIVE_PORTFOLIOS, saved);
+    await storage.put(key, saved);
+  }
   }
   const next = enabled
     ? { ...state, enabled: true, started_at: state.enabled ? state.started_at : new Date(now).toISOString(), stopped_at: null }
@@ -117,9 +120,12 @@ export async function setLivePaper(storage, enabled, now = Date.now()) {
  * at an invented price. Nothing is deleted: each cancelled or voided item is kept with its reason.
  */
 export async function haltLivePaper(storage, { flatten = false, now = Date.now(), reason = 'Emergency Stop' } = {}) {
-  const saved = (await storage.get(LIVE_PORTFOLIOS)) || {};
   const at = new Date(now).toISOString();
   const cancelled = []; const voided = []; const open = [];
+  // Both desks: the 5-minute one and the hourly volatility test (Codex on #946).
+  for (const key of [LIVE_PORTFOLIOS, HOURLY_PORTFOLIOS]) {
+  const saved = (await storage.get(key)) || {};
+  const before = cancelled.length + voided.length;
   for (const pf of Object.values(saved)) {
     if (pf.pending) {
       cancelled.push({ kind: 'cancelled', at, portfolio: pf.key, strategy: pf.candidate, pending: pf.pending, reason: `${reason}: the order had not filled` });
@@ -132,8 +138,9 @@ export async function haltLivePaper(storage, { flatten = false, now = Date.now()
       open.push({ portfolio: pf.key, strategy: pf.candidate, filter: pf.filter, side: pf.open.side, entry: pf.open.entry?.raw ?? null, stop: pf.open.stop, target: pf.open.target, qty: pf.qty, contract: pf.contract });
     }
   }
+  if (cancelled.length + voided.length > before) await storage.put(key, saved);
+  }
   await exclude(storage, [...cancelled, ...voided]);
-  if (cancelled.length || voided.length) await storage.put(LIVE_PORTFOLIOS, saved);
   return { cancelled: cancelled.length, flattened: voided.length, open };
 }
 
@@ -233,11 +240,9 @@ export async function liveTick(storage, { fetcher = fetch, now = Date.now(), for
               : `the newest closed bar is not usable (${Math.round(barAge / 1000)} s after its close)`;
         // The owner's controls (trading_controls.js) decide whether a valid signal may enter.
         const controls = await readControls(storage);
-        const today = tradeDayOf(now);
-        const realizedToday = (await readTrades(storage, isLive))
-          .filter((t) => tradeDayOf(t.exit?.time || 0) === today).reduce((sum, t) => sum + (Number(t.net_pnl) || 0), 0);
+        // The account limits cover both desks: the hourly test's losses and positions count here too (Codex on #946).
         // The strategy governor restricts forward paper only; simulation (delayed training, research) keeps every strategy.
-        const gate = oneTradePerSignal(governedGate(makeEntryGate(controls, { realized_today: realizedToday, open_positions: portfolios.filter((pf) => pf.open || pf.pending).length }), await pausedUnits(storage)));
+        const gate = oneTradePerSignal(governedGate(makeEntryGate(controls, await accountExposure(storage, now, { [LIVE_PORTFOLIOS]: portfolios })), await pausedUnits(storage)));
         const closed = [];
         run.missed_windows = portfolios.filter((pf) => pf.last_bar_time && pf.last_bar_time < bars[0].t).length;
         const before = new Map(portfolios.map((pf) => [pf.key, pf.last_bar_time]));
@@ -685,6 +690,22 @@ const HOUR = 3_600_000;
 const isIntradayPaper = (t) => t.environment === 'paper' && (t.data?.resolution === RESOLUTION || t.data?.resolution === HOURLY);
 export const isHourly = (t) => t.environment === 'paper' && t.data?.resolution === HOURLY;
 
+/**
+ * The account-wide inputs to the owner's entry limits, across both desks: today's realized paper P&L (5-minute and
+ * hourly) and the open or pending positions. `current` passes a desk's in-memory portfolios in place of its saved ones.
+ */
+export async function accountExposure(storage, now = Date.now(), current = {}) {
+  const today = tradeDayOf(now);
+  const realized = (await readTrades(storage, isIntradayPaper))
+    .filter((t) => tradeDayOf(t.exit?.time || 0) === today).reduce((sum, t) => sum + (Number(t.net_pnl) || 0), 0);
+  let open = 0;
+  for (const key of [LIVE_PORTFOLIOS, HOURLY_PORTFOLIOS]) {
+    const list = current[key] || Object.values((await storage.get(key)) || {});
+    open += list.filter((pf) => pf.open || pf.pending).length;
+  }
+  return { realized_today: realized, open_positions: open };
+}
+
 function freshHourly(spec) {
   const pf = newPortfolio(spec.c, 'any', { contract: 'MNQ', qty: 1, source: 'paper', resolution: HOURLY, priceSeries: 'Yahoo MNQ=F 60-minute (DELAYED)', params: { target_r: defaultTarget(spec.c), quality: QUALITY_RULES, stop_atr: spec.stop_atr } });
   pf.signals = [];
@@ -731,11 +752,7 @@ export async function hourlyTick(storage, { fetcher = fetch, now = Date.now(), f
         // Forward only: a new portfolio starts at the newest closed bar.
         for (const pf of portfolios) if (pf.last_bar_time == null) Object.assign(pf, { last_bar_time: newest, started_from: newest });
         const controls = await readControls(storage);
-        const today = tradeDayOf(now);
-        const realizedToday = (await readTrades(storage, isIntradayPaper))
-          .filter((t) => tradeDayOf(t.exit?.time || 0) === today).reduce((sum, t) => sum + (Number(t.net_pnl) || 0), 0);
-        const fiveMinuteOpen = Object.values((await storage.get(LIVE_PORTFOLIOS)) || {}).filter((pf) => pf.open || pf.pending).length;
-        const gate = governedGate(makeEntryGate(controls, { realized_today: realizedToday, open_positions: fiveMinuteOpen + portfolios.filter((pf) => pf.open || pf.pending).length }), await pausedUnits(storage), { timeframe: HOURLY });
+        const gate = governedGate(makeEntryGate(controls, await accountExposure(storage, now, { [HOURLY_PORTFOLIOS]: portfolios })), await pausedUnits(storage), { timeframe: HOURLY });
         const before = new Map(portfolios.map((pf) => [pf.key, pf.last_bar_time]));
         const closed = [];
         for (const pf of portfolios) {
