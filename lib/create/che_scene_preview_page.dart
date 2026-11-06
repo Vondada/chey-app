@@ -452,7 +452,7 @@ class _CheScenePreviewPageState extends State<CheScenePreviewPage> {
               Wrap(spacing: 8, children: [
                 for (final preset in cheSceneLights.keys)
                   ActionChip(
-                    avatar: Icon(Icons.light_mode, size: 16, color: Color(cheSceneLights[preset]!)),
+                    avatar: Icon(Icons.wb_sunny_outlined, size: 16, color: Color(cheSceneLights[preset]!)),
                     label: Text(preset),
                     tooltip: 'Relight the office: $preset',
                     onPressed: _sending ? null : () => _send(SceneEditWords.light(preset)),
@@ -466,7 +466,7 @@ class _CheScenePreviewPageState extends State<CheScenePreviewPage> {
                   labelText: selected == null ? 'Tell CHE what to change' : 'Tell CHE what to change about ${selected.name}',
                   suffixIcon: IconButton(
                     tooltip: 'Send to CHE',
-                    icon: const Icon(Icons.send),
+                    icon: const Icon(Icons.send_rounded),
                     onPressed: () {
                       final words = _ask.text.trim();
                       if (words.isEmpty) return;
@@ -517,6 +517,7 @@ class _CheScenePreviewPageState extends State<CheScenePreviewPage> {
           _viewSize = constraints.biggest;
           return Listener(
             // Apple Pencil and finger both select; the pointer kind decides what a long press does.
+            // a11y-label-ok: the 3D view is labelled above; VoiceOver selects actors with the chips below and by voice.
             onPointerDown: (e) => _lastKind = e.kind,
             child: GestureDetector(
               behavior: HitTestBehavior.opaque,
