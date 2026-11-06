@@ -349,6 +349,14 @@ export async function saveFilmVideo(storage, { key, title = 'Film', prompt = '',
   return item;
 }
 
+/** A Scene Director render (scene_director.js): read and checked by CHE, linked to its editable project and version. */
+export async function saveSceneVideo(storage, { key, title = 'Scene', seconds = 0, width = 0, height = 0, bytes = 0, project_id = '', version = 0, blob = 'r2' } = {}) {
+  const id = crypto.randomUUID();
+  const item = { id, root_id: id, parent_id: null, kind: 'video', mode: 'scene', mime_type: 'video/mp4', title: String(title).slice(0, 120), prompt: '', width, height, seconds, bytes, scene_project_id: project_id, scene_version: version, blob: blob === 'che_store' ? 'che_store' : 'r2', blob_key: key, durable: true, verified: true, duration_verified: true, created_at: now(), source: 'che_scene_director' };
+  await saveIndex(storage, [item, ...(await listMedia(storage))]);
+  return item;
+}
+
 // mode: new | variation | refine. parent_id links versions of one piece.
 
 // ── Modal GPU text-to-image (owner, 2026-10-28) ─────────────────────────────────────────────────────────────────

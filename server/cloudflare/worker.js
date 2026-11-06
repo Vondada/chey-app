@@ -316,6 +316,7 @@ import { creationProbeRoute } from './creation_probe.js';
 import { paidWakes, poolRoute, poolSay, reapPaid } from './compute_pool.js';
 import { projectAudit, projectLibraryRoute } from './project_library.js';
 import { officeCast } from './film_cast.js';
+import { directorTurn } from './scene_director.js';
 import { FILM_ACTIVE_STATES, filmPlan, filmTick, filmTokenRoute, refreshValidation as refreshFilmValidation, remakeShot, setFilmState, startFilm } from './film_pipeline.js';
 import { performanceBanner, performanceIntent, performanceReport, recordTiming, routeKey as perfRouteKey, speakPerformance } from './perf_watch.js';
 import { engineView, exportWorkflows, feedbackOnLast, importWorkflows, library as workflowLibrary, loadEngine, matchLearned, noteVersion, promoteCandidate, dismissCandidate, rankWorkflows, recordRun as recordWorkflowRun, isDisabled as workflowDisabled, restoreVersion, saveEngine, setDisabled as setWorkflowDisabled, setPreferred as setWorkflowPreferred, speakEfficiency, speakLibrary, testCandidate, workflowForRun, workflowIntent } from './workflow_engine.js';
@@ -10734,6 +10735,9 @@ export class CheState extends DurableObject {
           const secAsk = ownerDevice && !body.attachment && !body.workflow_step ? (securityIntent(rawMessage) || securityChiefIntent(rawMessage)) : null;
           if (secAsk) return this.securityChat(data, secAsk, tokenHash);
           // Film Studio: make, plan, status, remake, pause/resume/stop and the free render farm (film_studio.filmIntent).
+          // Scene Director: a crew scene by voice, and its edits while it is recent (scene_director.js).
+          const scene = ownerDevice && !body.attachment && !body.workflow_step ? await directorTurn({ storage: this.ctx.storage, env: this.env }, rawMessage) : null;
+          if (scene) return ndjsonReply(scene.text, { model_calls: 0, ...scene.meta });
           const filmAsk = ownerDevice && !body.attachment && !body.workflow_step ? filmIntent(rawMessage) : null;
           if (filmAsk) return this.filmChat(request, filmAsk, data);
           // Capability Engine: what CHE can actually do, what she learned, owner policies (internal-only and memory).

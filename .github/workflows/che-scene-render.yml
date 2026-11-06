@@ -1,0 +1,166 @@
+name: CHE scene render
+run-name: CHE scene render ${{ inputs.job_id }}
+
+# CHE Scene Director (server/cloudflare/scene_director.js). The Worker dispatches one editable scene spec; up to 20 free
+# runners each render a range of its frames in Blender (Cycles, the real crew GLBs and clips); one runner then joins
+# them, applies the timing and sound edits, voices the lines with the free Piper voice, and checks the MP4 from the file
+# itself. An edit that changes only timing or sound passes frames_run: that run's frames are reused and only the finish
+# step runs, so it never re-renders 3D. Nothing here costs money or uploads anywhere; the Worker collects the artifact.
+
+on:
+  workflow_dispatch:
+    inputs:
+      job_id:
+        description: CHE scene job id (scj_...)
+        required: true
+      spec:
+        description: The scene spec (JSON, version 1)
+        required: true
+      segments:
+        description: Runners rendering frames at once (1-20)
+        required: false
+        default: '12'
+      frames_run:
+        description: Reuse the frames of this earlier run (timing or sound edits only)
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: che-scene-${{ inputs.job_id }}
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    outputs:
+      segments: ${{ steps.plan.outputs.segments }}
+      reuse: ${{ steps.plan.outputs.reuse }}
+    steps:
+      - name: Check the spec and split the frames
+        id: plan
+        env:
+          SPEC: ${{ inputs.spec }}
+          SEGMENTS: ${{ inputs.segments }}
+          FRAMES_RUN: ${{ inputs.frames_run }}
+          JOB: ${{ inputs.job_id }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, os, re
+          job = os.environ["JOB"]
+          assert re.fullmatch(r"scj_[a-f0-9]{24}", job), "bad job id"
+          spec = json.loads(os.environ["SPEC"])
+          assert spec.get("v") == 1, "spec version must be 1"
+          seconds, fps = float(spec["seconds"]), int(spec.get("fps", 24))
+          assert 1 <= seconds <= 120 and fps in (12, 24, 30), "1-120 seconds at 12, 24 or 30 fps"
+          frames = int(round(seconds * fps))
+          n = max(1, min(20, int(os.environ.get("SEGMENTS") or 12), frames))
+          per = -(-frames // n)
+          ranges = [{"index": i, "start": i * per + 1, "end": min(frames, (i + 1) * per)} for i in range(n) if i * per + 1 <= frames]
+          reuse = os.environ.get("FRAMES_RUN", "").strip()
+          assert reuse == "" or reuse.isdigit(), "frames_run must be a run id"
+          with open(os.environ["GITHUB_OUTPUT"], "a") as out:
+              out.write("segments=" + json.dumps(ranges) + "\n")
+              out.write("reuse=" + reuse + "\n")
+          print(f"CHE_SCENE_PLAN {frames} frames on {len(ranges)} runners" + (f", reusing run {reuse}" if reuse else ""))
+          PY
+
+  render:
+    needs: plan
+    if: needs.plan.outputs.reuse == ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    strategy:
+      fail-fast: true
+      max-parallel: 20
+      matrix:
+        part: ${{ fromJson(needs.plan.outputs.segments) }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            tools
+            assets/characters/crew
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: tools/scene_render_requirements.txt
+      - name: Install Blender (the bpy module)
+        timeout-minutes: 6
+        run: |
+          set -euo pipefail
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends libxrender1 libxi6 libxkbcommon0 libsm6 libgl1 >/dev/null 2>&1 || true
+          python -m pip install --disable-pip-version-check -q -r tools/scene_render_requirements.txt
+          python -c "import bpy; print('Blender', bpy.app.version_string)"
+      - name: Render frames ${{ matrix.part.start }}-${{ matrix.part.end }}
+        env:
+          SPEC: ${{ inputs.spec }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$SPEC" > scene.json
+          python tools/che_scene_render.py --spec scene.json --out frames --start ${{ matrix.part.start }} --end ${{ matrix.part.end }}
+          test "$(find frames -name 'frame_*.png' | wc -l)" -eq $(( ${{ matrix.part.end }} - ${{ matrix.part.start }} + 1 ))
+      - uses: actions/upload-artifact@v4
+        with:
+          name: frames-${{ inputs.job_id }}-${{ matrix.part.index }}
+          path: frames/
+          retention-days: 7
+          if-no-files-found: error
+
+  finish:
+    needs: [plan, render]
+    if: always() && needs.plan.result == 'success' && (needs.render.result == 'success' || needs.render.result == 'skipped')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: tools
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Frames from this run
+        if: needs.plan.outputs.reuse == ''
+        uses: actions/download-artifact@v4
+        with:
+          pattern: frames-${{ inputs.job_id }}-*
+          path: frames
+          merge-multiple: true
+      - name: Frames from the earlier run (timing or sound edit)
+        if: needs.plan.outputs.reuse != ''
+        uses: actions/download-artifact@v4
+        with:
+          pattern: frames-*
+          path: frames
+          merge-multiple: true
+          run-id: ${{ needs.plan.outputs.reuse }}
+          github-token: ${{ github.token }}
+      - name: Install ffmpeg and the free Piper voice
+        timeout-minutes: 6
+        run: |
+          set -euo pipefail
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ffmpeg >/dev/null
+          python -m pip install --disable-pip-version-check -q piper-tts
+          python -m piper.download_voices en_US-kristin-medium
+      - name: Retime, voice, score and check the MP4
+        env:
+          SPEC: ${{ inputs.spec }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$SPEC" > scene.json
+          python tools/che_scene_finish.py --spec scene.json --frames frames --out rendered --voice piper
+      - uses: actions/upload-artifact@v4
+        with:
+          name: che-scene-${{ inputs.job_id }}
+          path: |
+            rendered/video.mp4
+            rendered/thumbnail.png
+            rendered/manifest.json
+          retention-days: 30
+          if-no-files-found: error
