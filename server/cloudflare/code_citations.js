@@ -5,6 +5,12 @@
 // excerpts; a finding that cites anything else is removed and said so. Pure: no storage, no network, no model.
 
 const norm = (s) => String(s || '').replace(/\s+/g, ' ').trim();
+const EXT = '(?:dart|js|mjs|ts|py|swift|kt)';
+// A snippet that is only a file name or path (optionally with :line) names a file, not code inside it.
+const PATH_ONLY = new RegExp(`^[\\w./-]+\\.${EXT}(?::\\d+)?$`);
+// Where a finding stops quoting CHE's code and starts proposing new code: what follows is checked as a proposal, not
+// as a claim that it already exists.
+const PROPOSAL = /(?:\b(?:repair|fix|suggested (?:fix|change)|proposed (?:fix|change)|recommend(?:ation|ed fix)?|patch|solution)\b\**\s*:|\b(?:replace (?:it |this |that )?with|change (?:it |this |that )?to|should (?:be|read|become)|add(?:ing)?|use|wrap (?:it )?(?:in|with)|instead,?)\s+(?=`))/i;
 // Words that are prose or Dart/JS keywords, never a claim about CHE's code.
 const COMMON = new Set(['null', 'true', 'false', 'const', 'final', 'var', 'let', 'new', 'return', 'if', 'else', 'this', 'await', 'async', 'void', 'class', 'import', 'export', 'function', 'widget', 'string', 'int', 'double', 'bool', 'list', 'map', 'object', 'dynamic']);
 
@@ -21,17 +27,23 @@ function codeNames(s) {
 
 /** What one finding claims: quoted snippets (fenced or inline code), code names inside them, and file:line pairs. */
 export function citationsOf(text) {
-  const t = String(text || '');
+  const full = String(text || '');
+  const cut = full.search(PROPOSAL);
+  const t = cut >= 0 ? full.slice(0, cut) : full;
   const snippets = [];
-  for (const m of t.matchAll(/```[a-z]*\n?([\s\S]*?)```/g)) snippets.push(m[1]);
-  for (const m of t.replace(/```[\s\S]*?```/g, ' ').matchAll(/`([^`\n]+)`/g)) snippets.push(m[1]);
+  const paths = [];
+  const quoted = [];
+  for (const m of t.matchAll(/```[a-z]*\n?([\s\S]*?)```/g)) quoted.push(m[1]);
+  for (const m of t.replace(/```[\s\S]*?```/g, ' ').matchAll(/`([^`\n]+)`/g)) quoted.push(m[1]);
+  for (const q of quoted) (PATH_ONLY.test(q.trim()) ? paths : snippets).push(q.trim());
   const lines = [];
-  for (const m of t.matchAll(/([\w./-]+\.(?:dart|js|mjs|ts|py|swift|kt))\**\s*\(?\s*(?:line|ln|l\.)\s*(\d+)/gi)) lines.push({ path: m[1], line: Number(m[2]) });
+  for (const m of t.matchAll(new RegExp(`([\\w./-]+\\.${EXT})\`?\\**\\s*(?:\\(?\\s*(?:line|ln|l\\.)\\s*|:)(\\d+)`, 'gi'))) lines.push({ path: m[1], line: Number(m[2]) });
+  for (const p of paths) { const m = p.match(/^(.*?)(?::(\d+))?$/); if (!m[2]) lines.push({ path: m[1], line: null }); }
   return { snippets, names: [...new Set(snippets.flatMap(codeNames))], lines };
 }
 
 /**
- * Checks each numbered finding of [text] against the excerpts in [files] ({path, excerpt}). Returns the text with the
+ * Checks each numbered finding (the code it quotes, not the code it proposes as a repair) of [text] against the excerpts in [files] ({path, excerpt}). Returns the text with the
  * findings that cite code CHE did not read removed, the removed findings, and whether any finding survived.
  */
 export function verifyCitations(text, files = []) {
@@ -50,6 +62,7 @@ export function verifyCitations(text, files = []) {
       const file = byFile(path);
       const shown = file ? file.text.split('\n') : [];
       if (!file) why.push(`cites ${path}, which was not read`);
+      else if (line == null) continue;
       else if (line > shown.length) why.push(`cites ${path} line ${line}, past what was read (${shown.length} lines)`);
       else if (c.names.length && !c.names.some((name) => shown.slice(Math.max(0, line - 3), line + 2).join('\n').includes(name))) why.push(`cites ${path} line ${line}, which does not hold that code`);
     }

@@ -66,3 +66,29 @@ test('plain prose with no code citation passes untouched', () => {
   const prose = 'The coding runtime waits on a runner that may never claim the job. Repair: record a claim deadline.';
   assert.equal(citedAnswer(prose, FILES), prose);
 });
+
+// Codex review of #944: a backticked file name, a proposed repair and a file:line citation.
+const EX = [{ path: 'lib/example.dart', excerpt: "import 'x.dart';\nclass ExampleWidget {}\nvoid build() {}" }];
+
+test('a backticked file name is checked against the files read, not searched for inside them', () => {
+  assert.equal(verifyCitations('1. In `lib/example.dart`, `ExampleWidget` defines the widget.', EX).kept, 1);
+  const v = verifyCitations('1. In `lib/missing.dart`, `ExampleWidget` defines the widget.', EX);
+  assert.equal(v.kept, 0);
+  assert.match(v.removed[0].why.join(' '), /lib\/missing\.dart, which was not read/);
+});
+
+test('code proposed as a repair is not required to exist already; the quoted code before it still is', () => {
+  assert.equal(verifyCitations('1. example.dart line 2: `ExampleWidget` has no guard. Repair: add `if (input == null) return;`', EX).kept, 1);
+  assert.equal(verifyCitations('1. example.dart line 2: `ExampleWidget` should be `ExampleWidget.safe(input)`.', EX).kept, 1);
+  assert.equal(verifyCitations('1. example.dart line 2: `che_desk: _desk` is null. Repair: add `if (input == null) return;`', EX).kept, 0);
+});
+
+test('file:line citations are checked, backticked or not', () => {
+  for (const t of ['1. example.dart:999: `ExampleWidget` defines the widget.', '1. `example.dart:999`: `ExampleWidget` defines the widget.']) {
+    const v = verifyCitations(t, EX);
+    assert.equal(v.kept, 0, t);
+    assert.match(v.removed[0].why.join(' '), /line 999, past what was read/);
+  }
+  assert.equal(verifyCitations('1. `lib/example.dart:2`: `ExampleWidget` defines the widget.', EX).kept, 1);
+  assert.deepEqual(citationsOf('see `lib/example.dart:2`').lines, [{ path: 'lib/example.dart', line: 2 }]);
+});
