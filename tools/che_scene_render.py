@@ -91,9 +91,20 @@ def chair(name, seat, heading, mat, seat_h):
     return parts
 
 
+# Relight (the owner's Higgsfield "Miracle" references, 2026-11-06): the time of day as light colours and strengths for
+# the ceiling key, the desk lamp, the fill, the window glow and the sky. (name: (colour, power) or (colour, strength))
+LIGHTING = {
+    "warm": {"key": ("#ffd9a8", 380), "lamp": ("#ffc27a", 60), "fill": ("#cfe0ff", 160), "window": ("#7fa8ff", 1.2), "world": ("#1a1f2b", 0.35)},
+    "cool": {"key": ("#e6f0ff", 380), "lamp": ("#dfe9ff", 60), "fill": ("#cfe0ff", 160), "window": ("#9fc4ff", 1.4), "world": ("#1a1f2b", 0.35)},
+    "morning": {"key": ("#fff4e0", 300), "lamp": ("#ffe2b8", 30), "fill": ("#dcebff", 200), "window": ("#e8f3ff", 3.5), "world": ("#9fc4ff", 0.6)},
+    "sunset": {"key": ("#ffb27a", 240), "lamp": ("#ffb060", 90), "fill": ("#a98bd8", 110), "window": ("#ff8a4a", 3.2), "world": ("#3a2030", 0.45)},
+    "night": {"key": ("#9fb4ff", 110), "lamp": ("#ffc27a", 140), "fill": ("#5a6fa8", 60), "window": ("#2a3f7a", 0.7), "world": ("#05070d", 0.12)},
+}
+
+
 def build_set(spec, seat_h):
     s = spec.get("set", {})
-    warm = s.get("light", "warm") == "warm"
+    look = LIGHTING.get(s.get("light", "warm"), LIGHTING["warm"])
     floor = material("floor", s.get("floor", "#5b4636"), 0.45)
     wall = material("wall", s.get("wall", "#d9d2c5"), 0.8)
     wood = material("desk", "#3b2a20", 0.4)
@@ -107,7 +118,7 @@ def build_set(spec, seat_h):
     box("side wall back", (0.1, 2.0, 3.2), (-3.6, 2.2, 1.6), wall)
     box("door header", (0.1, 1.6, 0.9), (-3.6, 0.4, 2.75), wall)
     # A night-city window on the back wall (an emissive panel, so it lights the room a little).
-    city = material("window", "#0b1630", 0.2, emission="#7fa8ff", strength=1.2)
+    city = material("window", "#0b1630", 0.2, emission=look["window"][0], strength=look["window"][1])
     box("window", (3.2, 0.02, 1.5), (1.2, 3.13, 1.65), city)
     box("desk top", (1.8, 0.8, 0.06), (0.9, 1.5, 0.74), wood)
     box("desk side", (0.06, 0.75, 0.72), (0.03, 1.5, 0.36), wood)
@@ -128,12 +139,12 @@ def build_set(spec, seat_h):
     world = bpy.data.worlds.new("office")
     scene.world = world
     world.use_nodes = True
-    world.node_tree.nodes["Background"].inputs["Color"].default_value = hex_rgba("#1a1f2b")
-    world.node_tree.nodes["Background"].inputs["Strength"].default_value = 0.35
+    world.node_tree.nodes["Background"].inputs["Color"].default_value = hex_rgba(look["world"][0])
+    world.node_tree.nodes["Background"].inputs["Strength"].default_value = look["world"][1]
     for name, loc, power, color in (
-        ("ceiling key", (0.5, -0.5, 3.0), 380, "#ffd9a8" if warm else "#e6f0ff"),
-        ("lamp", (1.6, 1.4, 1.6), 60, "#ffc27a" if warm else "#dfe9ff"),
-        ("fill", (-2.5, -3.0, 2.2), 160, "#cfe0ff"),
+        ("ceiling key", (0.5, -0.5, 3.0), look["key"][1], look["key"][0]),
+        ("lamp", (1.6, 1.4, 1.6), look["lamp"][1], look["lamp"][0]),
+        ("fill", (-2.5, -3.0, 2.2), look["fill"][1], look["fill"][0]),
     ):
         light = bpy.data.lights.new(name, "AREA")
         light.energy = power

@@ -34,6 +34,19 @@ This plan builds on what already works. Nothing here replaces a working system w
 7. No single compute router; two Modal budgets that do not talk; Kaggle quota counted twice.
 8. Export is MP4, PNG and GLB only (no USDZ for iPhone AR).
 
+## The editing target: the owner's Higgsfield "Miracle" reference clips (2026-11-06)
+
+| Shown in the clips | How CHE does it | Stage |
+|---|---|---|
+| "Vectorize" / "all videos have layers": a video split into its person, tree and background | CHE's own 3D scenes are layered by construction; Cycles can render each object as its own layer. Filmed video needs SAM 2 segmentation (Apache-2.0) on the free Kaggle GPU | 3D: 2-3; footage: after 3 |
+| Select a person, move and rotate them with a 3D gizmo; add a prop (an umbrella) | Tap to select in the live scene, drag or pinch to move and scale, then re-render; props from the object library | 2 |
+| Localized editing (change only the hair or the dog) | In 3D: per-object material and look edits (the outfit colour is the first). On footage: segmentation plus generative inpainting on GPU | 1 (outfit), 2, later |
+| Compositing / "control every pixel": change a car's livery, swap elements | Per-layer renders combined on Visual Studio overlay tracks | 3 |
+| Selective speed control: one skater slowed, the rest at normal speed | Each actor's clips are separate NLA strips, so one actor's time can be scaled alone; whole-scene spans already retime | 1 (spans), 2 (per actor) |
+| Relight with a time-of-day dial | The office lighting presets: warm, cool, morning, sunset, night | 1 (this PR) |
+| HDR and colour | Colour curves and LUTs in the Visual Studio document and renderer | 3 |
+| "World knowledge" (a city in 1996 vs 2026) | Needs generative imagery; not planned yet | later |
+
 ## Stages
 
 Each stage ships as focused PRs with tests, CI and rendered evidence. Free compute first; paid GPU only within the
@@ -46,7 +59,8 @@ owner's cap.
   frames already rendered.
 - `tools/che_scene_render.py`: Blender (Cycles) draws the real GLBs with their real clips: walking along the path,
   sitting on the chair (seat height measured from the sit pose), talking from the waist up while seated, the
-  camera holding or circling (the back wall hides while the camera passes behind it), and the outfit colour.
+  camera holding or circling (the back wall hides while the camera passes behind it), the outfit colour, and relighting
+  (warm, cool, morning, sunset, night).
 - `tools/che_scene_finish.py`: ffmpeg retimes spans, places the Piper voice lines after the retime, mixes ducked music,
   encodes H.264/AAC and checks the file itself.
 - `.github/workflows/che-scene-render.yml`: up to 20 free runners render frame ranges at once, then one finishes.
@@ -74,7 +88,6 @@ frames against the request, and fixes what fails. A missing capability becomes a
 
 ## Needs from the owner
 
-- The three Higgsfield Miracle reference clips, to set the editing target (they are not in this session).
 - A Modal spending cap, before any paid GPU use. The owner named $10 a month when choosing the free Kaggle path.
 - Merges, deploys and iPhone builds as before; Modal app redeploys are manual.
 

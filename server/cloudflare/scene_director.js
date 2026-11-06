@@ -143,7 +143,7 @@ export function directorEditIntent(text) {
   const t = String(text || '').toLowerCase();
   if (/^\s*(?:undo|redo)\b|^\s*(?:undo|go back)(?: that| the last)?(?: change| edit)?\s*[.!]?$/.test(t)) return true;
   if (/\b(?:is|how(?:'s| is)) (?:my |the )?scene\b|\bscene (?:ready|done|status)\b|\brender (?:it|the scene|my scene) again\b/.test(t)) return true;
-  return [/\boutfit\b|\bclothes\b|\b(?:put|dress) (?:her|him|them) in\b/, /\bcamera\b|\bcircle around\b|\borbit\b/, /\bslow(?:er)?(?: it)? down\b|\bslow[- ]?mo(?:tion)?\b|\bspeed (?:it |that )?up\b|\bfaster\b/, /\bmusic\b|\bsoundtrack\b/, /\b(?:make|have|let) (?:her|him|them) say\b/].some((r) => r.test(t)) && (PRONOUN.test(t) || /\b(?:scene|camera|music|slow|speed)\b/.test(t));
+  return [/\b(?:relight|lighting)\b|\bmake it (?:sunset|night|morning|golden hour|evening)\b/, /\boutfit\b|\bclothes\b|\b(?:put|dress) (?:her|him|them) in\b/, /\bcamera\b|\bcircle around\b|\borbit\b/, /\bslow(?:er)?(?: it)? down\b|\bslow[- ]?mo(?:tion)?\b|\bspeed (?:it |that )?up\b|\bfaster\b/, /\bmusic\b|\bsoundtrack\b/, /\b(?:make|have|let) (?:her|him|them) say\b/].some((r) => r.test(t)) && (PRONOUN.test(t) || /\b(?:scene|camera|music|slow|speed|relight|lighting|sunset|night|morning|evening|golden hour)\b/.test(t));
 }
 
 function threeDKey(spec) {
@@ -174,6 +174,12 @@ export function applyEdits(prev, text) {
   } else if (/\bcamera\b.*\b(?:still|static|steady|stop moving)\b/.test(t)) {
     spec.camera = { ...DEFAULT_CAMERA };
     said.push('the camera holds still');
+  }
+  const lit = t.match(/\b(?:relight|light(?:ing)?|make it|turn it|change it)\b.*?\b(sunset|golden hour|evening|night|nighttime|morning|sunrise|daytime|day ?light|warm|cool)\b/);
+  if (lit) {
+    const look = { 'golden hour': 'sunset', evening: 'sunset', nighttime: 'night', sunrise: 'morning', daytime: 'morning', daylight: 'morning', 'day light': 'morning' }[lit[1]] || lit[1];
+    spec.set = { ...(spec.set || {}), light: look };
+    said.push(`the office is relit for ${look === 'warm' || look === 'cool' ? `${look} light` : look}`);
   }
   const last = t.match(/\b(slow(?:er)?(?: it)? down|slow[- ]?mo(?:tion)?|speed (?:it |that )?up|faster)\b(?:.*?\b(?:the )?(last|first) (\w+) seconds?\b)?/);
   if (last) {

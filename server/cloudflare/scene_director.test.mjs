@@ -103,6 +103,11 @@ test('one sentence, four edits: outfit, camera circling, slow last five seconds,
   assert.equal(applyEdits(spec, 'make her outfit red').spec.actors[0].cloth, '#c0392b');
   assert.equal(applyEdits(spec, 'make her say "I brought coffee for everyone."').spec.timeline[2].line, 'I brought coffee for everyone.');
   assert.equal(applyEdits(spec, 'make her say "Hi"').three_d, false, 'new words reuse the frames');
+  // Relight, as in the owner's Higgsfield "Miracle" references: the time of day changes the light, so the 3D is redrawn.
+  assert.equal(directorEditIntent('make it sunset'), true);
+  const sunset = applyEdits(spec, 'relight the office for golden hour');
+  assert.deepEqual([sunset.spec.set.light, sunset.three_d, sunset.said[0]], ['sunset', true, 'the office is relit for sunset']);
+  assert.equal(applyEdits(spec, 'make it night').spec.set.light, 'night');
 });
 
 test('through the Director: start, check, edit by voice; a timing or sound edit reuses the rendered frames; undo; the video lands in the media library', async () => {
