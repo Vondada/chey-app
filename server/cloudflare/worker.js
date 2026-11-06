@@ -315,6 +315,7 @@ import { populationAnswer, worldPopulationIntent, worldRoute } from './world_pop
 import { creationProbeRoute } from './creation_probe.js';
 import { paidWakes, poolRoute, poolSay, reapPaid } from './compute_pool.js';
 import { projectAudit, projectLibraryRoute } from './project_library.js';
+import { officeCast } from './film_cast.js';
 import { FILM_ACTIVE_STATES, filmPlan, filmTick, filmTokenRoute, refreshValidation as refreshFilmValidation, remakeShot, setFilmState, startFilm } from './film_pipeline.js';
 import { performanceBanner, performanceIntent, performanceReport, recordTiming, routeKey as perfRouteKey, speakPerformance } from './perf_watch.js';
 import { engineView, exportWorkflows, feedbackOnLast, importWorkflows, library as workflowLibrary, loadEngine, matchLearned, noteVersion, promoteCandidate, dismissCandidate, rankWorkflows, recordRun as recordWorkflowRun, isDisabled as workflowDisabled, restoreVersion, saveEngine, setDisabled as setWorkflowDisabled, setPreferred as setWorkflowPreferred, speakEfficiency, speakLibrary, testCandidate, workflowForRun, workflowIntent } from './workflow_engine.js';
@@ -6438,11 +6439,11 @@ export class CheState extends DurableObject {
     };
   }
 
-  async filmAction(request, body) {
+  async filmAction(request, body, roster = null) {
     const ctx = await this.filmCtx(request);
     const action = String(body.action || '');
     if (action === 'make') {
-      const out = await startFilm(ctx, { topic: String(body.topic || '').slice(0, 300), seconds: Math.max(20, Math.min(14400, Number(body.seconds) || 300)), deadline: body.deadline_s == null ? null : { seconds: Math.max(0, Number(body.deadline_s)), words: String(body.deadline_words || '').slice(0, 40) } });
+      const out = await startFilm(ctx, { roster, topic: String(body.topic || '').slice(0, 300), seconds: Math.max(20, Math.min(14400, Number(body.seconds) || 300)), deadline: body.deadline_s == null ? null : { seconds: Math.max(0, Number(body.deadline_s)), words: String(body.deadline_words || '').slice(0, 40) } });
       if (out.ok) await this.wakeFilm();
       return { ok: out.ok, said: out.said, film_id: out.film?.id || null };
     }
@@ -6457,7 +6458,7 @@ export class CheState extends DurableObject {
     return { ok: false, status: 400, said: 'Unknown Film Studio action.' };
   }
 
-  async filmChat(request, ask) {
+  async filmChat(request, ask, data) {
     const say = (text, extra = {}) => ndjsonReply(text, { source: 'che_film_studio', ok: true, model_calls: 0, film_action: ask.kind, ...extra });
     if (ask.kind === 'open') return say('Opening Film Studio.', { open_screen: 'film_studio' });
     if (ask.kind === 'status') {
@@ -6466,7 +6467,7 @@ export class CheState extends DurableObject {
       return say(speakFilmStatus(film, film?.shot_count ? await store.shots(film.id, film.shot_count) : []));
     }
     const map = { make: 'make', plan: 'plan', farm: 'farm', pause: 'pause', resume: 'resume', cancel: 'cancel', remake: 'remake' };
-    const out = await this.filmAction(request, { action: map[ask.kind], topic: ask.topic, seconds: ask.seconds, deadline_s: ask.deadline ? ask.deadline.seconds : undefined, deadline_words: ask.deadline?.words || '', shot: ask.shot });
+    const out = await this.filmAction(request, { action: map[ask.kind], topic: ask.topic, seconds: ask.seconds, deadline_s: ask.deadline ? ask.deadline.seconds : undefined, deadline_words: ask.deadline?.words || '', shot: ask.shot }, ask.office ? officeCast(data) : null);
     return say(out.said, { ok: out.ok !== false, ...(out.film_id ? { film_id: out.film_id } : {}) });
   }
 
@@ -10734,7 +10735,7 @@ export class CheState extends DurableObject {
           if (secAsk) return this.securityChat(data, secAsk, tokenHash);
           // Film Studio: make, plan, status, remake, pause/resume/stop and the free render farm (film_studio.filmIntent).
           const filmAsk = ownerDevice && !body.attachment && !body.workflow_step ? filmIntent(rawMessage) : null;
-          if (filmAsk) return this.filmChat(request, filmAsk);
+          if (filmAsk) return this.filmChat(request, filmAsk, data);
           // Capability Engine: what CHE can actually do, what she learned, owner policies (internal-only and memory).
           // Brain Population Ledger: what entered the Brain, when, where from, and whether it is usable yet.
           const ledgerAsk = ownerDevice && !body.attachment && !body.workflow_step ? brainLedgerIntent(rawMessage) : null;
