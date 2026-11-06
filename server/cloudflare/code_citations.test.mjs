@@ -1,4 +1,4 @@
-// Owner, 2026-11-06: Jay's screen audit (certification run 42179558904) cited code that is not in CHE's files. A
+// Owner, 2026-11-06: CHE's screen audit (certification run 42179558904) cited code that is not in CHE's files. A
 // finding reaches the owner only when its quoted code, code names and line numbers are in the source she read.
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -9,7 +9,7 @@ const ROOT = new URL('../../', import.meta.url).pathname;
 const read = (p) => ({ path: p, excerpt: readFileSync(`${ROOT}${p}`, 'utf8').slice(0, 1600) });
 const FILES = ['lib/rooms/che_trading_room.dart', 'lib/rooms/che_trading_chart.dart', 'lib/agents/che_office_conversation_screen.dart'].map(read);
 
-// Three of the six findings, as Jay answered them.
+// Three of the six findings, as CHE answered them.
 const JAY = `Based on the provided source code, here are the potential issues:
 
 1. **che_trading_room.dart** (Line 142): The \`CheTradingRoom\` widget does not handle the case when the \`che_desk\` object is null.
@@ -38,7 +38,7 @@ test('a finding is read for its quoted code, code names and file:line', () => {
   assert.ok(c.names.includes('ChartBar') && c.names.includes('_feed'));
 });
 
-test("Jay's invented findings are all removed and the owner is told none could be verified", () => {
+test("CHE's invented findings are all removed and the owner is told none could be verified", () => {
   const v = verifyCitations(JAY, FILES);
   assert.equal(v.kept, 0);
   assert.equal(v.removed.length, 3);
@@ -91,4 +91,14 @@ test('file:line citations are checked, backticked or not', () => {
   }
   assert.equal(verifyCitations('1. `lib/example.dart:2`: `ExampleWidget` defines the widget.', EX).kept, 1);
   assert.deepEqual(citationsOf('see `lib/example.dart:2`').lines, [{ path: 'lib/example.dart', line: 2 }]);
+});
+
+// Live run 42245819995: "(`lib/agents/che_office_conversation_screen.dart`, line 71)" kept a finding whose line was
+// never read, because the comma between the file and "line" hid the line number.
+test('a file, a comma and "line N" is a line citation too', () => {
+  for (const form of ['(`lib/example.dart`, line 99)', 'lib/example.dart, line 99', 'lib/example.dart at line 99', '**lib/example.dart** — line 99', 'lib/example.dart on line 99']) {
+    assert.deepEqual(citationsOf(`1. ${form}: \`ExampleWidget\``).lines.find((l) => l.line != null), { path: 'lib/example.dart', line: 99 }, form);
+    assert.equal(verifyCitations(`1. ${form}: \`ExampleWidget\` is not refreshed.`, EX).kept, 0, form);
+  }
+  assert.equal(verifyCitations('1. The `ExampleWidget` class (`lib/example.dart`, line 2) has no guard.', EX).kept, 1);
 });

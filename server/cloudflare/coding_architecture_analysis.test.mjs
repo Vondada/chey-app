@@ -230,7 +230,7 @@ test('an app screen audit that mentions the crypto desk reads the source, not th
 });
 
 
-test('an audit answer that cites code CHE did not read is not passed on as findings (Jay, run 42179558904)', async (t) => {
+test('an audit answer that cites code CHE did not read is not passed on as findings (CHE, run 42179558904)', async (t) => {
   const record = { models: [], dispatches: [] };
   withFakeGithub(t, record);
   const invented = "1. **coding_runtime.js** (Line 142): The `CheCodingRuntime` does not handle a null `che_desk`.\n```js\nCheCodingRuntime({ che_desk: _desk })\n```\n2. **self_development.js** (Line 65): `inspectRepositoryContext(feed: _feed)` is not null-checked.";
