@@ -131,6 +131,14 @@ class EditRender(unittest.TestCase):
         pip = (0.06, 0.62, 0.28, 0.85)
         self.assertGreater(diff(self.region(p, 1.0, pip), self.region(p, 3.0, pip)), 20)
 
+    def test_a_ramped_clip_with_a_freeze_fails_the_render_with_its_reason(self):
+        with self.assertRaises(subprocess.CalledProcessError):
+            self.render('ramp_freeze')
+        m = json.loads((self.dir / 'ramp_freeze' / 'manifest.json').read_text())
+        self.assertEqual(m['status'], 'failed')
+        self.assertIn('Clip B has a speed ramp and a freeze, which do not combine', m['error'])
+        self.assertFalse((self.dir / 'ramp_freeze' / 'video.mp4').exists())
+
     def test_a_missing_source_fails_with_its_reason_and_no_ready_file(self):
         spec = json.loads(subprocess.run(['node', str(ROOT / 'tools' / 'che_edit_doc.mjs'), 'video', json.dumps({'clipA': 'nope', 'clipB': 'clipB', 'photo': 'photo', 'song': 'song'})], check=True, capture_output=True, text=True).stdout)
         out = self.dir / 'broken'
@@ -172,6 +180,12 @@ class Stage3Math(unittest.TestCase):
         self.assertEqual([(p['in'], p['out'], p['speed']) for p in pieces], [(1.0, 2.5, 1), (2.5, 3.0, 1.25), (3.0, 3.5, 1.6), (3.5, 4.0, 2)])
         self.assertEqual([p['transition']['type'] for p in pieces], ['cut', 'cut', 'cut', 'fade'], 'the clip\'s own transition stays on its last piece')
         self.assertAlmostEqual(sum(R.clip_len(p) for p in pieces), 1.5 + 0.4 + 0.3125 + 0.25)
+
+    def test_a_ramp_never_silently_drops_a_freeze_or_a_reverse(self):
+        for extra in ({'freeze': {'at': 1, 'duration': 1}}, {'reverse': True}):
+            c = {'id': 'c', 'name': 'Clip B', 'in': 0.0, 'out': 3.0, 'speed': 1, 'ramp': [{'at': 1.5, 'speed': 2}], **extra}
+            with self.assertRaisesRegex(RuntimeError, 'Clip B has a speed ramp and a (freeze|reverse), which do not combine'):
+                R.expand_ramps([c])
 
     def test_look_luts_are_valid_cube_files_and_mono_has_no_colour(self):
         d = Path(tempfile.mkdtemp())

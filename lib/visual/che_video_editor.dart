@@ -84,6 +84,9 @@ class _CheVideoEditorState extends State<CheVideoEditor> {
   void _apply(Map<String, dynamic> v) {
     _view = v;
     if (_selected != null && !_clips.any((c) => c['id'] == _selected) && !(_doc['audio'] as List? ?? const []).any((a) => (a as Map)['id'] == _selected) && !_overlayRows.any((o) => o.id == _selected)) _selected = null;
+    // An overlay chosen by voice ("select the logo") becomes the selection here too.
+    final spoken = v['selected_overlay'];
+    if (spoken is String && _overlayRows.any((o) => o.id == spoken)) _selected = spoken;
     _selected ??= _clips.firstOrNull?['id'] as String?;
     CheVisualSession.selection = _selected;
     for (final a in (_doc['audio'] as List? ?? const [])) {
@@ -720,9 +723,26 @@ class _CheVideoEditorState extends State<CheVideoEditor> {
       else ...[
         Text('${o.name}:', style: const TextStyle(fontWeight: FontWeight.w600)),
         for (final e in cheOverlayEdits) OutlinedButton(onPressed: () => _words(e[1]), child: Text(e[0])),
-        OutlinedButton(onPressed: () => _op({'op': 'delete_overlay', 'id': o.id}), child: const Text('Remove overlay')),
+        OutlinedButton(onPressed: () => _confirmRemoveOverlay(o), child: const Text('Remove overlay')),
       ],
     ]);
+  }
+
+  /// Removing asks first (AGENTS.md); the Worker also holds an unconfirmed removal until the owner says yes.
+  Future<void> _confirmRemoveOverlay(CheOverlayRow o) async {
+    final yes = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('Remove ${o.name}?'),
+        content: const Text('The overlay comes off the timeline. Undo brings it back.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Remove')),
+        ],
+      ),
+    );
+    if (yes != true) return;
+    await _run(() => widget.client.post({'action': 'op', 'project_id': widget.projectId, 'op': {'op': 'delete_overlay', 'id': o.id}, 'confirmed': true}));
   }
 
   Widget _effectsPanel(Map<String, dynamic>? c) => _wrap([

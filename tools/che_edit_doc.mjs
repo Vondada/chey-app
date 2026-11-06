@@ -68,6 +68,9 @@ function multitrack({ look = true } = {}) {
 const docs = {
   multitrack: () => multitrack(),
   multitrack_plain: () => multitrack({ look: false }),
+  // The editor refuses a freeze on a ramped clip; a document that has one anyway (written outside the editor) must
+  // fail to render with its reason, never render without the freeze.
+  ramp_freeze: () => { const d = multitrack({ look: false }); d.clips[1].freeze = { at: 1, duration: 1 }; return d; },
   video: () => video(),
   video_plain: () => video({ adjust: false }),
   image: () => image(),

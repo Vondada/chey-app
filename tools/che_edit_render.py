@@ -200,6 +200,10 @@ def expand_ramps(clips):
     out = []
     for c in clips:
         segs = ramp_segments(c) if c.get('ramp') else []
+        if segs and (c.get('freeze') or c.get('reverse')):
+            # The editor refuses this combination; a document that has it anyway fails here with its reason rather
+            # than rendering without the freeze or the reverse.
+            raise RuntimeError(f"{c.get('name', 'a clip')} has a speed ramp and a {'reverse' if c.get('reverse') else 'freeze'}, which do not combine")
         if len(segs) <= 1:
             out.append(c)
             continue

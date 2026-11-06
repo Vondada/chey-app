@@ -363,6 +363,7 @@ export function applyOp(input, op) {
       if (op.volume !== undefined) c.volume = clamp(+op.volume, 0, 2);
       if (op.muted !== undefined) c.muted = Boolean(op.muted);
       if (op.opacity !== undefined) c.opacity = clamp(+op.opacity, 0, 1);
+      if (c.ramp?.length && (op.reverse === true || (op.freeze !== undefined && op.freeze))) return { error: `${c.name} has a speed ramp, which plays forward without a freeze; remove the ramp first ("remove the speed ramp").` };
       if (op.reverse !== undefined) c.reverse = Boolean(op.reverse);
       if (op.freeze !== undefined) c.freeze = op.freeze ? { at: clamp(+op.freeze.at || 0, 0, c.out - c.in), duration: clamp(+op.freeze.duration || 1, 0.2, 10) } : null;
       return { doc, said: `${c.name} updated.` };
@@ -472,9 +473,9 @@ export function applyOp(input, op) {
       const c = clipBy(op.clip);
       if (!c) return { error: 'That clip is not in the project.' };
       const len = c.out - c.in;
+      if (op.points?.length && (c.freeze || c.reverse)) return { error: `${c.name} is ${c.reverse ? 'reversed' : 'frozen on a frame'}; a speed ramp plays it forward without a freeze, so remove the ${c.reverse ? 'reverse' : 'freeze'} first.` };
       const pts = (Array.isArray(op.points) ? op.points : []).map((p) => ({ at: round(clamp(+p.at, 0, len), 3), speed: round(clamp(+p.speed, 0.25, 4), 3) })).filter((p) => p.at > 0.01 && p.at < len - 0.01).sort((a, b) => a.at - b.at);
       c.ramp = pts.length ? pts : null;
-      if (c.ramp) { c.freeze = null; c.reverse = false; }
       return { doc, said: c.ramp ? `${c.name} speed ramp: ${pts.map((p) => `${p.speed}x from ${round(p.at, 1)} s`).join(', ')}; it now runs ${round(clipLength(c), 2)} s.` : `${c.name} has no speed ramp.` };
     }
     case 'look': {
@@ -705,6 +706,7 @@ export function useTemplate(template, fill = {}) {
   for (const l of doc.layers || []) set(l);
   for (const t of doc.text || []) { set(t.layer); t.text = t.layer.text?.value || t.text; }
   for (const c of doc.clips || []) if (c.placeholder && fill[c.placeholder]) c.asset = fill[c.placeholder];
+  for (const o of doc.overlays || []) if (o.placeholder && fill[o.placeholder]) o.asset = fill[o.placeholder];
   if (fill.artwork && doc.kind === 'video') for (const c of doc.clips) if (c.placeholder === 'artwork' || (!c.asset && c.placeholder?.startsWith('scene'))) c.asset = fill.artwork;
   if (fill.song && doc.kind === 'video') {
     doc.audio.push({ id: uid('au'), asset: fill.song.media_id || null, project_ref: fill.song.project_id || null, name: clip(fill.song.title || 'Song', 40), role: 'music', start: 0, in: fill.song.start || 0, out: null, volume: 1, fade_in: 0.5, fade_out: 1, muted: false, normalize: true, clean: false, duck: false, eq: null });
@@ -721,6 +723,7 @@ export function templateFromDoc(doc, { name, category = 'Custom' }) {
   for (const l of t.layers || []) strip(l);
   for (const x of t.text || []) strip(x.layer);
   for (const c of t.clips || []) { c.placeholder ||= 'scene'; c.asset = null; }
+  for (const o of t.overlays || []) { o.placeholder ||= /\blogo\b/i.test(o.name) ? 'logo' : 'overlay'; o.asset = null; }
   if (t.audio) t.audio = [];
   t.captions && (t.captions.cues = []);
   return { id: uid('tpl'), name: clip(name, 60) || 'My template', category: clip(category, 40), kind: t.kind, preset: t.preset, system: false, doc: t, created_at: new Date().toISOString() };
@@ -811,7 +814,7 @@ const ORDINAL = { first: 0, second: 1, third: 2, fourth: 3, fifth: 4, last: -1 }
 /// The owner's words turned into operations on the selected project. Several instructions joined by "and" or
 /// commas are handled in order. Returns { ops, unsupported, understood }: unsupported lists what needs a provider or
 /// was not understood, said plainly; nothing is guessed.
-export function wordsToOps(text, doc, { selection = null, playhead = 0 } = {}) {
+export function wordsToOps(text, doc, { selection = null, playhead = 0, spokenOverlay = null } = {}) {
   const parts = String(text || '').replace(/^(?:che|hey che)[,\s]+/i, '').split(/\s*(?:,|;|\band then\b|\bthen\b|\band\b(?=\s+(?:make|cut|trim|add|remove|delete|move|give|put|split|mute|turn|apply|change|use)))\s*/i).map((s) => s.trim()).filter(Boolean);
   const ops = [];
   const unsupported = [];
@@ -865,10 +868,30 @@ export function wordsToOps(text, doc, { selection = null, playhead = 0 } = {}) {
       else ops.push({ op: 'add_overlay_named', name: m[1].trim(), corner, start: playhead });
       understood.push(`${m[1].trim()} on an overlay track${corner ? ' in the corner' : ''}`); continue;
     }
-    const ovTarget = () => (selection && doc.overlays?.find((o) => o.id === selection)) || doc.overlays?.at(-1) || null;
+    // Which overlay: one named in the words ("fade the logo in"), then a number ("overlay 2", "the second overlay"), then
+    // the one chosen by voice ("select the logo"), then the one selected in the app, then the only one. With several and
+    // nothing to tell them apart, CHE asks instead of guessing.
+    const ovTarget = () => {
+      const list = doc.overlays || [];
+      const lower = p.toLowerCase();
+      const esc = (x) => x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const named = list.filter((o) => { const n = o.name.toLowerCase().trim(); return n && (new RegExp(`\\b${esc(n)}\\b`).test(lower) || n.split(/\s+/).some((w) => w.length > 2 && new RegExp(`\\bthe ${esc(w)}\\b`).test(lower))); });
+      if (named.length === 1) return named[0];
+      const n = lower.match(/\boverlay (\d+|one|two|three|four|five)\b/) || lower.match(/\b(first|second|third|fourth|fifth|last) overlay\b/);
+      if (n) { const i = ORDINAL[n[1]] ?? (num(n[1]) - 1); return (i < 0 ? list.at(-1) : list[i]) || null; }
+      const chosen = list.find((o) => o.id === spokenOverlay) || list.find((o) => o.id === selection);
+      if (chosen) return chosen;
+      if (list.length === 1) return list[0];
+      return list.length ? { ask: `Which overlay: ${list.map((o, i) => `${i + 1}, ${o.name}`).join('; ')}? Say its name, like "fade the ${list[0].name.toLowerCase()} in", or "select overlay 2".` } : null;
+    };
+    if (doc.kind === 'video' && (m = p.match(/^(?:select|choose|pick)\s+(?:the\s+)?(.+?)$/i)) && doc.overlays?.length && (/\boverlay\b/i.test(m[1]) || doc.overlays.some((o) => o.name.toLowerCase().includes(m[1].toLowerCase().trim())))) {
+      const o = ovTarget();
+      if (!o || o.ask) { unsupported.push(o?.ask || 'There is no such overlay.'); continue; }
+      ops.push({ op: 'select_overlay', id: o.id }); understood.push(`select ${o.name}`); continue;
+    }
     if (doc.kind === 'video' && (m = p.match(/\b(?:make (?:it|the [a-z ]+?) )?fade (?:it |the [a-z ]+? )?(in|out)(?: over (half a|\w+(?:\.\d+)?) seconds?)?\b/i))) {
       const o = ovTarget();
-      if (!o) { unsupported.push('There is no overlay to fade. Add a picture or your logo on top first.'); continue; }
+      if (!o || o.ask) { unsupported.push(o?.ask || 'There is no overlay to fade. Add a picture or your logo on top first.'); continue; }
       const secs = clamp(num(m[2]) || 1, 0.1, o.duration);
       const inn = /in/i.test(m[1]);
       ops.push({ op: 'keyframe', id: o.id, prop: 'opacity', keys: inn ? [{ t: 0, v: 0 }, { t: secs, v: o.opacity, ease: /linear/i.test(p) ? 'linear' : 'ease_in_out' }] : [{ t: o.duration - secs, v: o.opacity }, { t: o.duration, v: 0, ease: /linear/i.test(p) ? 'linear' : 'ease_in_out' }] });
@@ -876,7 +899,7 @@ export function wordsToOps(text, doc, { selection = null, playhead = 0 } = {}) {
     }
     if (doc.kind === 'video' && (m = p.match(/\bslide (?:it |the [a-z ]+? )?in from the (left|right|top|bottom)(?: over (\w+(?:\.\d+)?) seconds?)?\b/i))) {
       const o = ovTarget();
-      if (!o) { unsupported.push('There is no overlay to slide in. Add a picture or your logo on top first.'); continue; }
+      if (!o || o.ask) { unsupported.push(o?.ask || 'There is no overlay to slide in. Add a picture or your logo on top first.'); continue; }
       const secs = clamp(num(m[2]) || 1, 0.1, o.duration);
       const side = m[1].toLowerCase(); const prop = side === 'left' || side === 'right' ? 'x' : 'y';
       const from = side === 'left' ? -o.scale : side === 'right' ? 1 : side === 'top' ? -0.3 : 1;
@@ -885,6 +908,7 @@ export function wordsToOps(text, doc, { selection = null, playhead = 0 } = {}) {
     }
     if (doc.kind === 'video' && (m = p.match(/\b(?:make (?:it|the [a-z ]+?) )?(grow|shrink|zoom in|zoom out)(?: over (\w+(?:\.\d+)?) seconds?)?\b/i)) && (doc.overlays?.length)) {
       const o = ovTarget();
+      if (o?.ask) { unsupported.push(o.ask); continue; }
       const secs = clamp(num(m[2]) || 2, 0.1, o.duration);
       const up = /grow|zoom in/i.test(m[1]);
       ops.push({ op: 'keyframe', id: o.id, prop: 'scale', keys: [{ t: 0, v: o.scale }, { t: secs, v: round(clamp(o.scale * (up ? 1.6 : 0.6), 0.02, 2), 3), ease: /linear/i.test(p) ? 'linear' : 'ease_in_out' }] });

@@ -206,8 +206,14 @@ void main() {
     expect(server.posts.last, {'action': 'words', 'project_id': 'v3', 'text': 'fade it in over one second', 'selection': 'o1', 'playhead': 0.0});
     await tapVisible(tester, find.text('Slide in from left'));
     expect(server.posts.last['text'], 'slide it in from the left');
+    final before = server.posts.length;
     await tapVisible(tester, find.text('Remove overlay'));
-    expect(server.posts.last['op'], {'op': 'delete_overlay', 'id': 'o1'});
+    expect(find.text('Remove Sunset?'), findsOneWidget, reason: 'removing asks first');
+    await tapVisible(tester, find.text('Cancel'));
+    expect(server.posts.length, before, reason: 'cancel sends nothing');
+    await tapVisible(tester, find.text('Remove overlay'));
+    await tapVisible(tester, find.text('Remove'));
+    expect(server.posts.last, {'action': 'op', 'project_id': 'v3', 'op': {'op': 'delete_overlay', 'id': 'o1'}, 'confirmed': true});
     await tapVisible(tester, find.text('Effects'));
     await tapVisible(tester, find.text('Teal and orange LUT'));
     expect(server.posts.last['text'], 'give it a teal and orange look');

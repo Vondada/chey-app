@@ -130,6 +130,12 @@ async function runOps(ctx, project, state, ops, { brands }) {
       continue;
     }
     if (op.op === 'auto_captions') { said.push((await autoCaptions(ctx, state)).said); continue; }
+    if (op.op === 'select_overlay') {
+      // A spoken choice ("select the logo") that later words use when they name no overlay.
+      const o = state.doc.overlays?.find((x) => x.id === op.id);
+      if (o) { state.selected_overlay = state.selected_now = o.id; said.push(`Selected ${o.name}.`); } else said.push('That overlay is not in the project.');
+      continue;
+    }
     const r = edit(state, op);
     said.push(r.ok ? r.said : r.error);
   }
@@ -174,7 +180,10 @@ async function startRender(ctx, project, state) {
   return { ok: true, render: project.render };
 }
 
-const REMOVE_OPS = new Set(['delete_clip', 'delete_layer']);
+const REMOVE_OPS = new Set(['delete_clip', 'delete_layer', 'delete_overlay']);
+// Removals that wait for the owner's yes even when they come as an operation from a button (AGENTS.md: ask before
+// deleting). Overlays are new in stage 3; clip and layer buttons keep their existing behaviour.
+const CONFIRM_OPS = new Set(['delete_overlay']);
 export const YES_WORDS = /^(?:yes|yeah|yep|do it|go ahead|confirm|remove it|delete it)\b/i;
 export const NO_WORDS = /^(?:no|nope|cancel|keep it|don't)\b/i;
 
@@ -297,7 +306,17 @@ export async function visualApi(ctx, { method, body, query }) {
   const state = await loadVisual(storage, p.id);
   let said = [];
   let extra = {};
-  if (a === 'op' || a === 'ops') said = await runOps(ctx, p, state, a === 'op' ? [body.op] : body.ops || [], { brands });
+  if (a === 'op' || a === 'ops') {
+    const list = a === 'op' ? [body.op] : body.ops || [];
+    const at = body.confirmed === true ? -1 : list.findIndex((o) => CONFIRM_OPS.has(o?.op));
+    said = await runOps(ctx, p, state, at < 0 ? list : list.slice(0, at), { brands });
+    if (at >= 0) {
+      const o = state.doc.overlays?.find((x) => x.id === list[at].id);
+      state.pending = { ops: list.slice(at), understood: [`remove ${o?.name || 'the overlay'}`], at: Date.now() };
+      said.push(`Remove ${o?.name || 'that overlay'}? Say yes to remove it. Nothing was removed yet.`);
+      extra.needs_confirmation = true;
+    }
+  }
   else if (a === 'undo') said = [undo(state).said];
   else if (a === 'redo') said = [redo(state).said];
   else if (a === 'save_version') said = [`Saved ${saveVersion(state, body.label).label}.`];
@@ -308,7 +327,7 @@ export async function visualApi(ctx, { method, body, query }) {
   else if (a === 'words' && state.pending && YES_WORDS.test(String(body.text || '').trim())) return visualApi(ctx, { method, body: { ...body, action: 'confirm_pending' }, query });
   else if (a === 'words' && state.pending && NO_WORDS.test(String(body.text || '').trim())) return visualApi(ctx, { method, body: { ...body, action: 'cancel_pending' }, query });
   else if (a === 'words') {
-    const w = wordsToOps(body.text, state.doc, { selection: body.selection || null, playhead: Number(body.playhead) || 0 });
+    const w = wordsToOps(body.text, state.doc, { selection: body.selection || null, playhead: Number(body.playhead) || 0, spokenOverlay: state.selected_overlay || null });
     // Removing a clip or layer by voice waits for the owner's yes (AGENTS.md: ask before deleting anything).
     // The edits before it in the same sentence run now; the removal and anything after it wait with it.
     const at = body.confirmed === true ? -1 : w.ops.findIndex((o) => REMOVE_OPS.has(o.op));
@@ -365,9 +384,13 @@ export async function visualApi(ctx, { method, body, query }) {
   const claim = await claimAssets(storage, state.doc, p.workspace_id || null);
   if (!claim.ok) return { status: 400, body: { detail: claim.why } };
   p.updated_at = new Date().toISOString();
+  if (state.selected_overlay && !state.doc.overlays?.some((o) => o.id === state.selected_overlay)) state.selected_overlay = null;
+  // Only a choice made in this request is sent back, so the app's own selection is not taken over later.
+  const chosen = state.selected_now || null;
+  delete state.selected_now;
   await saveVisual(storage, p.id, state);
   ctx.dirty = true;
-  return { status: 200, body: { ok: true, said: said.filter(Boolean).join(' '), ...extra, ...projectView(p, state) } };
+  return { status: 200, body: { ok: true, said: said.filter(Boolean).join(' '), ...extra, ...(chosen ? { selected_overlay: chosen } : {}), ...projectView(p, state) } };
 }
 
 /// Creates the project behind "make me a promo video for this song": the song's own audio file (never copied),

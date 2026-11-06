@@ -678,3 +678,72 @@ test('stage 3: every touch control in the app (lib/visual/che_timeline_tracks.da
     for (const op of w.ops.filter((o) => !['brand_logo', 'add_overlay_named'].includes(o.op))) assert.ok(applyOpOk(s.doc, op), `"${words}" → ${op.op} applies`);
   }
 });
+
+// Codex on #955.
+test('stage 3: words name the overlay they mean ("fade the logo in", "overlay 2"), a spoken choice sticks, and with several and no name CHE asks', () => {
+  const { s } = video();
+  const sun = must(edit(s, { op: 'add_overlay', overlay: { asset: 'p', name: 'Sunset photo', start: 0, duration: 5 } })).id;
+  const logo = must(edit(s, { op: 'add_overlay', overlay: { asset: 'l', name: 'Logo', track: 2, start: 0, duration: 9 } })).id;
+  const target = (words, opts = {}) => wordsToOps(words, s.doc, opts);
+  assert.equal(target('fade the logo in').ops[0].id, logo, 'by name, although the logo was added last anyway');
+  assert.equal(target('fade the sunset in over two seconds').ops[0].id, sun, 'by one word of its name');
+  assert.equal(target('slide the sunset photo in from the left', { selection: logo }).ops[0].id, sun, 'a name wins over the app\'s selection');
+  assert.equal(target('make overlay 2 grow').ops[0].id, logo, 'by number');
+  assert.equal(target('fade the first overlay out').ops[0].id, sun);
+  const ask = target('fade it in');
+  assert.equal(ask.ops.length, 0);
+  assert.match(ask.unsupported[0], /^Which overlay: 1, Sunset photo; 2, Logo\? Say its name/);
+  assert.equal(target('fade it in', { selection: sun }).ops[0].id, sun, 'the app\'s selection when the words name none');
+  assert.deepEqual(target('select the logo').ops, [{ op: 'select_overlay', id: logo }]);
+  assert.equal(target('make it shrink', { spokenOverlay: logo }).ops[0].id, logo, 'a spoken choice is used next');
+});
+
+test('stage 3: a speed ramp and a freeze or reverse never combine silently: each is refused with the reason', () => {
+  const { s, C } = video();
+  must(edit(s, { op: 'clip', clip: C, freeze: { at: 1, duration: 1 } }));
+  assert.match(edit(s, { op: 'ramp', clip: C, points: [{ at: 1.5, speed: 2 }] }).error, /Outro is frozen on a frame; a speed ramp plays it forward without a freeze, so remove the freeze first/);
+  assert.ok(s.doc.clips.find((c) => c.id === C).freeze, 'the freeze is kept');
+  must(edit(s, { op: 'clip', clip: C, freeze: null }));
+  must(edit(s, { op: 'ramp', clip: C, points: [{ at: 1.5, speed: 2 }] }));
+  assert.match(edit(s, { op: 'clip', clip: C, reverse: true }).error, /Outro has a speed ramp, which plays forward without a freeze; remove the ramp first/);
+  assert.match(edit(s, { op: 'clip', clip: C, freeze: { at: 1, duration: 1 } }).error, /has a speed ramp/);
+  must(edit(s, { op: 'clip', clip: C, speed: 1.5 }));
+});
+
+test('stage 3: templates keep overlays as placeholders without the owner\'s media, and filling the template puts media back', () => {
+  const { s } = video();
+  must(edit(s, { op: 'add_overlay', overlay: { asset: 'mylogo', name: 'Logo', start: 0, duration: 5 } }));
+  must(edit(s, { op: 'add_overlay', overlay: { asset: 'myphoto', name: 'Sunset', start: 1, duration: 3 } }));
+  const t = templateFromDoc(s.doc, { name: 'Overlay promo' });
+  assert.deepEqual(t.doc.overlays.map((o) => [o.asset, o.placeholder]), [[null, 'logo'], [null, 'overlay']]);
+  assert.ok(!JSON.stringify(t.doc).includes('mylogo') && !JSON.stringify(t.doc).includes('myphoto'), 'no owner media left in the template');
+  const used = useTemplate(t, { logo: 'clientlogo', overlay: 'clientphoto' });
+  assert.deepEqual(used.overlays.map((o) => o.asset), ['clientlogo', 'clientphoto']);
+  assert.deepEqual(used.overlays[0].keys, s.doc.overlays[0].keys, 'the layout and keyframes stay');
+});
+
+test('stage 3, Worker: removing an overlay waits for the owner\'s yes, from a button as well as by voice', async () => {
+  const saved = new Map();
+  seedMedia(saved, [['clipv', { kind: 'video', mime_type: 'video/mp4' }], ['logo1']]);
+  const che = await owner(saved);
+  const pid = (await che.post({ action: 'create', kind: 'video', preset: 'tiktok', asset: 'clipv', title: 'Promo', fill: { duration: 6, asset_kind: 'video' } })).body.project.id;
+  const ov = await che.post({ action: 'op', project_id: pid, op: { op: 'add_overlay', overlay: { asset: 'logo1', name: 'Logo', start: 0, duration: 6 } } });
+  const id = ov.body.doc.overlays[0].id;
+  const held = await che.post({ action: 'op', project_id: pid, op: { op: 'delete_overlay', id } });
+  assert.equal(held.body.needs_confirmation, true);
+  assert.match(held.body.said, /Remove Logo\? Say yes to remove it\. Nothing was removed yet\./);
+  assert.equal(held.body.doc.overlays.length, 1, 'still there');
+  const yes = await che.say('yes', { visual_project_id: pid });
+  assert.match(yes.reply, /Removed Logo/);
+  assert.equal((await che.get(`/api/visual?project_id=${pid}`)).doc.overlays.length, 0);
+  // The app's dialog has already asked, so it sends the owner's yes with the operation.
+  await che.post({ action: 'undo', project_id: pid });
+  const confirmed = await che.post({ action: 'op', project_id: pid, op: { op: 'delete_overlay', id }, confirmed: true });
+  assert.equal(confirmed.body.doc.overlays.length, 0);
+  // A spoken choice comes back to the app once, as the selection.
+  await che.post({ action: 'undo', project_id: pid });
+  const chosen = await che.post({ action: 'words', project_id: pid, text: 'select the logo' });
+  assert.equal(chosen.body.selected_overlay, id);
+  assert.match(chosen.body.said, /Selected Logo/);
+  assert.equal((await che.post({ action: 'words', project_id: pid, text: 'fade it in over one second' })).body.selected_overlay, undefined);
+});
