@@ -633,6 +633,9 @@ test('K: a repeated fact with a changed value is never presented as the owner\'s
 // memory_id rule removes numbered memories and every sentence that repeats their numbers. Each test seeds its own
 // in-memory records; nothing touches the owner's CHE. Replay: .claude/skills/che-fact-check/cases/memory-retrieval-fabrication.json
 const INVENTED_IDS = 'I retrieved memory IDs 8829, 8830 and 8831 from storage, sir. Record 8829 says your favorite color is blue.';
+// The invented ids as whole numbers: a real record id is a random UUID and can contain the same digits ("8829fd56-…",
+// staging run on 612746f1), which is not an invented id.
+const invented = (...ids) => new RegExp(`(?<![0-9a-f-])(?:${ids.join('|')})(?![0-9a-f-])`);
 const COLOR_RECORDS = [
   // Listed newest first on purpose: the stored dates decide, never the array order.
   { id: 'mem-red-2', text: 'My favorite color is red', source: 'owner_chat', verification_status: 'owner_attested', active: true, created_at: '2026-10-20T15:00:00.000Z' },
@@ -656,7 +659,7 @@ test('memory retrieval 1: a record question reads the stores and names only the 
     assert.match(out.reply, /^I read my memory stores just now/);
     assert.match(out.reply, /record mem-red-2/);
     assert.match(out.reply, /record mem-blue-1/);
-    assert.doesNotMatch(out.reply, /8829|8830|8831/);
+    assert.doesNotMatch(out.reply, invented(8829, 8830, 8831));
     assert.equal(out.meta.read_receipt.kind, 'memory_store_read');
     assert.ok(out.meta.read_receipt.stores_read.includes('memory records'));
     assert.deepEqual([...out.meta.record_ids].sort(), ['mem-blue-1', 'mem-red-2']);
@@ -669,7 +672,8 @@ test('memory retrieval 1: a record question reads the stores and names only the 
   assert.equal(ids.meta.read_receipt.kind, 'answer_ledger_read');
   // A guest never reaches the owner's records.
   const guest = await (await che.send('/api/chat', { message: 'what memories do you have about my favorite color', history: [] })).text();
-  assert.doesNotMatch(guest, /mem-red-2|mem-blue-1|8829/);
+  assert.doesNotMatch(guest, /mem-red-2|mem-blue-1/);
+  assert.doesNotMatch(guest, invented(8829));
 });
 
 test('memory retrieval: record questions are read as asked; other routes keep their own sentences', async () => {
@@ -730,7 +734,7 @@ test('memory retrieval 4: a correction ("actually … red" after "blue") wins, a
   assert.match((await che.say('what is my favorite color')).reply, /^Your favorite color is red\./);
   const search = await che.say('pull my memory records about my favorite color');
   assert.match(search.reply, /superseded: "My favorite color is blue"/i);
-  assert.doesNotMatch(search.reply, /8829/);
+  assert.doesNotMatch(search.reply, invented(8829));
   const old = che.saved.get('che').memory_records.find((r) => /blue/.test(r.text));
   assert.equal(old.active, false, 'the old statement is kept, not deleted');
   // The owner's own words of 2026-10-24, after an older "blue".
@@ -755,7 +759,7 @@ test('memory retrieval 5: a store that cannot be read gives an honest failure, n
   assert.ok(hit.meta.read_receipt.stores_unreadable.includes('Brain (synced from the phone)'));
   const miss = await che.say('pull my memory records about my passport');
   assert.match(miss.reply, /found no record of it, sir\. I couldn't read Brain \(synced from the phone\) just now, so a record there may exist that I can't see; I won't guess at it\./);
-  assert.doesNotMatch(miss.reply, /8829|8830|8831/);
+  assert.doesNotMatch(miss.reply, invented(8829, 8830, 8831));
   // Every store failing: the turn says so and names nothing.
   const { ownerSearchTurn } = await import('./owner_recall.js');
   const data = { get memory_records() { throw new Error('storage read failed'); } };
@@ -771,7 +775,8 @@ test('memory retrieval 6: invented memory ids and "retrieved from storage" never
   const che = await seeded(COLOR_RECORDS, { model: () => fake });
   const out = await che.say('tell me everything you know about colors');
   assert.ok(out.modelCalls >= 1, 'this phrasing is answered by the model');
-  assert.doesNotMatch(out.reply, /8829|8830|8831|Retrieved memory/i);
+  assert.doesNotMatch(out.reply, invented(8829, 8830, 8831));
+  assert.doesNotMatch(out.reply, /Retrieved memory/i);
   assert.match(out.reply, /no storage read, lookup, tool or review ran for this answer/);
   const real = new Set(COLOR_RECORDS.map((r) => r.id));
   assert.ok(numbersIn(out.reply).every((n) => real.has(n)), 'no number that is not a real record id survives');
@@ -779,7 +784,7 @@ test('memory retrieval 6: invented memory ids and "retrieved from storage" never
   const { guardExecutionClaims } = await import('./truth_layer.js');
   const guarded = guardExecutionClaims('Your favorite color is red, sir. Memory IDs 8829, 8830 and 8831 confirm it. See 8830 for details.', { message: 'what is my favorite color' }).text;
   assert.match(guarded, /^Your favorite color is red, sir\./);
-  assert.doesNotMatch(guarded, /8829|8830|8831/);
+  assert.doesNotMatch(guarded, invented(8829, 8830, 8831));
   // Ordinary numbers about records stay.
   for (const plain of ['The record 2024 sales were strong.', 'A record 1,500 people came.', 'Order number 4521 shipped.']) {
     assert.equal(guardExecutionClaims(plain, { message: 'sales' }).text, plain);

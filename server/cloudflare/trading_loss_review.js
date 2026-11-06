@@ -141,7 +141,7 @@ export function lossIntent(message, now = Date.now()) {
 }
 
 const money = (value) => `${Number(value) < 0 ? '-' : ''}$${Math.abs(Number(value) || 0).toFixed(2)}`;
-const plural = (n, word) => `${n} ${n === 1 ? word : word.endsWith('entry') ? word.replace(/entry$/, 'entries') : `${word}s`}`;
+const plural = (n, word) => `${n} ${n === 1 ? word : word.endsWith('entry') ? word.replace(/entry$/, 'entries') : /(?:s|x|ch|sh)$/.test(word) ? `${word}es` : `${word}s`}`;
 
 /** Reads the paper journal the owner's question is about, one market at a time (futures and crypto are never added together). */
 export async function gatherLossReview(storage, { readTrades, isPaper, nameOf }) {
