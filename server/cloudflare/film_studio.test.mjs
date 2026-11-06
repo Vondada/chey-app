@@ -6,7 +6,7 @@ import test from 'node:test';
 import {
   DEFAULT_RATES, FARM_PROVIDERS, FILM_NEURON_SHARE, FilmStore, NEURONS, assemblyPlan, checkStill, deadlineFrom, farmProviders,
   filmIntent, imageSize, lengthFrom, loadRates, loadUsage, mp3Seconds, planFilm, recordRate, reserve, segmentSpec, shotList,
-  speakFarm, speakPlan, spend, validOutline, validSceneShots, _internals,
+  speakFarm, speakPlan, speakStatus, spend, validOutline, validSceneShots, _internals,
 } from './film_studio.js';
 import { HF_SPACE_FILES, KAGGLE_WORKER_PY, durationSeconds, farmTokenOpens, kaggleAuth, kaggleWorkerScript, newFarmToken, startKaggleSession, validateKaggle } from './film_farm.js';
 import { filmTick, filmTokenRoute, remakeShot, setFilmState, startFilm } from './film_pipeline.js';
@@ -158,6 +158,19 @@ test('the speed targets: a 2-hour film by the hour runs twenty runners and frame
 });
 
 // ─── Free allowances ─────────────────────────────────────────────────────────
+
+test('same faces are planned at what they really cost: a short film gets them within today\'s allowance; a 10-minute film is told it cannot', () => {
+  const short = planFilm({ targetSeconds: 60, providers: providers(), now: NOW });
+  assert.equal(short.faces, true);
+  assert.equal(short.neurons.stills, Math.round(short.unique_stills * NEURONS.picture), "priced at the reference picture");
+  assert.ok(short.neurons.stills + short.neurons.cast + short.neurons.voices <= short.neurons.left_today, 'pictures, portraits and voices fit what is left today');
+  // Codex on #948: 100 new pictures at the reference price would need about 11,000 neurons, over the film's daily share.
+  const ten = planFilm({ targetSeconds: 600, providers: providers(), now: NOW });
+  assert.equal(ten.faces, false);
+  assert.equal(ten.reuse, 1, 'it keeps one new picture per shot instead of reframing for faces');
+  assert.ok(ten.notes.some((n) => /cannot keep faces the same .* faces come from the written descriptions/.test(n)));
+  assert.match(speakPlan(ten), /faces come from the written descriptions/);
+});
 
 test('free allowances are hard caps: spending past one is refused and nothing is taken', async () => {
   const st = memory();
@@ -337,6 +350,15 @@ function fakeAI({ badFirst = 0 } = {}) {
     calls: () => still,
     run: async (model, input) => {
       if (Array.isArray(input?.messages) && /screenwriter/.test(input.messages[0]?.content || '')) return { response: await write(input.messages) };
+      if (/flux-2-klein/.test(model)) {
+        // FLUX.2 klein reads a multipart form; like the real model, it refuses a reference of 512x512 or more.
+        const form = await new Response(input.multipart.body, { headers: { 'content-type': input.multipart.contentType } }).formData();
+        input.form = form;
+        const ref = form.get('input_image_0');
+        if (!ref) return { image: b64(jpeg({ size: Number(form.get('width')), bytes: 20_000 })) }; // a cast portrait
+        const size = imageSize(new Uint8Array(await ref.arrayBuffer()));
+        if (!size || size.width >= 512 || size.height >= 512) throw new Error(`input image must be smaller than 512x512 (got ${size?.width}x${size?.height})`);
+      }
       if (/flux/.test(model)) { still += 1; return { image: b64(still <= badFirst ? jpeg({ bytes: 4000 }) : jpeg()) }; }
       if (/melotts/.test(model)) return { audio: b64(mp3(1 + input.prompt.length / 30)) };
       return { response: 'ok' };
@@ -472,6 +494,48 @@ test('check and retry: a failed picture is made again; after three failures the 
   assert.equal(failed.state, 'failed');
   assert.match(failed.errors.at(-1), /no shot passed its checks/);
   assert.equal(broken.gh.dispatch, undefined, 'nothing unverified was sent to assembly');
+});
+
+test('one face per character: a portrait is made once, every shot of her is drawn from it, and the status says so', async () => {
+  const { storage, bucket, ai, ctx } = await studio({ seconds: 60 });
+  const calls = [];
+  const run = ai.run;
+  ai.run = async (model, input) => { calls.push({ model, input }); return run(model, input); };
+  const film = await runUntil(ctx, ['assembling', 'failed']);
+  assert.equal(film.state, 'assembling', film.errors?.join('; '));
+  assert.deepEqual(Object.keys(film.cast), ['mara']);
+  const portraitKey = `film/${film.id}/cast/mara.jpg`;
+  assert.equal(film.cast.mara.key, portraitKey);
+  assert.ok(bucket.objects.has(portraitKey), 'the portrait is kept in the film files');
+  const portraits = calls.filter((c) => /reference portrait/i.test(c.input?.form?.get('prompt') || ''));
+  assert.equal(portraits.length, 1, 'the portrait is made once');
+  assert.deepEqual([portraits[0].input.form.get('width'), portraits[0].input.form.get('height')], ['448', '448'], 'under the reference input limit');
+  const refs = calls.filter((c) => c.model === '@cf/black-forest-labs/flux-2-klein-4b');
+  assert.ok(refs.length >= 1);
+  // The reference model gets the real portrait as its input image, in a multipart form.
+  const form = refs.find((c) => c.input.form?.get('input_image_0')).input.form;
+  assert.match(form.get('prompt'), /Mara: woman, 60, grey braid/);
+  const sent = new Uint8Array(await form.get('input_image_0').arrayBuffer());
+  const kept = new Uint8Array(await (await bucket.get(portraitKey)).arrayBuffer());
+  assert.deepEqual(sent, kept);
+  const shots = await new FilmStore(storage).shots(film.id, film.shot_count);
+  assert.ok(shots.filter((s) => s.still_of === s.n).every((s) => s.from_portrait), 'every new picture of Mara starts from her portrait');
+  assert.match(speakStatus({ ...film, state: 'making' }, shots, NOW), /1 character portrait keeps faces the same from shot to shot\./);
+});
+
+test('a reference model that fails is said once, and the film is still made from the descriptions', async () => {
+  const { storage, ai, ctx } = await studio({ seconds: 60 });
+  const run = ai.run;
+  let refCalls = 0;
+  // The portrait works; drawing a shot from it fails.
+  ai.run = async (model, input) => { const out = await run(model, input); if (input?.form?.get('input_image_0')) { refCalls += 1; throw new Error('5006: unsupported input'); } return out; };
+  const film = await runUntil(ctx, ['assembling', 'failed']);
+  assert.equal(film.state, 'assembling', film.errors?.join('; '));
+  assert.ok(refCalls >= 1 && refCalls <= 4, `only the first batch of four pictures tried it (${refCalls})`);
+  assert.match(film.ref_off, /unsupported input/);
+  const shots = await new FilmStore(storage).shots(film.id, film.shot_count);
+  assert.ok(shots.every((s) => s.status === 'verified'));
+  assert.match(speakStatus({ ...film, state: 'making' }, shots, NOW), /Faces come from the written descriptions only: the reference picture model failed \(5006: unsupported input\)\./);
 });
 
 test('interrupt and resume: a pause holds every pass, nothing is lost, and resume continues where it stopped', async () => {
