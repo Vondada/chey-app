@@ -313,7 +313,6 @@ class _CheBrainReliabilityScreenState extends State<CheBrainReliabilityScreen> {
     final label = 'Session ${s.number}: ${s.title}. ${cheDateLabel(s.firstAt)}. ${s.attempts} ${s.attempts == 1 ? 'question' : 'questions'}: ${s.outcomeLine}.';
     // The label sits inside the header, so it is on the same node as ExpansionTile's own tap (expand/collapse).
     return ExpansionTile(
-      key: PageStorageKey<String>('reliability_session_${s.number}'),
       tilePadding: EdgeInsets.zero,
       title: Semantics(label: label, excludeSemantics: true, child: Text('Session ${s.number}: ${s.title}', maxLines: 2, overflow: TextOverflow.ellipsis)),
       subtitle: ExcludeSemantics(child: Text('${cheDateLabel(s.firstAt)} · ${s.outcomeLine}')),

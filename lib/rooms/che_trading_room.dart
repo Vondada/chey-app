@@ -133,6 +133,13 @@ class CheTradingRoom extends StatefulWidget {
 
 class _CheTradingRoomState extends State<CheTradingRoom> {
   late CheTradingSection _section = CheTradingRoom.requestedSection.value ?? widget.initialSection;
+  // The list keeps its place across tab switches with its own controller, not a PageStorageKey (owner screenshots,
+  // 2026-11-06): under a PageStorageKey every unkeyed ExpansionTile in the room shared the list's PageStorage slot,
+  // read the saved scroll offset as its open state ("type 'double' is not a subtype of type 'bool?'") and a release
+  // build drew a grey box.
+  static double _savedOffset = 0;
+  late final ScrollController _scroll = ScrollController(initialScrollOffset: _savedOffset, keepScrollOffset: false)
+    ..addListener(() => _savedOffset = _scroll.offset);
 
   @override
   void initState() {
@@ -156,6 +163,7 @@ class _CheTradingRoomState extends State<CheTradingRoom> {
 
   @override
   void dispose() {
+    _scroll.dispose();
     CheTradingRoom.requestedSection.removeListener(_onRequest);
     CheUiPreferences.instance.removeListener(_onPrefs);
     CheScreenAwareness.unregister(_screen);
@@ -424,7 +432,7 @@ class _CheTradingRoomState extends State<CheTradingRoom> {
   @override
   Widget build(BuildContext context) {
     return ListView(
-      key: const PageStorageKey('trading_room_list'),
+      controller: _scroll,
       padding: const EdgeInsets.only(bottom: 32),
       children: [
         ?widget.header,

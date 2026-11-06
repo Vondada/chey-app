@@ -568,7 +568,6 @@ class _CheMailboxScreenState extends State<CheMailboxScreen> {
             return Card(
               color: cheHudActive ? null : CheColors.surface,
               child: ExpansionTile(
-                key: PageStorageKey<String>('mail_session_${session['locked_at']}'),
                 leading: Icon(Icons.inventory_2_rounded, color: CheColors.accentAlt),
                 title: Text('Session $shown', style: CheType.label),
                 subtitle: Text('${messages.length} messages', style: CheType.caption),

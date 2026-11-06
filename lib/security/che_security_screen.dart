@@ -272,7 +272,6 @@ class _CheSecurityScreenState extends State<CheSecurityScreen> {
         container: true,
         label: '$title, $count',
         child: ExpansionTile(
-          key: PageStorageKey<String>('security_section_$title'),
           tilePadding: EdgeInsets.zero,
           title: Text('$title ($count)', style: Theme.of(context).textTheme.titleMedium),
           children: children.isEmpty ? [ListTile(contentPadding: EdgeInsets.zero, title: Text(empty ?? 'Nothing recorded.'))] : children,
@@ -413,7 +412,6 @@ class _CheSecurityScreenState extends State<CheSecurityScreen> {
             container: true,
             label: score == null ? 'Readiness not measured yet.' : 'Readiness $score out of 100. ${r['how'] ?? ''}',
             child: ExpansionTile(
-              key: const PageStorageKey<String>('security_readiness'),
               tilePadding: EdgeInsets.zero,
               title: ExcludeSemantics(child: Text(score == null ? 'Readiness: not measured yet' : 'Readiness: $score / 100', style: text.titleLarge)),
               subtitle: const ExcludeSemantics(child: Text('How this is computed')),

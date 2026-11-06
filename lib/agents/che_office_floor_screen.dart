@@ -1552,7 +1552,6 @@ class _TaskCard extends StatelessWidget {
       _ => (task.status, CheColors.textDim),
     };
     final tile = ExpansionTile(
-        key: PageStorageKey<String>('office_task_${task.task.hashCode}_${task.status}'),
         shape: const Border(),
         title: Text(cheShortSummary(task.task),
             maxLines: 1, overflow: TextOverflow.ellipsis, style: CheType.label, semanticsLabel: task.task),

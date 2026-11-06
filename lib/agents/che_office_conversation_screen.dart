@@ -674,10 +674,7 @@ class _MessageCard extends StatelessWidget {
                   icon: Icon(Icons.volume_up_rounded, size: 20, color: CheColors.accent),
                 ),
             ]),
-            // The open state is part of the key: a voice "details for message N" recreates the card with detailsOpen true,
-            // and a fresh slot lets initiallyExpanded win over a collapse saved earlier (Codex on #938).
             ExpansionTile(
-              key: PageStorageKey<String>('office_msg_${m.seq}_$detailsOpen'),
               initiallyExpanded: detailsOpen,
               tilePadding: EdgeInsets.zero,
               childrenPadding: const EdgeInsets.only(bottom: CheSpace.sm),

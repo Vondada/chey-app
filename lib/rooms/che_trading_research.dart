@@ -997,7 +997,7 @@ class _CheTradingResearchDashboardState extends State<CheTradingResearchDashboar
         Theme(
           data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
           child: ExpansionTile(
-            key: PageStorageKey<String>('job_${_str(j['id'])}'),
+            key: Key('job_${_str(j['id'])}'),
             tilePadding: EdgeInsets.zero,
             childrenPadding: const EdgeInsets.only(left: 4, bottom: 6),
             iconColor: Colors.white,

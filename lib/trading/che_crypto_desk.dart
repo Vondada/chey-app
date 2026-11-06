@@ -168,7 +168,7 @@ class _CheCryptoDeskPanelState extends State<CheCryptoDeskPanel> {
           ),
           if (recent.isNotEmpty)
             ExpansionTile(
-              key: const PageStorageKey<String>('crypto_recent'),
+              key: const Key('crypto_recent'),
               tilePadding: EdgeInsets.zero,
               iconColor: Colors.white,
               collapsedIconColor: Colors.white70,
@@ -183,7 +183,7 @@ class _CheCryptoDeskPanelState extends State<CheCryptoDeskPanel> {
             ),
           if (research.isNotEmpty)
             ExpansionTile(
-              key: const PageStorageKey<String>('crypto_research'),
+              key: const Key('crypto_research'),
               tilePadding: EdgeInsets.zero,
               iconColor: Colors.white,
               collapsedIconColor: Colors.white70,

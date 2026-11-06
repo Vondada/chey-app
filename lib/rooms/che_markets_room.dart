@@ -369,7 +369,6 @@ class _CheMarketsRoomState extends State<CheMarketsRoom> {
                   SizedBox(
                     height: 84,
                     child: ListView.separated(
-                      key: const PageStorageKey<String>('markets_index_strip'),
                       scrollDirection: Axis.horizontal,
                       itemCount: _quotes.length,
                       separatorBuilder: (_, _) => const SizedBox(width: CheSpace.sm),

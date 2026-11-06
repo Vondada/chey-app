@@ -48,7 +48,6 @@ class CheStrategyLearningDashboard extends StatelessWidget {
       for (final strategy in strategies) _StrategyCard(row: strategy, timeframes: timeframes[strategy['id']] ?? const []),
       if (windows != null) CheLearningWindows(data: windows!),
       ExpansionTile(
-        key: const PageStorageKey<String>('strategy_research_diagnostics'),
         title: const Text('Research and slow-progress diagnostics'),
         childrenPadding: const EdgeInsets.all(12),
         children: [
@@ -217,7 +216,7 @@ class _StrategyCardState extends State<_StrategyCard> {
             const SizedBox(height: 6),
             Text('Today: ${today['trades'] ?? 0} closed (${today['wins'] ?? 0} wins, ${today['losses'] ?? 0} losses). Next: ${row['next_milestone']}.',
                 style: const TextStyle(color: Colors.white, fontSize: 15)),
-            ExpansionTile(key: PageStorageKey<String>('strategy_evidence_${row['id']}'), title: const Text('Separate evidence & live readiness', style: TextStyle(color: Colors.white)), tilePadding: EdgeInsets.zero, children: [
+            ExpansionTile(title: const Text('Separate evidence & live readiness', style: TextStyle(color: Colors.white)), tilePadding: EdgeInsets.zero, children: [
               _source('Historical backtest', _map(row['historical'])),
               _source('Out-of-sample (subset of history, never added)', _map(row['out_of_sample'])),
               _source('Forward paper', forward),
@@ -230,7 +229,7 @@ class _StrategyCardState extends State<_StrategyCard> {
               SelectableText('Version ${row['strategy_version']} · parameters ${row['params']}'),
               for (final variant in _rows(row['variants'])) ListTile(title: Text('${variant['version']}'), subtitle: Text('${variant['trades']} portfolio records; not independent of other variants.')),
             ]),
-            ExpansionTile(key: PageStorageKey<String>('strategy_recent_${row['id']}'), title: const Text('Recent unique forward trades', style: TextStyle(color: Colors.white)), tilePadding: EdgeInsets.zero, children: [
+            ExpansionTile(title: const Text('Recent unique forward trades', style: TextStyle(color: Colors.white)), tilePadding: EdgeInsets.zero, children: [
               for (final trade in _rows(row['recent_trades'])) ListTile(
                 leading: Icon((trade['net_pnl'] as num? ?? 0) > 0 ? Icons.trending_up : Icons.trending_down, color: (trade['net_pnl'] as num? ?? 0) > 0 ? _teal : Colors.redAccent),
                 title: Text('${trade['side']} · ${_money(trade['net_pnl'])} · ${_map(trade['exit'])['reason']}'),
