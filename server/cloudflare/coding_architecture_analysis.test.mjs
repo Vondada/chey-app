@@ -228,3 +228,4 @@ test('an app screen audit that mentions the crypto desk reads the source, not th
   assert.doesNotMatch(reply, /Orion's crypto desk is on/);
   assert.deepEqual(record.dispatches, [], 'audit only: no coding job or workflow');
 });
+
