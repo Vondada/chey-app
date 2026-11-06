@@ -1,0 +1,30 @@
+[
+ {
+  "id": "scene-edit-01",
+  "category": "creative",
+  "difficulty": "medium",
+  "question": "Change her outfit, make the camera circle around us, slow down the last five seconds, and add music.",
+  "expected": {
+   "criteria": "All four edits applied to the scene project and a re-render started.",
+   "must_contain_any": [
+    "Done in the project"
+   ],
+   "must_not_contain": []
+  }
+ },
+ {
+  "id": "office-story-01",
+  "category": "creative",
+  "difficulty": "hard",
+  "question": "Che, make a short story about the office: the coffee machine breaks on a busy morning and the crew argues about who has to fix it.",
+  "expected": {
+   "criteria": "A Film Studio film cast with the office crew, planned with same faces and lip sync on the free Kaggle GPU.",
+   "must_contain_any": [
+    "film",
+    "Starting now"
+   ],
+   "must_not_contain": []
+  },
+  "receipt_required": false
+ }
+]
