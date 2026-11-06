@@ -73,6 +73,7 @@ class CheVoiceIdsSection extends StatelessWidget {
       child: Theme(
         data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
         child: ExpansionTile(
+          key: const PageStorageKey<String>('voice_ids'),
           leading: Icon(Icons.record_voice_over_rounded, color: CheColors.accent),
           title: const Text('Voice IDs', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
           subtitle: Text('Paste a voice ID, name it, and use it',

@@ -323,6 +323,7 @@ class _CheSetupBoardState extends State<CheSetupBoard> {
               Theme(
                 data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
                 child: ExpansionTile(
+                  key: PageStorageKey<String>('setup_timeline_${s.id}'),
                   tilePadding: EdgeInsets.zero,
                   iconColor: Colors.white,
                   collapsedIconColor: Colors.white70,

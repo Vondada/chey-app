@@ -22,10 +22,11 @@ class _Worker {
   final working = <Map<String, dynamic>>[];
   final positions = <Map<String, dynamic>>[];
   final posts = <Map<String, dynamic>>[];
+  List<Object?> fills = const [];
 
   Map<String, dynamic> account() => {
         'cash': 50000, 'realized': 0, 'open_pnl': 0, 'equity': 50000, 'commissions': 0,
-        'positions': positions, 'working': working, 'recent_fills': [],
+        'positions': positions, 'working': working, 'recent_fills': fills,
         'feeds': {'MNQ': {'status': 'DELAYED', 'source': 'Yahoo Finance chart (public) MNQ=F', 'contract': 'MNQZ6', 'price': 21000, 'bar_time': '2026-11-04T15:00:00.000Z', 'age_s': 660, 'fresh': true}},
         'limits': {'daily_loss': 500, 'today': 0},
       };
@@ -85,6 +86,21 @@ Future<void> _pump(WidgetTester tester, _Worker w, {double textScale = 1, List<S
 }
 
 void main() {
+  testWidgets('audit 2026-11-06: a short or missing fill time, numbers sent as text and a stray list item never break the desk', (tester) async {
+    final w = _Worker()
+      ..positions.add({'root': 'MNQ', 'qty': '1', 'avg': '21000.25', 'mark': null, 'open_pnl': '-0.5'})
+      ..fills = [
+        {'id': 'F-1', 'side': 'buy', 'qty': 1, 'root': 'MNQ', 'price': '21000.25', 'time': null},
+        {'id': 'F-2', 'side': 'sell', 'qty': 1, 'root': 'MNQ', 'price': 21001, 'time': '2026-11'},
+        'not a fill',
+      ];
+    await _pump(tester, w);
+    expect(tester.takeException(), isNull);
+    expect(find.textContaining('F-1: buy 1 MNQ at 21000.25 · time unknown UTC'), findsOneWidget);
+    expect(find.textContaining('F-2: sell 1 MNQ at 21001 · 2026-11 UTC'), findsOneWidget);
+    expect(find.textContaining('Long 1 MNQ at 21000.25'), findsOneWidget);
+  });
+
   testWidgets('says paper and delayed plainly; a buy is confirmed first, then placed once and shown as the Worker answered', (tester) async {
     final w = _Worker();
     final spoken = <String>[];

@@ -411,7 +411,7 @@ class _ChePaperAccountPanelState extends State<ChePaperAccountPanel> {
   }
 
   Widget _journal(ChePaperEngine e) => ExpansionTile(
-        key: const Key('paper_journal'),
+        key: const PageStorageKey<String>('paper_journal'),
         tilePadding: EdgeInsets.zero,
         iconColor: Colors.white,
         collapsedIconColor: Colors.white70,
@@ -427,7 +427,7 @@ class _ChePaperAccountPanelState extends State<ChePaperAccountPanel> {
       );
 
   Widget _balanceHistory(ChePaperEngine e) => ExpansionTile(
-        key: const Key('paper_balance_history'),
+        key: const PageStorageKey<String>('paper_balance_history'),
         tilePadding: EdgeInsets.zero,
         iconColor: Colors.white,
         collapsedIconColor: Colors.white70,

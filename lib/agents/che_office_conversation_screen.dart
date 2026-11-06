@@ -675,6 +675,7 @@ class _MessageCard extends StatelessWidget {
                 ),
             ]),
             ExpansionTile(
+              key: PageStorageKey<String>('office_msg_${m.taskTitle}_${m.text.hashCode}'),
               initiallyExpanded: detailsOpen,
               tilePadding: EdgeInsets.zero,
               childrenPadding: const EdgeInsets.only(bottom: CheSpace.sm),

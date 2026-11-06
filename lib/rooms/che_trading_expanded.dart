@@ -160,7 +160,7 @@ class _CheTradingChartExpandedPageState extends State<CheTradingChartExpandedPag
               CheTradingPanel(
                 margin: const EdgeInsets.only(bottom: 6),
                 child: ExpansionTile(
-                  key: Key('recent_${m.source}_${m.tradeId}_${m.kind}'),
+                  key: PageStorageKey<String>('recent_${m.source}_${m.tradeId}_${m.kind}'),
                   minTileHeight: 52,
                   iconColor: Colors.white,
                   collapsedIconColor: Colors.white70,

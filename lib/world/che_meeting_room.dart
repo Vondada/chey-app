@@ -140,6 +140,7 @@ class _CheMeetingRoomState extends State<CheMeetingRoom> {
                     Text(chePlainText(o.text.isNotEmpty ? o.text : o.detail, max: 400), style: const TextStyle(fontSize: 19, height: 1.4)),
                     if ((o.text.isNotEmpty ? o.text : o.detail).trim().isNotEmpty)
                       ExpansionTile(
+                        key: PageStorageKey<String>('meeting_full_${(o.text.isNotEmpty ? o.text : o.detail).hashCode}'),
                         tilePadding: EdgeInsets.zero,
                         title: const Text('Full sourced text', style: TextStyle(fontSize: 17)),
                         children: [SelectableText(o.text.isNotEmpty ? o.text : o.detail, style: const TextStyle(fontSize: 16, height: 1.4))],

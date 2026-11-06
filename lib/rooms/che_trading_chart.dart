@@ -1190,7 +1190,7 @@ class CheTradingChartState extends State<CheTradingChart> {
   /// Wins, Losses, Open, Paper, Simulation: one row of filter chips (the strategy filter comes from voice or a card).
   Widget _filterChips() => SizedBox(
         height: 48,
-        child: ListView(scrollDirection: Axis.horizontal, children: [
+        child: ListView(key: const PageStorageKey<String>('chart_filter_chips'), scrollDirection: Axis.horizontal, children: [
           // The strategy filter first, so it is never scrolled out of sight.
           if (_strategy != null)
             Center(
@@ -1506,7 +1506,7 @@ class CheTradingChartState extends State<CheTradingChart> {
 
   Widget _indicatorChips() => SizedBox(
         height: 48,
-        child: ListView(scrollDirection: Axis.horizontal, children: [
+        child: ListView(key: const PageStorageKey<String>('chart_indicator_chips'), scrollDirection: Axis.horizontal, children: [
           for (final e in kChartIndicators.entries)
             Padding(
               padding: const EdgeInsets.only(right: 6),

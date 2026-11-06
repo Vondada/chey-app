@@ -431,6 +431,7 @@ class CheHelpCenter extends StatelessWidget {
         if (topics.isEmpty) const Padding(padding: EdgeInsets.only(top: 12), child: Text('No screen has listed its controls yet.', style: TextStyle(color: Colors.white))),
         for (final t in topics)
           ExpansionTile(
+            key: PageStorageKey<String>('help_${t.title}'),
             title: Text(t.title, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700)),
             subtitle: t.summary.isEmpty ? null : Text(t.summary, style: TextStyle(color: CheColors.textDim)),
             children: [for (final i in t.items) ListTile(title: Text(i.name, style: const TextStyle(color: Colors.white)), subtitle: Text(i.spoken, style: const TextStyle(color: Color(0xFFB8C7C4))))],

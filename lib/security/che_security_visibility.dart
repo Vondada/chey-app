@@ -220,6 +220,7 @@ class CheSecurityItemTile extends StatelessWidget {
       container: true,
       label: spoken,
       child: ExpansionTile(
+        key: PageStorageKey<String>('security_item_${item['name']}_${item['type']}'),
         tilePadding: EdgeInsets.zero,
         title: ExcludeSemantics(child: Text('${item['name']}', maxLines: 2, overflow: TextOverflow.ellipsis)),
         subtitle: ExcludeSemantics(child: Text('${item['type']} · ${_when(item['last_activity'])}', maxLines: 2, overflow: TextOverflow.ellipsis)),
@@ -370,6 +371,7 @@ class CheSecurityChiefCard extends StatelessWidget {
           if ('${chief['personality'] ?? ''}'.isNotEmpty) Text('${chief['personality']}', style: text.bodyMedium),
           if (chief['on_roster'] != true && '${chief['roster_note'] ?? ''}'.isNotEmpty) Text('${chief['roster_note']}', style: text.bodyMedium),
           ExpansionTile(
+            key: const PageStorageKey<String>('security_responsibilities'),
             tilePadding: EdgeInsets.zero,
             title: Text('Responsibilities and ${specialists.length} specialists'),
             expandedCrossAxisAlignment: CrossAxisAlignment.start,
@@ -382,6 +384,7 @@ class CheSecurityChiefCard extends StatelessWidget {
             ],
           ),
           ExpansionTile(
+            key: const PageStorageKey<String>('security_permissions'),
             tilePadding: EdgeInsets.zero,
             title: Text('Permissions: ${configured.length} configured, ${verified.length} verified working'),
             expandedCrossAxisAlignment: CrossAxisAlignment.start,
@@ -395,6 +398,7 @@ class CheSecurityChiefCard extends StatelessWidget {
             ],
           ),
           ExpansionTile(
+            key: const PageStorageKey<String>('security_recent_activity'),
             tilePadding: EdgeInsets.zero,
             title: Text('Recent verified activity (${activity.length})'),
             expandedCrossAxisAlignment: CrossAxisAlignment.start,

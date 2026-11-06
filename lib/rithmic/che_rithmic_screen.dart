@@ -366,6 +366,7 @@ class _CheRithmicScreenState extends State<CheRithmicScreen> {
           Semantics(
             label: 'Advanced Rithmic settings, for manual override and debugging',
             child: ExpansionTile(
+              key: const PageStorageKey<String>('rithmic_advanced'),
               title: const Text('Advanced'),
               subtitle: Text('Found automatically. Contract now: $_autoSymbol'),
               childrenPadding: const EdgeInsets.only(top: 8),

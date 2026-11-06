@@ -140,7 +140,7 @@ class CheTickerSelector extends StatelessWidget {
           ),
         ),
         Expanded(
-          child: ListView(scrollDirection: Axis.horizontal, children: [
+          child: ListView(key: const PageStorageKey<String>('ticker_selector_strip'), scrollDirection: Axis.horizontal, children: [
             for (final id in ids) Padding(padding: const EdgeInsets.only(right: 6), child: Center(child: _chip(id))),
           ]),
         ),

@@ -280,6 +280,7 @@ class _CheOwnerImprovementsScreenState extends State<CheOwnerImprovementsScreen>
         child: Theme(
           data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
           child: ExpansionTile(
+            key: PageStorageKey<String>('improvement_$id'),
             tilePadding: EdgeInsets.symmetric(horizontal: gap, vertical: 0),
             childrenPadding: EdgeInsets.fromLTRB(gap, 0, gap, gap),
             iconColor: Colors.white,

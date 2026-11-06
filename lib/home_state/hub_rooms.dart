@@ -106,7 +106,9 @@ extension _CheHomeHubRooms on _CHEHomeState {
 
   void _runHubPrompt(String prompt) {
     if (!mounted) return;
-    Navigator.of(context).pop();
+    // Back to the chat the prompt goes to: a Trading Room page pushed over the rooms sheet would otherwise close and
+    // leave the sheet covering the reply (audit 2026-11-06).
+    Navigator.of(context).popUntil((r) => r.isFirst);
     controller.text = prompt;
     Future<void>.delayed(const Duration(milliseconds: 120), () async {
       if (mounted) await sendMessage();
