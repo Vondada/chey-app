@@ -3,9 +3,9 @@
 // film/<id>/, so a film survives restarts and can be paused and resumed without losing anything.
 
 import {
-  FilmStore, FILM_VALIDATION_KEY, NEURONS, STILL_MODEL, TTS_MODEL,
+  FilmStore, FILM_VALIDATION_KEY, NEURONS, REFERENCE_MODEL, STILL_MODEL, TTS_MODEL,
   assemblyPlan, checkStill, farmProviders, learnFromCheck, loadRates, loadUsage, mp3Seconds, newFilm, outlineMessages, planFilm,
-  recordRate, reserve, sceneMessages, seedFor, segmentSpec, shotList, spend, speakPlan, stillPrompt, validOutline, validSceneShots,
+  portraitPrompt, recordRate, reserve, sceneMessages, seedFor, segmentSpec, shotList, spend, speakPlan, stillPrompt, validOutline, validSceneShots,
   _internals,
 } from './film_studio.js';
 import { imagePayload } from './image_payload.js';
@@ -134,10 +134,63 @@ async function writeStep(ctx, store, film) {
 /** Shot fields the token routes write (clips arrive from the farm while a pass runs), kept apart so nothing is lost. */
 async function farmLedger(storage, film) { return (await storage.get(`film:${film.id}:clips`)) || {}; }
 
+/**
+ * Cast portraits, before any shot: one reference picture per character, made once and kept in the film's files, so
+ * every picture of that character starts from the same face. A portrait that fails three times is given up, and the
+ * character's shots are drawn from the written description alone. Returns true while portraits are still being made.
+ */
+async function castStep(ctx, film, media) {
+  const { env, storage } = ctx;
+  const now = ctx.now || Date.now();
+  film.cast = film.cast || {};
+  const want = (film.outline?.characters || []).filter((c) => !film.cast[c.id]?.done).slice(0, STILL_BATCH);
+  if (!want.length) return false;
+  film.waiting = '';
+  const paid = await reserve(storage, 'neurons', NEURONS.still, want.length, { now });
+  if (!paid) { film.waiting = 'Waiting for tomorrow\'s free picture allowance (it resets at midnight UTC).'; return true; }
+  await Promise.all(want.slice(0, paid).map(async (c) => {
+    const entry = film.cast[c.id] || { tries: 0 };
+    try {
+      const out = await env.AI.run(STILL_MODEL, imagePayload(STILL_MODEL, { prompt: portraitPrompt(c), steps: 4, seed: c.seed }).payload);
+      const bytes = out?.image ? b64ToBytes(out.image) : null;
+      const check = bytes ? checkStill(bytes) : { ok: false, reason: 'the image model returned no picture' };
+      if (!check.ok) throw new Error(check.reason);
+      const key = `film/${film.id}/cast/${c.id}.jpg`;
+      const saved = await media.put(key, bytes, { contentType: 'image/jpeg' });
+      if (!saved.ok) throw new Error(saved.error);
+      film.cast[c.id] = { done: true, key };
+    } catch (error) {
+      entry.tries += 1;
+      entry.reason = safe(error?.message || error);
+      if (entry.tries >= MAX_ATTEMPTS) entry.done = true; // given up: this character's shots use the description only
+      film.cast[c.id] = entry;
+    }
+  }));
+  return true;
+}
+
+/**
+ * A shot's picture drawn from its lead character's portrait (FLUX.2 klein takes the portrait as a reference image).
+ * Returns the model's output, or throws so the caller falls back to a picture from the description alone.
+ */
+async function referenceStill(env, media, prompt, portraitKey, seed) {
+  const portrait = await media.get(portraitKey);
+  if (!portrait?.body?.length) throw new Error('the portrait file is missing');
+  const form = new FormData();
+  form.append('prompt', prompt);
+  form.append('input_image_0', new Blob([portrait.body], { type: 'image/jpeg' }), 'portrait.jpg');
+  form.append('width', '1024');
+  form.append('height', '576');
+  form.append('seed', String(seed));
+  const body = new Response(form);
+  return env.AI.run(REFERENCE_MODEL, { multipart: { body: body.body, contentType: body.headers.get('content-type') } });
+}
+
 async function makeStep(ctx, store, film) {
   const { env, storage } = ctx;
   const now = ctx.now || Date.now();
   const media = mediaStore(env, storage);
+  if (await castStep(ctx, film, media)) { await store.save(film); return film.waiting ? 600_000 : 500; }
   const shots = await store.shots(film.id, film.shot_count);
   const byN = new Map(shots.map((s) => [s.n, s]));
   // Owner remakes queued since the last pass, and clips the farm delivered.
@@ -153,14 +206,32 @@ async function makeStep(ctx, store, film) {
 
   // Pictures: up to four at once. The allowance for all of them is reserved first, in one step, so the cap holds.
   const wantStill = shots.filter((s) => s.still_of === s.n && !s.still_key && s.status !== 'failed').slice(0, STILL_BATCH);
-  const stillsPaid = wantStill.length ? await reserve(storage, 'neurons', NEURONS.still, wantStill.length, { now }) : 0;
+  // A shot whose lead has a portrait is drawn from it; the allowance is reserved at the reference price, which also
+  // covers the plain picture if the reference model fails.
+  const portraitOf = (shot) => (film.ref_off ? '' : film.cast?.[shot.characters?.[0]]?.key || '');
+  const stillCost = wantStill.some(portraitOf) ? Math.max(NEURONS.reference_still, NEURONS.still) : NEURONS.still;
+  const stillsPaid = wantStill.length ? await reserve(storage, 'neurons', stillCost, wantStill.length, { now }) : 0;
   if (wantStill.length && !stillsPaid) film.waiting = 'Waiting for tomorrow\'s free picture allowance (it resets at midnight UTC).';
   if (stillsPaid) {
     const started = Date.now(); let made = 0; let storeError = null;
     await Promise.all(wantStill.slice(0, stillsPaid).map(async (shot) => {
       let bytes = null; let check;
+      const prompt = stillPrompt(shot, film.outline, lessons);
       try {
-        const out = await env.AI.run(STILL_MODEL, imagePayload(STILL_MODEL, { prompt: stillPrompt(shot, film.outline, lessons), steps: 4, seed: seedFor(shot, film.outline) }).payload);
+        let out = null;
+        const portrait = portraitOf(shot);
+        if (portrait) {
+          try {
+            out = await referenceStill(env, media, prompt, portrait, seedFor(shot, film.outline));
+            if (!out?.image) throw new Error('the reference model returned no picture');
+            shot.from_portrait = true;
+          } catch (error) {
+            // The reference model is not working: say why once, and draw this and later shots from the description.
+            film.ref_off = safe(error?.message || error);
+            out = null;
+          }
+        }
+        if (!out) out = await env.AI.run(STILL_MODEL, imagePayload(STILL_MODEL, { prompt, steps: 4, seed: seedFor(shot, film.outline) }).payload);
         bytes = out?.image ? b64ToBytes(out.image) : null;
         check = bytes ? checkStill(bytes) : { ok: false, reason: 'the image model returned no picture' };
       } catch (error) { check = { ok: false, reason: String(error?.message || error).slice(0, 120) }; }

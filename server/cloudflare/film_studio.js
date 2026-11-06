@@ -588,6 +588,11 @@ export function stillPrompt(shot, outline, lessons = []) {
   return clean(`Cinematic film still, 16:9, photorealistic. ${shot.setting}. ${shot.description}.${cast ? ` Characters: ${cast}.` : ''} Consistent lighting, natural faces and hands${extra ? `, ${extra}` : ''}. No text, no watermark.`, 2000);
 }
 
+/** A character's reference portrait: one fixed face that every picture of them starts from. */
+export function portraitPrompt(character) {
+  return clean(`Photorealistic character reference portrait, head and shoulders, facing the camera, plain neutral studio background, soft even light. ${character.name}: ${character.look}. Natural face and skin, no text, no watermark.`, 1000);
+}
+
 export function seedFor(shot, outline) {
   const lead = outline.characters.find((c) => c.id === shot.characters?.[0]);
   return lead ? lead.seed : Math.abs(hash(`${outline.title}|scene${shot.scene}`)) % 2 ** 31;
@@ -714,6 +719,15 @@ export function filmProgress(film, shots = [], now = Date.now()) {
   return { state: film.state, shots_total: shots.length || film.shot_count, shots_verified: verified, shots_failed: failed, elapsed_s: elapsed, eta_s: eta, remaining_s: Math.max(0, eta - elapsed) };
 }
 
+/** How the characters' faces are kept the same, said plainly, including when the reference portraits are off. */
+function faces(film) {
+  const cast = Object.values(film.cast || {});
+  if (!cast.length) return '';
+  if (film.ref_off) return ` Faces come from the written descriptions only: the reference picture model failed (${film.ref_off}).`;
+  const made = cast.filter((c) => c.key).length;
+  return made ? ` ${made} character portrait${made === 1 ? '' : 's'} keep${made === 1 ? 's' : ''} faces the same from shot to shot.` : '';
+}
+
 export function speakStatus(film, shots = [], now = Date.now()) {
   if (!film) return 'You have no film in the studio yet. Say "make me a 10-minute movie about" and a subject.';
   const p = filmProgress(film, shots, now);
@@ -721,7 +735,7 @@ export function speakStatus(film, shots = [], now = Date.now()) {
   const time = `${spokenDuration(p.elapsed_s)} in, against an estimate of ${spokenDuration(p.eta_s)}`;
   switch (film.state) {
     case 'scripting': return `${name} is being written: scene ${film.scene_next} of ${film.outline?.scenes?.length || 'the outline'}. ${time}.`;
-    case 'making': return `${name}: ${p.shots_verified} of ${p.shots_total} shots done${p.shots_failed ? `, ${p.shots_failed} failed after ${MAX_ATTEMPTS} tries` : ''}. ${time}.${film.waiting ? ` ${film.waiting}` : ''}`;
+    case 'making': return `${name}: ${p.shots_verified} of ${p.shots_total} shots done${p.shots_failed ? `, ${p.shots_failed} failed after ${MAX_ATTEMPTS} tries` : ''}. ${time}.${film.waiting ? ` ${film.waiting}` : ''}${faces(film)}`;
     case 'assembling': return `${name} is being assembled on ${film.plan?.segments || 1} GitHub runners. ${time}.`;
     case 'verifying': return `${name} is uploaded and I am checking the file. ${time}.`;
     case 'done': return `${name} is done: ${spokenDuration(film.result?.seconds || 0)}, checked from the file itself, in your media library.${film.result?.missing?.length ? ` ${film.result.missing.length} shots never passed their checks and were left out.` : ''} It took ${spokenDuration((Date.parse(film.result?.at || '') - film.started_ms) / 1000)}.`;
