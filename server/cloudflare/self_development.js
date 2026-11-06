@@ -681,6 +681,9 @@ export const SOURCE_RETRY_NOTE = 'Your draft said you did not know or could not 
 // This never edits source and never treats another AI's message as owner
 // authorization. It gives CHE facts she can safely use before discussing a
 // coding lane: the exact live commit, real paths/symbols and open PRs.
+// The most source files one inspection reads (see loadBatch below).
+export const SOURCE_READ_BUDGET = 32;
+
 export async function inspectRepositoryContext(env, request, fetcher = fetch, { trace = false } = {}) {
   if (!repoOf(env)) {
     return { ok: false, failure_class: FAILURE_CLASS.PERMANENT_EXTERNAL, detail: 'CHE_GITHUB_TOKEN or CHE_GITHUB_REPO is missing.' };
@@ -725,8 +728,13 @@ export async function inspectRepositoryContext(env, request, fetcher = fetch, { 
   // Tier 2: inspect real source, then follow structural imports/exports. This
   // is deterministic and bounded; the model never decides whether a neighbor
   // exists. Independent reads are batched to keep grounding fast.
+  // One read budget for the whole inspection (seeds first, then imports, tests and trace reads): Cloudflare allows 50
+  // subrequests per invocation on CHE's plan, and an unbounded read of ~60 files threw "Too many subrequests", so a broad
+  // question ("how does your memory code work?", an app screen audit) answered HTTP 500 (R-16, run 42176288358).
+  let budget = SOURCE_READ_BUDGET;
   const loadBatch = async (paths) => {
-    const missing = paths.filter((path) => !loaded.has(path)).slice(0, 24);
+    const missing = paths.filter((path) => !loaded.has(path)).slice(0, Math.min(24, budget));
+    budget -= missing.length;
     const rows = await Promise.all(missing.map(async (path) => [path, await readFile(env, index.head_sha, path, fetcher)]));
     for (const [path, file] of rows) if (file) loaded.set(path, file);
   };

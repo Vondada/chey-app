@@ -145,3 +145,10 @@ test('a month review reads only that month\'s journal entries', async () => {
   assert.match(await lossAnswer(storage, 'What did you do wrong trading in October 2025?'), /^For October 2025: From the futures paper journal, 1 distinct entry, 0 won and 1 lost/, 'one year at a time (Codex on #939)');
   assert.match(text, /What I changed:/);
 });
+
+test('plurals read as words: "56 losses", never "56 losss" (live run 42175191352)', () => {
+  const review = { market: 'futures', ...reviewLosses([trade('a', { net: -2, gross: 3 }), trade('b', { at: '2026-10-21T16:05:00Z', net: -2, gross: 3 })], { name }) };
+  const text = lossReply('review', review);
+  assert.match(text, /2 losses would have been wins before fees and slippage/);
+  assert.doesNotMatch(text, /losss/);
+});
