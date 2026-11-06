@@ -447,3 +447,12 @@ test('a question is never a build by itself: which/what/how ... could/would ... 
     assert.equal(currentTurnActionPolicy(text).codingJobAllowed, true, text);
   }
 });
+
+test('an audit of the app\'s screens is a reasoned read of the source, even when it names a desk (owner, 2026-11-06)', async () => {
+  const { analyticalRepositoryQuestion: analytical, repositoryInspectionIntent: inspects } = await import('./code_scout.js');
+  const ask = "Jay, do a complete audit of the CHE app's screens and navigation. Find every screen that can show a grey error box, with the file and line and the cause. Audit only: do not open a pull request.";
+  assert.equal(inspects(ask), true);
+  assert.equal(analytical(ask), true);
+  assert.equal(inspects('Audit my shopping list'), false, 'an audit of something else is not a source read');
+  assert.equal(inspects('Show me the trading screen'), false, 'opening a screen is not an audit');
+});

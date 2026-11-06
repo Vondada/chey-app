@@ -572,6 +572,9 @@ export function cryptoIntent(message, { followup = '', referent = '' } = {}) {
   const orion = /\borion\b/.test(t);
   if (!CRYPTO_WORD.test(t) && !(orion && /\bcrypto|weekend\b/.test(t))) return null;
   if (!DESK_WORD.test(t)) return null;
+  // A request to audit or fix the app that only mentions the desk ("audit the screens: the crypto desk shows grey boxes")
+  // is coding work, not a question for Orion's desk (certification run 42153285881).
+  if (/\b(?:audit\w*|grey\s+box(?:es)?|gray\s+box(?:es)?|navigation|pull\s+request|file\s+and\s+line|crash\w*|bugs?)\b/.test(t)) return null;
   // A backtest of a rule on a coin ("run a backtest of buying ETH when RSI is below 30") is the strategy lab's work, not a
   // question about Orion's desk; only one that names Orion or the desk stays here (certification run 41256280478, thb-18).
   if (/\bback[\s-]?test/.test(t) && !orion && !/\bdesk\b/.test(t)) return null;

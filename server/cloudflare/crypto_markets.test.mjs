@@ -316,3 +316,11 @@ test('guests cannot run or read the crypto desk', async () => {
   const g = await che.say('How is the crypto paper trading going?', '');
   assert.notEqual(g.meta.source === 'che_crypto' && /Simulated trades closed/.test(g.reply), true);
 });
+
+test('an app audit or bug report that mentions the crypto desk is not a desk question (certification run 42153285881)', () => {
+  assert.equal(cryptoIntent("Jay, do a complete audit of the CHE app's screens: the crypto desk's recent trades show grey boxes."), null);
+  assert.equal(cryptoIntent('There is a bug in the crypto desk screen, find the file and line.'), null);
+  assert.equal(cryptoIntent('The crypto desk crashes when I open it'), null);
+  assert.equal(cryptoIntent('How is the crypto desk doing?').kind, 'status', 'a plain desk question still reaches the desk');
+  assert.equal(cryptoIntent('Pause Orion crypto research').kind, 'pause');
+});

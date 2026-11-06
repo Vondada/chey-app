@@ -211,3 +211,20 @@ test('creator studio: source claims are judged against the paths the read return
   assert.equal(guardExecutionClaims('The class MediaService stores uploads.').removed.length, 1, 'a class name with no read is removed');
   assert.equal(guardExecutionClaims('Creator Studio is a room where you make videos.').removed.length, 0, 'ordinary product talk stays');
 });
+
+// Owner, 2026-11-06 (certification run 42153285881): an audit request that mentioned the crypto desk went to the crypto
+// desk's status instead of a read of the source. "Jay" is how voice spells CHE's name.
+const AUDIT_REQUEST = "Jay, do a complete audit of the CHE app's screens and navigation. On my iPhone the Trading room shows big grey boxes where the crypto desk's recent trades and the setup board's timeline should be. Find every screen and navigation path that can show a grey error box or break, with the file and line and the cause, and report it to me. Audit only: do not open a pull request.";
+
+test('an app screen audit that mentions the crypto desk reads the source, not the desk status, and starts no job', async (t) => {
+  const record = { models: [], dispatches: [] };
+  withFakeGithub(t, record);
+  const che = await owner(ANALYSIS, record);
+  const { reply, done } = await che.say(AUDIT_REQUEST);
+  console.log('AUDIT>>>', done.source, reply.slice(0, 300));
+  assert.notEqual(done.source, 'che_crypto', 'the crypto desk does not take an audit request');
+  assert.equal(done.source, 'che_repository_analysis', 'an audit is a reasoned read of the source, not a file list');
+  assert.doesNotMatch(reply, /^VERIFIED/m);
+  assert.doesNotMatch(reply, /Orion's crypto desk is on/);
+  assert.deepEqual(record.dispatches, [], 'audit only: no coding job or workflow');
+});

@@ -765,7 +765,7 @@ export function analyticalRepositoryQuestion(message) {
   const text = withoutQuotedText(String(message || '').trim());
   // Reasoning wins over listing: "explain why it stalls and list the files involved" gets the explanation.
   // A pure listing request ("show me the files", "which files") has no reasoning word and keeps the list.
-  return /\b(?:explain|why|how\s+(?:does|do|is|are|would|should|could)|weakness(?:es)?|weak\s+points?|biggest|recommend\w*|repairs?|root\s+cause|trade-?offs?|risks?|improve\w*|what\s+(?:should|would|could)|what\s+(?:the\s+)?(?:code|source|it|this|that)\s+(?:does|do)\b|analy[sz]e|compare|list\s+the\s+(?:weaknesses|problems|risks|causes|reasons))\b/i.test(text);
+  return /\b(?:explain|why|how\s+(?:does|do|is|are|would|should|could)|weakness(?:es)?|weak\s+points?|biggest|recommend\w*|repairs?|root\s+cause|trade-?offs?|risks?|improve\w*|what\s+(?:should|would|could)|what\s+(?:the\s+)?(?:code|source|it|this|that)\s+(?:does|do)\b|analy[sz]e|compare|list\s+the\s+(?:weaknesses|problems|risks|causes|reasons)|audit\w*|(?:and\s+)?the\s+cause|what\s+(?:can|could|would)\s+(?:break|fail|crash))\b/i.test(text);
 }
 
 export function repositoryInspectionIntent(message) {
@@ -812,7 +812,13 @@ export function repositoryInspectionIntent(message) {
   // reads its source. Without this the no-tools model answers with file names it invented.
   const namedAreaInvestigation = /\b(?:creator|music|voice|video|trading|war|brain|office)\s+(?:studio|room|desk|screen|page)\b/i.test(text)
     && /^(?:(?:che|chay|chey|shay)[,:]?\s*)?(?:please\s+|(?:can|could|will)\s+you\s+)?(?:investigate|inspect|audit|review|diagnose|analy[sz]e|trace|examine|verify)\b/i.test(text);
-  return Boolean((directInspection && repoTarget) || architectureAnalysis || namedAreaInvestigation || exactHeadQuestion || repositoryStateQuestion || guardedDiagnostic || selfDiagnosticSource);
+  // "Jay, do a complete audit of the CHE app's screens and navigation ... grey boxes" (owner, 2026-11-06; "Jay" is how
+  // voice spells CHE's name): an audit of the app's screens reads the source. Without this the later crypto route took
+  // it because it mentioned the crypto desk (certification run 42153285881).
+  const appScreenAudit = /\b(?:audit\w*|investigat\w*|inspect\w*|diagnos\w*|review)\b/i.test(text)
+    && /\b(?:screens?|navigation|grey\s+box(?:es)?|gray\s+box(?:es)?|error\s+box(?:es)?)\b/i.test(text)
+    && /\b(?:app|che(?:'s)?|your|every)\b/i.test(text);
+  return Boolean((directInspection && repoTarget) || architectureAnalysis || namedAreaInvestigation || appScreenAudit || exactHeadQuestion || repositoryStateQuestion || guardedDiagnostic || selfDiagnosticSource);
 }
 
 export function starredRepoIntent(message) {
