@@ -435,7 +435,9 @@ const FUTURES = new Set(['MNQ', 'NQ', 'MES', 'ES']);
 // The exclusions in force. Pipeline tests whose fixtures trade an excluded setup switch them off for their own file,
 // as they do the halt; the exclusions have their own test. Production never changes it.
 export const learnedState = { exclusions: LEARNED_EXCLUSIONS };
-export const learnedReason = (pf) => (FUTURES.has(pf?.contract || 'MNQ') && learnedState.exclusions[pf?.candidate])
+// The exclusions were learned from 5-minute backtests, so they apply to 5-minute desks only (the hourly volatility test,
+// owner 2026-11-06, trades pdhl-sweep on 1-hour bars with wider stops, which passed its own test).
+export const learnedReason = (pf) => (FUTURES.has(pf?.contract || 'MNQ') && (pf?.resolution || '5m') === '5m' && learnedState.exclusions[pf?.candidate])
   ? `CHE learned from the backtests to skip this setup: it ${learnedState.exclusions[pf.candidate]}` : null;
 // The halt in force. Tests of the pause logic set it off for their own run and restore it; production never does.
 export const haltState = { halted: FORWARD_ENTRIES_HALTED };
