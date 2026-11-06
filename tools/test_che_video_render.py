@@ -244,5 +244,25 @@ class StoryboardRenderTest(unittest.TestCase):
         self.assertIn('Then check them.', cues.replace('\n', ' '))
 
 
+class NarrationFitsLength(unittest.TestCase):
+    # Owner's 8-second office video (run 42262895334) was refused: the fixed script ran past 8 seconds.
+    OFFICE = 'your office: a modern AI agency office at night with city lights, slowly panning across the desks'
+
+    def test_short_video_gets_short_narration_in_whole_sentences(self):
+        text = render.fit_narration(self.OFFICE, 8)
+        self.assertLessEqual(len(text.split()), int(8 * render.WORDS_PER_SECOND))
+        self.assertTrue(text.startswith('Discover your office'))
+        self.assertTrue(text.endswith('.'))
+
+    def test_long_video_keeps_the_full_script(self):
+        text = render.fit_narration('volcanoes', 30)
+        self.assertIn('Explore the big picture', text)
+        self.assertIn('Check reliable sources', text)
+
+    def test_an_endless_topic_never_exceeds_the_budget(self):
+        text = render.fit_narration(' '.join(['word'] * 60), 6)
+        self.assertLessEqual(len(text.split()), max(5, int(6 * render.WORDS_PER_SECOND)))
+
+
 if __name__ == '__main__':
     unittest.main()
