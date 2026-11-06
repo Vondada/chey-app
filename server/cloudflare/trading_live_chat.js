@@ -180,6 +180,9 @@ export function marketRead(bars = []) {
   return parts.join(' ');
 }
 
+// The hourly volatility test (owner, 2026-11-06) is its own record: 1-hour bars, 2 ATR stops, judged from its start only.
+const hourlyLine = (h) => (!h ? '' : ` Hourly volatility test (inside bar and previous-day sweep, 1-hour bars, 2 ATR stops${h.started ? `, since ${when(h.started)}` : ''}): ${h.trades ? `${h.trades} closed (${h.wins} won, ${h.losses} lost), net after costs ${money(h.net)}, ${h.avg_r} R per trade` : 'no trade closed yet'}${h.open ? `, ${h.open} open` : ''}${h.trades < 30 ? '; fewer than 30 trades, so not yet evidence' : ''}.`);
+
 /** The reply for one command, from the dashboard data. `extra.started` etc. come from the route. */
 export function liveReply(kind, d, extra = {}) {
   if (kind === 'learning') return [d.learning?.daily_report || 'No strategy learning report is available yet.', ...(d.learning?.strategies || []).map((r) => `${r.name}: ${r.forward.trades} unique forward trades, ${r.forward.wins} wins, ${r.forward.losses} losses, expectancy ${r.forward.expectancy_r} R, net ${money(r.forward.net_pnl)}. Next: ${r.next_milestone}.`)].join(' ');
@@ -240,7 +243,7 @@ export function liveReply(kind, d, extra = {}) {
     }
     case 'performance':
     case 'evidence':
-      return `${head} ${feedLine(d)} Since ${d.state.started_at ? when(d.state.started_at) : 'the start'}: ${d.counts.signals} signals, ${d.counts.filled} entries, ${t.trades} closed (${t.wins} won, ${t.losses} lost), ${d.positions.length} open. Net after costs ${money(t.net_pnl)}, profit factor ${t.profit_factor ?? 'not measured'}, max drawdown ${money(t.max_drawdown)}. ${t.trades < d.min_trades ? `Fewer than ${d.min_trades} trades: not yet evidence.` : ''} Verified real-time forward outcomes: ${d.verified_live_forward?.trades || 0}; legacy delayed entries are unverified. ${research}`;
+      return `${head} ${feedLine(d)} Since ${d.state.started_at ? when(d.state.started_at) : 'the start'}: ${d.counts.signals} signals, ${d.counts.filled} entries, ${t.trades} closed (${t.wins} won, ${t.losses} lost), ${d.positions.length} open. Net after costs ${money(t.net_pnl)}, profit factor ${t.profit_factor ?? 'not measured'}, max drawdown ${money(t.max_drawdown)}. ${t.trades < d.min_trades ? `Fewer than ${d.min_trades} trades: not yet evidence.` : ''} Verified real-time forward outcomes: ${d.verified_live_forward?.trades || 0}; legacy delayed entries are unverified.${hourlyLine(d.hourly)} ${research}`;
     case 'analysis':
       return `I placed no order, sir. ${feedLine(d)} ${marketRead(d.bars)} Paper trading is ${d.state.enabled ? 'on' : 'off'}: ${d.counts.signals} signals, ${d.counts.filled} entries, ${t.trades} closed (${t.wins} won, ${t.losses} lost), ${d.positions.length} open. Verified real-time forward outcomes: ${d.verified_live_forward?.trades || 0}. ${research} This is a read of recorded data, not a forecast.`;
     case 'open':

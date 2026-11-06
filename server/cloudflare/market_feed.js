@@ -111,6 +111,8 @@ export function aggregate(bars, minutes, now = Date.now()) {
  * Closed 1-minute bars for MNQ or NQ, with the feed's status for the dashboard.
  * Status is DELAYED for Yahoo (CME delayed data), UNAVAILABLE when it did not answer.
  */
+// Yahoo chart intervals CHE reads, with their bar lengths (60m for the hourly volatility test, owner 2026-11-06).
+const BAR_MS = { '1m': 60_000, '5m': 300_000, '60m': 3_600_000 };
 export async function loadIntraday(root = 'MNQ', { fetcher = fetch, now = Date.now(), range = '5d', interval = '1m' } = {}) {
   const spec = FEED_ROOTS[root];
   const contract = frontMonth(root, now);
@@ -121,8 +123,9 @@ export async function loadIntraday(root = 'MNQ', { fetcher = fetch, now = Date.n
   if (!spec) return { ...base, status: 'UNAVAILABLE', error: `unknown root ${root}` };
   const started = Date.now();
   try {
-    const barMs = interval === '5m' ? 300_000 : 60_000;
-    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(spec.yahoo)}?interval=${interval === '5m' ? '5m' : '1m'}&range=${range}&includePrePost=true`;
+    const iv = BAR_MS[interval] ? interval : '1m';
+    const barMs = BAR_MS[iv];
+    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(spec.yahoo)}?interval=${iv}&range=${range}&includePrePost=true`;
     const ask = (target) => fetcher(target, { headers: { 'User-Agent': 'Mozilla/5.0 (CHE paper-trading research)', Accept: 'application/json' }, signal: AbortSignal.timeout(10_000) });
     let res = await ask(url);
     // Yahoo serves the same chart from a second host; one retry there before giving up.
@@ -136,7 +139,7 @@ export async function loadIntraday(root = 'MNQ', { fetcher = fetch, now = Date.n
       ...base,
       status: parsed.candles.length ? 'DELAYED' : 'UNAVAILABLE',
       ...(parsed.candles.length ? {} : { error: 'no closed bars in the answer' }),
-      interval: interval === '5m' ? '5m' : '1m',
+      interval: iv,
       candles: parsed.candles,
       last_bar_time: last?.t || null,
       latency_s: lagS,

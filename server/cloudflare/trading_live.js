@@ -537,6 +537,7 @@ export async function liveDashboard(storage, { now = Date.now(), tradovateConnec
   const counts = portfolios.reduce((o, pf) => ({ signals: o.signals + pf.counts.signals, filled: o.filled + pf.counts.filled, skipped: o.skipped + pf.counts.gap_skipped }), { signals: 0, filled: 0, skipped: 0 });
   return {
     account: 'PAPER',
+    hourly: await hourlyRecord(storage).catch(() => null),
     isolation: 'Paper portfolios are research records only. No broker module is reachable from this engine, and live orders stay disabled.',
     delayed_training: delayedTraining,
     verified_live_forward: { trades: verifiedLive.length, ...summarize(verifiedLive), source: 'authenticated subscribed LIVE CME at entry' },
@@ -653,7 +654,7 @@ export function signalNote(sig) {
   const name = INTRADAY_CANDIDATES[sig.strategy]?.name || sig.strategy;
   return {
     subject: `Paper signal: ${side} ${sig.contract || 'MNQ'} near ${sig.ref}`,
-    body: `${side} 1 ${sig.contract || 'MNQ'} near ${sig.ref}, stop ${sig.stop}, target ${sig.target} (${name}${sig.filter && sig.filter !== 'any' ? `, ${sig.filter} filter` : ''}; ${sig.why}). `
+    body: `${side} 1 ${sig.contract || 'MNQ'} near ${sig.ref}, stop ${sig.stop}, target ${sig.target} (${name}${sig.filter && sig.filter !== 'any' ? `, ${sig.filter} filter` : ''}${sig.timeframe === HOURLY ? ', 1-hour volatility test' : ''}; ${sig.why}). `
       + 'It is a pending paper order for the next bar\'s open, from delayed CME bars; it fills only if the open is still inside the plan and passes the cost checks, and the trade journal shows whether it did. This is not advice: none of my strategies has yet shown a profit after costs, and no real order was placed.',
   };
 }
@@ -662,9 +663,120 @@ export function signalNote(sig) {
  * pending order, not a fill: the note says so. */
 export async function notifySignals(run, notify) {
   // A throttled pass returns the previous run (skipped: 'ran recently'); its signals were already sent (Codex on #937).
-  if (!run || run.skipped) return;
-  for (const sig of (run.new_signals || []).slice(0, 3)) {
+  // The hourly volatility test's pass rides on the same run (run.hourly) and files its own signals, also at most 3.
+  const own = !run || run.skipped ? [] : (run.new_signals || []).slice(0, 3);
+  const hourly = run?.hourly && !run.hourly.skipped ? (run.hourly.new_signals || []).slice(0, 3) : [];
+  for (const sig of [...own, ...hourly]) {
     const note = signalNote(sig);
     await notify(note.subject, note.body);
   }
+}
+
+// ─── Hourly volatility test (owner, 2026-11-06: "Yes put them on paper") ─────────────────────────────────────────────
+// The only two setups that passed the volatility-stop replay (run 42242981300: positive after costs in both the first
+// 70% and last 30% of 2.4 years of 1-hour MNQ bars) trade forward on paper as a separate desk: 1-hour bars, the stop at
+// least 2 ATR(14) away, the default target and the trade-quality rules. Its trades are journalled with resolution 1h,
+// so they never mix with the 5-minute desk's record, and they are judged only on trades from now on. Paper only.
+export const HOURLY = '1h';
+export const HOURLY_PORTFOLIOS = 'hourly_paper_portfolios';
+export const HOURLY_RUN = 'hourly_paper_run';
+export const HOURLY_SPECS = Object.freeze([{ c: 'inside-bar-5m', stop_atr: 2 }, { c: 'pdhl-sweep-5m', stop_atr: 2 }]);
+const HOUR = 3_600_000;
+const isIntradayPaper = (t) => t.environment === 'paper' && (t.data?.resolution === RESOLUTION || t.data?.resolution === HOURLY);
+export const isHourly = (t) => t.environment === 'paper' && t.data?.resolution === HOURLY;
+
+function freshHourly(spec) {
+  const pf = newPortfolio(spec.c, 'any', { contract: 'MNQ', qty: 1, source: 'paper', resolution: HOURLY, priceSeries: 'Yahoo MNQ=F 60-minute (DELAYED)', params: { target_r: defaultTarget(spec.c), quality: QUALITY_RULES, stop_atr: spec.stop_atr } });
+  pf.signals = [];
+  pf.skips = [];
+  return pf;
+}
+
+export async function readHourlyPortfolios(storage) {
+  const saved = (await storage.get(HOURLY_PORTFOLIOS)) || {};
+  return HOURLY_SPECS.map((spec) => {
+    const fresh = freshHourly(spec);
+    return saved[fresh.key] ? { signals: [], skips: [], ...saved[fresh.key] } : fresh;
+  });
+}
+
+/**
+ * One hourly pass, run after each forward-paper pass. A new 1-hour bar closes once an hour, so Yahoo is asked only when
+ * one can have closed since the newest bar (and at most every 10 minutes while it is late). The owner's controls, the
+ * account limits (shared with the 5-minute desk) and the governor's pauses apply; nothing reaches a broker.
+ */
+export async function hourlyTick(storage, { fetcher = fetch, now = Date.now(), force = false, load = loadIntraday } = {}) {
+  const state = (await storage.get(LIVE_STATE)) || {};
+  if (!state.enabled && !force) return { skipped: 'paper trading is off' };
+  const portfolios = await readHourlyPortfolios(storage);
+  const newestSeen = portfolios.map((pf) => pf.last_bar_time).filter(Boolean).sort().at(-1);
+  const previous = await storage.get(HOURLY_RUN);
+  if (!force && newestSeen && Date.parse(newestSeen) + 2 * HOUR > now) return { skipped: 'no new hourly bar yet' };
+  if (!force && previous?.at && now - Date.parse(previous.at) < 10 * 60000) return { skipped: 'ran recently' };
+  const run = { at: new Date(now).toISOString(), desk: 'hourly volatility test', ok: false };
+  try {
+    const feed = await load(ROOT, { fetcher, now, range: '1mo', interval: '60m' });
+    if (feed.status === 'UNAVAILABLE' || feed.interval !== '60m') {
+      run.error = feed.error || 'no 60-minute bars';
+    } else {
+      const bars = feed.candles.filter((b) => Date.parse(b.t) % HOUR === 0 && Date.parse(b.t) + HOUR <= now);
+      const problems = candleProblems(bars);
+      const age = bars.length ? now - Date.parse(bars[bars.length - 1].t) - HOUR : Infinity;
+      if (!problems.length && age > MAX_DELAYED_BAR_AGE_MS) problems.push(`the newest hourly bar closed ${Math.round(age / 60000)} min ago; the maximum is ${MAX_DELAYED_BAR_AGE_MS / 60000} min`);
+      if (problems.length) {
+        run.error = `data refused: ${problems.join('; ')}`;
+      } else {
+        const ctx = intradayContext(bars);
+        const newest = bars[bars.length - 1].t;
+        // Forward only: a new portfolio starts at the newest closed bar.
+        for (const pf of portfolios) if (pf.last_bar_time == null) Object.assign(pf, { last_bar_time: newest, started_from: newest });
+        const controls = await readControls(storage);
+        const today = tradeDayOf(now);
+        const realizedToday = (await readTrades(storage, isIntradayPaper))
+          .filter((t) => tradeDayOf(t.exit?.time || 0) === today).reduce((sum, t) => sum + (Number(t.net_pnl) || 0), 0);
+        const fiveMinuteOpen = Object.values((await storage.get(LIVE_PORTFOLIOS)) || {}).filter((pf) => pf.open || pf.pending).length;
+        const gate = governedGate(makeEntryGate(controls, { realized_today: realizedToday, open_positions: fiveMinuteOpen + portfolios.filter((pf) => pf.open || pf.pending).length }), await pausedUnits(storage), { timeframe: HOURLY });
+        const before = new Map(portfolios.map((pf) => [pf.key, pf.last_bar_time]));
+        const closed = [];
+        for (const pf of portfolios) {
+          pf.feed = feedOf(feed);
+          if (!pf.open && !pf.pending) pf.qty = controls.strategies[pf.candidate]?.qty || pf.qty;
+          pf.price_series = `${feed.provider} ${feed.provider_symbol} 60m (${feed.status})`;
+          closed.push(...stepPortfolio(pf, bars, ctx, gate, { allowEntries: feed.status === 'DELAYED' || feed.status === 'LIVE' }));
+        }
+        run.new_signals = portfolios.flatMap((pf) => (pf.signals || []).filter((x) => x.time > (before.get(pf.key) || ''))
+          .map((x) => ({ strategy: pf.candidate, filter: pf.filter, contract: pf.contract, timeframe: HOURLY, ...x })));
+        const valid = [];
+        const rejected = [];
+        for (const t of closed) {
+          t.review = postTradeReview(t);
+          const p = validateTradeRecord(t);
+          if (p.length) rejected.push({ portfolio: t.portfolio, entry: t.entry.time, problems: p, trade: t });
+          else valid.push(t);
+        }
+        run.journal = await appendTrades(storage, valid);
+        if (run.journal.written) {
+          try { run.governor = (await runGovernor(storage, { now })).changes.map((c) => `${c.action} ${c.strategy}`); } catch (error) { run.governor_error = String(error?.message || error).slice(0, 160); }
+        }
+        await exclude(storage, rejected.map((r) => ({ kind: 'rejected', at: run.at, ...r })));
+        await storage.put(HOURLY_PORTFOLIOS, Object.fromEntries(portfolios.map((pf) => [pf.key, pf])));
+        Object.assign(run, { ok: true, bars: bars.length, last_bar: newest, closed: closed.length, rejected: rejected.length, open_positions: portfolios.filter((pf) => pf.open).length });
+      }
+    }
+  } catch (error) {
+    run.error = String(error?.message || error).slice(0, 200);
+  }
+  await storage.put(HOURLY_RUN, run);
+  return run;
+}
+
+/** The hourly test's record from the journal, for the owner: trades, wins, net after costs and average R. */
+export async function hourlyRecord(storage) {
+  const trades = await readTrades(storage, isHourly);
+  const n = trades.length;
+  const wins = trades.filter((t) => t.net_pnl > 0).length;
+  const net = r2(trades.reduce((s, t) => s + (Number(t.net_pnl) || 0), 0));
+  const avgR = n ? Math.round((trades.reduce((s, t) => s + (Number(t.r_net) || 0), 0) / n) * 1000) / 1000 : null;
+  const open = (await readHourlyPortfolios(storage)).filter((pf) => pf.open).length;
+  return { trades: n, wins, losses: n - wins, net, avg_r: avgR, open, started: (await readHourlyPortfolios(storage)).map((pf) => pf.started_from).filter(Boolean).sort()[0] || null };
 }
