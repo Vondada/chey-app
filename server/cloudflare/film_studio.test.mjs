@@ -688,6 +688,37 @@ test('lip sync on the farm: after the clips, a talking shot is sent with its voi
   assert.match(speakStatus(film, shots, NOW), /1 talking shot is lip-synced\./);
 });
 
+test('lip sync results reach the film: a clip that lands during a pass is used, and a failure is said in the notes and the status (Codex on #950)', async () => {
+  const storage = memory(); const bucket = r2();
+  const store = new FilmStore(storage);
+  const { record } = await newFarmToken(NOW);
+  const film = { id: 'film_00000000000000cc', state: 'making', shot_count: 2, outline: validOutline(OUTLINE, { shots: 2 }), plan: { lip_sync: 2, segments: 1, parts: {} }, farm: { ...record, provider: 'kaggle', session: {} }, stats: { stills_made: 0, stills_failed: 0, lines_voiced: 0, clips_made: 0, retries: 0 }, notes: [], errors: [] };
+  await store.save(film, { force: true });
+  const line = (k) => ({ character: 'mara', line: 'Hello.', audio_key: `film/${film.id}/voice/${k}.mp3`, audio_s: 1 });
+  await store.putShots(film.id, [
+    { n: 1, tier: 'B', still_of: 1, still_key: `film/${film.id}/stills/1.jpg`, status: 'planned', attempts: 0, dialogue: [line('1-0')], description: 'Mara talks', characters: ['mara'], setting: 'stairs' },
+    { n: 2, tier: 'B', still_of: 2, still_key: `film/${film.id}/stills/2.jpg`, status: 'planned', attempts: 0, dialogue: [line('2-0')], description: 'Mara again', characters: ['mara'], setting: 'lamp' },
+  ]);
+  const ledgerKey = `film:${film.id}:clips`;
+  await storage.put(ledgerKey, { 2: { lip_error: 'Face not detected' } });
+  // Shot 1's lip-synced clip lands between this pass's first and second read of the farm ledger.
+  let reads = 0; const get = storage.get;
+  storage.get = async (k) => { if (k === ledgerKey && ++reads === 2) await storage.put(ledgerKey, { ...(await get(k)), 1: { lip_key: `film/${film.id}/lips/1.mp4`, lip_s: 2 } }); return get(k); };
+  const ctx = { storage, env: { CHE_DATA_BUCKET: bucket, CHE_GITHUB_TOKEN: 'gh', CHE_GITHUB_REPO: 'Vondada/chey-app' }, keys: {}, base: 'https://che.example', fetcher: offline, now: NOW };
+  await filmTick(ctx);
+  storage.get = get;
+  const after = await store.film(film.id);
+  const shots = await store.shots(film.id, 2);
+  assert.equal(shots[0].lip_key, `film/${film.id}/lips/1.mp4`, 'the clip that arrived mid-pass is on the shot before the farm closes');
+  assert.equal(after.farm.closed, 'all clips arrived');
+  const plan = assemblyPlan(after, shots);
+  assert.equal(segmentSpec(after, plan.segments[0], plan.timed).shots[0].clip, `film/${film.id}/lips/1.mp4`);
+  assert.equal(after.notes.filter((n) => n === 'Shot 2 has no lip sync: Face not detected.').length, 1, after.notes.join(' | '));
+  assert.match(speakStatus({ ...after, state: 'making' }, shots, NOW), /1 talking shot is lip-synced\. 1 talking shot could not be lip-synced \(Face not detected\)\./);
+  await filmTick({ ...ctx });
+  assert.equal((await store.film(film.id)).notes.filter((n) => /Shot 2 has no lip sync/.test(n)).length, 1, 'said once');
+});
+
 test('the Kaggle worker is valid Python that waits for work, frees the GPU for lip sync, and pins LatentSync 1.5', async () => {
   const { execFileSync } = await import('node:child_process');
   const { writeFileSync, unlinkSync } = await import('node:fs');

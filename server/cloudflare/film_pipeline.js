@@ -201,7 +201,7 @@ async function makeStep(ctx, store, film) {
   const remakes = (await storage.get(`film:${film.id}:remakes`)) || [];
   if (remakes.length) { for (const n of remakes) applyRemake(shots, n); await storage.put(`film:${film.id}:remakes`, []); }
   const clips = await farmLedger(storage, film);
-  for (const s of shots) { if (clips[s.n]?.key) s.clip_key = clips[s.n].key; if (clips[s.n]?.lip_key) s.lip_key = clips[s.n].lip_key; }
+  takeFarmResults(film, shots, clips);
   const lessons = (await storage.get('film:lessons')) || [];
   film.waiting = '';
 
@@ -404,6 +404,22 @@ function talkers(film, shots) {
   return new Set(shots.filter((s) => s.dialogue.length && s.characters?.length && s.status !== 'failed').slice(0, n).map((s) => s.n));
 }
 
+/**
+ * Copies what the farm delivered onto the shots: moving clips, lip-synced clips, and lip-sync failures, each of which
+ * is said once in the film's notes (the owner hears why a talking shot has no lip sync).
+ */
+function takeFarmResults(film, shots, ledger) {
+  for (const s of shots) {
+    const got = ledger[s.n] || {};
+    if (got.key) s.clip_key = got.key;
+    if (got.lip_key) s.lip_key = got.lip_key;
+    if (got.lip_error && !s.lip_error && !s.lip_key) {
+      s.lip_error = got.lip_error;
+      film.notes = [...(film.notes || []), safe(`Shot ${s.n} has no lip sync: ${got.lip_error}.`)];
+    }
+  }
+}
+
 /** A talking shot that must wait for its lip-synced clip: the Kaggle farm is open and it has neither the clip nor a failure. */
 function lipPending(film, s, ledger, chosen) {
   return film.farm?.provider === 'kaggle' && !film.farm.closed && chosen.has(s.n) && !s.lip_key && !ledger[s.n]?.lip_key && !ledger[s.n]?.lip_error;
@@ -420,7 +436,9 @@ function downgradeTierA(film, shots, why) {
 
 async function settleFarm(ctx, film, shots) {
   if (!film.farm || film.farm.closed) return;
+  // Read again: a clip may have arrived during this pass. Copy it onto the shots before deciding to close the farm.
   const ledger = await farmLedger(ctx.storage, film);
+  takeFarmResults(film, shots, ledger);
   const chosen = talkers(film, shots);
   const onFarm = (s) => (s.tier === 'A' && !s.clip_key && s.status !== 'failed') || lipPending(film, s, ledger, chosen);
   if (!shots.some(onFarm)) { film.farm.revoked = true; film.farm.closed = 'all clips arrived'; return; }

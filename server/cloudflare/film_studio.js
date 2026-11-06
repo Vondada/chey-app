@@ -807,7 +807,10 @@ export function filmProgress(film, shots = [], now = Date.now()) {
 
 function lipLine(shots) {
   const n = shots.filter((s) => s.lip_key).length;
-  return n ? ` ${n} talking shot${n === 1 ? ' is' : 's are'} lip-synced.` : '';
+  const failed = shots.filter((s) => s.lip_error && !s.lip_key);
+  const ok = n ? ` ${n} talking shot${n === 1 ? ' is' : 's are'} lip-synced.` : '';
+  const bad = failed.length ? ` ${failed.length} talking shot${failed.length === 1 ? '' : 's'} could not be lip-synced (${clean(failed[0].lip_error, 120)}).` : '';
+  return ok + bad;
 }
 
 /** How the characters' faces are kept the same, said plainly, including when the reference portraits are off. */
@@ -829,7 +832,7 @@ export function speakStatus(film, shots = [], now = Date.now()) {
     case 'making': return `${name}: ${p.shots_verified} of ${p.shots_total} shots done${p.shots_failed ? `, ${p.shots_failed} failed after ${MAX_ATTEMPTS} tries` : ''}. ${time}.${film.waiting ? ` ${film.waiting}` : ''}${faces(film)}${lipLine(shots)}`;
     case 'assembling': return `${name} is being assembled on ${film.plan?.segments || 1} GitHub runners. ${time}.`;
     case 'verifying': return `${name} is uploaded and I am checking the file. ${time}.`;
-    case 'done': return `${name} is done: ${spokenDuration(film.result?.seconds || 0)}, checked from the file itself, in your media library.${film.result?.missing?.length ? ` ${film.result.missing.length} shots never passed their checks and were left out.` : ''} It took ${spokenDuration((Date.parse(film.result?.at || '') - film.started_ms) / 1000)}.`;
+    case 'done': return `${name} is done: ${spokenDuration(film.result?.seconds || 0)}, checked from the file itself, in your media library.${film.result?.missing?.length ? ` ${film.result.missing.length} shots never passed their checks and were left out.` : ''}${lipLine(shots)} It took ${spokenDuration((Date.parse(film.result?.at || '') - film.started_ms) / 1000)}.`;
     case 'paused': return `${name} is paused at ${p.shots_verified} of ${p.shots_total} shots. Say "resume my movie" to continue; nothing is lost.`;
     case 'cancelled': return `${name} was stopped. Its finished shots are kept.`;
     case 'failed': return `${name} could not be finished: ${film.errors?.slice(-1)[0] || 'an unknown error'}. No film was made.`;
