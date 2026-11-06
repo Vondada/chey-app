@@ -73,10 +73,11 @@ export const DEFAULT_RATES = Object.freeze({
   kaggle_startup_s: 600, // GPU session start + model download
   kaggle_clip_s: 240, // one 5-second moving clip on a T4
   hf_clip_s: 60,
-  // Lip sync (LatentSync 1.5 on the same Kaggle T4). Starting estimates until measured: the one-time install of its own
-  // environment and checkpoints, then one talking shot.
-  lipsync_setup_s: 900,
-  kaggle_lipsync_s: 150,
+  // Lip sync (LatentSync 1.5 on the Kaggle T4s). Starting estimates until measured: the one-time install of its own
+  // environment and checkpoints (with uv, started with the session), then one talking shot (with DeepCache).
+  lipsync_setup_s: 600,
+  kaggle_lipsync_s: 100,
+  kaggle_gpus: 1, // the worker reports how many GPUs the session really has; two let clips and lip sync run at once
 });
 
 export const FARM_PROVIDERS = Object.freeze({
@@ -295,8 +296,12 @@ function planAt({ targetSeconds, deadlineSeconds = null, providers = [], rates =
   const etaFor = (unique, clips, lips = 0) => {
     const stillsS = unique / rates.images_per_s;
     const clipsS = clips > 0 ? farmClipSeconds(clips, p, rates) : 0;
-    // Lip sync runs on the Kaggle GPU after its clips: its own install once, then each talking shot.
-    const gpuS = lips > 0 ? Math.max(clipsS, rates.kaggle_startup_s) + rates.lipsync_setup_s + lips * rates.kaggle_lipsync_s : clipsS;
+    // Lip sync's install starts with the session, beside the clip model. With two GPUs the talking shots are lip-synced
+    // while the clips are made; with one, after them.
+    const ready = rates.kaggle_startup_s + rates.lipsync_setup_s;
+    const gpuS = lips <= 0 ? clipsS
+      : rates.kaggle_gpus >= 2 ? Math.max(clipsS, ready + lips * rates.kaggle_lipsync_s)
+        : Math.max(clipsS, ready) + lips * rates.kaggle_lipsync_s;
     return { stills_s: stillsS, clips_s: clipsS, lip_sync_s: gpuS - clipsS, total: scriptS + Math.max(stillsS, ttsS, gpuS) + encodeS + finishS };
   };
 

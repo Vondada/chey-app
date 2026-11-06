@@ -384,7 +384,7 @@ async function dispatchFarm(ctx, film, shots) {
     const usage = await loadUsage(ctx.storage, ctx.now || Date.now());
     const paid = await spend(ctx.storage, 'kaggle_seconds', seconds, { now: ctx.now || Date.now(), caps: { kaggle_seconds: usage.kaggle_seconds + left } });
     if (paid.ok) {
-      const session = await startKaggleSession(ctx.keys?.KAGGLE_API_TOKEN || ctx.env.KAGGLE_API_TOKEN, { base: ctx.base, film, token, seconds, username: kaggle.username }, ctx.fetcher || fetch);
+      const session = await startKaggleSession(ctx.keys?.KAGGLE_API_TOKEN || ctx.env.KAGGLE_API_TOKEN, { base: ctx.base, film, token, seconds, username: kaggle.username, lipsync: lips > 0 }, ctx.fetcher || fetch);
       if (session.ok) { film.farm = { ...record, provider: 'kaggle', session, started_ms: ctx.now || Date.now(), window_s: seconds }; return; }
       film.notes = [...(film.notes || []), safe(`Kaggle: ${session.error}`)];
     }
@@ -587,8 +587,21 @@ export async function filmTokenRoute(ctx, path, request) {
   const ledger = (await ctx.storage.get(ledgerKey)) || {};
   if (farm[2] === 'asset') return assetResponse(ctx, film, url.searchParams.get('key'));
   if (farm[2] === 'next') {
+    // kind: "clip" or "lipsync" (one loop per GPU on a two-GPU session), "any" (one GPU), or "hello" (the worker is up).
+    const kind = url.searchParams.get('kind') || 'any';
+    const gpus = Number(url.searchParams.get('gpus'));
+    if (kind === 'hello') {
+      // Real start-up time (session boot until the worker asks) and the GPU count, measured for the next plans.
+      if (!ledger.hello_ms) {
+        ledger.hello_ms = ctx.now || Date.now();
+        await patchLedger(ctx.storage, ledgerKey, 'hello_ms', () => ledger.hello_ms);
+        if (film.farm.started_ms) await recordRate(ctx.storage, 'kaggle_startup_s', (ledger.hello_ms - film.farm.started_ms) / 1000);
+        if (gpus > 0) await recordRate(ctx.storage, 'kaggle_gpus', gpus);
+      }
+      return json({ ok: true });
+    }
     const open = (s) => s.tier === 'A' && !s.clip_key && !ledger[s.n]?.key && s.status !== 'failed';
-    const shot = shots.find((s) => open(s) && !ledger[s.n]?.claimed_ms && shots.find((x) => x.n === s.still_of)?.still_key);
+    const shot = kind === 'lipsync' ? null : shots.find((s) => open(s) && !ledger[s.n]?.claimed_ms && shots.find((x) => x.n === s.still_of)?.still_key);
     if (!shot) {
       // Then lip sync: a talking shot whose picture (or moving clip) and voices are ready, unclaimed for 30 minutes.
       const chosen = talkers(film, shots);
@@ -597,18 +610,18 @@ export async function filmTokenRoute(ctx, path, request) {
       const stillOf = (s) => shots.find((x) => x.n === s.still_of)?.still_key || '';
       const ready = (s) => stillOf(s) && s.dialogue.every((d) => d.audio_key) && (s.tier !== 'A' || clipOf(s));
       const now = ctx.now || Date.now();
-      const lip = shots.find((s) => lipPending(film, s, ledger, chosen) && ready(s) && now - Number(ledger[s.n]?.lip_claimed_ms || 0) > 1_800_000);
+      const lip = kind === 'clip' ? null : shots.find((s) => lipPending(film, s, ledger, chosen) && ready(s) && now - Number(ledger[s.n]?.lip_claimed_ms || 0) > 1_800_000);
       if (lip) {
-        ledger[lip.n] = { ...(ledger[lip.n] || {}), lip_claimed_ms: now };
-        await ctx.storage.put(ledgerKey, ledger);
+        await patchLedger(ctx.storage, ledgerKey, lip.n, (cur) => ({ ...cur, lip_claimed_ms: now }));
         return json({ kind: 'lipsync', shot: lip.n, seconds: shotSeconds(lip), fps: 25, video_url: clipOf(lip) ? asset(clipOf(lip)) : '', image_url: asset(stillOf(lip)), audio: voiceTimes(lip).map((v) => ({ url: asset(v.key), at: v.at })) });
       }
       // Work still coming (clips claimed, or talking shots whose pictures and voices are not made yet): wait, do not stop.
-      if (shots.some(open) || shots.some((s) => lipPending(film, s, ledger, chosen))) return json({ wait: 30 });
+      const clipsLeft = kind !== 'lipsync' && shots.some(open);
+      const lipsLeft = kind !== 'clip' && shots.some((s) => lipPending(film, s, ledger, chosen));
+      if (clipsLeft || lipsLeft) return json({ wait: 30 });
       return json({ done: true });
     }
-    ledger[shot.n] = { ...(ledger[shot.n] || {}), claimed_ms: ctx.now || Date.now() };
-    await ctx.storage.put(ledgerKey, ledger);
+    await patchLedger(ctx.storage, ledgerKey, shot.n, (cur) => ({ ...cur, claimed_ms: ctx.now || Date.now() }));
     const still = shots.find((x) => x.n === shot.still_of).still_key;
     return json({ shot: shot.n, prompt: stillPrompt(shot, film.outline), image_url: `${ctx.base}/api/film/farm/${film.id}/asset?key=${encodeURIComponent(still)}`, frames: 121, fps: 24, steps: 30 });
   }
@@ -620,16 +633,15 @@ export async function filmTokenRoute(ctx, path, request) {
     const facts = mp4Facts(bytes);
     // A lip-synced clip replaces the shot's picture in the edit, so it must be a real H.264 MP4 the shot's full length.
     if (!(bytes.length > 20_000 && facts.video && facts.seconds >= shotSeconds(shot) - 0.5)) {
-      ledger[n] = { ...(ledger[n] || {}), lip_claimed_ms: 0, lip_rejected: (ledger[n]?.lip_rejected || 0) + 1, ...((ledger[n]?.lip_rejected || 0) >= 1 ? { lip_error: 'the lip-synced clip was not usable twice' } : {}) };
-      await ctx.storage.put(ledgerKey, ledger);
+      await patchLedger(ctx.storage, ledgerKey, n, (cur) => ({ ...cur, lip_claimed_ms: 0, lip_rejected: (cur.lip_rejected || 0) + 1, ...((cur.lip_rejected || 0) >= 1 ? { lip_error: 'the lip-synced clip was not usable twice' } : {}) }));
       return json({ ok: false, detail: 'That is not a usable lip-synced clip.' }, 422);
     }
     const key = `film/${film.id}/lips/${n}.mp4`;
     const saved = await mediaStore(ctx.env, ctx.storage).put(key, bytes, { contentType: 'video/mp4' });
     if (!saved.ok) return json({ ok: false, detail: saved.error }, 507);
-    ledger[n] = { ...(ledger[n] || {}), lip_key: key, lip_s: facts.seconds };
-    await ctx.storage.put(ledgerKey, ledger);
+    await patchLedger(ctx.storage, ledgerKey, n, (cur) => ({ ...cur, lip_key: key, lip_s: facts.seconds }));
     if (Number(url.searchParams.get('seconds')) > 0) await recordRate(ctx.storage, 'kaggle_lipsync_s', Number(url.searchParams.get('seconds')));
+    if (Number(url.searchParams.get('setup')) > 0) await recordRate(ctx.storage, 'lipsync_setup_s', Number(url.searchParams.get('setup')));
     return json({ ok: true });
   }
   if (farm[2] === 'lipfail' && request.method === 'POST') {
@@ -637,8 +649,7 @@ export async function filmTokenRoute(ctx, path, request) {
     const n = Number(body.shot);
     if (!shots.some((s) => s.n === n && s.dialogue.length)) return json({ detail: 'No such talking shot.' }, 404);
     // That shot keeps its picture; the film does not wait for it.
-    ledger[n] = { ...(ledger[n] || {}), lip_error: safe(body.error || 'lip sync failed') };
-    await ctx.storage.put(ledgerKey, ledger);
+    await patchLedger(ctx.storage, ledgerKey, n, (cur) => ({ ...cur, lip_error: safe(body.error || 'lip sync failed') }));
     return json({ ok: true });
   }
   if (farm[2] === 'result' && request.method === 'PUT') {
@@ -648,15 +659,13 @@ export async function filmTokenRoute(ctx, path, request) {
     const facts = mp4Facts(bytes);
     // A clip has no sound (voices are mixed later): it must be a real H.264 MP4 of at least three seconds.
     if (!(bytes.length > 20_000 && facts.video && facts.seconds >= 3)) {
-      ledger[n] = { ...(ledger[n] || {}), claimed_ms: 0, rejected: (ledger[n]?.rejected || 0) + 1 };
-      await ctx.storage.put(ledgerKey, ledger);
+      await patchLedger(ctx.storage, ledgerKey, n, (cur) => ({ ...cur, claimed_ms: 0, rejected: (cur.rejected || 0) + 1 }));
       return json({ ok: false, detail: 'That is not a usable clip.' }, 422);
     }
     const key = `film/${film.id}/clips/${n}.mp4`;
     const saved = await mediaStore(ctx.env, ctx.storage).put(key, bytes, { contentType: 'video/mp4' });
     if (!saved.ok) return json({ ok: false, detail: saved.error }, 507);
-    ledger[n] = { ...(ledger[n] || {}), key, seconds: facts.seconds, at: ctx.now || Date.now() };
-    await ctx.storage.put(ledgerKey, ledger);
+    await patchLedger(ctx.storage, ledgerKey, n, (cur) => ({ ...cur, key, seconds: facts.seconds, at: ctx.now || Date.now() }));
     if (Number(url.searchParams.get('seconds')) > 0 && film.farm.provider === 'kaggle') await recordRate(ctx.storage, 'kaggle_clip_s', Number(url.searchParams.get('seconds')));
     return json({ ok: true });
   }
@@ -665,6 +674,19 @@ export async function filmTokenRoute(ctx, path, request) {
     return json({ ok: true });
   }
   return json({ detail: 'Not found.' }, 404);
+}
+
+/**
+ * Changes one entry of the farm ledger from the ledger as stored now, never from a copy read earlier in the request:
+ * two GPUs upload at the same time, and a request that awaited its upload must not write back an older ledger over the
+ * other's result. The read and the write are back to back with nothing awaited between them, so in the Durable Object
+ * no other request runs in between (its input gate holds while storage is read).
+ */
+async function patchLedger(storage, key, entry, change) {
+  const fresh = (await storage.get(key)) || {};
+  fresh[entry] = change(fresh[entry] && typeof fresh[entry] === 'object' ? fresh[entry] : {});
+  await storage.put(key, fresh);
+  return fresh;
 }
 
 async function assetResponse(ctx, film, key) {
