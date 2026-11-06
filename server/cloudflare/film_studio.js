@@ -495,6 +495,40 @@ function firstJson(text) {
 }
 const clean = (v, n = 300) => String(v ?? '').replace(/\s+/g, ' ').trim().slice(0, n);
 
+/**
+ * The shots a writer reply holds even when the reply as a whole is not valid JSON: cut off at its token limit, a
+ * trailing comma, or an unescaped quote in one line. Each complete shot object is read on its own; a broken one is
+ * dropped, never guessed. Returns { shots: [...] } or null.
+ */
+function salvageShots(text) {
+  const s = String(text || '');
+  const key = s.search(/"shots"\s*:\s*\[/);
+  if (key < 0) return null;
+  const shots = [];
+  let depth = 0; let inStr = false; let esc = false; let start = -1;
+  for (let i = s.indexOf('[', key) + 1; i < s.length; i += 1) {
+    const c = s[i];
+    if (inStr) { if (esc) esc = false; else if (c === '\\') esc = true; else if (c === '"') inStr = false; continue; }
+    if (c === '"') inStr = true;
+    else if (c === '{') { if (depth === 0) start = i; depth += 1; }
+    else if (c === '}') {
+      depth -= 1;
+      if (depth === 0 && start >= 0) {
+        const body = s.slice(start, i + 1);
+        for (const tryText of [body, body.replace(/,\s*([}\]])/g, '$1')]) { try { shots.push(JSON.parse(tryText)); break; } catch (_) {} }
+        start = -1;
+      }
+    } else if (c === ']' && depth === 0) break;
+  }
+  return shots.length ? { shots } : null;
+}
+
+/** A writer reply as an object: the whole JSON when it parses, else the shots that can be read from it. */
+function writerJson(text) {
+  if (text && typeof text === 'object') return text;
+  return firstJson(text) || salvageShots(text);
+}
+
 /** Checks an outline from the writer; returns the cleaned outline or a reason it is unusable. */
 export function validOutline(raw, { shots, roster = null }) {
   const o = raw && typeof raw === 'object' ? raw : null;
@@ -542,6 +576,19 @@ export function validSceneShots(raw, scene, characters) {
   return { shots };
 }
 
+/**
+ * The scene as its outline describes it, when the writer could not give its shots: one shot per planned shot, showing
+ * the outline's setting and action with its cast, without dialogue. The film says so in its notes.
+ */
+export function outlineShots(scene, characters) {
+  const ids = characters.map((c) => c.id).slice(0, 4);
+  const views = ['wide shot', 'medium shot', 'close shot'];
+  return Array.from({ length: scene.shots }, (_, i) => ({
+    description: clean(`${views[i % views.length]}: ${scene.setting}. ${scene.summary}`, 500),
+    camera: ['slow push in', 'pan right', 'static'][i % 3], dialogue: [], sound: '', characters: ids,
+  }));
+}
+
 export function outlineMessages({ topic, targetSeconds, shots, roster = null }) {
   if (roster?.length) {
     const cast = roster.map((r) => `${r.id} (${r.name}${r.role ? `, ${r.role}` : ''})`).join('; ');
@@ -556,11 +603,11 @@ export function outlineMessages({ topic, targetSeconds, shots, roster = null }) 
   ];
 }
 
-export function sceneMessages(outline, scene) {
+export function sceneMessages(outline, scene, count = scene.shots) {
   const cast = outline.characters.map((c) => `${c.id}: ${c.name}, ${c.look}`).join('\n');
   return [
     { role: 'system', content: 'You are a screenwriter writing a shot list. Reply with JSON only, no prose.' },
-    { role: 'user', content: `Film: ${outline.title}. ${outline.logline}\nCast:\n${cast}\nScene ${scene.id} of ${outline.scenes.length}: ${scene.setting}. ${scene.summary}\nWrite exactly ${scene.shots} shots. JSON: {"shots":[{"description":"what the camera sees, concrete and visual","camera":"slow push in|pull out|pan left|pan right|tilt up|static","characters":["id"],"dialogue":[{"character":"id","line":"short spoken line"}],"sound":"ambient sound or effect"}]}. Keep lines short; about half the shots have dialogue.` },
+    { role: 'user', content: `Film: ${outline.title}. ${outline.logline}\nCast:\n${cast}\nScene ${scene.id} of ${outline.scenes.length}: ${scene.setting}. ${scene.summary}\nWrite exactly ${count} shots. JSON: {"shots":[{"description":"what the camera sees, concrete and visual","camera":"slow push in|pull out|pan left|pan right|tilt up|static","characters":["id"],"dialogue":[{"character":"id","line":"short spoken line"}],"sound":"ambient sound or effect"}]}. Keep lines short; about half the shots have dialogue. Inside a line use single quotes, never double quotes.` },
   ];
 }
 
@@ -850,4 +897,4 @@ export function speakFarm(providers) {
   return `My free render farm: ${lines.join(' ')} Your own computer is never part of it.`;
 }
 
-export const _internals = { SHOT_SECONDS, CLIP_SECONDS, MAX_REUSE, DEADLINE_REUSE, MAX_ATTEMPTS, SHOTS_PER_CHUNK, firstJson, isoWeek };
+export const _internals = { SHOT_SECONDS, CLIP_SECONDS, MAX_REUSE, DEADLINE_REUSE, MAX_ATTEMPTS, SHOTS_PER_CHUNK, firstJson, salvageShots, writerJson, isoWeek };
