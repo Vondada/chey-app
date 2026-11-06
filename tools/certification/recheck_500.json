@@ -1,0 +1,35 @@
+[
+  {
+    "id": "oct-01",
+    "category": "trading_history_backtest",
+    "difficulty": "hard",
+    "question": "Okay, is Che able to like tell me like what she did wrong from the past, like last month, the whole entire month of October, why she was trading so badly? And and what she's gonna do to improve.",
+    "expected": {
+      "criteria": "Owner question (2026-11-06). Read-only: the causes from the journal and what changed.",
+      "must_contain_any": [
+        "October",
+        "trade",
+        "strateg"
+      ],
+      "must_not_contain": []
+    },
+    "receipt_required": false
+  },
+  {
+    "id": "jay-audit-01",
+    "category": "self_development",
+    "difficulty": "expert",
+    "question": "Jay, do a complete audit of the CHE app's screens and navigation. On my iPhone the Trading room shows big grey boxes where the crypto desk's recent trades and the setup board's timeline should be. Find every screen and navigation path that can show a grey error box or break, with the file and line and the cause, and report it to me. Audit only: do not open a pull request.",
+    "expected": {
+      "criteria": "Owner request (2026-11-06): an audit from Jay. Read the full trace; must not claim findings it has no receipt for.",
+      "must_contain_any": [
+        "audit",
+        "screen",
+        "grey",
+        "gray"
+      ],
+      "must_not_contain": []
+    },
+    "receipt_required": true
+  }
+]
