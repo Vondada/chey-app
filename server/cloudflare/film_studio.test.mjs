@@ -628,6 +628,11 @@ test('the office story words: what starts one and what does not', () => {
   assert.equal(filmIntent('Make a film about an office romance in 1950s New York').office, undefined);
   assert.equal(filmIntent('Make a video about black holes'), null, 'ordinary videos stay with the video renderer');
   assert.equal(filmIntent('How is the office story going?'), null);
+  // Codex on #949: a question only plans, and the plot after "starring" is kept.
+  const ask = filmIntent('How long would it take to make a 3-minute movie about my crew?');
+  assert.deepEqual([ask.kind, ask.seconds], ['plan', 180]);
+  const heist = filmIntent('Make a movie starring my crew solving a bank robbery');
+  assert.deepEqual([heist.kind, heist.office, heist.topic], ['make', true, 'my crew solving a bank robbery']);
 });
 
 test('a fixed cast: the writer picks who appears, never their names or looks; a cast nobody uses is refused', () => {

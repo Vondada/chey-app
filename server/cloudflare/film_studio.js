@@ -412,7 +412,9 @@ export function filmIntent(message = '') {
   // A story set in the office is a film played by the crew, even when the owner calls it a video.
   const office = /\b(?:the|my|our|your|che'?s)\s+(?:office|crew|team)\b|\bla agencia\b/i.test(t);
   if (office && /\b(?:make|create|produce|shoot|render|generate)\b/i.test(t) && /\b(?:story|episode|skit|movie|film)\b/i.test(t) && !/\b(?:how(?:'s| is)|status|ready)\b/i.test(t)) {
-    const about = /\b(?:about|of|where|in which)\s+(.{3,300}?)[.!?]*$/i.exec(t);
+    // Asking how long one would take only plans it; it never starts a film.
+    if (/\bhow long\b|\bhow fast\b|\bcould you\b.*\bin\b|\bcan you make\b.*\bin\b/i.test(t) && !/\b(?:please|now|go ahead)\b/i.test(t)) return { kind: 'plan', seconds: lengthFrom(t) || 60, deadline: deadlineFrom(t) };
+    const about = /\b(?:about|on|of|starring|featuring|where|in which)\s+(.{3,300}?)[.!?]*$/i.exec(t);
     return { kind: 'make', seconds: lengthFrom(t) || 60, deadline: deadlineFrom(t), topic: clean(about ? about[1] : 'something that happens in the office', 300), office: true };
   }
   if (!FILM_WORD.test(t)) return null;
