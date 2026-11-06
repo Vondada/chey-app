@@ -11,6 +11,10 @@ on:
         description: How long to capture (30-180)
         type: number
         default: 90
+      chat_message:
+        description: Optional owner chat turn to send through /api/probe/chat while capturing (diagnosis)
+        type: string
+        default: ''
 
 permissions:
   contents: read
@@ -49,6 +53,7 @@ jobs:
         working-directory: server/cloudflare
         env:
           SECONDS_TO_CAPTURE: ${{ inputs.seconds }}
+          CHAT_MESSAGE: ${{ inputs.chat_message }}
         run: |
           mkdir -p "$RUNNER_TEMP/logs"
           secs="${SECONDS_TO_CAPTURE:-90}"
@@ -59,6 +64,11 @@ jobs:
           for path in /api/trading/probe; do
             curl -s -o "$RUNNER_TEMP/logs/probe-$(basename $path).json" -w "$path HTTP %{http_code}\n" -X POST -H "Authorization: Bearer $CHE_VOICE_PROBE_TOKEN" "$CHE_LIVE_BASE$path" || true
           done
+          if [ -n "$CHAT_MESSAGE" ]; then
+            node -e 'process.stdout.write(JSON.stringify({ message: process.env.CHAT_MESSAGE, history: [], client: { platform: "web" } }))' > "$RUNNER_TEMP/logs/chat-body.json"
+            curl -s -o "$RUNNER_TEMP/logs/probe-chat.txt" -w "/api/probe/chat HTTP %{http_code}\n" -X POST -H "Authorization: Bearer $CHE_VOICE_PROBE_TOKEN" -H "Content-Type: application/json" --data @"$RUNNER_TEMP/logs/chat-body.json" "$CHE_LIVE_BASE/api/probe/chat" || true
+            echo "chat reply head: $(head -c 600 "$RUNNER_TEMP/logs/probe-chat.txt")"
+          fi
           sleep "$secs"
           kill "$tail_pid" 2>/dev/null || true
           wait "$tail_pid" 2>/dev/null || true
@@ -92,6 +102,10 @@ jobs:
                   counts["non-object line"] += 1
                   continue
               counts[str(event.get("outcome"))] += 1
+              for log in event.get("logs") or []:
+                  line = " ".join(str(x) for x in (log.get("message") or [])) if isinstance(log, dict) else str(log)
+                  if any(w in line.lower() for w in ("error", "exceed", "too many", "fail")) and len(messages) < 20:
+                      messages.append("log " + str(log.get("level") if isinstance(log, dict) else "") + ": " + line[:300])
               for exc in event.get("exceptions") or []:
                   if len(messages) < 10:
                       text_ = exc.get("message") if isinstance(exc, dict) else exc
