@@ -114,6 +114,7 @@ import { marketUniverse, searchUniverse } from './market_universe.js';
 import { readRithmicCandles, storeRithmicCandles } from './rithmic_dataset.js';
 import { gatherTradingStatus, tradingStatusIntent, tradingStatusReply } from './trading_answers.js';
 import { lossAnswer } from './trading_loss_review.js';
+import { citedAnswer } from './code_citations.js';
 // A spoken cancel of one Alpaca PAPER order waiting for the owner's yes, or for his pick from a numbered list.
 const CHART_CANCEL_PENDING = 'trading_chart_cancel_pending';
 // "Number 2", "2", "the second one": a pick from a numbered list of n. 0 when the turn picks nothing.
@@ -15488,8 +15489,8 @@ export class CheState extends DurableObject {
     // Only a path the pinned read returned may be named; any other file, lint run or dependency is a fabrication.
     const verifiedPaths = new Set([...(inspected.files || []), ...(inspected.discovery?.files || [])].map((file) => file.path).filter(Boolean));
     const checked = guardExecutionClaims(masked, { message: question, receipts: [], verifiedPaths });
-    if (!checked.removed.length) return text;
-    return checked.text.replace(/\u27e6sha(\d+)\u27e7/g, (_, i) => hashes[Number(i)] || '');
+    const kept = checked.removed.length ? checked.text.replace(/\u27e6sha(\d+)\u27e7/g, (_, i) => hashes[Number(i)] || '') : text;
+    return citedAnswer(kept, inspected.files);
   }
 
   // Owner chat reply for a coding request. Proposal → short summary;
