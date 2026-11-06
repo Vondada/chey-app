@@ -1,0 +1,3 @@
+[
+  {"id": "office-story-status-01", "category": "creative", "difficulty": "easy", "question": "How is my movie going?", "expected": {"criteria": "The film's real progress from the stored state.", "must_contain_any": ["shots", "being written", "assembled", "done"], "must_not_contain": []}}
+]
