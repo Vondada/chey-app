@@ -3,8 +3,7 @@
 // PageStorageKey nothing is saved, so nothing can collide. The Trading room list had one, every ExpansionTile under it
 // read the list's scroll offset as its open state and threw ("type 'double' is not a subtype of type 'bool?'"), and a
 // release build drew a grey box (test/che_trading_room_grey_box_test.dart). Keying the tiles instead made each tile
-// share a slot with the text fields inside it (CI run 42154263918). So lib/ uses no PageStorageKey: a list that should
-// keep its place uses a ScrollController, as the Trading room does.
+// share a slot with the text fields inside it (CI run 42154263918). So lib/ uses no PageStorageKey.
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -19,6 +18,6 @@ void main() {
         if (code.contains('PageStorageKey')) found.add('${f.path}:${i + 1}');
       }
     }
-    expect(found, isEmpty, reason: 'keep a list\'s place with a ScrollController instead (see lib/rooms/che_trading_room.dart)');
+    expect(found, isEmpty, reason: 'a list that must keep its place should use a ScrollController owned by its State, never a PageStorageKey');
   });
 }

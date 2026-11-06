@@ -82,6 +82,10 @@ void main() {
     await tester.pump(const Duration(milliseconds: 500));
     await tester.pump(const Duration(milliseconds: 500));
     _noError(tester, 'after tab switch');
-    expect(find.textContaining('Recent simulated trades'), findsWidgets);
+    // Scroll to the crypto desk's expandable section: it builds, and nothing throws on the way.
+    await tester.dragUntilVisible(find.textContaining('Recent simulated trades'), find.byType(Scrollable).last, const Offset(0, -200));
+    await tester.pump(const Duration(milliseconds: 300));
+    _noError(tester, 'scrolled to the section');
+    expect(find.textContaining('Recent simulated trades'), findsOneWidget);
   });
 }
