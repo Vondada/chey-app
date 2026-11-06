@@ -159,6 +159,19 @@ test('the speed targets: a 2-hour film by the hour runs twenty runners and frame
 
 // ─── Free allowances ─────────────────────────────────────────────────────────
 
+test('same faces are planned at what they really cost: a short film gets them within today\'s allowance; a 10-minute film is told it cannot', () => {
+  const short = planFilm({ targetSeconds: 60, providers: providers(), now: NOW });
+  assert.equal(short.faces, true);
+  assert.equal(short.neurons.stills, Math.round(short.unique_stills * NEURONS.picture), "priced at the reference picture");
+  assert.ok(short.neurons.stills + short.neurons.cast + short.neurons.voices <= short.neurons.left_today, 'pictures, portraits and voices fit what is left today');
+  // Codex on #948: 100 new pictures at the reference price would need about 11,000 neurons, over the film's daily share.
+  const ten = planFilm({ targetSeconds: 600, providers: providers(), now: NOW });
+  assert.equal(ten.faces, false);
+  assert.equal(ten.reuse, 1, 'it keeps one new picture per shot instead of reframing for faces');
+  assert.ok(ten.notes.some((n) => /cannot keep faces the same .* faces come from the written descriptions/.test(n)));
+  assert.match(speakPlan(ten), /faces come from the written descriptions/);
+});
+
 test('free allowances are hard caps: spending past one is refused and nothing is taken', async () => {
   const st = memory();
   assert.equal((await spend(st, 'neurons', FILM_NEURON_SHARE - 10, { now: NOW })).ok, true);
@@ -337,7 +350,15 @@ function fakeAI({ badFirst = 0 } = {}) {
     calls: () => still,
     run: async (model, input) => {
       if (Array.isArray(input?.messages) && /screenwriter/.test(input.messages[0]?.content || '')) return { response: await write(input.messages) };
-      if (/flux/.test(model) && /reference portrait/.test(input?.prompt || '')) return { image: b64(jpeg()) }; // cast portraits
+      if (/flux-2-klein/.test(model)) {
+        // FLUX.2 klein reads a multipart form; like the real model, it refuses a reference of 512x512 or more.
+        const form = await new Response(input.multipart.body, { headers: { 'content-type': input.multipart.contentType } }).formData();
+        input.form = form;
+        const ref = form.get('input_image_0');
+        if (!ref) return { image: b64(jpeg({ size: Number(form.get('width')), bytes: 20_000 })) }; // a cast portrait
+        const size = imageSize(new Uint8Array(await ref.arrayBuffer()));
+        if (!size || size.width >= 512 || size.height >= 512) throw new Error(`input image must be smaller than 512x512 (got ${size?.width}x${size?.height})`);
+      }
       if (/flux/.test(model)) { still += 1; return { image: b64(still <= badFirst ? jpeg({ bytes: 4000 }) : jpeg()) }; }
       if (/melotts/.test(model)) return { audio: b64(mp3(1 + input.prompt.length / 30)) };
       return { response: 'ok' };
@@ -486,11 +507,13 @@ test('one face per character: a portrait is made once, every shot of her is draw
   const portraitKey = `film/${film.id}/cast/mara.jpg`;
   assert.equal(film.cast.mara.key, portraitKey);
   assert.ok(bucket.objects.has(portraitKey), 'the portrait is kept in the film files');
-  assert.equal(calls.filter((c) => /cast|reference portrait/i.test(c.input?.prompt || '')).length, 1, 'the portrait is made once');
+  const portraits = calls.filter((c) => /reference portrait/i.test(c.input?.form?.get('prompt') || ''));
+  assert.equal(portraits.length, 1, 'the portrait is made once');
+  assert.deepEqual([portraits[0].input.form.get('width'), portraits[0].input.form.get('height')], ['448', '448'], 'under the reference input limit');
   const refs = calls.filter((c) => c.model === '@cf/black-forest-labs/flux-2-klein-4b');
   assert.ok(refs.length >= 1);
   // The reference model gets the real portrait as its input image, in a multipart form.
-  const form = await new Response(refs[0].input.multipart.body, { headers: { 'content-type': refs[0].input.multipart.contentType } }).formData();
+  const form = refs.find((c) => c.input.form?.get('input_image_0')).input.form;
   assert.match(form.get('prompt'), /Mara: woman, 60, grey braid/);
   const sent = new Uint8Array(await form.get('input_image_0').arrayBuffer());
   const kept = new Uint8Array(await (await bucket.get(portraitKey)).arrayBuffer());
@@ -504,7 +527,8 @@ test('a reference model that fails is said once, and the film is still made from
   const { storage, ai, ctx } = await studio({ seconds: 60 });
   const run = ai.run;
   let refCalls = 0;
-  ai.run = async (model, input) => { if (/flux-2-klein/.test(model)) { refCalls += 1; throw new Error('5006: unsupported input'); } return run(model, input); };
+  // The portrait works; drawing a shot from it fails.
+  ai.run = async (model, input) => { const out = await run(model, input); if (input?.form?.get('input_image_0')) { refCalls += 1; throw new Error('5006: unsupported input'); } return out; };
   const film = await runUntil(ctx, ['assembling', 'failed']);
   assert.equal(film.state, 'assembling', film.errors?.join('; '));
   assert.ok(refCalls >= 1 && refCalls <= 4, `only the first batch of four pictures tried it (${refCalls})`);

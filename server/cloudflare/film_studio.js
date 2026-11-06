@@ -31,9 +31,15 @@ export const TTS_MODEL = '@cf/myshell-ai/melotts';
 // Neuron costs from the Workers AI pricing page (read 2026-10-22). FLUX.1 schnell: 4.80 per 512x512 tile plus 9.60 per
 // step; it renders 1024x1024 (4 tiles) at 4 steps. MeloTTS: 18.63 per audio minute. FLUX.2 klein 4B: 26.05 per output
 // tile plus 5.37 per input tile (one 512x512 reference).
+// A cast portrait is one FLUX.2 klein tile (448x448: reference inputs must be under 512x512, Cloudflare changelog
+// 2026-01-15). The planner prices every new picture at the reference price, which also covers a plain picture.
+export const PORTRAIT_SIZE = 448;
+export const MAX_CAST = 6;
 export const NEURONS = Object.freeze({
   still: 4 * 4.8 + 4 * 9.6,
   reference_still: 4 * 26.05 + 5.37,
+  portrait: 26.05,
+  picture: Math.max(4 * 26.05 + 5.37, 4 * 4.8 + 4 * 9.6),
   tts_per_minute: 18.63,
 });
 // Workers AI gives 10,000 neurons a day free, shared with everything else CHE does. The film uses at most this share
@@ -174,10 +180,10 @@ export async function farmProviders(env = {}, storage, { now = Date.now(), inter
   const neuronsLeft = Math.max(0, FILM_NEURON_SHARE - usage.neurons);
   add('workers_ai', {
     status: !aiBound ? 'not set up' : valid.workers_ai?.ok ? 'connected' : 'built in, not yet checked',
-    usable: aiBound && neuronsLeft > NEURONS.still,
-    remaining: { neurons: round(neuronsLeft), stills: Math.floor(neuronsLeft / NEURONS.still) },
+    usable: aiBound && neuronsLeft > NEURONS.picture,
+    remaining: { neurons: round(neuronsLeft), stills: Math.floor(neuronsLeft / NEURONS.picture) },
     resets_in_s: secondsUntilReset('day', now),
-    detail: aiBound ? `${round(neuronsLeft)} of the film's ${FILM_NEURON_SHARE} neurons left today (about ${Math.floor(neuronsLeft / NEURONS.still)} pictures).` : 'The Worker has no Workers AI binding.',
+    detail: aiBound ? `${round(neuronsLeft)} of the film's ${FILM_NEURON_SHARE} neurons left today (about ${Math.floor(neuronsLeft / NEURONS.picture)} pictures).` : 'The Worker has no Workers AI binding.',
   });
 
   const ghConfigured = Boolean(env.CHE_GITHUB_TOKEN && env.CHE_GITHUB_REPO);
@@ -242,7 +248,21 @@ export function defaultDeadline(targetSeconds) {
  * rates and the free allowance actually left. Moving clips (tier A) are used only where the budget and the deadline
  * both allow; everything else is tier B (FAST): a still with camera motion, voice, music and sound.
  */
-export function planFilm({ targetSeconds, deadlineSeconds = null, providers = [], rates = DEFAULT_RATES, measured = {}, dialogueSeconds = null, uniqueWanted = null, now = Date.now() } = {}) {
+/**
+ * The plan, priced the way the pipeline spends. Same-face pictures (a cast portrait plus the reference model) cost about
+ * twice a plain picture, so a film gets them only when they need no extra reframing, no extra wait for the free
+ * allowance and no missed deadline; otherwise faces come from the written descriptions, and the plan says so.
+ */
+export function planFilm(args = {}) {
+  const faces = planAt(args, { picture: NEURONS.picture, cast: MAX_CAST * NEURONS.portrait });
+  const plain = planAt(args, { picture: NEURONS.still, cast: 0 });
+  if (!plain.ok) return plain;
+  if (faces.ok && faces.reuse === plain.reuse && faces.waits_for_reset_s <= plain.waits_for_reset_s && (faces.meets_deadline || !plain.meets_deadline)) return { ...faces, faces: true };
+  plain.notes.push('The free picture allowance cannot keep faces the same from shot to shot for a film this size today, so faces come from the written descriptions.');
+  return { ...plain, faces: false };
+}
+
+function planAt({ targetSeconds, deadlineSeconds = null, providers = [], rates = DEFAULT_RATES, measured = {}, dialogueSeconds = null, uniqueWanted = null, now = Date.now() } = {}, price) {
   const target = Math.max(20, Math.min(4 * 3600, Math.round(Number(targetSeconds) || 0)));
   const deadline = deadlineSeconds == null ? defaultDeadline(target) : Math.max(0, Number(deadlineSeconds));
   const p = Object.fromEntries(providers.map((x) => [x.id, x]));
@@ -258,8 +278,9 @@ export function planFilm({ targetSeconds, deadlineSeconds = null, providers = []
     return { ok: false, target_s: target, deadline_s: deadline, said: gha?.status === 'not set up' ? 'I cannot assemble a film: GitHub Actions is not set up (CHE_GITHUB_TOKEN and CHE_GITHUB_REPO).' : `I cannot assemble a film right now: ${gha?.detail || 'GitHub Actions is not reachable.'}` };
   }
   const ttsNeurons = (speech / 60) * NEURONS.tts_per_minute;
+  const castNeurons = price.cast; // room for the cast portraits, made before any shot
   const neuronsLeft = Number(ai.remaining?.neurons || 0);
-  const stillsToday = Math.max(0, Math.floor((neuronsLeft - ttsNeurons) / NEURONS.still));
+  const stillsToday = Math.max(0, Math.floor((neuronsLeft - ttsNeurons - castNeurons) / price.picture));
   const wanted = Math.max(1, uniqueWanted == null ? shots : Number(uniqueWanted));
   // Segments run on parallel runners: about a minute of film each, at most the free-plan concurrency.
   const segments = Math.max(1, Math.min(GHA_MAX_PARALLEL, Math.ceil(target / 60)));
@@ -283,7 +304,7 @@ export function planFilm({ targetSeconds, deadlineSeconds = null, providers = []
   if (reuse > reuseCap) {
     reuse = reuseCap;
     const short = Math.ceil(wanted / MAX_REUSE) - stillsToday;
-    const perDay = Math.floor((FILM_NEURON_SHARE - ttsNeurons) / NEURONS.still);
+    const perDay = Math.floor((FILM_NEURON_SHARE - ttsNeurons) / price.picture);
     waitS = secondsUntilReset('day', now) + Math.max(0, Math.ceil(short / Math.max(1, perDay)) - 1) * 86400;
     notes.push(`The free picture allowance gives about ${stillsToday} new pictures today, so the rest wait for the reset at midnight UTC.`);
   }
@@ -312,7 +333,7 @@ export function planFilm({ targetSeconds, deadlineSeconds = null, providers = []
     shots, tier_a: clips, tier_b: shots - clips, unique_stills: unique, reuse, segments,
     eta_s: eta, meets_deadline: meets, waits_for_reset_s: waitS, estimated,
     parts: { script_s: round(scriptS), stills_s: round(parts.stills_s), voices_s: round(ttsS), clips_s: round(parts.clips_s), assembly_s: round(encodeS), finish_s: round(finishS) },
-    neurons: { stills: round(unique * NEURONS.still), voices: round(ttsNeurons), left_today: round(neuronsLeft) },
+    neurons: { stills: round(unique * price.picture), cast: round(castNeurons), voices: round(ttsNeurons), left_today: round(neuronsLeft) },
     providers_used: ['workers_ai', 'github_actions', ...(clips ? ['kaggle', 'hf_zerogpu'].filter((id) => p[id]?.usable) : [])],
     notes,
   };
@@ -622,6 +643,16 @@ export function imageSize(bytes) {
  * A picture passes when it is a real image of the expected size with enough detail (a blank or flat frame compresses
  * to almost nothing). An optional vision check, when the owner turned it on, must also say it matches the shot.
  */
+/** A cast portrait: a real picture under the reference model's 512x512 input limit, with real detail. */
+export function checkPortrait(bytes) {
+  const size = imageSize(bytes);
+  if (!size) return { ok: false, reason: 'not a real image' };
+  if (size.width >= 512 || size.height >= 512) return { ok: false, reason: `too large for a reference (${size.width}x${size.height})` };
+  if (size.width < 256 || size.height < 256) return { ok: false, reason: `too small (${size.width}x${size.height})` };
+  if (bytes.length < 8_000) return { ok: false, reason: 'almost no detail (a blank or flat frame)' };
+  return { ok: true, width: size.width, height: size.height, bytes: bytes.length };
+}
+
 export function checkStill(bytes, { minBytes = 25_000, vision = null } = {}) {
   const size = imageSize(bytes);
   if (!size) return { ok: false, reason: 'not a real image' };

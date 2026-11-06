@@ -3,8 +3,8 @@
 // film/<id>/, so a film survives restarts and can be paused and resumed without losing anything.
 
 import {
-  FilmStore, FILM_VALIDATION_KEY, NEURONS, REFERENCE_MODEL, STILL_MODEL, TTS_MODEL,
-  assemblyPlan, checkStill, farmProviders, learnFromCheck, loadRates, loadUsage, mp3Seconds, newFilm, outlineMessages, planFilm,
+  FilmStore, FILM_VALIDATION_KEY, MAX_CAST, NEURONS, PORTRAIT_SIZE, REFERENCE_MODEL, STILL_MODEL, TTS_MODEL,
+  assemblyPlan, checkPortrait, checkStill, farmProviders, learnFromCheck, loadRates, loadUsage, mp3Seconds, newFilm, outlineMessages, planFilm,
   portraitPrompt, recordRate, reserve, sceneMessages, seedFor, segmentSpec, shotList, spend, speakPlan, stillPrompt, validOutline, validSceneShots,
   _internals,
 } from './film_studio.js';
@@ -143,17 +143,19 @@ async function castStep(ctx, film, media) {
   const { env, storage } = ctx;
   const now = ctx.now || Date.now();
   film.cast = film.cast || {};
-  const want = (film.outline?.characters || []).filter((c) => !film.cast[c.id]?.done).slice(0, STILL_BATCH);
+  if (film.plan?.faces !== true) return false; // planned without same-face pictures (or planned before they existed)
+  const want = (film.outline?.characters || []).slice(0, MAX_CAST).filter((c) => !film.cast[c.id]?.done).slice(0, STILL_BATCH);
   if (!want.length) return false;
   film.waiting = '';
-  const paid = await reserve(storage, 'neurons', NEURONS.still, want.length, { now });
+  const paid = await reserve(storage, 'neurons', NEURONS.portrait, want.length, { now });
   if (!paid) { film.waiting = 'Waiting for tomorrow\'s free picture allowance (it resets at midnight UTC).'; return true; }
   await Promise.all(want.slice(0, paid).map(async (c) => {
     const entry = film.cast[c.id] || { tries: 0 };
     try {
-      const out = await env.AI.run(STILL_MODEL, imagePayload(STILL_MODEL, { prompt: portraitPrompt(c), steps: 4, seed: c.seed }).payload);
+      // Made at 448x448 by the reference model itself, so it can be that model's input as it is (no resizing).
+      const out = await klein(env, { prompt: portraitPrompt(c), width: PORTRAIT_SIZE, height: PORTRAIT_SIZE, seed: c.seed });
       const bytes = out?.image ? b64ToBytes(out.image) : null;
-      const check = bytes ? checkStill(bytes) : { ok: false, reason: 'the image model returned no picture' };
+      const check = bytes ? checkPortrait(bytes) : { ok: false, reason: 'the image model returned no picture' };
       if (!check.ok) throw new Error(check.reason);
       const key = `film/${film.id}/cast/${c.id}.jpg`;
       const saved = await media.put(key, bytes, { contentType: 'image/jpeg' });
@@ -162,7 +164,7 @@ async function castStep(ctx, film, media) {
     } catch (error) {
       entry.tries += 1;
       entry.reason = safe(error?.message || error);
-      if (entry.tries >= MAX_ATTEMPTS) entry.done = true; // given up: this character's shots use the description only
+      if (entry.tries >= MAX_ATTEMPTS) { entry.done = true; film.ref_off = film.ref_off || `portrait: ${entry.reason}`; } // given up: description only
       film.cast[c.id] = entry;
     }
   }));
@@ -176,12 +178,14 @@ async function castStep(ctx, film, media) {
 async function referenceStill(env, media, prompt, portraitKey, seed) {
   const portrait = await media.get(portraitKey);
   if (!portrait?.body?.length) throw new Error('the portrait file is missing');
+  return klein(env, { prompt, width: 1024, height: 576, seed }, portrait.body);
+}
+
+/** One FLUX.2 klein call: its input is a multipart form, with an optional reference picture. */
+function klein(env, fields, image = null) {
   const form = new FormData();
-  form.append('prompt', prompt);
-  form.append('input_image_0', new Blob([portrait.body], { type: 'image/jpeg' }), 'portrait.jpg');
-  form.append('width', '1024');
-  form.append('height', '576');
-  form.append('seed', String(seed));
+  for (const [k, v] of Object.entries(fields)) form.append(k, String(v));
+  if (image) form.append('input_image_0', new Blob([image], { type: 'image/jpeg' }), 'portrait.jpg');
   const body = new Response(form);
   return env.AI.run(REFERENCE_MODEL, { multipart: { body: body.body, contentType: body.headers.get('content-type') } });
 }
@@ -209,7 +213,7 @@ async function makeStep(ctx, store, film) {
   // A shot whose lead has a portrait is drawn from it; the allowance is reserved at the reference price, which also
   // covers the plain picture if the reference model fails.
   const portraitOf = (shot) => (film.ref_off ? '' : film.cast?.[shot.characters?.[0]]?.key || '');
-  const stillCost = wantStill.some(portraitOf) ? Math.max(NEURONS.reference_still, NEURONS.still) : NEURONS.still;
+  const stillCost = wantStill.some(portraitOf) ? NEURONS.picture : NEURONS.still;
   const stillsPaid = wantStill.length ? await reserve(storage, 'neurons', stillCost, wantStill.length, { now }) : 0;
   if (wantStill.length && !stillsPaid) film.waiting = 'Waiting for tomorrow\'s free picture allowance (it resets at midnight UTC).';
   if (stillsPaid) {
