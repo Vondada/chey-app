@@ -6,7 +6,7 @@ import test from 'node:test';
 import {
   DEFAULT_RATES, FARM_PROVIDERS, FILM_NEURON_SHARE, FilmStore, NEURONS, assemblyPlan, checkStill, deadlineFrom, farmProviders,
   filmIntent, imageSize, lengthFrom, loadRates, loadUsage, mp3Seconds, planFilm, recordRate, reserve, segmentSpec, shotList,
-  speakFarm, speakPlan, speakStatus, spend, validOutline, validSceneShots, _internals,
+  outlineMessages, speakFarm, speakPlan, speakStatus, spend, validOutline, validSceneShots, _internals,
 } from './film_studio.js';
 import { HF_SPACE_FILES, KAGGLE_WORKER_PY, durationSeconds, farmTokenOpens, kaggleAuth, kaggleWorkerScript, newFarmToken, startKaggleSession, validateKaggle } from './film_farm.js';
 import { filmTick, filmTokenRoute, remakeShot, setFilmState, startFilm } from './film_pipeline.js';
@@ -337,9 +337,12 @@ test('Keys: a Kaggle token is tested with a real authenticated POST before it is
 function writer() {
   return async (messages) => {
     const last = messages[messages.length - 1].content;
+    // A fixed cast: the writer names cast ids (and one stranger, and a look of its own, which must be ignored).
+    if (/Write the outline/.test(last) && /fixed cast of office members/.test(last)) return JSON.stringify({ ...OUTLINE, title: 'The Coffee Machine', characters: [{ id: 'knox', look: 'a pirate' }, { id: 'CHE' }, { id: 'ghost' }] });
     if (/Write the outline/.test(last)) return `Here you go:\n${JSON.stringify(OUTLINE)}`;
     const n = Number(/Write exactly (\d+) shots/.exec(last)[1]);
-    return JSON.stringify(SHOTS(n));
+    const lead = /Cast:\n(\w+):/.exec(last)?.[1] || 'mara';
+    return JSON.stringify({ shots: SHOTS(n).shots.map((x) => ({ ...x, characters: [lead], dialogue: x.dialogue.map((d) => ({ ...d, character: lead })) })) });
   };
 }
 
@@ -644,4 +647,67 @@ test('through /api/chat: the owner\'s words start a film with its ETA, status an
     const farm = await say('render farm status');
     assert.match(farm.reply, /Your own computer is never part of it/);
   } finally { globalThis.fetch = before; }
+});
+
+test('a story in the office is played by the real crew with their fixed looks, even when the owner says "video"', async () => {
+  const { writeFileSync, unlinkSync } = await import('node:fs');
+  const generated = new URL('./.film_office.test.generated.mjs', import.meta.url);
+  writeFileSync(generated, readFileSync(new URL('./worker.js', import.meta.url), 'utf8').replace("import { DurableObject } from 'cloudflare:workers';", 'class DurableObject { constructor(ctx, env) { this.ctx = ctx; this.env = env; } }'), 'utf8');
+  let mod;
+  try { mod = await import(generated.href + '?t=' + Date.now()); } finally { try { unlinkSync(generated); } catch (_) {} }
+  const st = memory(); const pending = [];
+  const env = { CHE_PAIR_CODE: '123456', CHE_DISABLE_KEYLESS_AI: '1', AI: fakeAI(), CHE_DATA_BUCKET: r2(), CHE_GITHUB_TOKEN: 'gh', CHE_GITHUB_REPO: 'Vondada/chey-app' };
+  const before = globalThis.fetch; globalThis.fetch = github({});
+  try {
+    const state = new mod.CheState({ storage: st, waitUntil: (p) => pending.push(p) }, env);
+    env.CHE_STATE = { getByName: () => state };
+    const send = (path, body, token = '') => mod.default.fetch(new Request(`https://che.example${path}`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) }, body: JSON.stringify(body) }), env);
+    const token = (await (await send('/api/pair', { code: '123456' })).json()).device_token;
+    assert.equal((await send('/api/agents', { name: 'Knox', role: 'Office Security Chief' }, token)).status < 300, true);
+    // The owner gives Knox a look in their own words; the Workshop keeps it.
+    assert.equal((await send('/api/office/workshop/avatar', { agent_id: 'knox', description: 'man in his 30s' }, token)).status, 200);
+    // The owner's words, 2026-11-06.
+    const raw = await (await send('/api/chat', { message: 'Okay, and I want her to create a video too. I want her to create like a short story of something that happens in the office using realistic characters for each of the office members.', history: [] }, token)).text();
+    const done = raw.trim().split('\n').map((l) => JSON.parse(l)).find((l) => l.type === 'done') || {};
+    assert.equal(done.source, 'che_film_studio', replyFromNdjson(raw));
+    const store = new FilmStore(st);
+    let film = await store.latest();
+    assert.equal(film.target_s, 60, 'a short story is a one-minute film');
+    assert.equal(film.roster[0].id, 'che');
+    assert.ok(film.roster.some((r) => r.id === 'knox' && /^man in his 30s, /.test(r.look)), JSON.stringify(film.roster.map((r) => r.id)));
+    for (let i = 0; i < 6 && !film.outline; i += 1) { await state.filmPass(); film = await store.latest(); }
+    assert.equal(film.outline.title, 'The Coffee Machine');
+    assert.deepEqual(film.outline.characters.map((c) => c.id), ['che', 'knox'], 'only cast members, never a stranger');
+    const knox = film.outline.characters.find((c) => c.id === 'knox');
+    assert.equal(knox.look, film.roster.find((r) => r.id === 'knox').look, 'the look is the Office\'s, never the writer\'s');
+    assert.doesNotMatch(knox.look, /pirate/);
+    // With #948: a one-minute story gets same-face pictures, so each cast member gets one portrait from their look.
+    assert.equal(film.plan.faces, true);
+    for (let i = 0; i < 6 && !(film.cast?.che?.key && film.cast?.knox?.key); i += 1) { await state.filmPass(); film = await store.latest(); }
+    assert.deepEqual(Object.keys(film.cast).sort(), ['che', 'knox']);
+    assert.ok(film.cast.knox.key && film.cast.che.key, JSON.stringify(film.cast));
+  } finally { globalThis.fetch = before; }
+});
+
+test('the office story words: what starts one and what does not', () => {
+  const office = filmIntent('Make a short story about the office coffee machine breaking');
+  assert.deepEqual([office.kind, office.office, office.seconds], ['make', true, 60]);
+  assert.equal(filmIntent('Che, make a 3-minute movie about my crew planning a launch').seconds, 180);
+  assert.equal(filmIntent('Make a movie about a pirate crew').office, undefined, 'a pirate crew is not the office');
+  assert.equal(filmIntent('Make a film about an office romance in 1950s New York').office, undefined);
+  assert.equal(filmIntent('Make a video about black holes'), null, 'ordinary videos stay with the video renderer');
+  assert.equal(filmIntent('How is the office story going?'), null);
+  // Codex on #949: a question only plans, and the plot after "starring" is kept.
+  const ask = filmIntent('How long would it take to make a 3-minute movie about my crew?');
+  assert.deepEqual([ask.kind, ask.seconds], ['plan', 180]);
+  const heist = filmIntent('Make a movie starring my crew solving a bank robbery');
+  assert.deepEqual([heist.kind, heist.office, heist.topic], ['make', true, 'my crew solving a bank robbery']);
+});
+
+test('a fixed cast: the writer picks who appears, never their names or looks; a cast nobody uses is refused', () => {
+  const roster = [{ id: 'che', name: 'CHE', role: 'Office Boss', look: 'standard build' }, { id: 'nova', name: 'Nova', role: 'Product', look: 'tall build' }];
+  const out = validOutline({ title: 'T', characters: [{ id: 'Nova', name: 'Bob', look: 'a wizard' }, 'che', { id: 'ghost' }], scenes: [{ setting: 'Office', summary: 'x', shots: 2 }] }, { shots: 4, roster });
+  assert.deepEqual(out.characters.map((c) => [c.id, c.name, c.look]), [['che', 'CHE', 'standard build'], ['nova', 'Nova', 'tall build']]);
+  assert.equal(validOutline({ title: 'T', characters: [{ id: 'ghost' }], scenes: [{ setting: 'Office', summary: 'x', shots: 2 }] }, { shots: 4, roster }).error, 'the outline used none of the cast');
+  assert.match(outlineMessages({ topic: 'x', targetSeconds: 60, shots: 10, roster })[1].content, /fixed cast of office members.*che \(CHE, Office Boss\); nova \(Nova, Product\)/);
 });
