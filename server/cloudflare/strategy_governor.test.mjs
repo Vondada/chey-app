@@ -9,7 +9,7 @@ import { roomEventRecord } from './brain_rooms.js';
 import { liveTick, readLivePortfolios, setLivePaper } from './trading_live.js';
 import { matrixState } from './trading_research.js';
 import {
-  GOV_STATE, FORWARD_ENTRIES_HALTED, HALT_REASON, haltState, cleanSettings, fillProblems, governedGate, governorAction, independentTrades, lossCauses, performance, readDecisions,
+  GOV_STATE, FORWARD_ENTRIES_HALTED, HALT_REASON, LEARNED_EXCLUSIONS, learnedReason, learnedState, haltState, cleanSettings, fillProblems, governedGate, governorAction, independentTrades, lossCauses, performance, readDecisions,
   queueAllocationFollowUp, recurringLosses, repeatedMistakes, runGovernor, simulationAllocation, speakGovernor, streakProbability, tradeDecisions, verdict,
 } from './strategy_governor.js';
 
@@ -231,6 +231,7 @@ const after = (bars) => Date.parse(bars.at(-1).t) + 6 * 60_000;
 
 test('in the real forward-paper tick a paused strategy is not traded and its setup is journalled as skipped with the reason', async () => {
   haltState.halted = false; // the pause logic alone (the halt is tested below)
+  learnedState.exclusions = {}; // the fixture's sweep is a learned exclusion; this test is about the governor's pause
   try {
   const sweep = async (storage) => (await readTrades(storage, (t) => t.strategy === 'pdhl-sweep-5m'));
   const control = memoryStorage();
@@ -251,7 +252,7 @@ test('in the real forward-paper tick a paused strategy is not traded and its set
   const brain = storage.saved.get(ROOM_EVENTS_KEY).filter((e) => e.kind === 'trade_decision');
   assert.ok(brain.length >= 1);
   assert.match(brain.map((e) => e.body).join('\n'), /previous-day high\/low sweep long: skipped \(blocked: the strategy governor paused it/);
-  } finally { haltState.halted = FORWARD_ENTRIES_HALTED; }
+  } finally { haltState.halted = FORWARD_ENTRIES_HALTED; learnedState.exclusions = LEARNED_EXCLUSIONS; }
 });
 
 test('matrix: fewer than 15 unseen trades is "Not enough unseen data", not Weak', () => {
@@ -274,13 +275,46 @@ test('better-supported strategies get an extra daily research job (NQ and 15m); 
 });
 
 test('the owner halt refuses every new forward-paper entry, even for a strategy the governor has not paused, and keeps the reason', () => {
-  assert.equal(FORWARD_ENTRIES_HALTED, true, 'the directive is in force');
+  assert.equal(FORWARD_ENTRIES_HALTED, false, 'the owner lifted the halt on 2026-11-06');
   let inner = 0;
-  const gate = governedGate(() => { inner += 1; return null; }, new Map());
+  const gate = governedGate(() => { inner += 1; return null; }, new Map(), {}, { halted: true });
   const pf = { candidate: 'orb-15m', contract: 'MNQ', resolution: '5m' };
   assert.equal(gate(pf, { stage: 'signal' }), HALT_REASON, 'a fresh, unpaused strategy is halted too');
   assert.equal(inner, 0, 'the inner gate is not reached while halted');
   assert.equal(gate(pf, { stage: 'fill' }), null, 'an order already placed is not cancelled');
   const lifted = governedGate(() => null, new Map(), {}, { halted: false });
   assert.equal(lifted(pf, { stage: 'signal' }), null, 'with the halt lifted, the normal gate decides again');
+});
+
+test('learned exclusions: setups that lost in both halves of the replay are kept out of futures forward paper, with the reason', () => {
+  const gate = governedGate(() => null, new Map(), {}, { halted: false });
+  for (const id of Object.keys(LEARNED_EXCLUSIONS)) {
+    const reason = gate({ candidate: id, contract: 'MNQ', resolution: '5m' }, { stage: 'signal' });
+    assert.match(reason, /^CHE learned from the backtests to skip this setup: it /);
+  }
+  assert.equal(gate({ candidate: 'fvg-retest-5m', contract: 'MNQ' }, { stage: 'fill' }), null, 'an order already placed is not cancelled');
+  assert.equal(gate({ candidate: 'ema-pullback-5m', contract: 'MNQ', resolution: '5m' }, { stage: 'signal' }), null, 'kept strategies still trade');
+  assert.equal(gate({ candidate: 'orb-15m', contract: 'MNQ', resolution: '5m' }, { stage: 'signal' }), null);
+  assert.equal(learnedReason({ candidate: 'fvg-retest-5m', contract: 'BTC' }), null, 'the evidence is from MNQ bars only');
+});
+
+test('a new paper signal becomes a plain inbox note that says it is paper and not advice', async () => {
+  const { signalNote } = await import('./trading_live.js');
+  const n = signalNote({ strategy: 'ema-pullback-5m', filter: 'trend', contract: 'MNQ', side: 'long', ref: 21000.25, stop: 20985, target: 21030.75, why: 'pulled back to the 20 EMA' });
+  assert.equal(n.subject, 'Paper signal: Buy MNQ near 21000.25');
+  assert.match(n.body, /^Buy 1 MNQ near 21000.25, stop 20985, target 21030.75 \(/);
+  assert.match(n.body, /not advice/);
+  assert.match(n.body, /no real order was placed/);
+  assert.match(n.body, /pending paper order for the next bar's open/);
+  assert.doesNotMatch(n.body, /I took it|filled at/, 'a signal is not reported as a fill (Codex on #937)');
+  assert.match(signalNote({ side: 'short', ref: 1, stop: 2, target: 0, why: 'x', strategy: 'orb-15m' }).subject, /^Paper signal: Sell MNQ/);
+  const { notifySignals } = await import('./trading_live.js');
+  const sent = [];
+  const many = Array.from({ length: 5 }, (_, i) => ({ strategy: 'orb-15m', side: 'long', ref: i, stop: i - 1, target: i + 2, why: 'w' }));
+  await notifySignals({ new_signals: many }, async (a, b) => sent.push([a, b]));
+  assert.equal(sent.length, 3, 'at most 3 notes a pass');
+  await notifySignals({}, async () => sent.push(1));
+  assert.equal(sent.length, 3, 'a pass without signals sends nothing');
+  await notifySignals({ new_signals: many, skipped: 'ran recently' }, async () => sent.push(1));
+  assert.equal(sent.length, 3, 'a throttled pass repeats the last run and sends nothing again (Codex on #937)');
 });

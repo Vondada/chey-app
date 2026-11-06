@@ -414,18 +414,39 @@ export async function pausedUnits(storage) {
   return new Map(Object.entries(state).filter(([, s]) => s.status === 'paused').map(([k, s]) => [k, s.reason]));
 }
 
-// Owner directive (2026-10-28): forward-paper entries are halted while the paper journal is reconciled. Research,
-// simulation, replay and read-only analysis keep running. Refused signals are still journalled as skipped, with this
-// reason, so the evidence remains. Lifting the halt is a deliberate code change, reviewed and deployed.
-export const FORWARD_ENTRIES_HALTED = true;
+// Owner directive (2026-10-28): forward-paper entries were halted while the paper journal was reconciled. The owner
+// lifted it on 2026-11-06, after the trade-quality rules (#935) and the learned exclusions below were in place.
+// Refused signals are still journalled as skipped, with their reason. Setting this back to true halts again.
+export const FORWARD_ENTRIES_HALTED = false;
+
+// What CHE learned from her losing journal and the replay on real MNQ bars (run 42130528712, Aug 28 to Nov 5, under the
+// trade-quality rules): these setups lost after costs in both the first 70% and the last 30% of the bars, so they are
+// kept out of forward paper on futures. They keep running in research and simulation; a strategy returns only through
+// a new reviewed change backed by out-of-sample evidence.
+export const LEARNED_EXCLUSIONS = Object.freeze({
+  'sweep-mss-5m': 'lost in both halves of the replay (-0.29 to -0.37 R per trade over 343 trades)',
+  'fvg-retest-5m': 'lost in both halves of the replay (-0.12 to -0.17 R per trade over 1,004 trades), and lost 24 of 30 in the paper journal',
+  'pdhl-sweep-5m': 'lost in both halves of the replay (-0.52 R per trade)',
+  'sweep-reclaim-5m': 'lost -0.20 R per trade over 309 trades, and -0.46 to -0.53 R in the last 30% of the bars',
+  'vwap-revert-5m': 'lost -0.11 R per trade, -0.34 R in the last 30% of the bars, and ran 13 losses in a row in the paper journal',
+  'rsi-revert-5m': 'lost in both halves of the replay (-0.14 R per trade over 219 trades)',
+});
+const FUTURES = new Set(['MNQ', 'NQ', 'MES', 'ES']);
+// The exclusions in force. Pipeline tests whose fixtures trade an excluded setup switch them off for their own file,
+// as they do the halt; the exclusions have their own test. Production never changes it.
+export const learnedState = { exclusions: LEARNED_EXCLUSIONS };
+export const learnedReason = (pf) => (FUTURES.has(pf?.contract || 'MNQ') && learnedState.exclusions[pf?.candidate])
+  ? `CHE learned from the backtests to skip this setup: it ${learnedState.exclusions[pf.candidate]}` : null;
 // The halt in force. Tests of the pause logic set it off for their own run and restore it; production never does.
 export const haltState = { halted: FORWARD_ENTRIES_HALTED };
-export const HALT_REASON = 'new forward-paper entries are halted by the owner (2026-10-28) while the paper journal is reconciled';
+export const HALT_REASON = 'new forward-paper entries are halted by the owner while the paper journal is reconciled';
 
 /** Wraps the owner's entry gate for forward paper only: a halt or a paused strategy refuses new signals, journalled as skipped. */
 export function governedGate(gate, paused, { market = 'MNQ', timeframe = '5m' } = {}, { halted = haltState.halted } = {}) {
   return (pf, info) => {
     if (halted && info.stage === 'signal') return HALT_REASON;
+    const learned = info.stage === 'signal' ? learnedReason(pf) : null;
+    if (learned) return learned;
     const reason = paused.get(`${pf.candidate}|${pf.contract || market}|${pf.resolution || timeframe}`);
     if (reason && info.stage === 'signal') return `the strategy governor paused it from forward paper: ${reason}`;
     return gate ? gate(pf, info) : null;

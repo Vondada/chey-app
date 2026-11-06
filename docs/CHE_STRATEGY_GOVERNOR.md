@@ -39,6 +39,20 @@ The rules are part of the strategy version, so results under them never mix with
 records skips for costs instead of trades that lose on fees. `tools/che_quality_replay.mjs` (in
 `che-strategy-backtest.yml`) replays every desk on real bars with and without the rules.
 
+## Learned exclusions and the halt (2026-11-06)
+
+The owner lifted the forward-paper halt of 2026-10-28 (`FORWARD_ENTRIES_HALTED = false`). At the same time CHE keeps
+out of futures forward paper the setups that lost after costs in both the first 70% and the last 30% of the replay on
+real MNQ bars (run 42130528712): `sweep-mss-5m`, `fvg-retest-5m`, `pdhl-sweep-5m`, `sweep-reclaim-5m`,
+`vwap-revert-5m`, `rsi-revert-5m` (`LEARNED_EXCLUSIONS` in `strategy_governor.js`, each with its evidence). A refused
+setup is journalled as skipped with that reason. They keep running in research and simulation; a strategy returns
+only through a reviewed change backed by new out-of-sample evidence. The remaining setups (20-EMA pullback, inside
+bar, opening range, silver bullet, order block) still have no proven edge after costs; the trade-quality rules and the
+governor's early pauses apply to them.
+
+Each new forward-paper signal is filed to the owner's inbox (`signalNote` in `trading_live.js`, at most 3 per pass):
+side, contract, price, stop, target and setup, marked paper and not advice. No real order is placed.
+
 ## Simulation allocation
 
 Half of the research budget is spread evenly over every defined strategy, so none stops being simulated. The other half is split in proportion to the lower bound of each strategy's out-of-sample evidence. Better-supported ideas are researched more often. This is a research budget, not a forecast: past results do not promise future profit.

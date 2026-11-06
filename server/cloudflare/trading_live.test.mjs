@@ -7,9 +7,10 @@ import { CONTRACTS, COSTS, INTRADAY_CANDIDATES, fillEntry, exitOn, newPortfolio,
 import { LIVE_EXCLUDED, LIVE_PORTFOLIOS, liveDashboard, liveTick, setLivePaper } from './trading_live.js';
 import { liveIntent } from './trading_live_chat.js';
 import { evidenceReport } from './trading_evidence_runner.js';
-import { haltState } from './strategy_governor.js';
+import { haltState, learnedState } from './strategy_governor.js';
 // These tests cover entry mechanics. The owner's forward-paper halt is tested in strategy_governor.test.mjs.
 haltState.halted = false;
+learnedState.exclusions = {}; // pipeline fixtures trade excluded setups; the exclusions have their own test
 
 function memoryStorage(saved = new Map()) {
   return {
@@ -95,6 +96,9 @@ test('forward only: history is never journalled; a new signal enters, exits and 
   assert.equal(first.closed, 0, 'bars before the start are not traded');
   const second = await liveTick(storage, { force: true, load: feedOf([...DAY1, ...DAY2]), now: after(DAY2) });
   assert.equal(second.ok, true);
+  assert.deepEqual(first.new_signals, [], 'no signal before the start');
+  const ns = second.new_signals.find((x) => x.strategy === 'pdhl-sweep-5m');
+  assert.ok(ns && ns.side === 'long' && ns.contract === 'MNQ' && Number.isFinite(ns.ref) && Number.isFinite(ns.stop) && Number.isFinite(ns.target), 'the pass reports its new signal for the owner');
   const trades = await readTrades(storage, (t) => t.data?.resolution === '5m');
   const sweep = trades.find((t) => t.strategy === 'pdhl-sweep-5m' && t.filter === 'any');
   assert.ok(sweep, `the previous-day low sweep traded: ${trades.map((t) => t.strategy).join(', ')}`);
