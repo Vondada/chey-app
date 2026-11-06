@@ -952,6 +952,18 @@ extension _CheHomeSend on _CHEHomeState {
       }
     }
 
+    // The live scene preview, while it is open, takes play, pause, go to a time, select an actor, read the scene, the
+    // numbered options, and scene edits sent with its project and selection (lib/create/che_scene_preview_page.dart).
+    final scenePreviewVoice = CheScenePreviewPage.voiceHandler;
+    if (scenePreviewVoice != null && _pendingAttachment == null) {
+      final reply = await scenePreviewVoice(message);
+      if (reply != null) {
+        if (mounted) _set(() => controller.clear());
+        if (reply.isNotEmpty) await speakText(reply, record: false);
+        return;
+      }
+    }
+
     // Trade Replay, while it is open, takes play, pause, back or forward 10 seconds, restart and read.
     final replayVoice = CheTradeReplayPage.voiceHandler;
     if (replayVoice != null && _pendingAttachment == null) {

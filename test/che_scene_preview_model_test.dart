@@ -81,6 +81,41 @@ void main() {
     expect(SceneEditWords.light('warm'), 'relight the office warm');
   });
 
+  test('every preview action has words: play, pause, seek, select, read, options and scene edits', () {
+    final spec = ScenePreviewSpec.fromLatest(latest())!;
+    ScenePreviewVoice? kind(String s) => scenePreviewCommand(s, spec)?.kind;
+    expect(kind('play'), ScenePreviewVoice.play);
+    expect(kind('Che, pause.'), ScenePreviewVoice.pause);
+    expect(scenePreviewCommand('go to 5 seconds', spec)?.seconds, 5);
+    expect(scenePreviewCommand('jump to seven', spec)?.seconds, 7);
+    expect(scenePreviewCommand('go to the start', spec)?.seconds, 0);
+    expect(scenePreviewCommand('go to the end', spec)?.seconds, 11.1);
+    expect(scenePreviewCommand('select Nova', spec)?.actor, 'nova');
+    expect(kind('select Orion'), isNull, reason: 'not in this scene');
+    expect(kind('clear the selection'), ScenePreviewVoice.deselect);
+    expect(kind('read the scene'), ScenePreviewVoice.read);
+    expect(kind("what's on screen"), ScenePreviewVoice.read);
+    expect(kind('options'), ScenePreviewVoice.options);
+    for (final edit in ['make her outfit red', 'move him left', 'make him bigger', 'relight the office for sunset', 'undo', 'is my scene ready', 'make the camera circle around us']) {
+      final c = scenePreviewCommand(edit, spec);
+      expect([c?.kind, c?.words], [ScenePreviewVoice.edit, edit], reason: edit);
+    }
+    expect(kind('what is the weather tomorrow'), isNull, reason: 'other words go to the chat');
+  });
+
+  test('the numbered options are read aloud and chosen by number', () {
+    final spec = ScenePreviewSpec.fromLatest(latest())!;
+    final options = scenePreviewOptions(spec);
+    expect(options.take(4), ['play the scene', 'pause', 'go to the start', 'select nova']);
+    expect(scenePreviewCommand('option 1', spec)?.kind, ScenePreviewVoice.play);
+    expect(scenePreviewCommand('option four', spec)?.actor, 'nova');
+    expect(scenePreviewCommand('number ${options.indexOf('undo') + 1}', spec)?.words, 'undo');
+    expect(scenePreviewCommand('option 40', spec)?.kind, ScenePreviewVoice.options, reason: 'out of range: the list is read again');
+    for (final o in options) {
+      expect(scenePreviewCommand(o, spec), isNotNull, reason: 'every option is a command: $o');
+    }
+  });
+
   test('spec coordinates map into the y-up 3D view', () {
     expect(cheSceneToView(1, 2, 3), [1, 3, -2]);
   });

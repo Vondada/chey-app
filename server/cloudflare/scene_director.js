@@ -140,7 +140,7 @@ export function sceneFromWords(text) {
 
 // ─── Edits ───────────────────────────────────────────────────────────────────
 
-const PRONOUN = /\b(?:her|his|their|she|he|they|them)\b/i;
+const PRONOUN = /\b(?:her|his|him|their|she|he|they|them)\b/i;
 /** Is this an edit of the scene the owner just made? Only checked while a scene is recent. */
 export function directorEditIntent(text) {
   const t = String(text || '').toLowerCase();

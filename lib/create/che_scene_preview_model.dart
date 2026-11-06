@@ -239,3 +239,76 @@ class SceneEditWords {
   static String size(SceneActor a, {required bool bigger}) => 'make ${a.objectPronoun} ${bigger ? 'bigger' : 'smaller'}';
   static String light(String preset) => 'relight the office ${preset == 'warm' || preset == 'cool' ? preset : 'for $preset'}';
 }
+
+// ─── Voice (the preview's handler in lib/home_state/send.dart) ──────────────────────────────────────────────────────
+
+enum ScenePreviewVoice { play, pause, seek, select, deselect, read, options, edit }
+
+/// One spoken command for the open preview. [seconds] for seek, [actor] for select, [words] for an edit.
+class ScenePreviewCommand {
+  const ScenePreviewCommand(this.kind, {this.seconds, this.actor, this.words});
+  final ScenePreviewVoice kind;
+  final double? seconds;
+  final String? actor;
+  final String? words;
+}
+
+const _spokenNumbers = {'zero': 0, 'one': 1, 'two': 2, 'three': 3, 'four': 4, 'five': 5, 'six': 6, 'seven': 7, 'eight': 8, 'nine': 9, 'ten': 10, 'eleven': 11, 'twelve': 12, 'fifteen': 15, 'twenty': 20};
+
+double? _spokenNumber(String w) => double.tryParse(w) ?? _spokenNumbers[w]?.toDouble();
+
+/// The numbered choices the preview reads aloud ("option 2" runs the second). Each is a phrase [scenePreviewCommand]
+/// understands, so a choice and the same words spoken do the same thing.
+List<String> scenePreviewOptions(ScenePreviewSpec? spec) => [
+      'play the scene',
+      'pause',
+      'go to the start',
+      if (spec != null)
+        for (final a in spec.actors) 'select ${a.name.toLowerCase()}',
+      'relight the office for sunset',
+      'undo',
+      'is my scene ready',
+      'read the scene',
+    ];
+
+/// The preview command in [said], or null when the words are not for the preview (the chat answers them then).
+/// Scene edits ("make her outfit red", "move him left", "undo") go to CHE with the preview's project and selection.
+ScenePreviewCommand? scenePreviewCommand(String said, ScenePreviewSpec? spec) {
+  var t = said.toLowerCase().replaceAll(RegExp(r'[.!?,]+$'), '').replaceFirst(RegExp(r'^\W*(?:(?:hey\s+)?(?:che|chey|chay)[,:]?\s+)'), '').trim();
+  final option = RegExp(r'^(?:option|number|choice)\s+(\w+)$').firstMatch(t);
+  if (option != null) {
+    final n = _spokenNumber(option.group(1)!);
+    final list = scenePreviewOptions(spec);
+    if (n == null || n < 1 || n > list.length) return const ScenePreviewCommand(ScenePreviewVoice.options);
+    t = list[n.toInt() - 1];
+  }
+  if (RegExp(r'^(?:play|play (?:it|the scene|the preview)|resume|start playing)$').hasMatch(t)) return const ScenePreviewCommand(ScenePreviewVoice.play);
+  if (RegExp(r'^(?:pause|stop|pause (?:it|the scene)|stop playing)$').hasMatch(t)) return const ScenePreviewCommand(ScenePreviewVoice.pause);
+  if (RegExp(r'^(?:restart|go (?:back )?to the (?:start|beginning)|from the (?:start|top))$').hasMatch(t)) {
+    return const ScenePreviewCommand(ScenePreviewVoice.seek, seconds: 0);
+  }
+  if (t == 'go to the end') return ScenePreviewCommand(ScenePreviewVoice.seek, seconds: spec?.seconds ?? 0);
+  final seek = RegExp(r'^(?:go|jump|skip|seek) to (\w+(?:\.\d+)?)(?: seconds?)?$').firstMatch(t);
+  if (seek != null) {
+    final s = _spokenNumber(seek.group(1)!);
+    if (s != null) return ScenePreviewCommand(ScenePreviewVoice.seek, seconds: s);
+  }
+  if (RegExp(r'^(?:deselect|unselect|clear (?:the )?selection|select (?:no ?one|nobody))$').hasMatch(t)) {
+    return const ScenePreviewCommand(ScenePreviewVoice.deselect);
+  }
+  final select = RegExp(r'^(?:select|pick|choose|touch) (\w+)$').firstMatch(t);
+  if (select != null && spec != null) {
+    for (final a in spec.actors) {
+      if (a.id == select.group(1) || a.name.toLowerCase() == select.group(1)) return ScenePreviewCommand(ScenePreviewVoice.select, actor: a.id);
+    }
+  }
+  if (RegExp(r"^(?:read (?:the )?(?:scene|screen|status)(?: aloud)?|read aloud|describe (?:the )?(?:scene|screen)|what(?:'s| is) on (?:the )?screen)$").hasMatch(t)) {
+    return const ScenePreviewCommand(ScenePreviewVoice.read);
+  }
+  if (RegExp(r'^(?:options|what can i (?:do|say)|help|list (?:the )?options)$').hasMatch(t)) return const ScenePreviewCommand(ScenePreviewVoice.options);
+  if (RegExp(r'^(?:undo|redo)\b|\b(?:outfit|clothes|move (?:her|him|them)|bigger|smaller|taller|shorter|relight|lighting|camera|music|slow|speed|faster|say|render it again|scene ready)\b|\bmake it (?:sunset|night|morning|evening)\b')
+      .hasMatch(t)) {
+    return ScenePreviewCommand(ScenePreviewVoice.edit, words: t);
+  }
+  return null;
+}

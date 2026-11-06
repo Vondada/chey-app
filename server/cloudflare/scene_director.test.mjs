@@ -246,6 +246,11 @@ test('touch edits from the live preview: move and resize, bounded, versioned lik
   assert.match(big.said[0], /Nova is bigger \(115% of her usual height\)/);
   assert.equal(applyEdits(big.spec, 'make her smaller').spec.actors[0].scale, 1);
   assert.equal(directorEditIntent('move the meeting to Friday'), false, 'ordinary words are not scene edits');
+  // Atlas, Knox: the controls say "him" (Codex, #954).
+  const atlas = sceneFromWords('make Atlas walk into my office and sit down').spec;
+  for (const words of ['move him left', 'make him bigger', 'make him smaller', 'make his outfit black']) assert.equal(directorEditIntent(words), true, words);
+  assert.deepEqual(applyEdits(atlas, 'move him left').spec.actors[0].offset, [-0.5, 0]);
+  assert.equal(applyEdits(atlas, 'make him bigger').spec.actors[0].scale, 1.15);
   // The exact words the app's touch controls send (lib/create/che_scene_preview_model.dart SceneEditWords).
   for (const [words, check] of [['make her outfit gold', (s) => s.actors[0].cloth === '#c9a227'], ['move her closer', (s) => s.actors[0].offset[1] === -0.5], ['move her back', (s) => s.actors[0].offset[1] === 0.5], ['relight the office warm', (s) => s.set.light === 'warm'], ['relight the office for night', (s) => s.set.light === 'night']]) {
     assert.equal(directorEditIntent(words), true, words);
@@ -263,5 +268,16 @@ test('a selection from the preview sends the edit to that project and actor, eve
   assert.match(got.text, /^Done in the project \(version 2\): Nova's outfit is now red/);
   assert.equal((await sceneLatest(storage)).spec.actors[0].cloth, '#c0392b');
   assert.equal(await directorTurn({ ...later, now: NOW + 20 * 3600_000 }, 'make her outfit red', { project_id: 'scp_bad', actor: 'nova' }), null, 'a malformed id is ignored');
+  // Scene-wide controls send the displayed project with no actor selected (Codex, #954): they still land on it.
+  const old = { ...later, now: NOW + 40 * 3600_000 };
+  assert.equal(await directorTurn(old, 'relight the office for sunset'), null, 'without the project, a scene this old is not edited');
+  const lit = await directorTurn(old, 'relight the office for sunset', { project_id });
+  assert.match(lit.text, /the office is relit for sunset/);
+  assert.equal((await sceneLatest(storage)).spec.set.light, 'sunset');
+  const undone = await directorTurn({ ...old, now: NOW + 60 * 3600_000 }, 'undo', { project_id });
+  assert.match(undone.text, /^Undone: back to version 2/);
+  const status = await directorTurn({ ...old, now: NOW + 80 * 3600_000 }, 'is my scene ready?', { project_id });
+  assert.equal(status.meta.project_id, project_id, 'the status is of the displayed project');
+  assert.match(status.text, /GitHub never started this render/, 'the fake GitHub never ran it, and after 15 minutes that is said');
   assert.deepEqual(await sceneLatest(memory()), { ok: false, detail: 'There is no scene yet. Say something like "make Nova walk into my office, sit beside me, and start talking".' });
 });

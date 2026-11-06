@@ -738,7 +738,11 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
   void _openScenePreview() {
     HapticFeedback.selectionClick();
     unawaited(Navigator.of(context).push(MaterialPageRoute<void>(
-      builder: (_) => CheScenePreviewPage(baseUrl: cheAgentBaseUrl, headers: () => _authHeaders),
+      builder: (_) => CheScenePreviewPage(
+        baseUrl: cheAgentBaseUrl,
+        headers: () => _authHeaders,
+        onSpeak: (text) => unawaited(speakText(text, record: false, readOnDemand: true)),
+      ),
     )));
   }
 

@@ -22,11 +22,19 @@ import 'che_scene_preview_model.dart';
 const _clipNames = ['idle', 'walk', 'sit', 'talk', 'wave', 'nod', 'think', 'celebrate', 'shake'];
 
 class CheScenePreviewPage extends StatefulWidget {
-  const CheScenePreviewPage({super.key, required this.baseUrl, required this.headers, this.client});
+  const CheScenePreviewPage({super.key, required this.baseUrl, required this.headers, this.client, this.onSpeak});
 
   final String baseUrl;
   final Map<String, String> Function() headers;
   final http.Client? client;
+
+  /// Speaks a reply aloud (the app's voice); used by Read Aloud and to report a touch edit's result.
+  final void Function(String words)? onSpeak;
+
+  /// While the page is open: "play", "pause", "go to 5 seconds", "select Nova", "read the scene", "options",
+  /// "option 3", and scene edits ("make her outfit red", "move him left", "undo") sent with this scene and selection.
+  /// Returns the spoken result, or null when the words are not for the preview (lib/home_state/send.dart).
+  static Future<String?> Function(String words)? voiceHandler;
 
   @override
   State<CheScenePreviewPage> createState() => _CheScenePreviewPageState();
@@ -59,11 +67,13 @@ class _CheScenePreviewPageState extends State<CheScenePreviewPage> {
   @override
   void initState() {
     super.initState();
+    CheScenePreviewPage.voiceHandler = voice;
     unawaited(_load());
   }
 
   @override
   void dispose() {
+    if (CheScenePreviewPage.voiceHandler == voice) CheScenePreviewPage.voiceHandler = null;
     _ask.dispose();
     _scene?.removeAll();
     super.dispose();
@@ -85,6 +95,76 @@ class _CheScenePreviewPageState extends State<CheScenePreviewPage> {
       if (spec != null && _gpu) await _buildScene(spec);
     } catch (e) {
       if (mounted) setState(() => _status = 'Could not load the scene: $e');
+    }
+  }
+
+  /// What is on screen, for Read Aloud and "read the scene".
+  String describe() {
+    final spec = _spec;
+    if (spec == null) return _status;
+    final who = spec.actors.map((a) => a.name).join(', ');
+    final sel = _selected == null ? 'Nobody is selected.' : '${spec.actor(_selected!)?.name ?? _selected} is selected.';
+    final pose = spec.actors.isEmpty ? null : spec.poseAt(spec.actors.first.id, _t);
+    final doing = pose == null ? '' : ' At ${_t.toStringAsFixed(1)} of ${spec.seconds.toStringAsFixed(1)} seconds, ${spec.actors.first.name} is ${_doing(pose)}.';
+    return 'Scene preview. $_status In the scene: $who. ${_playing ? 'Playing.' : 'Paused.'}$doing $sel Say "options" to hear what you can do.';
+  }
+
+  String _doing(SceneActorPose p) => switch (p.clip) {
+        'walk' => 'walking',
+        'sit' => p.line == null ? 'sitting' : 'sitting and talking',
+        'talk' => 'talking',
+        'idle' => 'standing',
+        _ => p.clip,
+      };
+
+  String _options() {
+    final list = scenePreviewOptions(_spec);
+    return 'You can say: ${[for (var i = 0; i < list.length; i++) '${i + 1}, ${list[i]}'].join('; ')}. Or say a change, like "make her outfit red".';
+  }
+
+  void _seek(double seconds) {
+    final spec = _spec;
+    setState(() {
+      _t = spec == null ? 0 : seconds.clamp(0, spec.seconds).toDouble();
+      _playing = false;
+    });
+    _pose();
+  }
+
+  /// The preview's voice commands (see [CheScenePreviewPage.voiceHandler]).
+  Future<String?> voice(String words) async {
+    final command = scenePreviewCommand(words, _spec);
+    if (command == null || !mounted) return null;
+    final spec = _spec;
+    switch (command.kind) {
+      case ScenePreviewVoice.play:
+        if (spec == null) return 'There is no scene to play yet.';
+        setState(() => _playing = true);
+        return 'Playing the scene.';
+      case ScenePreviewVoice.pause:
+        setState(() => _playing = false);
+        return 'Paused at ${_t.toStringAsFixed(1)} seconds.';
+      case ScenePreviewVoice.seek:
+        if (spec == null) return 'There is no scene yet.';
+        _seek(command.seconds ?? 0);
+        return 'At ${_t.toStringAsFixed(1)} of ${spec.seconds.toStringAsFixed(1)} seconds.';
+      case ScenePreviewVoice.select:
+        setState(() => _selected = command.actor);
+        _pose();
+        HapticFeedback.selectionClick();
+        final a = spec?.actor(command.actor ?? '');
+        return a == null ? 'Nobody to select.' : '${a.name} is selected. Say a change, like "make ${a.possessive} outfit red" or "move ${a.objectPronoun} left".';
+      case ScenePreviewVoice.deselect:
+        setState(() => _selected = null);
+        _pose();
+        return 'Nobody is selected.';
+      case ScenePreviewVoice.read:
+        return describe();
+      case ScenePreviewVoice.options:
+        return _options();
+      case ScenePreviewVoice.edit:
+        if (spec == null) return null;
+        return _send(command.words ?? words, spoken: true);
     }
   }
 
@@ -251,9 +331,12 @@ class _CheScenePreviewPageState extends State<CheScenePreviewPage> {
 
   // ─── Edits: words through /api/chat, with the selection ────────────────────
 
-  Future<void> _send(String words) async {
+  /// Sends [words] to CHE with this scene (and the selected actor, if any) and returns CHE's reply. A touch edit's
+  /// result is spoken; a spoken edit's result is spoken by the voice navigator, so [spoken] skips it here.
+  Future<String> _send(String words, {bool spoken = false}) async {
     final spec = _spec;
-    if (spec == null || _sending) return;
+    if (spec == null) return 'There is no scene to change yet.';
+    if (_sending) return 'CHE is still answering the last change.';
     setState(() {
       _sending = true;
       _reply = 'Asking CHE: "$words"…';
@@ -269,7 +352,9 @@ class _CheScenePreviewPageState extends State<CheScenePreviewPage> {
               'history': const <Object>[],
               'owner_mode': true,
               'agent_mode': 'chat',
-              if (_selected != null) 'scene_selection': {'project_id': spec.projectId, 'actor': _selected},
+              // Always the displayed project, so scene-wide controls reach it even after six hours; the actor only
+              // when one is selected.
+              'scene_selection': {'project_id': spec.projectId, if (_selected != null) 'actor': _selected},
               'client': const {'platform': 'flutter', 'voice_enabled': false, 'screen': 'scene_preview'},
             }),
           )
@@ -288,12 +373,14 @@ class _CheScenePreviewPageState extends State<CheScenePreviewPage> {
     } catch (e) {
       said = 'The edit was not sent: $e.';
     }
-    if (!mounted) return;
+    if (!mounted) return said;
     setState(() {
       _sending = false;
       _reply = said;
     });
+    if (!spoken) widget.onSpeak?.call(said);
     await _load();
+    return said;
   }
 
   // ─── UI ────────────────────────────────────────────────────────────────────
@@ -311,7 +398,16 @@ class _CheScenePreviewPageState extends State<CheScenePreviewPage> {
         child: ListView(
           padding: const EdgeInsets.all(12),
           children: [
-            Semantics(liveRegion: true, child: Text(_status)),
+            // Passive status is readable but never announced on its own (AGENTS.md); Read Aloud speaks it on request.
+            Text(_status),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton.icon(
+                icon: const Icon(Icons.volume_up),
+                label: const Text('Read aloud'),
+                onPressed: () => widget.onSpeak?.call(describe()),
+              ),
+            ),
             const SizedBox(height: 8),
             _view(spec),
             if (spec != null) ...[
@@ -391,7 +487,8 @@ class _CheScenePreviewPageState extends State<CheScenePreviewPage> {
                 TextButton(onPressed: _sending ? null : () => _send('is my scene ready?'), child: const Text('Is it rendered?')),
               ]),
             ],
-            if (_reply != null) Padding(padding: const EdgeInsets.only(top: 8), child: Semantics(liveRegion: true, child: Text(_reply!))),
+            // CHE's answer to an edit is spoken through onSpeak (or by the voice navigator), so it is not a live region too.
+            if (_reply != null) Padding(padding: const EdgeInsets.only(top: 8), child: Text(_reply!)),
           ],
         ),
       ),
