@@ -306,4 +306,11 @@ test('a new paper signal becomes a plain inbox note that says it is paper and no
   assert.match(n.body, /not advice/);
   assert.match(n.body, /no real order was placed/);
   assert.match(signalNote({ side: 'short', ref: 1, stop: 2, target: 0, why: 'x', strategy: 'orb-15m' }).subject, /^Paper signal: Sell MNQ/);
+  const { notifySignals } = await import('./trading_live.js');
+  const sent = [];
+  const many = Array.from({ length: 5 }, (_, i) => ({ strategy: 'orb-15m', side: 'long', ref: i, stop: i - 1, target: i + 2, why: 'w' }));
+  await notifySignals({ new_signals: many }, async (a, b) => sent.push([a, b]));
+  assert.equal(sent.length, 3, 'at most 3 notes a pass');
+  await notifySignals({}, async () => sent.push(1));
+  assert.equal(sent.length, 3, 'a pass without signals sends nothing');
 });

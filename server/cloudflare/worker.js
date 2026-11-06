@@ -129,7 +129,7 @@ function spokenPick(message, n) {
 }
 import { ATLAS_SOURCE, answerAtlas, atlasHiddenAction, atlasIntent, atlasQuizAnswerTurn, atlasPromptContext, atlasResetAsk, atlasResetIntent, projectAtlasToBrain, resetAtlasProgress } from './knowledge_atlas.js';
 import { CRYPTO_SOURCE, cryptoIntent, cryptoTick, cryptoView, nextCryptoTickAt, setCryptoPaper, speakCrypto } from './crypto_markets.js';
-import { LIVE_BACKTEST, LIVE_FEED, LIVE_RUNS, LIVE_STATE, haltLivePaper, liveSpecs, liveBacktest, liveDashboard, livePaperSummary, liveTick, nextLiveTickAt, readLivePortfolios, researchDue, setLivePaper, signalNote } from './trading_live.js';
+import { LIVE_BACKTEST, LIVE_FEED, LIVE_RUNS, LIVE_STATE, haltLivePaper, liveSpecs, liveBacktest, liveDashboard, livePaperSummary, liveTick, nextLiveTickAt, readLivePortfolios, researchDue, setLivePaper, notifySignals } from './trading_live.js';
 import { governorAction, queueAllocationFollowUp, readDecisions, runGovernor, speakGovernor, tradeDecisions } from './strategy_governor.js';
 import { ICT_CONCEPTS, applyControlChange, controlsView, noteAuditEffect, readControls, strategyRegistry, resolveStep, speakControlResult, speakControlsView, speakSkipReasons, stockOrderProblem } from './trading_controls.js';
 import { cmeSession, frontMonth, loadIntraday, TradovateMarketStream, connectMarketSocket } from './market_feed.js';
@@ -3736,11 +3736,7 @@ export class CheState extends DurableObject {
 
   async runForwardPaper(options = {}) {
     const run = await liveTick(this.ctx.storage, { ...options, load: (root, opts) => this.tradingFeed(root, opts) });
-    // Each new paper signal goes to the owner's inbox (at most 3 a pass, so a burst never floods it).
-    for (const sig of (run?.new_signals || []).slice(0, 3)) {
-      const note = signalNote(sig);
-      await this.notifyOwner(note.subject, note.body);
-    }
+    await notifySignals(run, (a, b) => this.notifyOwner(a, b));
     return run;
   }
 

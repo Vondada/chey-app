@@ -642,3 +642,11 @@ export function signalNote(sig) {
       + 'I took it on paper at the next bar\'s open, from delayed CME bars. This is not advice: none of my strategies has yet shown a profit after costs, and no real order was placed.',
   };
 }
+
+/** Files each new paper signal of a pass to the owner's inbox, at most 3 a pass so a burst never floods it. */
+export async function notifySignals(run, notify) {
+  for (const sig of (run?.new_signals || []).slice(0, 3)) {
+    const note = signalNote(sig);
+    await notify(note.subject, note.body);
+  }
+}
