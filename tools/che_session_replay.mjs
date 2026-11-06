@@ -7,10 +7,12 @@
 //   node tools/che_session_replay.mjs
 import { appendFileSync } from 'node:fs';
 import { acquireDataset } from '../server/cloudflare/trading_research.js';
-import { isPrimaryVariant, liveSpecs } from '../server/cloudflare/trading_live.js';
+import { liveSpecs } from '../server/cloudflare/trading_live.js';
 import { LEARNED_EXCLUSIONS } from '../server/cloudflare/strategy_governor.js';
 import { QUALITY_RULES, intradayContext, newPortfolio, stepPortfolio } from '../server/cloudflare/trading_evidence.js';
 
+// The desk's primary copy (trading_live.isPrimaryVariant, #943): no filter, default target.
+const isPrimaryVariant = (pf) => pf.filter === 'any' && (pf.params?.target_r ?? 2) === (pf.candidate === 'rsi-revert-5m' ? 1.5 : 2);
 const mem = new Map();
 const storage = {
   async get(k) { return Array.isArray(k) ? new Map(k.filter((x) => mem.has(x)).map((x) => [x, mem.get(x)])) : mem.get(k); },
