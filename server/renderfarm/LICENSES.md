@@ -12,7 +12,7 @@ licenses change. CHE uses only free, open-weight models or the free Workers AI a
 | Moving clips, fallback | Wan 2.2 + lightx2v LoRA | farm GPU | Apache-2.0 | not yet |
 | Per-character voices | Kokoro-82M | farm GPU or runner CPU | Apache-2.0 | not yet |
 | Expressive voices | Chatterbox (Resemble AI) | farm GPU | MIT | not yet |
-| Lip sync | MuseTalk / LatentSync | farm GPU | MIT / Apache-2.0 | not yet |
+| Lip sync | LatentSync 1.5 (ByteDance), code pinned at a229c394, weights ByteDance/LatentSync-1.5 | Kaggle T4 (about 8 GB) | Apache-2.0 (code; recorded 2026-11-06) | yes (Kaggle worker; a shot says lip-synced only after its checked clip arrives) |
 | Upscale | Real-ESRGAN | farm GPU | BSD-3-Clause | not yet |
 | Frame smoothing | RIFE (Practical-RIFE) | farm GPU | MIT | not yet |
 | Sound effects and music | Stable Audio Open 1.0 | farm GPU | Stability AI Community License (free under a revenue limit) | not yet |

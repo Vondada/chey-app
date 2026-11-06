@@ -5,7 +5,7 @@
 import {
   FilmStore, FILM_VALIDATION_KEY, MAX_CAST, NEURONS, PORTRAIT_SIZE, REFERENCE_MODEL, STILL_MODEL, TTS_MODEL,
   assemblyPlan, checkPortrait, checkStill, farmProviders, learnFromCheck, loadRates, loadUsage, mp3Seconds, newFilm, outlineMessages, planFilm,
-  portraitPrompt, recordRate, reserve, sceneMessages, seedFor, segmentSpec, shotList, spend, speakPlan, stillPrompt, validOutline, validSceneShots,
+  portraitPrompt, recordRate, reserve, sceneMessages, seedFor, shotSeconds, voiceTimes, segmentSpec, shotList, spend, speakPlan, stillPrompt, validOutline, validSceneShots,
   _internals,
 } from './film_studio.js';
 import { imagePayload } from './image_payload.js';
@@ -120,7 +120,7 @@ async function writeStep(ctx, store, film) {
   // Re-plan with the real screenplay: its spoken lines and how many distinct pictures it really needs.
   const draft = shotList(film.outline, sceneShots, film.plan);
   const speech = draft.reduce((t, s) => t + s.dialogue.reduce((u, d) => u + d.line.length / 14, 0), 0);
-  const replanned = planFilm({ targetSeconds: film.target_s, deadlineSeconds: film.deadline_s, providers: await farmProviders(ctx.env, ctx.storage, ctx), ...(await loadRates(ctx.storage)), dialogueSeconds: speech, uniqueWanted: draft.length, now });
+  const replanned = planFilm({ targetSeconds: film.target_s, deadlineSeconds: film.deadline_s, providers: await farmProviders(ctx.env, ctx.storage, ctx), ...(await loadRates(ctx.storage)), dialogueSeconds: speech, uniqueWanted: draft.length, talkingShots: draft.filter((s) => s.dialogue.length && s.characters?.length).length, now });
   if (replanned.ok) film.plan = replanned;
   const shots = shotList(film.outline, sceneShots, film.plan);
   await store.putShots(film.id, shots);
@@ -201,12 +201,12 @@ async function makeStep(ctx, store, film) {
   const remakes = (await storage.get(`film:${film.id}:remakes`)) || [];
   if (remakes.length) { for (const n of remakes) applyRemake(shots, n); await storage.put(`film:${film.id}:remakes`, []); }
   const clips = await farmLedger(storage, film);
-  for (const s of shots) if (clips[s.n]?.key) s.clip_key = clips[s.n].key;
+  for (const s of shots) { if (clips[s.n]?.key) s.clip_key = clips[s.n].key; if (clips[s.n]?.lip_key) s.lip_key = clips[s.n].lip_key; }
   const lessons = (await storage.get('film:lessons')) || [];
   film.waiting = '';
 
   // Moving clips go to the farm first so the GPUs work while the stills are made.
-  if (shots.some((s) => s.tier === 'A' && !s.clip_key && s.status !== 'failed') && !film.farm) await dispatchFarm(ctx, film, shots);
+  if ((shots.some((s) => s.tier === 'A' && !s.clip_key && s.status !== 'failed') || talkers(film, shots).size) && !film.farm) await dispatchFarm(ctx, film, shots);
 
   // Pictures: up to four at once. The allowance for all of them is reserved first, in one step, so the cap holds.
   const wantStill = shots.filter((s) => s.still_of === s.n && !s.still_key && s.status !== 'failed').slice(0, STILL_BATCH);
@@ -293,8 +293,10 @@ async function makeStep(ctx, store, film) {
 
   // A shot is verified when its picture passed, every line is voiced, and its clip arrived (tier A) or it was moved
   // to tier B. A reframed shot depends on the picture it reuses.
+  const chosen = talkers(film, shots);
   for (const s of shots) {
     if (s.status === 'verified' || s.status === 'failed') continue;
+    if (lipPending(film, s, clips, chosen)) continue; // its lip-synced clip is still coming from the GPU
     const source = byN.get(s.still_of);
     if (source?.status === 'failed') { s.status = 'failed'; s.check = { ok: false, reason: `its picture (shot ${source.n}) never passed` }; continue; }
     if (source?.still_key && s.dialogue.every((d) => d.audio_key) && (s.tier !== 'A' || s.clip_key)) s.status = 'verified';
@@ -376,8 +378,9 @@ async function dispatchFarm(ctx, film, shots) {
   if (kaggle?.usable) {
     const { rates } = await loadRates(ctx.storage);
     const want = shots.filter((s) => s.tier === 'A').length;
+    const lips = talkers(film, shots).size;
     const left = Number(kaggle.remaining.gpu_seconds);
-    const seconds = Math.floor(Math.min(left, 11.5 * 3600, rates.kaggle_startup_s + want * rates.kaggle_clip_s + 900));
+    const seconds = Math.floor(Math.min(left, 11.5 * 3600, rates.kaggle_startup_s + want * rates.kaggle_clip_s + (lips ? rates.lipsync_setup_s + lips * rates.kaggle_lipsync_s : 0) + 900));
     const usage = await loadUsage(ctx.storage, ctx.now || Date.now());
     const paid = await spend(ctx.storage, 'kaggle_seconds', seconds, { now: ctx.now || Date.now(), caps: { kaggle_seconds: usage.kaggle_seconds + left } });
     if (paid.ok) {
@@ -387,21 +390,40 @@ async function dispatchFarm(ctx, film, shots) {
     }
   }
   // The Space receives the farm token with each call, so this provider keeps it (it opens only this film's farm routes).
-  if (hf?.usable) { film.farm = { ...record, provider: 'hf_zerogpu', token, started_ms: ctx.now || Date.now() }; return; }
+  // The Space makes moving clips only, never lip sync.
+  if (hf?.usable && shots.some((s) => s.tier === 'A')) { film.farm = { ...record, provider: 'hf_zerogpu', token, started_ms: ctx.now || Date.now() }; if (film.plan?.lip_sync) film.notes = [...(film.notes || []), 'Lip sync needs the Kaggle GPU, which could not start, so talking shots use their pictures as they are.']; return; }
   downgradeTierA(film, shots, 'no free GPU session could start');
+}
+
+// ─── Lip sync ────────────────────────────────────────────────────────────────
+
+/** The talking shots this film lip-syncs: shots with a character speaking, in film order, as many as the plan allows. */
+function talkers(film, shots) {
+  const n = Number(film.plan?.lip_sync || 0);
+  if (!n || film.farm?.closed) return new Set();
+  return new Set(shots.filter((s) => s.dialogue.length && s.characters?.length && s.status !== 'failed').slice(0, n).map((s) => s.n));
+}
+
+/** A talking shot that must wait for its lip-synced clip: the Kaggle farm is open and it has neither the clip nor a failure. */
+function lipPending(film, s, ledger, chosen) {
+  return film.farm?.provider === 'kaggle' && !film.farm.closed && chosen.has(s.n) && !s.lip_key && !ledger[s.n]?.lip_key && !ledger[s.n]?.lip_error;
 }
 
 function downgradeTierA(film, shots, why) {
   let n = 0;
   for (const s of shots) if (s.tier === 'A' && !s.clip_key) { s.tier = 'B'; s.downgraded = why; n += 1; }
   if (n) film.notes = [...(film.notes || []), safe(`${n} moving shots became stills with camera motion: ${why}.`)];
+  const unsynced = talkers(film, shots).size - shots.filter((s) => s.lip_key).length;
+  if (!film.farm?.closed && unsynced > 0) film.notes = [...(film.notes || []), safe(`${unsynced} talking shot${unsynced === 1 ? '' : 's'} got no lip sync: ${why}.`)];
   film.farm = { ...(film.farm || {}), revoked: true, closed: why };
 }
 
 async function settleFarm(ctx, film, shots) {
   if (!film.farm || film.farm.closed) return;
-  const pendingA = shots.filter((s) => s.tier === 'A' && !s.clip_key && s.status !== 'failed');
-  if (!pendingA.length) { film.farm.revoked = true; film.farm.closed = 'all clips arrived'; return; }
+  const ledger = await farmLedger(ctx.storage, film);
+  const chosen = talkers(film, shots);
+  const onFarm = (s) => (s.tier === 'A' && !s.clip_key && s.status !== 'failed') || lipPending(film, s, ledger, chosen);
+  if (!shots.some(onFarm)) { film.farm.revoked = true; film.farm.closed = 'all clips arrived'; return; }
   const now = ctx.now || Date.now();
   if (film.farm.provider === 'kaggle') {
     const status = await kaggleSessionStatus(ctx.keys?.KAGGLE_API_TOKEN || ctx.env.KAGGLE_API_TOKEN, film.farm.session, ctx.fetcher || fetch);
@@ -410,10 +432,10 @@ async function settleFarm(ctx, film, shots) {
   const done = await ctx.storage.get(`film:${film.id}:farmdone`);
   if (done?.error) return downgradeTierA(film, shots, `the GPU worker stopped: ${String(done.error).slice(0, 80)}`);
   // Clips may not hold up the film: once everything else is ready they get half the planned clip time more, no more.
-  const othersDone = shots.filter((s) => s.tier !== 'A').every((s) => s.status === 'verified' || s.status === 'failed');
+  const othersDone = shots.filter((s) => !onFarm(s)).every((s) => s.status === 'verified' || s.status === 'failed' || (s.tier === 'A' && !s.clip_key));
   if (othersDone) {
     film.farm.others_done_ms = film.farm.others_done_ms || now;
-    const grace = (film.plan?.parts?.clips_s || 600) * 500 + 120_000;
+    const grace = ((film.plan?.parts?.clips_s || 600) + (film.plan?.parts?.lip_sync_s || 0)) * 500 + 120_000;
     if (now - film.farm.others_done_ms > grace) return downgradeTierA(film, shots, 'the GPU farm ran past its planned time');
   }
 }
@@ -491,7 +513,7 @@ async function fail(store, film, why) {
  */
 export async function filmTokenRoute(ctx, path, request) {
   const render = /^\/api\/film\/render\/(fgha_[a-f0-9]{32})\/(segment\/(\d{1,3})|asset|report|upload\/start|upload\/part|upload\/complete)$/.exec(path);
-  const farm = /^\/api\/film\/farm\/(film_[a-f0-9]{16})\/(next|asset|result|done)$/.exec(path);
+  const farm = /^\/api\/film\/farm\/(film_[a-f0-9]{16})\/(next|asset|result|done|lipfail)$/.exec(path);
   if (!render && !farm) return null;
   const store = new FilmStore(ctx.storage);
   const url = new URL(request.url);
@@ -549,11 +571,57 @@ export async function filmTokenRoute(ctx, path, request) {
   if (farm[2] === 'next') {
     const open = (s) => s.tier === 'A' && !s.clip_key && !ledger[s.n]?.key && s.status !== 'failed';
     const shot = shots.find((s) => open(s) && !ledger[s.n]?.claimed_ms && shots.find((x) => x.n === s.still_of)?.still_key);
-    if (!shot) return json({ done: !shots.some(open) });
+    if (!shot) {
+      // Then lip sync: a talking shot whose picture (or moving clip) and voices are ready, unclaimed for 30 minutes.
+      const chosen = talkers(film, shots);
+      const asset = (key) => `${ctx.base}/api/film/farm/${film.id}/asset?key=${encodeURIComponent(key)}`;
+      const clipOf = (s) => s.clip_key || ledger[s.n]?.key || '';
+      const stillOf = (s) => shots.find((x) => x.n === s.still_of)?.still_key || '';
+      const ready = (s) => stillOf(s) && s.dialogue.every((d) => d.audio_key) && (s.tier !== 'A' || clipOf(s));
+      const now = ctx.now || Date.now();
+      const lip = shots.find((s) => lipPending(film, s, ledger, chosen) && ready(s) && now - Number(ledger[s.n]?.lip_claimed_ms || 0) > 1_800_000);
+      if (lip) {
+        ledger[lip.n] = { ...(ledger[lip.n] || {}), lip_claimed_ms: now };
+        await ctx.storage.put(ledgerKey, ledger);
+        return json({ kind: 'lipsync', shot: lip.n, seconds: shotSeconds(lip), fps: 25, video_url: clipOf(lip) ? asset(clipOf(lip)) : '', image_url: asset(stillOf(lip)), audio: voiceTimes(lip).map((v) => ({ url: asset(v.key), at: v.at })) });
+      }
+      // Work still coming (clips claimed, or talking shots whose pictures and voices are not made yet): wait, do not stop.
+      if (shots.some(open) || shots.some((s) => lipPending(film, s, ledger, chosen))) return json({ wait: 30 });
+      return json({ done: true });
+    }
     ledger[shot.n] = { ...(ledger[shot.n] || {}), claimed_ms: ctx.now || Date.now() };
     await ctx.storage.put(ledgerKey, ledger);
     const still = shots.find((x) => x.n === shot.still_of).still_key;
     return json({ shot: shot.n, prompt: stillPrompt(shot, film.outline), image_url: `${ctx.base}/api/film/farm/${film.id}/asset?key=${encodeURIComponent(still)}`, frames: 121, fps: 24, steps: 30 });
+  }
+  if (farm[2] === 'result' && request.method === 'PUT' && url.searchParams.get('kind') === 'lipsync') {
+    const n = Number(url.searchParams.get('shot'));
+    const shot = shots.find((s) => s.n === n && s.dialogue.length);
+    if (!shot) return json({ detail: 'No such talking shot.' }, 404);
+    const bytes = new Uint8Array(await request.arrayBuffer());
+    const facts = mp4Facts(bytes);
+    // A lip-synced clip replaces the shot's picture in the edit, so it must be a real H.264 MP4 the shot's full length.
+    if (!(bytes.length > 20_000 && facts.video && facts.seconds >= shotSeconds(shot) - 0.5)) {
+      ledger[n] = { ...(ledger[n] || {}), lip_claimed_ms: 0, lip_rejected: (ledger[n]?.lip_rejected || 0) + 1, ...((ledger[n]?.lip_rejected || 0) >= 1 ? { lip_error: 'the lip-synced clip was not usable twice' } : {}) };
+      await ctx.storage.put(ledgerKey, ledger);
+      return json({ ok: false, detail: 'That is not a usable lip-synced clip.' }, 422);
+    }
+    const key = `film/${film.id}/lips/${n}.mp4`;
+    const saved = await mediaStore(ctx.env, ctx.storage).put(key, bytes, { contentType: 'video/mp4' });
+    if (!saved.ok) return json({ ok: false, detail: saved.error }, 507);
+    ledger[n] = { ...(ledger[n] || {}), lip_key: key, lip_s: facts.seconds };
+    await ctx.storage.put(ledgerKey, ledger);
+    if (Number(url.searchParams.get('seconds')) > 0) await recordRate(ctx.storage, 'kaggle_lipsync_s', Number(url.searchParams.get('seconds')));
+    return json({ ok: true });
+  }
+  if (farm[2] === 'lipfail' && request.method === 'POST') {
+    const body = await request.json().catch(() => ({}));
+    const n = Number(body.shot);
+    if (!shots.some((s) => s.n === n && s.dialogue.length)) return json({ detail: 'No such talking shot.' }, 404);
+    // That shot keeps its picture; the film does not wait for it.
+    ledger[n] = { ...(ledger[n] || {}), lip_error: safe(body.error || 'lip sync failed') };
+    await ctx.storage.put(ledgerKey, ledger);
+    return json({ ok: true });
   }
   if (farm[2] === 'result' && request.method === 'PUT') {
     const n = Number(url.searchParams.get('shot'));

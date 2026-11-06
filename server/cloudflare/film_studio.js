@@ -73,6 +73,10 @@ export const DEFAULT_RATES = Object.freeze({
   kaggle_startup_s: 600, // GPU session start + model download
   kaggle_clip_s: 240, // one 5-second moving clip on a T4
   hf_clip_s: 60,
+  // Lip sync (LatentSync 1.5 on the same Kaggle T4). Starting estimates until measured: the one-time install of its own
+  // environment and checkpoints, then one talking shot.
+  lipsync_setup_s: 900,
+  kaggle_lipsync_s: 150,
 });
 
 export const FARM_PROVIDERS = Object.freeze({
@@ -262,7 +266,7 @@ export function planFilm(args = {}) {
   return { ...plain, faces: false };
 }
 
-function planAt({ targetSeconds, deadlineSeconds = null, providers = [], rates = DEFAULT_RATES, measured = {}, dialogueSeconds = null, uniqueWanted = null, now = Date.now() } = {}, price) {
+function planAt({ targetSeconds, deadlineSeconds = null, providers = [], rates = DEFAULT_RATES, measured = {}, dialogueSeconds = null, uniqueWanted = null, talkingShots = null, now = Date.now() } = {}, price) {
   const target = Math.max(20, Math.min(4 * 3600, Math.round(Number(targetSeconds) || 0)));
   const deadline = deadlineSeconds == null ? defaultDeadline(target) : Math.max(0, Number(deadlineSeconds));
   const p = Object.fromEntries(providers.map((x) => [x.id, x]));
@@ -288,10 +292,12 @@ function planAt({ targetSeconds, deadlineSeconds = null, providers = [], rates =
   const ttsS = speech / rates.tts_speed;
   const encodeS = rates.runner_startup_s + (target / segments) / rates.encode_speed;
   const finishS = rates.finish_s_per_film_minute * (target / 60) + 5;
-  const etaFor = (unique, clips) => {
+  const etaFor = (unique, clips, lips = 0) => {
     const stillsS = unique / rates.images_per_s;
     const clipsS = clips > 0 ? farmClipSeconds(clips, p, rates) : 0;
-    return { stills_s: stillsS, clips_s: clipsS, total: scriptS + Math.max(stillsS, ttsS, clipsS) + encodeS + finishS };
+    // Lip sync runs on the Kaggle GPU after its clips: its own install once, then each talking shot.
+    const gpuS = lips > 0 ? Math.max(clipsS, rates.kaggle_startup_s) + rates.lipsync_setup_s + lips * rates.kaggle_lipsync_s : clipsS;
+    return { stills_s: stillsS, clips_s: clipsS, lip_sync_s: gpuS - clipsS, total: scriptS + Math.max(stillsS, ttsS, gpuS) + encodeS + finishS };
   };
 
   // New pictures: one per shot when the allowance and the deadline allow; otherwise each picture is reframed for up to
@@ -321,7 +327,18 @@ function planAt({ targetSeconds, deadlineSeconds = null, providers = [], rates =
     const window = deadline - (scriptS + encodeS + finishS + waitS);
     clips = Math.max(0, Math.min(Math.floor(shots / 5), budget, clipsWithin(Math.max(stage, window), p, rates)));
   }
-  const parts = etaFor(unique, clips);
+  // Lip sync: talking shots, on the Kaggle GPU only (the Hugging Face Space makes clips only), as many as its free hours
+  // and the deadline allow. About half the shots talk until the screenplay says exactly how many.
+  let lips = 0;
+  if (p.kaggle?.usable && deadline > 0) {
+    const talking = Math.max(0, Math.round(talkingShots == null ? shots / 2 : Number(talkingShots)));
+    const gpuLeft = Number(p.kaggle.remaining?.gpu_seconds || 0) - Math.max(clips ? farmClipSeconds(clips, p, rates) : 0, rates.kaggle_startup_s) - rates.lipsync_setup_s;
+    lips = Math.max(0, Math.min(talking, Math.floor(gpuLeft / rates.kaggle_lipsync_s)));
+    while (lips > 0 && etaFor(unique, clips, lips).total + waitS > deadline) lips -= 1;
+    if (talking && lips < talking) notes.push(lips ? `${lips} of ${talking} talking shots get lip sync; the free GPU time and your deadline cover no more.` : 'Talking shots get no lip sync: the free GPU time or your deadline does not cover it.');
+  }
+  if (lips && lips === Math.round(talkingShots == null ? shots / 2 : Number(talkingShots))) notes.push(`${lips} talking shot${lips === 1 ? ' gets' : 's get'} lip sync on the free Kaggle GPU.`);
+  const parts = etaFor(unique, clips, lips);
   const eta = Math.round(parts.total + waitS);
   const meets = deadline === 0 ? true : eta <= deadline;
   const estimated = ['images_per_s', 'tts_speed', 'encode_speed', 'runner_startup_s'].some((k) => !measured[k]);
@@ -330,9 +347,10 @@ function planAt({ targetSeconds, deadlineSeconds = null, providers = [], rates =
   for (const id of ['kaggle', 'hf_zerogpu']) if (p[id]?.status === 'blocked') notes.push(p[id].detail[0].toUpperCase() + p[id].detail.slice(1) + '.');
   return {
     ok: true, target_s: target, deadline_s: deadline, as_fast_as_possible: deadline === 0,
+    lip_sync: lips,
     shots, tier_a: clips, tier_b: shots - clips, unique_stills: unique, reuse, segments,
     eta_s: eta, meets_deadline: meets, waits_for_reset_s: waitS, estimated,
-    parts: { script_s: round(scriptS), stills_s: round(parts.stills_s), voices_s: round(ttsS), clips_s: round(parts.clips_s), assembly_s: round(encodeS), finish_s: round(finishS) },
+    parts: { script_s: round(scriptS), stills_s: round(parts.stills_s), voices_s: round(ttsS), clips_s: round(parts.clips_s), lip_sync_s: round(parts.lip_sync_s), assembly_s: round(encodeS), finish_s: round(finishS) },
     neurons: { stills: round(unique * price.picture), cast: round(castNeurons), voices: round(ttsNeurons), left_today: round(neuronsLeft) },
     providers_used: ['workers_ai', 'github_actions', ...(clips ? ['kaggle', 'hf_zerogpu'].filter((id) => p[id]?.usable) : [])],
     notes,
@@ -708,10 +726,7 @@ export async function learnFromCheck(storage, check) {
 export function assemblyPlan(film, shots, { segments = film.plan?.segments || 1 } = {}) {
   const ready = shots.filter((s) => s.status === 'verified').sort((a, b) => a.n - b.n);
   const missing = shots.filter((s) => s.status !== 'verified').map((s) => s.n);
-  const timed = ready.map((s) => {
-    const speech = s.dialogue.reduce((t, d) => t + (d.audio_s || 0), 0) + 0.35 * s.dialogue.length;
-    return { ...s, seconds: round(Math.max(s.tier === 'A' ? CLIP_SECONDS : SHOT_SECONDS, speech + 0.6), 2) };
-  });
+  const timed = ready.map((s) => ({ ...s, seconds: shotSeconds(s) }));
   const total = timed.reduce((t, s) => t + s.seconds, 0);
   const per = total / Math.max(1, Math.min(segments, timed.length));
   const out = []; let cur = []; let acc = 0;
@@ -723,6 +738,19 @@ export function assemblyPlan(film, shots, { segments = film.plan?.segments || 1 
   return { segments: out.map((list, i) => ({ index: i, shots: list.map((s) => s.n), seconds: round(list.reduce((t, s) => t + s.seconds, 0), 2) })), timed, total_s: round(total, 2), missing };
 }
 
+/** Where each voice line starts inside its shot (the edit and lip sync use the same times). */
+export function voiceTimes(shot) {
+  const out = []; let t = 0.3;
+  for (const d of shot.dialogue || []) { if (d.audio_key) { out.push({ key: d.audio_key, at: round(t, 3) }); t += d.audio_s + 0.35; } }
+  return out;
+}
+
+/** A shot's length in the film: long enough for its clip or its lines. */
+export function shotSeconds(s) {
+  const speech = s.dialogue.reduce((t, d) => t + (d.audio_s || 0), 0) + 0.35 * s.dialogue.length;
+  return round(Math.max(s.tier === 'A' ? CLIP_SECONDS : SHOT_SECONDS, speech + 0.6), 2);
+}
+
 /** The spec one runner renders: pictures or clips with their moves, voice lines at their times, sound and music. */
 export function segmentSpec(film, segment, timed) {
   const byN = new Map(timed.map((s) => [s.n, s]));
@@ -731,9 +759,9 @@ export function segmentSpec(film, segment, timed) {
   const shots = []; const audio = [];
   for (const n of segment.shots) {
     const s = byN.get(n);
-    shots.push({ n, seconds: s.seconds, image: s.clip_key ? '' : stillKey(s), clip: s.clip_key || '', motion: s.motion, variant: (n - s.still_of) % 4, caption: s.dialogue.map((d) => d.line).join(' ') });
-    let t = at + 0.3;
-    for (const d of s.dialogue) { if (d.audio_key) { audio.push({ key: d.audio_key, at: round(t, 3), gain: 1 }); t += d.audio_s + 0.35; } }
+    const clip = s.lip_key || s.clip_key || '';
+    shots.push({ n, seconds: s.seconds, image: clip ? '' : stillKey(s), clip, motion: s.motion, variant: (n - s.still_of) % 4, caption: s.dialogue.map((d) => d.line).join(' ') });
+    for (const v of voiceTimes(s)) audio.push({ key: v.key, at: round(at + v.at, 3), gain: 1 });
     at += s.seconds;
   }
   const assets = [...new Set([...shots.map((s) => s.image || s.clip), ...audio.map((a) => a.key)].filter(Boolean))];
@@ -748,6 +776,11 @@ export function filmProgress(film, shots = [], now = Date.now()) {
   const elapsed = Math.round((now - Number(film.started_ms || now)) / 1000);
   const eta = film.plan?.eta_s || 0;
   return { state: film.state, shots_total: shots.length || film.shot_count, shots_verified: verified, shots_failed: failed, elapsed_s: elapsed, eta_s: eta, remaining_s: Math.max(0, eta - elapsed) };
+}
+
+function lipLine(shots) {
+  const n = shots.filter((s) => s.lip_key).length;
+  return n ? ` ${n} talking shot${n === 1 ? ' is' : 's are'} lip-synced.` : '';
 }
 
 /** How the characters' faces are kept the same, said plainly, including when the reference portraits are off. */
@@ -766,7 +799,7 @@ export function speakStatus(film, shots = [], now = Date.now()) {
   const time = `${spokenDuration(p.elapsed_s)} in, against an estimate of ${spokenDuration(p.eta_s)}`;
   switch (film.state) {
     case 'scripting': return `${name} is being written: scene ${film.scene_next} of ${film.outline?.scenes?.length || 'the outline'}. ${time}.`;
-    case 'making': return `${name}: ${p.shots_verified} of ${p.shots_total} shots done${p.shots_failed ? `, ${p.shots_failed} failed after ${MAX_ATTEMPTS} tries` : ''}. ${time}.${film.waiting ? ` ${film.waiting}` : ''}${faces(film)}`;
+    case 'making': return `${name}: ${p.shots_verified} of ${p.shots_total} shots done${p.shots_failed ? `, ${p.shots_failed} failed after ${MAX_ATTEMPTS} tries` : ''}. ${time}.${film.waiting ? ` ${film.waiting}` : ''}${faces(film)}${lipLine(shots)}`;
     case 'assembling': return `${name} is being assembled on ${film.plan?.segments || 1} GitHub runners. ${time}.`;
     case 'verifying': return `${name} is uploaded and I am checking the file. ${time}.`;
     case 'done': return `${name} is done: ${spokenDuration(film.result?.seconds || 0)}, checked from the file itself, in your media library.${film.result?.missing?.length ? ` ${film.result.missing.length} shots never passed their checks and were left out.` : ''} It took ${spokenDuration((Date.parse(film.result?.at || '') - film.started_ms) / 1000)}.`;
