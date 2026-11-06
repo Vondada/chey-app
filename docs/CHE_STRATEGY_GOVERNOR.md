@@ -50,6 +50,11 @@ only through a reviewed change backed by new out-of-sample evidence. The remaini
 bar, opening range, silver bullet, order block) still have no proven edge after costs; the trade-quality rules and the
 governor's early pauses apply to them.
 
+One trade per signal (2026-11-06): forward paper trades only each setup's primary copy (no filter, default target,
+`isPrimaryVariant` in `trading_live.js`). The trend-filter and alternative-target copies keep their portfolios and
+journal a skipped setup ("one trade per signal: this copy ... stays in research"), so one stop-out is no longer
+journalled and counted two or three times.
+
 Each new forward-paper signal is filed to the owner's inbox (`signalNote` in `trading_live.js`, at most 3 per pass):
 side, contract, price, stop, target and setup, marked paper and not advice. No real order is placed.
 

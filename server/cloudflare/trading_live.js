@@ -37,10 +37,25 @@ const r2 = (x) => Math.round(x * 100) / 100;
 
 // The portfolio grid: every intraday strategy with and without the trend filter, plus
 // different targets for two of them, each in its own isolated portfolio.
+// One trade per signal (owner's recording, 2026-11-06): every setup ran under the "any" and "trend" filters (and two
+// targets for some), and each copy took the same entry, so one stop-out was journalled and counted two or three times.
+// Forward paper trades the primary variant only, the one the governor ranks first (any filter, default target); the
+// others keep their portfolios, journal the skipped setup with this reason and stay in research.
+export const defaultTarget = (candidate) => (candidate === 'rsi-revert-5m' ? 1.5 : 2);
+export const isPrimaryVariant = (pf) => pf.filter === 'any' && (pf.params?.target_r ?? 2) === defaultTarget(pf.candidate);
+export function oneTradePerSignal(gate) {
+  return (pf, info) => {
+    if (info.stage === 'signal' && !isPrimaryVariant(pf)) {
+      return `forward paper takes one trade per signal: this copy (${pf.filter} filter, ${pf.params?.target_r ?? 2}R) stays in research`;
+    }
+    return gate ? gate(pf, info) : null;
+  };
+}
+
 export function liveSpecs() {
   const out = [];
   for (const c of Object.keys(INTRADAY_CANDIDATES)) {
-    for (const f of Object.keys(INTRADAY_FILTERS)) out.push({ c, f, target_r: c === 'rsi-revert-5m' ? 1.5 : 2 });
+    for (const f of Object.keys(INTRADAY_FILTERS)) out.push({ c, f, target_r: defaultTarget(c) });
   }
   for (const c of ['fvg-retest-5m', 'sweep-mss-5m']) for (const target_r of [1.5, 3]) out.push({ c, f: 'any', target_r });
   return out;
@@ -222,7 +237,7 @@ export async function liveTick(storage, { fetcher = fetch, now = Date.now(), for
         const realizedToday = (await readTrades(storage, isLive))
           .filter((t) => tradeDayOf(t.exit?.time || 0) === today).reduce((sum, t) => sum + (Number(t.net_pnl) || 0), 0);
         // The strategy governor restricts forward paper only; simulation (delayed training, research) keeps every strategy.
-        const gate = governedGate(makeEntryGate(controls, { realized_today: realizedToday, open_positions: portfolios.filter((pf) => pf.open || pf.pending).length }), await pausedUnits(storage));
+        const gate = oneTradePerSignal(governedGate(makeEntryGate(controls, { realized_today: realizedToday, open_positions: portfolios.filter((pf) => pf.open || pf.pending).length }), await pausedUnits(storage)));
         const closed = [];
         run.missed_windows = portfolios.filter((pf) => pf.last_bar_time && pf.last_bar_time < bars[0].t).length;
         const before = new Map(portfolios.map((pf) => [pf.key, pf.last_bar_time]));
