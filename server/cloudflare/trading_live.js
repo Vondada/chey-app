@@ -235,6 +235,9 @@ export async function liveTick(storage, { fetcher = fetch, now = Date.now(), for
           closed.push(...stepPortfolio(pf, bars, ctx, gate, { allowEntries, blockReason }));
           run.signals = (run.signals || 0) + pf.counts.signals - before;
         }
+        // New paper signals this pass, for the owner's inbox (paper only: a signal is information, never an order).
+        run.new_signals = portfolios.flatMap((pf) => (pf.signals || []).filter((x) => x.time > (before.get(pf.key) || ''))
+          .map((x) => ({ strategy: pf.candidate, filter: pf.filter, contract: pf.contract, ...x })));
         // This pass's enter and skip decisions, one bounded Brain event (the full list stays in each portfolio).
         const fresh = tradeDecisions(portfolios.map((pf) => ({ ...pf, signals: (pf.signals || []).filter((x) => x.time > (before.get(pf.key) || '')), skips: (pf.skips || []).filter((x) => x.time > (before.get(pf.key) || '')) })), { limit: 500 });
         run.decisions = { entered: fresh.filter((x) => x.decision === 'taken').length, skipped: fresh.filter((x) => x.decision === 'skipped').length };
@@ -627,4 +630,26 @@ export async function strategyLearning(storage, { now = Date.now() } = {}) {
   return { paper_only: true, day: today, timezone: 'CME research day, America/New_York 18:00 boundary', strategies, research, diagnostics,
     leader: eligible[0] ? { id: eligible[0].id, metric: 'forward baseline expectancy after costs', provisional: true } : null,
     daily_report: `${today}: ${strategies.reduce((n, r) => n + r.today.trades, 0)} unique baseline forward trades closed; ${strategies.reduce((n, r) => n + r.today.studied, 0)} outcomes in today's latest historical baseline. ${eligible[0] ? `Provisional forward expectancy leader: ${eligible[0].name}.` : 'No strategy has the minimum forward sample for a ranking.'} Live trading remains disabled.` };
+}
+
+/** The owner's inbox note for one new forward-paper signal: plain numbers and the honest record behind it. */
+export function signalNote(sig) {
+  const side = sig.side === 'short' ? 'Sell' : 'Buy';
+  const name = INTRADAY_CANDIDATES[sig.strategy]?.name || sig.strategy;
+  return {
+    subject: `Paper signal: ${side} ${sig.contract || 'MNQ'} near ${sig.ref}`,
+    body: `${side} 1 ${sig.contract || 'MNQ'} near ${sig.ref}, stop ${sig.stop}, target ${sig.target} (${name}${sig.filter && sig.filter !== 'any' ? `, ${sig.filter} filter` : ''}; ${sig.why}). `
+      + 'It is a pending paper order for the next bar\'s open, from delayed CME bars; it fills only if the open is still inside the plan and passes the cost checks, and the trade journal shows whether it did. This is not advice: none of my strategies has yet shown a profit after costs, and no real order was placed.',
+  };
+}
+
+/** Files each new paper signal of a pass to the owner's inbox, at most 3 a pass so a burst never floods it. A signal is a
+ * pending order, not a fill: the note says so. */
+export async function notifySignals(run, notify) {
+  // A throttled pass returns the previous run (skipped: 'ran recently'); its signals were already sent (Codex on #937).
+  if (!run || run.skipped) return;
+  for (const sig of (run.new_signals || []).slice(0, 3)) {
+    const note = signalNote(sig);
+    await notify(note.subject, note.body);
+  }
 }

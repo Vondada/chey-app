@@ -129,7 +129,7 @@ function spokenPick(message, n) {
 }
 import { ATLAS_SOURCE, answerAtlas, atlasHiddenAction, atlasIntent, atlasQuizAnswerTurn, atlasPromptContext, atlasResetAsk, atlasResetIntent, projectAtlasToBrain, resetAtlasProgress } from './knowledge_atlas.js';
 import { CRYPTO_SOURCE, cryptoIntent, cryptoTick, cryptoView, nextCryptoTickAt, setCryptoPaper, speakCrypto } from './crypto_markets.js';
-import { LIVE_BACKTEST, LIVE_FEED, LIVE_RUNS, LIVE_STATE, haltLivePaper, liveSpecs, liveBacktest, liveDashboard, livePaperSummary, liveTick, nextLiveTickAt, readLivePortfolios, researchDue, setLivePaper } from './trading_live.js';
+import { LIVE_BACKTEST, LIVE_FEED, LIVE_RUNS, LIVE_STATE, haltLivePaper, liveSpecs, liveBacktest, liveDashboard, livePaperSummary, liveTick, nextLiveTickAt, readLivePortfolios, researchDue, setLivePaper, notifySignals } from './trading_live.js';
 import { governorAction, queueAllocationFollowUp, readDecisions, runGovernor, speakGovernor, tradeDecisions } from './strategy_governor.js';
 import { ICT_CONCEPTS, applyControlChange, controlsView, noteAuditEffect, readControls, strategyRegistry, resolveStep, speakControlResult, speakControlsView, speakSkipReasons, stockOrderProblem } from './trading_controls.js';
 import { cmeSession, frontMonth, loadIntraday, TradovateMarketStream, connectMarketSocket } from './market_feed.js';
@@ -3735,7 +3735,9 @@ export class CheState extends DurableObject {
   }
 
   async runForwardPaper(options = {}) {
-    return liveTick(this.ctx.storage, { ...options, load: (root, opts) => this.tradingFeed(root, opts) });
+    const run = await liveTick(this.ctx.storage, { ...options, load: (root, opts) => this.tradingFeed(root, opts) });
+    await notifySignals(run, (a, b) => this.notifyOwner(a, b));
+    return run;
   }
 
   // One Alpaca stock socket per feed, subscribed to the union of the symbols its open views want, so a

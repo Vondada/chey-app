@@ -7,9 +7,10 @@ import test from 'node:test';
 import { INTRADAY_CANDIDATES, readTrades } from './trading_evidence.js';
 import { LIVE_EXCLUDED, LIVE_PORTFOLIOS, haltLivePaper, liveTick, readLivePortfolios, setLivePaper } from './trading_live.js';
 import { applyControlChange, controlsView, readControls, scopeIds, stockOrderProblem } from './trading_controls.js';
-import { haltState } from './strategy_governor.js';
+import { haltState, learnedState } from './strategy_governor.js';
 // These tests cover entry mechanics. The owner's forward-paper halt is tested in strategy_governor.test.mjs.
 haltState.halted = false;
+learnedState.exclusions = {}; // pipeline fixtures trade excluded setups; the exclusions have their own test
 
 function memoryStorage(saved = new Map()) {
   return {

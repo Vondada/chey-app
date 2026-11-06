@@ -328,7 +328,7 @@ class _CheCloudComputerRoomState extends State<CheCloudComputerRoom> {
       if (job.startedAt.isNotEmpty) 'started ${job.startedAt}',
       if (job.finishedAt.isNotEmpty) 'finished ${job.finishedAt}',
     ].join(' · ');
-    final outputs = job.outputs.map((o) => '${o['label'] ?? o['kind']}${o['url'] != null ? ' ${o['url']}' : ''}${o['sha256'] != null ? ' SHA-256 ${'${o['sha256']}'.substring(0, 12)}' : ''}').join('; ');
+    final outputs = job.outputs.map((o) => '${o['label'] ?? o['kind']}${o['url'] != null ? ' ${o['url']}' : ''}${o['sha256'] != null ? ' SHA-256 ${'${o['sha256']}'.length > 12 ? '${o['sha256']}'.substring(0, 12) : o['sha256']}' : ''}').join('; ');
     return Card(
       margin: const EdgeInsets.only(top: 10),
       child: Padding(

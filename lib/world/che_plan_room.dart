@@ -297,7 +297,7 @@ class ChePlanRoomState extends State<ChePlanRoom> {
                   if (i.hours != null) Text('Effort: ${i.hours!.$1.round()} to ${i.hours!.$2.round()} hours', style: const TextStyle(fontSize: 16)),
                   if (needs.isNotEmpty) Padding(padding: const EdgeInsets.only(top: 6), child: Text('Needs first: ${needs.join(', ')}', style: const TextStyle(fontSize: 16))),
                   const SizedBox(height: 8),
-                  Text('${i.provenanceSpoken[0].toUpperCase()}${i.provenanceSpoken.substring(1)}. From project_plans #${i.sourceId}', style: const TextStyle(fontSize: 13, color: Colors.white54)),
+                  Text('${_cap(i.provenanceSpoken)}. From project_plans #${i.sourceId}', style: const TextStyle(fontSize: 13, color: Colors.white54)),
                   const SizedBox(height: 12),
                   FilledButton.icon(
                     onPressed: () => widget.onSpeak('${i.spoken} That is ${i.provenanceSpoken}.'),
@@ -329,7 +329,7 @@ class ChePlanRoomState extends State<ChePlanRoom> {
           : ListView(
               padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
               children: [
-                Text('${p.typeLabel[0].toUpperCase()}${p.typeLabel.substring(1)} · ${p.structureLabel} · complexity ${p.complexity}', style: const TextStyle(fontSize: 16, color: Colors.white70)),
+                Text('${_cap(p.typeLabel)} · ${p.structureLabel} · complexity ${p.complexity}', style: const TextStyle(fontSize: 16, color: Colors.white70)),
                 if (p.safetyLevel != 'ok') Padding(padding: const EdgeInsets.only(top: 6), child: Text(p.safetyLevel == 'high_level' ? 'High-level plan: a regulated or safety-critical system.' : 'Some parts were left out for safety.', style: const TextStyle(fontSize: 16, color: _gold))),
                 const SizedBox(height: 12),
                 Semantics(
@@ -555,3 +555,6 @@ class _PlanMapPainter extends CustomPainter {
   @override
   bool shouldRepaint(_PlanMapPainter old) => old.plan != plan;
 }
+
+// An empty label from the server must not throw in build (a release build shows that as a grey box; audit 2026-11-06).
+String _cap(String t) => t.isEmpty ? '' : '${t[0].toUpperCase()}${t.substring(1)}';
