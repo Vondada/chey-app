@@ -639,13 +639,16 @@ export function signalNote(sig) {
   return {
     subject: `Paper signal: ${side} ${sig.contract || 'MNQ'} near ${sig.ref}`,
     body: `${side} 1 ${sig.contract || 'MNQ'} near ${sig.ref}, stop ${sig.stop}, target ${sig.target} (${name}${sig.filter && sig.filter !== 'any' ? `, ${sig.filter} filter` : ''}; ${sig.why}). `
-      + 'I took it on paper at the next bar\'s open, from delayed CME bars. This is not advice: none of my strategies has yet shown a profit after costs, and no real order was placed.',
+      + 'It is a pending paper order for the next bar\'s open, from delayed CME bars; it fills only if the open is still inside the plan and passes the cost checks, and the trade journal shows whether it did. This is not advice: none of my strategies has yet shown a profit after costs, and no real order was placed.',
   };
 }
 
-/** Files each new paper signal of a pass to the owner's inbox, at most 3 a pass so a burst never floods it. */
+/** Files each new paper signal of a pass to the owner's inbox, at most 3 a pass so a burst never floods it. A signal is a
+ * pending order, not a fill: the note says so. */
 export async function notifySignals(run, notify) {
-  for (const sig of (run?.new_signals || []).slice(0, 3)) {
+  // A throttled pass returns the previous run (skipped: 'ran recently'); its signals were already sent (Codex on #937).
+  if (!run || run.skipped) return;
+  for (const sig of (run.new_signals || []).slice(0, 3)) {
     const note = signalNote(sig);
     await notify(note.subject, note.body);
   }
