@@ -4,7 +4,7 @@
 // never calls a model and never invents a figure. Market direction and choppiness are not in the records, so they are
 // reported as not measured rather than guessed. Backtests and paper trades are never combined: the caller reads one journal.
 import { INTRADAY_CANDIDATES, MIN_TRADES, QUALITY_RULES, readTrades, sessionOf, summarize } from './trading_evidence.js';
-import { DEFAULT_GOV_SETTINGS, FORWARD_ENTRIES_HALTED, LEARNED_EXCLUSIONS } from './strategy_governor.js';
+import { DEFAULT_GOV_SETTINGS, FORWARD_ENTRIES_HALTED, LEARNED_EXCLUSIONS, readGovSettings } from './strategy_governor.js';
 import { RESOLUTION } from './trading_live.js';
 
 export const STREAK = 3;            // three or more losses in a row from one setup is a pattern to flag
@@ -122,9 +122,20 @@ export function lossIntent(message, now = Date.now()) {
   if (BEST.test(text)) return { kind: 'best' };
   if (WHY_LOSING.test(text)) return { kind: 'why_losing' };
   if (REVIEW.test(text) && TRADING_WORD.test(text)) {
+    // A named month is its most recent one up to now unless a year is given; "last month" is the calendar month before
+    // now. The review reads that one month of that one year (Codex on #939).
+    const d = new Date(now);
     const m = text.match(MONTH);
-    const last = /\blast\s+month\b/i.test(text) ? (new Date(now).getUTCMonth() + 11) % 12 : null;
-    return { kind: 'review', month: m ? MONTHS.indexOf(m[1].toLowerCase()) : last };
+    const year = text.match(/\b(20\d\d)\b/);
+    if (m) {
+      const month = MONTHS.indexOf(m[1].toLowerCase());
+      return { kind: 'review', month, year: year ? Number(year[1]) : (month > d.getUTCMonth() ? d.getUTCFullYear() - 1 : d.getUTCFullYear()) };
+    }
+    if (/\blast\s+month\b/i.test(text)) {
+      const month = (d.getUTCMonth() + 11) % 12;
+      return { kind: 'review', month, year: month === 11 ? d.getUTCFullYear() - 1 : d.getUTCFullYear() };
+    }
+    return { kind: 'review', month: null, year: null };
   }
   return null;
 }
@@ -199,25 +210,33 @@ export function lossReply(kind, review) {
 export async function lossAnswer(storage, message) {
   const ask = lossIntent(message);
   if (!ask) return null;
-  const inMonth = (t) => ask.month == null || new Date(t.entry?.time || 0).getUTCMonth() === ask.month;
+  const inMonth = (t) => {
+    if (ask.month == null) return true;
+    const at = new Date(t.entry?.time || 0);
+    return at.getUTCMonth() === ask.month && at.getUTCFullYear() === ask.year;
+  };
   const isPaper = (t) => t.environment === 'paper' && t.data?.resolution === RESOLUTION && inMonth(t);
   const nameOf = (id) => INTRADAY_CANDIDATES[id]?.name || id;
   const { futures, crypto } = await gatherLossReview(storage, { readTrades, isPaper, nameOf });
-  const scope = ask.month == null ? '' : `For ${MONTHS[ask.month][0].toUpperCase()}${MONTHS[ask.month].slice(1)}: `;
+  const scope = ask.month == null ? '' : `For ${MONTHS[ask.month][0].toUpperCase()}${MONTHS[ask.month].slice(1)} ${ask.year}: `;
   const crypto_line = crypto.entries ? ` Crypto paper journal, kept separate: ${lossReply(ask.kind, crypto)}` : '';
   const answer = `${scope}${lossReply(ask.kind, futures)}${crypto_line}`;
-  return ask.kind === 'review' ? `${answer} ${improvementPlan(nameOf)}` : answer;
+  // The governor's settings in force, as the owner saved them (Codex on #939): a switched-off governor is said so.
+  return ask.kind === 'review' ? `${answer} ${improvementPlan(nameOf, { gov: await readGovSettings(storage) })}` : answer;
 }
 
 /** What changed after the losses, read from the rules in force (never from a model). Pure. */
-export function improvementPlan(nameOf = (id) => id, { exclusions = LEARNED_EXCLUSIONS, rules = QUALITY_RULES, gov = DEFAULT_GOV_SETTINGS, halted = FORWARD_ENTRIES_HALTED } = {}) {
+export function improvementPlan(nameOf = (id) => id, { exclusions = LEARNED_EXCLUSIONS, rules = QUALITY_RULES, gov: govIn = DEFAULT_GOV_SETTINGS, halted = FORWARD_ENTRIES_HALTED } = {}) {
+  const gov = { ...DEFAULT_GOV_SETTINGS, ...govIn };
   const skipped = Object.keys(exclusions).map(nameOf);
   const parts = [
     'What I changed:',
     skipped.length ? `I no longer take ${skipped.length} setups that lost after costs in both halves of the replay on real MNQ bars: ${skipped.join(', ')}.` : '',
     `I skip a trade when its costs would be more than ${rules.max_cost_r} R of the risk or a winning trade would net under ${rules.min_target_net_r} R, checked again at the fill.`,
     `I wait ${rules.stop_cooldown_min} minutes after a stop-out before the same setup trades again.`,
-    `A setup is paused after ${gov.streak_pause} losses in a row, or once ${gov.early_trades} trades show it losing.`,
+    gov.enabled === false
+      ? 'The strategy governor is switched off, so no setup is paused automatically for a losing run.'
+      : `A setup is paused after ${gov.streak_pause} losses in a row, or once ${gov.early_trades} trades show it losing.`,
     'None of the setups I still trade has yet shown a profit after costs, so I am proving them on paper first;',
     halted ? 'new paper entries are paused right now.' : 'paper trading is on and real money stays off.',
   ];

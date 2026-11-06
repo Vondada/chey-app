@@ -88,7 +88,7 @@ test('the owner\'s October look-back is answered from the journal with what chan
   const t = await che.say("Okay, is Che able to like tell me like what she did wrong from the past, like last month, the whole entire month of October, why she was trading so badly? And and what she's gonna do to improve.");
   assert.equal(t.done.source, 'che_trading_losses');
   assert.equal(t.modelCalls, 0, 'a look-back is read from records, never from the model');
-  assert.match(t.reply, /^For October: From the futures paper journal, 3 distinct entries, 0 won and 3 lost/);
+  assert.match(t.reply, /^For October 2026: From the futures paper journal, 3 distinct entries, 0 won and 3 lost/);
   assert.match(t.reply, /What I changed: I no longer take 6 setups/);
   assert.match(t.reply, /real money stays off/);
   assert.doesNotMatch(t.reply, /blank slate|language model/);

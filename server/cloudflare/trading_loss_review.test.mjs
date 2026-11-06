@@ -95,10 +95,13 @@ test('an empty journal says so, and invents no loss', () => {
 test('the owner\'s October look-back routes to a review: the month, the causes and what changed (run 42171612444)', () => {
   const now = Date.parse('2026-11-06T04:00:00Z');
   const owner = "Okay, is Che able to like tell me like what she did wrong from the past, like last month, the whole entire month of October, why she was trading so badly? And and what she's gonna do to improve.";
-  assert.deepEqual(lossIntent(owner, now), { kind: 'review', month: 9 });
-  assert.deepEqual(lossIntent('What did you do wrong trading in October, the whole month? Why were you trading so badly, and what are you going to do to improve?', now), { kind: 'review', month: 9 });
-  assert.deepEqual(lossIntent('what did she do wrong last month in her trading', now), { kind: 'review', month: 9 }, 'last month is October on 6 November');
-  assert.deepEqual(lossIntent('How will you improve your trading?', now), { kind: 'review', month: null });
+  assert.deepEqual(lossIntent(owner, now), { kind: 'review', month: 9, year: 2026 });
+  assert.deepEqual(lossIntent('What did you do wrong trading in October, the whole month? Why were you trading so badly, and what are you going to do to improve?', now), { kind: 'review', month: 9, year: 2026 });
+  assert.deepEqual(lossIntent('what did she do wrong last month in her trading', now), { kind: 'review', month: 9, year: 2026 }, 'last month is October on 6 November');
+  assert.deepEqual(lossIntent('what did you do wrong trading in December', now), { kind: 'review', month: 11, year: 2025 }, 'a later month is the most recent one, last year');
+  assert.deepEqual(lossIntent('what did you do wrong trading in October 2025', now), { kind: 'review', month: 9, year: 2025 });
+  assert.deepEqual(lossIntent('what went wrong with your trading last month', Date.parse('2027-01-10T00:00:00Z')), { kind: 'review', month: 11, year: 2026 }, 'January\'s last month is December of the year before');
+  assert.deepEqual(lossIntent('How will you improve your trading?', now), { kind: 'review', month: null, year: null });
   assert.equal(lossIntent('What went wrong with the music player?', now), null, 'not a trading question');
   assert.equal(lossIntent('Why are you losing so many trades?', now).kind, 'why_losing', 'the narrower question keeps its answer');
 });
@@ -113,6 +116,11 @@ test('the improvement plan is read from the rules in force, says nothing is prov
   assert.match(plan, /None of the setups I still trade has yet shown a profit after costs/);
   assert.match(plan, /paper trading is on and real money stays off/);
   assert.match(improvementPlan((id) => id, { halted: true }), /new paper entries are paused right now/);
+  // The owner's saved governor settings, not the defaults (Codex on #939).
+  assert.match(improvementPlan((id) => id, { gov: { streak_pause: 5, early_trades: 20 } }), /paused after 5 losses in a row, or once 20 trades show it losing/);
+  const off = improvementPlan((id) => id, { gov: { enabled: false } });
+  assert.match(off, /strategy governor is switched off, so no setup is paused automatically/);
+  assert.doesNotMatch(off, /paused after \d+ losses/);
 });
 
 test('a month review reads only that month\'s journal entries', async () => {
@@ -130,8 +138,10 @@ test('a month review reads only that month\'s journal entries', async () => {
     same_bar_both_touched: false, gross_before_costs: -20, costs: { spread: 0.5, slippage: 1, commissions: 3, fees: 1 }, net_pnl: -25.5, r_net: -1.27, r_gross: -1, risk_dollars: 20,
     mfe_points: 1, mae_points: 10, mfe_r: 0.1, mae_r: 1, data: { resolution: '5m', price_series: 'test', label: 'intraday 5m bars' }, cost_assumptions: {}, result: 'loss',
   });
-  await appendTrades(storage, [rec(0, '09'), rec(1, '10'), rec(2, '10')]);
-  const text = await lossAnswer(storage, 'What did you do wrong trading in October and how will you improve?');
-  assert.match(text, /^For October: From the futures paper journal, 2 distinct entries, 0 won and 2 lost/, text.slice(0, 200));
+  const lastYear = { ...rec(3, '10'), entry: { ...rec(3, '10').entry, time: '2025-10-04T14:05:00.000Z' }, signal: { ...rec(3, '10').signal, time: '2025-10-04T14:00:00.000Z' }, exit: { ...rec(3, '10').exit, time: '2025-10-04T14:30:00.000Z' } };
+  await appendTrades(storage, [rec(0, '09'), rec(1, '10'), rec(2, '10'), lastYear]);
+  const text = await lossAnswer(storage, 'What did you do wrong trading in October 2026 and how will you improve?');
+  assert.match(text, /^For October 2026: From the futures paper journal, 2 distinct entries, 0 won and 2 lost/, text.slice(0, 200));
+  assert.match(await lossAnswer(storage, 'What did you do wrong trading in October 2025?'), /^For October 2025: From the futures paper journal, 1 distinct entry, 0 won and 1 lost/, 'one year at a time (Codex on #939)');
   assert.match(text, /What I changed:/);
 });
