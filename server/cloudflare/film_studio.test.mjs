@@ -761,12 +761,62 @@ test('two GPUs: the clip loop gets only clips and the lip-sync loop only talking
   assert.deepEqual(await next('kind=lipsync&gpus=2'), { done: true }, 'the lip-sync loop stops when its work is done, while the clip is still coming');
 });
 
+test('two GPUs uploading at the same moment both keep their results (Codex on #951)', async () => {
+  const storage = memory(); const bucket = r2();
+  const store = new FilmStore(storage);
+  const { token, record } = await newFarmToken(NOW);
+  const film = { id: 'film_00000000000000ee', state: 'making', shot_count: 2, outline: validOutline(OUTLINE, { shots: 2 }), plan: { lip_sync: 1, segments: 1, parts: {} }, farm: { ...record, provider: 'kaggle' }, stats: { clips_made: 0 } };
+  await store.save(film, { force: true });
+  await store.putShots(film.id, [
+    { n: 1, tier: 'A', still_of: 1, still_key: `film/${film.id}/stills/1.jpg`, status: 'planned', dialogue: [], description: 'The sea', characters: [], setting: 'sea' },
+    { n: 2, tier: 'B', still_of: 2, still_key: `film/${film.id}/stills/2.jpg`, status: 'planned', dialogue: [{ character: 'mara', line: 'Hi.', audio_key: `film/${film.id}/voice/2-0.mp3`, audio_s: 1 }], description: 'Mara talks', characters: ['mara'], setting: 'stairs' },
+  ]);
+  // Uploads take real time: the first one's file is still being stored while the second request starts.
+  const slow = { ...bucket, put: async (k, v, o) => { await new Promise((r) => setTimeout(r, k.includes('/clips/') ? 30 : 5)); return bucket.put(k, v, o); } };
+  const ctx = { storage, env: { CHE_DATA_BUCKET: slow }, base: 'https://che.example', now: NOW };
+  const put = (q, body) => filmTokenRoute(ctx, `/api/film/farm/${film.id}/result`, req(`/api/film/farm/${film.id}/result?${q}`, { header: 'X-CHE-Farm-Token', token, method: 'PUT', body }));
+  const [a, b] = await Promise.all([put('shot=1&seconds=200', mp4({ seconds: 5, codecs: 'avc1' })), put('shot=2&kind=lipsync&seconds=80', mp4({ seconds: 6, codecs: 'avc1' }))]);
+  assert.deepEqual([a.status, b.status], [200, 200]);
+  const ledger = await storage.get(`film:${film.id}:clips`);
+  assert.equal(ledger[1]?.key, `film/${film.id}/clips/1.mp4`, 'the clip is kept');
+  assert.equal(ledger[2]?.lip_key, `film/${film.id}/lips/2.mp4`, 'and the lip-synced clip');
+});
+
 test('the Kaggle worker is valid Python that waits for work, frees the GPU for lip sync, and pins LatentSync 1.5', async () => {
   const { execFileSync } = await import('node:child_process');
   const { writeFileSync, unlinkSync } = await import('node:fs');
   const file = new URL('./.kaggle_worker.test.py', import.meta.url);
   writeFileSync(file, kaggleWorkerScript({ base: 'https://che.example', filmId: 'film_0123456789abcdef', token: 't', deadlineS: 3600 }));
-  try { execFileSync('python3', ['-m', 'py_compile', file.pathname]); } finally { unlinkSync(file); }
+  // Two GPUs, and the clip loop crashes: main() raises (so the handler reports it to CHE), and the lip-sync loop stops.
+  const harness = `
+import runpy, threading
+w = runpy.run_path(${JSON.stringify(file.pathname)}, run_name="worker")["main"].__globals__
+calls = []
+def che(method, path, body=None, raw=None, timeout=120):
+    calls.append(path)
+    return {"wait": 1} if "kind=lipsync" in path else {"ok": True}
+w["che"] = che
+w["gpu_count"] = lambda: 2
+w["LIPSYNC"] = True
+w["PREPARING"] = threading.Thread(target=lambda: None)
+def crash(kind, gpu):
+    if kind == "clip":
+        raise RuntimeError("CUDA out of memory")
+    while not w["STOP"].is_set():
+        w["che"]("GET", "/next?kind=lipsync")
+        w["STOP"].wait(0.05)
+w["work"] = crash
+try:
+    w["main"]()
+    print("NO-RAISE")
+except RuntimeError as e:
+    print("RAISED", e, "STOPPED", w["STOP"].is_set(), "DONE-SENT", any(p == "/done" for p in calls))
+`;
+  try {
+    execFileSync('python3', ['-m', 'py_compile', file.pathname]);
+    const out = execFileSync('python3', ['-c', harness], { encoding: 'utf8', timeout: 20000 });
+    assert.match(out, /RAISED CUDA out of memory STOPPED True DONE-SENT False/, out);
+  } finally { unlinkSync(file); }
   assert.match(KAGGLE_WORKER_PY, /if job\.get\("wait"\):/);
   assert.match(KAGGLE_WORKER_PY, /LATENTSYNC_COMMIT = "a229c3948406bc2cf6eaf4873e662e70c6a04746"/);
   assert.match(KAGGLE_WORKER_PY, /LATENTSYNC_WEIGHTS = "ByteDance\/LatentSync-1\.5"/);
@@ -775,7 +825,7 @@ test('the Kaggle worker is valid Python that waits for work, frees the GPU for l
   assert.match(KAGGLE_WORKER_PY, /\/lipfail/);
   assert.match(KAGGLE_WORKER_PY, /"--enable_deepcache"/, 'DeepCache, as in the inference.sh LatentSync ships');
   assert.match(KAGGLE_WORKER_PY, /"uv", "pip", "install"/, 'the install uses uv, with pip as the fallback');
-  assert.match(KAGGLE_WORKER_PY, /threading\.Thread\(target=work, args=\("clip", 0\)\), threading\.Thread\(target=work, args=\("lipsync", 1\)\)/, 'one loop per GPU on a T4 x2');
+  assert.match(KAGGLE_WORKER_PY, /threading\.Thread\(target=guarded, args=\("clip", 0\)\), threading\.Thread\(target=guarded, args=\("lipsync", 1\)\)/, 'one loop per GPU on a T4 x2');
   assert.match(KAGGLE_WORKER_PY, /CUDA_VISIBLE_DEVICES/);
   assert.match(kaggleWorkerScript({ base: 'b', filmId: 'f', token: 't', deadlineS: 10, lipsync: true }), /LIPSYNC = "1" == "1"/);
   assert.match(kaggleWorkerScript({ base: 'b', filmId: 'f', token: 't', deadlineS: 10 }), /LIPSYNC = "0" == "1"/);

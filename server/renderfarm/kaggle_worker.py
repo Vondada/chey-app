@@ -151,13 +151,15 @@ def prepare():
 PREPARING = threading.Thread(target=prepare, daemon=True)
 TOTALS = {"made": 0, "lip_synced": 0}
 LOCK = threading.Lock()
+STOP = threading.Event()  # set when either GPU loop fails, so the other stops too
+FAILED = []
 
 
 def work(kind, gpu):
     """Asks CHE for jobs of one kind ("clip", "lipsync" or "any") and does them on one GPU until there are none."""
     pipe = None
     reported = False
-    while time_left() > 600:
+    while time_left() > 600 and not STOP.is_set():
         job = che("GET", f"/next?kind={kind}&gpus={gpu_count()}")
         if not job or job.get("done"):
             break
@@ -193,17 +195,28 @@ def work(kind, gpu):
             TOTALS["made"] += 1
 
 
+def guarded(kind, gpu):
+    """One GPU loop on its own thread: its failure is kept for main() and stops the other loop (join() drops it)."""
+    try:
+        work(kind, gpu)
+    except Exception as error:
+        FAILED.append(error)
+        STOP.set()
+
+
 def main():
     che("GET", f"/next?kind=hello&gpus={gpu_count()}&boot={time.time() - STARTED:.1f}")
     if LIPSYNC:
         PREPARING.start()
     if LIPSYNC and gpu_count() >= 2:
         # Two GPUs (Kaggle's T4 x2): moving clips on the first, lip sync on the second, at the same time.
-        loops = [threading.Thread(target=work, args=("clip", 0)), threading.Thread(target=work, args=("lipsync", 1))]
+        loops = [threading.Thread(target=guarded, args=("clip", 0)), threading.Thread(target=guarded, args=("lipsync", 1))]
         for t in loops:
             t.start()
         for t in loops:
             t.join()
+        if FAILED:  # reported to CHE by the handler below, so the farm's fallback starts at once
+            raise FAILED[0]
     else:
         work("any", None)
     che("POST", "/done", body={**TOTALS, "gpus": gpu_count(), "seconds": round(time.time() - STARTED)})
