@@ -6,7 +6,7 @@ import test from 'node:test';
 import {
   DEFAULT_RATES, FARM_PROVIDERS, FILM_NEURON_SHARE, FilmStore, NEURONS, assemblyPlan, checkStill, deadlineFrom, farmProviders,
   filmIntent, imageSize, lengthFrom, loadRates, loadUsage, mp3Seconds, planFilm, recordRate, reserve, segmentSpec, shotList,
-  outlineMessages, speakFarm, speakPlan, speakStatus, spend, validOutline, validSceneShots, _internals,
+  outlineMessages, shotSeconds, speakFarm, speakPlan, speakStatus, spend, validOutline, validSceneShots, _internals,
 } from './film_studio.js';
 import { HF_SPACE_FILES, KAGGLE_WORKER_PY, durationSeconds, farmTokenOpens, kaggleAuth, kaggleWorkerScript, newFarmToken, startKaggleSession, validateKaggle } from './film_farm.js';
 import { filmTick, filmTokenRoute, remakeShot, setFilmState, startFilm } from './film_pipeline.js';
@@ -592,6 +592,21 @@ test('moving clips: a farm that cannot start moves those shots to stills with mo
   assert.ok(film.notes.every((n) => !n.includes('KGAT_secret')), 'a token echoed by the provider is masked');
 });
 
+test('a Kaggle session that cannot start: the planned lip sync is dropped, said once, and the film goes on', async () => {
+  const storage = memory(); const bucket = r2(); const gh = {};
+  await storage.put('film:validation', { github_actions: { ok: true, checked_ms: NOW }, kaggle: { ok: true, username: 'owner', allowed_s: 30 * 3600, used_s: 0, reserved_s: 0, checked_ms: NOW } });
+  const env = { AI: fakeAI(), CHE_DATA_BUCKET: bucket, CHE_GITHUB_TOKEN: 'gh', CHE_GITHUB_REPO: 'Vondada/chey-app' };
+  const kaggleRefuses = async (url, init) => (String(url).includes('SaveKernel') ? Response.json({ error: 'Phone verification is required for internet access.' }) : github(gh)(url, init));
+  const ctx = { storage, env, keys: { KAGGLE_API_TOKEN: 'owner:KGAT_abc' }, writer: writer(), base: 'https://che.example', fetcher: kaggleRefuses, now: NOW };
+  assert.equal((await startFilm(ctx, { topic: 'a keeper', seconds: 60, deadline: { seconds: 7200 } })).ok, true);
+  const film = await runUntil(ctx, ['assembling', 'failed']);
+  assert.equal(film.state, 'assembling', film.errors?.join('; '));
+  assert.ok(film.plan.lip_sync > 0, 'the plan had lip sync');
+  assert.equal(film.notes.filter((n) => /talking shots? got no lip sync: no free GPU session could start/.test(n)).length, 1, film.notes.join(' | '));
+  const shots = await new FilmStore(storage).shots(film.id, film.shot_count);
+  assert.ok(shots.every((s) => s.status === 'verified' && !s.lip_key), 'nothing waits on a farm that never started');
+});
+
 test('farm routes: only this film\'s farm token opens them, and a clip must be a real MP4 before it is used', async () => {
   const storage = memory(); const bucket = r2();
   const store = new FilmStore(storage);
@@ -607,11 +622,115 @@ test('farm routes: only this film\'s farm token opens them, and a clip must be a
   assert.equal((await call(`/api/film/farm/${film.id}/next`, { token: 'wrong' })).status, 404);
   const job = await (await call(`/api/film/farm/${film.id}/next`, { token })).json();
   assert.equal(job.shot, 1);
-  assert.deepEqual(await (await call(`/api/film/farm/${film.id}/next`, { token })).json(), { done: false }, 'a claimed shot is not handed out twice');
+  assert.deepEqual(await (await call(`/api/film/farm/${film.id}/next`, { token })).json(), { wait: 30 }, 'a claimed shot is not handed out twice; the worker waits (the old { done: false } crashed it: no image_url)');
   assert.equal((await call(`/api/film/farm/${film.id}/result?shot=1`, { token, method: 'PUT', body: new Uint8Array(50_000) })).status, 422);
   assert.equal((await call(`/api/film/farm/${film.id}/result?shot=1&seconds=200`, { token, method: 'PUT', body: mp4({ seconds: 5, codecs: 'avc1' }) })).status, 200);
   assert.equal((await storage.get(`film:${film.id}:clips`))[1].key, `film/${film.id}/clips/1.mp4`);
   assert.equal((await loadRates(storage)).measured.kaggle_clip_s, true, 'clip time is measured');
+});
+
+test('lip sync is planned at its real GPU cost: with Kaggle, talking shots get it; as fast as possible or without GPU time they do not, and the plan says so', () => {
+  const one = planFilm({ targetSeconds: 60, deadlineSeconds: 7200, providers: providers(kaggleOn), talkingShots: 4, now: NOW });
+  assert.equal(one.lip_sync, 4);
+  assert.ok(one.parts.lip_sync_s >= DEFAULT_RATES.lipsync_setup_s + 4 * DEFAULT_RATES.kaggle_lipsync_s - 1, 'its install and each shot are in the ETA');
+  assert.match(speakPlan(one), /4 talking shots get lip sync on the free Kaggle GPU\./);
+  assert.equal(planFilm({ targetSeconds: 60, deadlineSeconds: 7200, providers: providers(), now: NOW }).lip_sync, 0, 'no Kaggle, no lip sync');
+  assert.equal(planFilm({ targetSeconds: 60, deadlineSeconds: 0, providers: providers(kaggleOn), now: NOW }).lip_sync, 0, 'as fast as possible uses no GPU');
+  const short = planFilm({ targetSeconds: 60, deadlineSeconds: 7200, providers: providers({ kaggle: { usable: true, status: 'connected', remaining: { gpu_seconds: 1800 } } }), talkingShots: 6, now: NOW });
+  assert.ok(short.lip_sync < 6);
+  assert.ok(short.notes.some((n) => /talking shots get (no )?lip sync|of 6 talking shots get lip sync/i.test(n)), short.notes.join(' | '));
+});
+
+test('lip sync on the farm: after the clips, a talking shot is sent with its voices at the edit\'s times; the shot waits for it, and a failure lets it go on', async () => {
+  const storage = memory(); const bucket = r2();
+  const store = new FilmStore(storage);
+  const { token, record } = await newFarmToken(NOW);
+  const film = { id: 'film_00000000000000bb', state: 'making', shot_count: 3, outline: validOutline(OUTLINE, { shots: 3 }), plan: { lip_sync: 2, segments: 1, parts: {} }, farm: { ...record, provider: 'kaggle' }, stats: { clips_made: 0 } };
+  await store.save(film, { force: true });
+  const line = (k, s) => ({ character: 'mara', line: 'Hello there.', audio_key: `film/${film.id}/voice/${k}.mp3`, audio_s: s });
+  await store.putShots(film.id, [
+    { n: 1, tier: 'B', still_of: 1, still_key: `film/${film.id}/stills/1.jpg`, status: 'planned', dialogue: [line('1-0', 1.2), line('1-1', 0.8)], description: 'Mara talks', characters: ['mara'], setting: 'stairs' },
+    { n: 2, tier: 'A', still_of: 2, still_key: `film/${film.id}/stills/2.jpg`, status: 'planned', dialogue: [line('2-0', 2)], description: 'Mara at the lamp', characters: ['mara'], setting: 'lamp' },
+    { n: 3, tier: 'B', still_of: 3, still_key: `film/${film.id}/stills/3.jpg`, status: 'planned', dialogue: [], description: 'The sea', characters: [], setting: 'sea' },
+  ]);
+  const ctx = { storage, env: { CHE_DATA_BUCKET: bucket }, base: 'https://che.example', now: NOW };
+  const call = (path, opts) => filmTokenRoute(ctx, path.split('?')[0], req(path, { header: 'X-CHE-Farm-Token', ...opts }));
+  const next = async () => (await call(`/api/film/farm/${film.id}/next`, { token })).json();
+  // The moving clip first; shot 2 cannot be lip-synced before its clip arrives.
+  assert.equal((await next()).shot, 2);
+  const lip = await next();
+  assert.equal(lip.kind, 'lipsync');
+  assert.equal(lip.shot, 1);
+  assert.equal(lip.video_url, '', 'a still shot is held for its length');
+  assert.match(lip.image_url, /stills%2F1\.jpg$/);
+  assert.deepEqual(lip.audio.map((a) => a.at), [0.3, 1.85], 'the same times the edit gives the lines: 0.3 s in, 0.35 s between');
+  assert.equal(lip.seconds, shotSeconds({ ...lip, tier: 'B', dialogue: [line('1-0', 1.2), line('1-1', 0.8)] }));
+  assert.deepEqual(await next(), { wait: 30 }, 'shot 2 still waits for its clip, so the worker waits');
+  // A clip shorter than the shot is refused; the right one is kept.
+  assert.equal((await call(`/api/film/farm/${film.id}/result?shot=1&kind=lipsync`, { token, method: 'PUT', body: mp4({ seconds: 2, codecs: 'avc1' }) })).status, 422);
+  assert.equal((await call(`/api/film/farm/${film.id}/result?shot=1&kind=lipsync&seconds=140`, { token, method: 'PUT', body: mp4({ seconds: lip.seconds, codecs: 'avc1' }) })).status, 200);
+  assert.equal((await storage.get(`film:${film.id}:clips`))[1].lip_key, `film/${film.id}/lips/1.mp4`);
+  assert.equal((await loadRates(storage)).measured.kaggle_lipsync_s, true, 'lip sync time is measured');
+  // Shot 2's clip arrives; its lip sync starts from that clip, and fails: that shot goes on with its clip.
+  assert.equal((await call(`/api/film/farm/${film.id}/result?shot=2&seconds=200`, { token, method: 'PUT', body: mp4({ seconds: 5, codecs: 'avc1' }) })).status, 200);
+  const lip2 = await next();
+  assert.deepEqual([lip2.kind, lip2.shot], ['lipsync', 2]);
+  assert.match(lip2.video_url, /clips%2F2\.mp4$/);
+  assert.equal((await call(`/api/film/farm/${film.id}/lipfail`, { token, method: 'POST', body: JSON.stringify({ shot: 2, error: 'Face not detected' }) })).status, 200);
+  assert.deepEqual(await next(), { done: true });
+  // The edit uses the lip-synced clip in place of the still.
+  const shots = await store.shots(film.id, 3);
+  shots[0].lip_key = `film/${film.id}/lips/1.mp4`;
+  shots.forEach((s) => { s.status = 'verified'; });
+  const plan = assemblyPlan(film, shots);
+  const spec = segmentSpec(film, plan.segments[0], plan.timed);
+  assert.deepEqual([spec.shots[0].clip, spec.shots[0].image], [`film/${film.id}/lips/1.mp4`, '']);
+  assert.match(speakStatus(film, shots, NOW), /1 talking shot is lip-synced\./);
+});
+
+test('lip sync results reach the film: a clip that lands during a pass is used, and a failure is said in the notes and the status (Codex on #950)', async () => {
+  const storage = memory(); const bucket = r2();
+  const store = new FilmStore(storage);
+  const { record } = await newFarmToken(NOW);
+  const film = { id: 'film_00000000000000cc', state: 'making', shot_count: 2, outline: validOutline(OUTLINE, { shots: 2 }), plan: { lip_sync: 2, segments: 1, parts: {} }, farm: { ...record, provider: 'kaggle', session: {} }, stats: { stills_made: 0, stills_failed: 0, lines_voiced: 0, clips_made: 0, retries: 0 }, notes: [], errors: [] };
+  await store.save(film, { force: true });
+  const line = (k) => ({ character: 'mara', line: 'Hello.', audio_key: `film/${film.id}/voice/${k}.mp3`, audio_s: 1 });
+  await store.putShots(film.id, [
+    { n: 1, tier: 'B', still_of: 1, still_key: `film/${film.id}/stills/1.jpg`, status: 'planned', attempts: 0, dialogue: [line('1-0')], description: 'Mara talks', characters: ['mara'], setting: 'stairs' },
+    { n: 2, tier: 'B', still_of: 2, still_key: `film/${film.id}/stills/2.jpg`, status: 'planned', attempts: 0, dialogue: [line('2-0')], description: 'Mara again', characters: ['mara'], setting: 'lamp' },
+  ]);
+  const ledgerKey = `film:${film.id}:clips`;
+  await storage.put(ledgerKey, { 2: { lip_error: 'Face not detected' } });
+  // Shot 1's lip-synced clip lands between this pass's first and second read of the farm ledger.
+  let reads = 0; const get = storage.get;
+  storage.get = async (k) => { if (k === ledgerKey && ++reads === 2) await storage.put(ledgerKey, { ...(await get(k)), 1: { lip_key: `film/${film.id}/lips/1.mp4`, lip_s: 2 } }); return get(k); };
+  const ctx = { storage, env: { CHE_DATA_BUCKET: bucket, CHE_GITHUB_TOKEN: 'gh', CHE_GITHUB_REPO: 'Vondada/chey-app' }, keys: {}, base: 'https://che.example', fetcher: offline, now: NOW };
+  await filmTick(ctx);
+  storage.get = get;
+  const after = await store.film(film.id);
+  const shots = await store.shots(film.id, 2);
+  assert.equal(shots[0].lip_key, `film/${film.id}/lips/1.mp4`, 'the clip that arrived mid-pass is on the shot before the farm closes');
+  assert.equal(after.farm.closed, 'all clips arrived');
+  const plan = assemblyPlan(after, shots);
+  assert.equal(segmentSpec(after, plan.segments[0], plan.timed).shots[0].clip, `film/${film.id}/lips/1.mp4`);
+  assert.equal(after.notes.filter((n) => n === 'Shot 2 has no lip sync: Face not detected.').length, 1, after.notes.join(' | '));
+  assert.match(speakStatus({ ...after, state: 'making' }, shots, NOW), /1 talking shot is lip-synced\. 1 talking shot could not be lip-synced \(Face not detected\)\./);
+  await filmTick({ ...ctx });
+  assert.equal((await store.film(film.id)).notes.filter((n) => /Shot 2 has no lip sync/.test(n)).length, 1, 'said once');
+});
+
+test('the Kaggle worker is valid Python that waits for work, frees the GPU for lip sync, and pins LatentSync 1.5', async () => {
+  const { execFileSync } = await import('node:child_process');
+  const { writeFileSync, unlinkSync } = await import('node:fs');
+  const file = new URL('./.kaggle_worker.test.py', import.meta.url);
+  writeFileSync(file, kaggleWorkerScript({ base: 'https://che.example', filmId: 'film_0123456789abcdef', token: 't', deadlineS: 3600 }));
+  try { execFileSync('python3', ['-m', 'py_compile', file.pathname]); } finally { unlinkSync(file); }
+  assert.match(KAGGLE_WORKER_PY, /if job\.get\("wait"\):/);
+  assert.match(KAGGLE_WORKER_PY, /LATENTSYNC_COMMIT = "a229c3948406bc2cf6eaf4873e662e70c6a04746"/);
+  assert.match(KAGGLE_WORKER_PY, /LATENTSYNC_WEIGHTS = "ByteDance\/LatentSync-1\.5"/);
+  assert.match(KAGGLE_WORKER_PY, /configs\/unet\/stage2\.yaml/, 'the 256-pixel 1.5 config, not 1.6\'s 512 (18 GB)');
+  assert.match(KAGGLE_WORKER_PY, /torch\.cuda\.empty_cache\(\)/);
+  assert.match(KAGGLE_WORKER_PY, /\/lipfail/);
 });
 
 test('through /api/chat: the owner\'s words start a film with its ETA, status answers from the stored state, and guests cannot', async () => {
@@ -692,6 +811,10 @@ test('a story in the office is played by the real crew with their fixed looks, e
 test('the office story words: what starts one and what does not', () => {
   const office = filmIntent('Make a short story about the office coffee machine breaking');
   assert.deepEqual([office.kind, office.office, office.seconds], ['make', true, 60]);
+  assert.equal(office.deadline.seconds, 7200, 'a crew story may take two hours, so its talking shots can be lip-synced');
+  assert.equal(filmIntent('Make a short story about the office coffee machine as fast as possible').deadline.seconds, 0, 'unless the owner wants it fast');
+  const plan = planFilm({ targetSeconds: office.seconds, deadlineSeconds: office.deadline.seconds, providers: providers(kaggleOn), talkingShots: 5, now: NOW });
+  assert.equal(plan.lip_sync, 5, 'with the free Kaggle GPU connected, every talking shot of a crew story gets lip sync');
   assert.equal(filmIntent('Che, make a 3-minute movie about my crew planning a launch').seconds, 180);
   assert.equal(filmIntent('Make a movie about a pirate crew').office, undefined, 'a pirate crew is not the office');
   assert.equal(filmIntent('Make a film about an office romance in 1950s New York').office, undefined);
