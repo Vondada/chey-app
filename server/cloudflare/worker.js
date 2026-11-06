@@ -13891,7 +13891,8 @@ export class CheState extends DurableObject {
             // A render still under way when this one starts keeps being tracked.
             const running = await this.ctx.storage.get('che_video_pending');
             let alsoNote = '';
-            if (running?.task_id && running.task_id !== made.job_id) {
+            // Only a render from the last 30 min is still rendering.
+            if (running?.task_id && running.task_id !== made.job_id && Date.now() - Date.parse(running.created_at || 0) < 1800000) {
               const kept = (await this.ctx.storage.get('che_video_earlier')) || [];
               await this.ctx.storage.put('che_video_earlier', [running, ...kept.filter((v) => v.task_id !== running.task_id)].slice(0, 3));
               alsoNote = ` Your video${running.topic ? ` about ${running.topic}` : ''} keeps rendering too (task ${running.task_id}).`;
