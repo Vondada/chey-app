@@ -54,3 +54,32 @@ for (const side of ['long', 'short']) {
   }
 }
 if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, `${lines.join('\n')}\n`);
+
+// The owner's question (2026-11-06): "since she's able to lose that much, flip it so she wins that much". The exact
+// opposite trade (other side, its stop at the original target, its target at the original stop) exits on the same
+// prices, so its result before costs is the negative of the original's and it pays the same costs again:
+// flipped net = -(gross) - costs. Measured per setup on every copy the desk has run (excluded setups included, since
+// October's losses came from them), in both halves of the bars. Research only.
+const allTrades = [];
+for (const spec of liveSpecs()) {
+  const pf = newPortfolio(spec.c, spec.f, { contract: 'MNQ', qty: 1, source: 'backtest', resolution: '5m', params: { target_r: spec.target_r } });
+  if (!isPrimaryVariant(pf)) continue;
+  allTrades.push(...stepPortfolio(pf, bars, ctx));
+}
+const flipTally = (list) => {
+  const n = list.length;
+  const cost = list.reduce((s, t) => s + (t.gross_before_costs - t.net_pnl), 0);
+  const asIs = list.reduce((s, t) => s + t.net_pnl, 0);
+  const flipped = list.reduce((s, t) => s - t.gross_before_costs - (t.gross_before_costs - t.net_pnl), 0);
+  const flipWins = list.filter((t) => -t.gross_before_costs - (t.gross_before_costs - t.net_pnl) > 0).length;
+  return { n, as_is: asIs, flipped, costs: cost, flip_win: n ? flipWins / n : null };
+};
+const flipLines = ['', '## Flipped trades (the exact opposite of each trade, same bars, same costs)', '',
+  '| Setup | Trades | As traded $ | Flipped $ | Flipped win % | Flipped first 70% $ | Flipped last 30% $ | Costs $ |', '|---|---|---|---|---|---|---|---|'];
+for (const s of [...new Set(allTrades.map((t) => t.strategy)), 'ALL']) {
+  const list = s === 'ALL' ? allTrades : allTrades.filter((t) => t.strategy === s);
+  const a = flipTally(list); const p = flipTally(list.filter((t) => t.entry.time < cut)); const q = flipTally(list.filter((t) => t.entry.time >= cut));
+  flipLines.push(`| ${s} | ${a.n} | ${f(a.as_is, 0)} | ${f(a.flipped, 0)} | ${f(a.flip_win == null ? null : 100 * a.flip_win, 1)} | ${f(p.flipped, 0)} | ${f(q.flipped, 0)} | ${f(a.costs, 0)} |`);
+  console.log(`flip ${s}: n=${a.n} as_is=${f(a.as_is, 0)} flipped=${f(a.flipped, 0)} flip_win=${f(a.flip_win == null ? null : 100 * a.flip_win, 1)}% first70=${f(p.flipped, 0)} last30=${f(q.flipped, 0)} costs=${f(a.costs, 0)}`);
+}
+if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, `${flipLines.join('\n')}\n`);
