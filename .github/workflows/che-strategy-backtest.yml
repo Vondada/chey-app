@@ -10,6 +10,7 @@ on:
       - server/cloudflare/trading_research.js
       - tools/che_strategy_backtest.mjs
       - tools/che_quality_replay.mjs
+      - tools/che_volatility_replay.mjs
       - server/cloudflare/strategy_governor.js
       - server/cloudflare/crypto_markets.js
 
@@ -52,3 +53,15 @@ jobs:
         with:
           name: quality-replay
           path: quality-replay.json
+
+  volatility-replay:
+    name: Volatility-stop replay (real bars, informational)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node tools/che_volatility_replay.mjs
