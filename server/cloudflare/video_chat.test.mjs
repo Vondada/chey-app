@@ -380,6 +380,21 @@ test('a different subject is its own video, and both are tracked', async () => {
   assert.doesNotMatch(second.reply, /earlier video/, 'a finished earlier video is reported once');
 });
 
+test('an older finished video is still collected, without calling it "still rendering"', async () => {
+  const gh = github();
+  const che = await owner();
+  await che.say('Make a video about black holes.');
+  const pending = che.saved.get('che_video_pending');
+  che.saved.set('che_video_pending', { ...pending, created_at: new Date(Date.now() - 31 * 60_000).toISOString() });
+  Object.assign(gh.runs[0], { status: 'completed', conclusion: 'success' });
+  gh.artifacts[gh.runs[0].id] = [{ id: 5000 + gh.runs[0].id, name: `che-video-${gh.runs[0].job}`, expired: false }];
+  const coffee = await che.say('Make a video about the history of coffee.');
+  assert.doesNotMatch(coffee.reply, /keeps rendering too/, 'a 31-minute-old job is not described as rendering');
+  assert.ok((che.saved.get('che_video_earlier') || []).some((v) => v.task_id === pending.task_id), 'the older job is still tracked');
+  const check = await che.say('Is my video ready?');
+  assert.match(check.reply, /Your earlier video about black holes is ready too/);
+});
+
 test('trading and other sentences are not video status checks or lengths', async () => {
   const gh = github();
   const che = await owner();
