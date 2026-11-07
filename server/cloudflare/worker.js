@@ -318,7 +318,7 @@ import { projectAudit, projectLibraryRoute } from './project_library.js';
 import { officeCast } from './film_cast.js';
 import { directorTurn, sceneLatest } from './scene_director.js';
 import { publicOrigin } from './film_render.js';
-import { FILM_ACTIVE_STATES, filmPlan, filmTick, filmTokenRoute, refreshValidation as refreshFilmValidation, remakeShot, setFilmState, startFilm } from './film_pipeline.js';
+import { FILM_ACTIVE_STATES, filmAskApplies, filmPlan, filmTick, filmTokenRoute, refreshValidation as refreshFilmValidation, remakeShot, rerenderFilm, reviewFilmNow, setFilmState, startFilm } from './film_pipeline.js';
 import { performanceBanner, performanceIntent, performanceReport, recordTiming, routeKey as perfRouteKey, speakPerformance } from './perf_watch.js';
 import { engineView, exportWorkflows, feedbackOnLast, importWorkflows, library as workflowLibrary, loadEngine, matchLearned, noteVersion, promoteCandidate, dismissCandidate, rankWorkflows, recordRun as recordWorkflowRun, isDisabled as workflowDisabled, restoreVersion, saveEngine, setDisabled as setWorkflowDisabled, setPreferred as setWorkflowPreferred, speakEfficiency, speakLibrary, testCandidate, workflowForRun, workflowIntent } from './workflow_engine.js';
 import { CATEGORIES, COMMANDS, catalogView, commandById, commandStatus, connectorStatus, describeWorkflow, dispatchPrompt, findSavedWorkflow, normalizeSavedWorkflow, parseSlashCommand, readCommandSpeech, searchCommands, speakCommandList, speakUnavailable, suggestCommands, workflowNodes, workflowFromWords } from './command_catalog.js';
@@ -5895,7 +5895,9 @@ export class CheState extends DurableObject {
     // Film Studio: the command's own words go through the same intent the owner's chat uses.
     if (command.local === 'film_make' || command.local === 'film_status') {
       if (!OWNER_CHAT_REQUESTS.has(request)) return ndjsonReply('Only the CHE owner can run Film Studio. Nothing was started.', { source: 'che_film_studio', ok: false, command: command.id, model_calls: 0 });
-      const ask = filmIntent(dispatchPrompt(command, input)) || (command.local === 'film_status' ? { kind: 'status' } : null);
+      // The owner's own words first ("/film-make re-render the film Brewed Anarchy"), then the command's prompt.
+      const own = command.local === 'film_make' ? filmIntent(String(input || '')) : null;
+      const ask = (own && own.kind !== 'make' ? own : null) || filmIntent(dispatchPrompt(command, input)) || (command.local === 'film_status' ? { kind: 'status' } : null);
       if (!ask) return ndjsonReply('Say the length and the subject, for example "/film-make 10-minute movie about a lighthouse keeper".', { source: 'che_film_studio', ok: false, command: command.id, model_calls: 0 });
       return withDoneFields(await this.filmChat(request, ask), { command: command.id });
     }
@@ -6496,6 +6498,9 @@ export class CheState extends DurableObject {
     if (action === 'farm') { await refreshFilmValidation(ctx, { force: true }); return { ok: true, said: speakFarm(await farmProviders(ctx.env, ctx.storage, ctx)) }; }
     if (['pause', 'resume', 'cancel'].includes(action)) { const out = await setFilmState(ctx, action); if (out.ok && action === 'resume') await this.wakeFilm(); return { ok: out.ok, said: out.said }; }
     if (action === 'remake') { const out = await remakeShot(ctx, Number(body.shot)); if (out.ok) await this.wakeFilm(); return { ok: out.ok, said: out.said }; }
+    // The director loop on demand, and a finished film made again from its saved script (film_pipeline.js).
+    if (action === 'review') { const out = await reviewFilmNow(ctx, { fix: body.fix === true }); if (out.started) await this.wakeFilm(); return { ok: out.ok, said: out.said }; }
+    if (action === 'rerender') { const out = await rerenderFilm(ctx, { title: String(body.title || '').slice(0, 120), last: body.last === true }); if (out.ok) await this.wakeFilm(); return { ok: out.ok, said: out.said, film_id: out.film?.id || null }; }
     return { ok: false, status: 400, said: 'Unknown Film Studio action.' };
   }
 
@@ -6507,8 +6512,8 @@ export class CheState extends DurableObject {
       const film = await store.latest();
       return say(speakFilmStatus(film, film?.shot_count ? await store.shots(film.id, film.shot_count) : []));
     }
-    const map = { make: 'make', plan: 'plan', farm: 'farm', pause: 'pause', resume: 'resume', cancel: 'cancel', remake: 'remake' };
-    const out = await this.filmAction(request, { action: map[ask.kind], topic: ask.topic, seconds: ask.seconds, deadline_s: ask.deadline ? ask.deadline.seconds : undefined, deadline_words: ask.deadline?.words || '', shot: ask.shot }, ask.office ? officeCast(data) : null);
+    const map = { make: 'make', plan: 'plan', farm: 'farm', pause: 'pause', resume: 'resume', cancel: 'cancel', remake: 'remake', review: 'review', rerender: 'rerender' };
+    const out = await this.filmAction(request, { action: map[ask.kind], topic: ask.topic, seconds: ask.seconds, deadline_s: ask.deadline ? ask.deadline.seconds : undefined, deadline_words: ask.deadline?.words || '', shot: ask.shot, fix: ask.fix === true, title: ask.title, last: ask.last === true }, ask.office ? officeCast(data) : null);
     return say(out.said, { ok: out.ok !== false, ...(out.film_id ? { film_id: out.film_id } : {}) });
   }
 
@@ -10760,7 +10765,8 @@ export class CheState extends DurableObject {
           const scene = ownerDevice && !body.attachment && !body.workflow_step ? await directorTurn({ storage: this.ctx.storage, env: this.env }, rawMessage, body.scene_selection) : null;
           if (scene) return ndjsonReply(scene.text, { model_calls: 0, ...scene.meta });
           const filmAsk = ownerDevice && !body.attachment && !body.workflow_step ? filmIntent(rawMessage) : null;
-          if (filmAsk) return this.filmChat(request, filmAsk, data);
+          // A bare "fix it" / "check it again" (while a finished film is recent) or "re-render <a film's title>" only.
+          if (filmAsk && await filmAskApplies(this.ctx.storage, filmAsk)) return this.filmChat(request, filmAsk, data);
           // Capability Engine: what CHE can actually do, what she learned, owner policies (internal-only and memory).
           // Brain Population Ledger: what entered the Brain, when, where from, and whether it is usable yet.
           const ledgerAsk = ownerDevice && !body.attachment && !body.workflow_step ? brainLedgerIntent(rawMessage) : null;
