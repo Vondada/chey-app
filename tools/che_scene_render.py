@@ -28,6 +28,7 @@ import bpy
 from mathutils import Euler, Vector
 
 from che_scene_layout import apply_layout  # touch edits (offset, scale); tools/ is on the path as this script's folder
+import che_scene_look as look_data  # lights, props, materials, actor poses and camera keys as data (Stage 7)
 
 LEG_BONES = ("pelvis", "thigh", "shin", "foot", "toe", "leg", "hip", "knee", "ankle")
 ACTOR_HEIGHT = 1.62  # the crew are drawn small; scaled to an adult's height in a life-size office
@@ -104,7 +105,172 @@ LIGHTING = {
 }
 
 
-def build_set(spec, seat_h):
+# The office's inner walls (metres), shared with tools/che_scene_look.py. The seats sit near the middle; the door is on
+# the left wall. The default static camera (scene_director.js DEFAULT_CAMERA) stands at about (1.3, -5.0), inside the
+# front wall; the orbit (radius 3) stays inside the side walls and only passes behind the back wall, hidden while it does.
+ROOM = look_data.ROOM
+INSET = 0.3  # how close the camera may come to a side or front wall
+TARGETS = {}  # material target id -> the objects it colours (spec.materials)
+
+
+def tag(target, *objs):
+    TARGETS.setdefault(target, []).extend(o for o in objs if o is not None)
+    return objs[0] if objs else None
+
+
+# Built-in props, drawn from simple shapes at the prop's own origin: it stands on z=0 (wall pieces are centred on it)
+# and faces +Y, so rotation 0 suits the front wall and 90 the right wall (spec.props, tools/che_scene_look.py).
+def prop_bookshelf(look):
+    wood = material("shelf wood", "#6b4a33", 0.55)
+    spines = [material(f"book {i}", c, 0.7) for i, c in enumerate(("#8c2f2f", "#2f4f8c", "#d9a441", "#3f7a4f", "#5b3f7a", "#c96a3a"))]
+    box("bookshelf back", (1.6, 0.04, 2.0), (0, -0.14, 1.0), wood)
+    for side in (-0.8, 0.8):
+        box("bookshelf side", (0.04, 0.32, 2.0), (side, 0, 1.0), wood)
+    for k in range(5):
+        z = 0.05 + k * 0.48
+        box("bookshelf shelf", (1.6, 0.32, 0.03), (0, 0, z), wood)
+        if k < 4:
+            x, i = -0.72, k
+            while x < 0.62:
+                w = 0.05 + 0.03 * ((i * 7) % 3)
+                h = 0.26 + 0.04 * ((i * 5) % 3)
+                box("book", (w, 0.22, h), (x + w / 2, 0, z + 0.015 + h / 2), spines[i % len(spines)])
+                x += w + 0.01
+                i += 1
+
+
+def prop_whiteboard(look):
+    box("whiteboard", (1.6, 0.03, 1.0), (0, 0, 0), material("whiteboard", "#f7f7f4", 0.25))
+    box("whiteboard frame", (1.7, 0.02, 1.1), (0, -0.015, 0), material("cabinet", "#4a5560", 0.35))
+
+
+def prop_print(look):
+    box("print frame", (1.1, 0.03, 0.8), (0, 0, 0), material("frame", "#1b1b1b", 0.4))
+    box("print", (0.96, 0.01, 0.66), (0, 0.02, 0), material("print", look["window"][0], 0.6))
+
+
+def prop_sideboard(look):
+    box("sideboard", (1.6, 0.5, 0.9), (0, 0, 0.45), material("shelf wood", "#6b4a33", 0.55))
+    paper = material("paper", "#f3efe6", 0.9)
+    for x in (0.25, 0.45):
+        bpy.ops.mesh.primitive_cylinder_add(radius=0.045, depth=0.1, location=(x, 0.02, 0.95))
+        bpy.context.object.data.materials.append(paper)
+
+
+def prop_coffee_machine(look):
+    box("coffee machine", (0.3, 0.32, 0.42), (0, 0, 0.21), material("coffee machine", "#2b2b2e", 0.3))
+    box("coffee machine light", (0.06, 0.01, 0.03), (0, 0.17, 0.3), material("ready light", "#111111", 0.3, emission="#5cff9a", strength=4))
+
+
+def prop_filing_cabinet(look):
+    box("filing cabinet", (0.6, 0.5, 1.3), (0, 0, 0.65), material("cabinet", "#4a5560", 0.35))
+    paper = material("paper", "#f3efe6", 0.9)
+    for k in range(3):
+        box("drawer handle", (0.2, 0.01, 0.03), (0, 0.26, 0.3 + k * 0.42), paper)
+
+
+def prop_rug(look):
+    box("rug", (3.0, 2.2, 0.01), (0, 0, 0.005), material("rug", "#384a5e", 0.95))
+
+
+def prop_plant(look):
+    bpy.ops.mesh.primitive_cylinder_add(radius=0.22, depth=0.45, location=(0, 0, 0.225))
+    bpy.context.object.data.materials.append(material("pot", "#6b4f3a", 0.7))
+    bpy.ops.mesh.primitive_uv_sphere_add(radius=0.45, location=(0, 0, 0.85))
+    bpy.context.object.data.materials.append(material("leaf", "#2f6b3a", 0.6))
+
+
+def prop_ceiling_panel(look):
+    box("ceiling panel", (1.2, 0.6, 0.02), (0, 0, 0), material("panel", "#fffaf0", 0.5, emission=look["key"][0], strength=2.5))
+
+
+def prop_box(look):
+    box("box", (1, 1, 1), (0, 0, 0.5), material("box", "#8a7a66", 0.6))
+
+
+PROP_BUILDERS = {k: globals()[f"prop_{k}"] for k in look_data.PROP_KINDS}
+
+
+def place_props(spec, look, root):
+    """Every prop in spec.props (or the default dressing), each under its own empty at its position, rotation, scale."""
+    for p in look_data.props(spec):
+        before = set(bpy.data.objects)
+        if p["asset"] in PROP_BUILDERS:
+            PROP_BUILDERS[p["asset"]](look)
+        else:
+            path = Path(root) / p["asset"]
+            if not path.is_file():
+                print(f"CHE_SCENE_WARN prop {p['id']}: {p['asset']} is not in the repository; skipped", flush=True)
+                continue
+            bpy.ops.import_scene.gltf(filepath=str(path))
+        parts = [o for o in bpy.data.objects if o not in before]
+        holder = bpy.data.objects.new(f"prop {p['id']}", None)
+        bpy.context.scene.collection.objects.link(holder)
+        for o in parts:
+            if o.parent is None:
+                o.parent = holder
+        holder.location = p["position"]
+        holder.rotation_euler = [math.radians(a) for a in p["rotation"]]
+        holder.scale = p["scale"]
+        tag(p["id"], *[o for o in parts if o.type == "MESH"])
+        if p.get("material"):
+            spec.setdefault("_prop_materials", {})[p["id"]] = p["material"]
+
+
+def place_lights(spec, look):
+    scene = bpy.context.scene
+    kinds = {"area": "AREA", "sun": "SUN", "point": "POINT", "spot": "SPOT"}
+    for l in look_data.lights(spec, look):
+        light = bpy.data.lights.new(l["id"], kinds[l["type"]])
+        light.energy = l["power"]
+        light.color = hex_rgba(l["color"])[:3]
+        if l["type"] == "area":
+            light.size = l["size"]
+        elif l["type"] == "spot":
+            light.spot_size = math.radians(l["size"])
+            light.shadow_soft_size = 0.25
+        elif l["type"] == "point":
+            light.shadow_soft_size = l["size"]
+        obj = bpy.data.objects.new(f"light {l['id']}", light)
+        scene.collection.objects.link(obj)
+        obj.location = l["position"]
+        if "rotation" in l:
+            obj.rotation_euler = [math.radians(a) for a in l["rotation"]]
+        else:
+            obj.rotation_euler = (Vector(l["look_at"]) - Vector(l["position"])).to_track_quat("-Z", "Y").to_euler()
+
+
+def apply_materials(spec):
+    """spec.materials and each prop's own material: base colour, roughness, metallic and emission on the named target.
+    An actor id recolours only that actor's outfit; a prop or set target recolours every part of it."""
+    wanted = {**spec.get("_prop_materials", {}), **look_data.materials(spec)}
+    for target, m in wanted.items():
+        objs = TARGETS.get(target, [])
+        if not objs:
+            continue
+        mat = bpy.data.materials.new(f"{target} edited")
+        mat.use_nodes = True
+        bsdf = mat.node_tree.nodes["Principled BSDF"]
+        if "base_color" in m:
+            bsdf.inputs["Base Color"].default_value = hex_rgba(m["base_color"])
+        if "roughness" in m:
+            bsdf.inputs["Roughness"].default_value = m["roughness"]
+        if "metallic" in m:
+            bsdf.inputs["Metallic"].default_value = m["metallic"]
+        if "emission" in m:
+            bsdf.inputs["Emission Color"].default_value = hex_rgba(m["emission"])
+            bsdf.inputs["Emission Strength"].default_value = m["emission_strength"]
+        actor = target in ACTOR_IDS
+        for o in objs:
+            for i, slot in enumerate(o.data.materials):
+                if not actor or (slot and slot.name.split(".")[0] in ("cloth",) or (slot and slot.name.endswith(" outfit"))):
+                    o.data.materials[i] = mat
+
+
+ACTOR_IDS = set()
+
+
+def build_set(spec, seat_h, root="."):
     s = spec.get("set", {})
     look = LIGHTING.get(s.get("light", "warm"), LIGHTING["warm"])
     floor = material("floor", s.get("floor", "#5b4636"), 0.45)
@@ -113,49 +279,52 @@ def build_set(spec, seat_h):
     seat = material("chair", s.get("chair", "#1f2a36"), 0.5)
     bpy.ops.mesh.primitive_plane_add(size=14, location=(0, 0, 0))
     bpy.context.object.data.materials.append(floor)
-    box("ceiling", (14, 14, 0.05), (0, 0, 3.2), material("ceiling", "#efeae0", 0.9))
-    box("back wall", (14, 0.1, 3.2), (0, 3.2, 1.6), wall)
-    # The side wall has the doorway the actors walk in through (a gap from y=-0.4 to y=1.2).
-    box("side wall front", (0.1, 4.6, 3.2), (-3.6, -2.7, 1.6), wall)
-    box("side wall back", (0.1, 2.0, 3.2), (-3.6, 2.2, 1.6), wall)
-    box("door header", (0.1, 1.6, 0.9), (-3.6, 0.4, 2.75), wall)
+    tag("floor", bpy.context.object)
+    tag("ceiling", box("ceiling", (14, 14, 0.05), (0, 0, 3.2), material("ceiling", "#efeae0", 0.9)))
+    x0, x1, y0, y1 = ROOM["x0"], ROOM["x1"], ROOM["y0"], ROOM["y1"]
+    # The room is closed on every side (Stage 7): an orbiting or wide camera never sees past the walls into the empty
+    # world. The left wall keeps the doorway the actors walk in through (a gap from y=-0.4 to y=1.2), with a short lit
+    # corridor behind it; the walls run a little past each corner so a camera near one still sees wall at the frame edge.
+    tag("wall",
+        box("back wall", (14, 0.1, 3.2), (0, y1, 1.6), wall),
+        box("side wall front", (0.1, -0.4 - (y0 - 0.6), 3.2), (x0, (-0.4 + y0 - 0.6) / 2, 1.6), wall),
+        box("side wall back", (0.1, (y1 + 0.6) - 1.2, 3.2), (x0, (1.2 + y1 + 0.6) / 2, 1.6), wall),
+        box("door header", (0.1, 1.6, 0.9), (x0, 0.4, 2.75), wall),
+        box("right wall", (0.1, (y1 + 0.6) - (y0 - 0.6), 3.2), (x1, (y1 + y0) / 2, 1.6), wall),
+        box("front wall", ((x1 + 0.6) - (x0 - 0.6), 0.1, 3.2), ((x0 + x1) / 2, y0, 1.6), wall),
+        box("corridor far wall", (0.1, 4.0, 3.2), (x0 - 1.6, 0.4, 1.6), wall),
+        box("corridor wall front", (1.6, 0.1, 3.2), (x0 - 0.8, -1.6, 1.6), wall),
+        box("corridor wall back", (1.6, 0.1, 3.2), (x0 - 0.8, 2.4, 1.6), wall))
+    tag("ceiling", box("corridor light", (0.8, 0.4, 0.02), (x0 - 0.8, 0.4, 3.17), material("corridor light", "#fffaf0", 0.5, emission=look["key"][0], strength=1.5)))
+    trim = material("trim", s.get("trim", "#ece6da"), 0.5)
+    for name, size, loc in (
+        ("skirting back", (x1 - x0, 0.03, 0.12), ((x0 + x1) / 2, y1 - 0.06, 0.06)),
+        ("skirting front", (x1 - x0, 0.03, 0.12), ((x0 + x1) / 2, y0 + 0.06, 0.06)),
+        ("skirting right", (0.03, y1 - y0, 0.12), (x1 - 0.06, (y0 + y1) / 2, 0.06)),
+    ):
+        tag("trim", box(name, size, loc, trim))
     # A night-city window on the back wall (an emissive panel, so it lights the room a little).
     city = material("window", "#0b1630", 0.2, emission=look["window"][0], strength=look["window"][1])
-    box("window", (3.2, 0.02, 1.5), (1.2, 3.13, 1.65), city)
-    box("desk top", (1.8, 0.8, 0.06), (0.9, 1.5, 0.74), wood)
-    box("desk side", (0.06, 0.75, 0.72), (0.03, 1.5, 0.36), wood)
-    box("desk side", (0.06, 0.75, 0.72), (1.77, 1.5, 0.36), wood)
+    tag("window", box("window", (3.2, 0.02, 1.5), (1.2, 3.13, 1.65), city))
+    tag("desk",
+        box("desk top", (1.8, 0.8, 0.06), (0.9, 1.5, 0.74), wood),
+        box("desk side", (0.06, 0.75, 0.72), (0.03, 1.5, 0.36), wood),
+        box("desk side", (0.06, 0.75, 0.72), (1.77, 1.5, 0.36), wood))
     box("monitor", (0.7, 0.04, 0.42), (0.9, 1.75, 1.05), material("screen", "#111111", 0.3, emission="#9fd4ff", strength=0.6))
     for name, pos in spec.get("seats", {}).items():
         # The sit pose moves the hips back about 0.19, so the seat centre sits that far behind the actor's spot.
         shift = Vector((0, 0.17, 0))
         shift.rotate(Euler((0, 0, math.radians(pos[2]))))
-        chair(f"chair {name}", (pos[0] + shift.x, pos[1] + shift.y), pos[2], seat, seat_h)
-    pot = material("pot", "#6b4f3a", 0.7)
-    leaf = material("leaf", "#2f6b3a", 0.6)
-    bpy.ops.mesh.primitive_cylinder_add(radius=0.22, depth=0.45, location=(2.9, 2.6, 0.225))
-    bpy.context.object.data.materials.append(pot)
-    bpy.ops.mesh.primitive_uv_sphere_add(radius=0.45, location=(2.9, 2.6, 0.85))
-    bpy.context.object.data.materials.append(leaf)
+        tag("chair", *chair(f"chair {name}", (pos[0] + shift.x, pos[1] + shift.y), pos[2], seat, seat_h))
+    place_props(spec, look, root)
     scene = bpy.context.scene
     world = bpy.data.worlds.new("office")
     scene.world = world
     world.use_nodes = True
     world.node_tree.nodes["Background"].inputs["Color"].default_value = hex_rgba(look["world"][0])
     world.node_tree.nodes["Background"].inputs["Strength"].default_value = look["world"][1]
-    for name, loc, power, color in (
-        ("ceiling key", (0.5, -0.5, 3.0), look["key"][1], look["key"][0]),
-        ("lamp", (1.6, 1.4, 1.6), look["lamp"][1], look["lamp"][0]),
-        ("fill", (-2.5, -3.0, 2.2), look["fill"][1], look["fill"][0]),
-    ):
-        light = bpy.data.lights.new(name, "AREA")
-        light.energy = power
-        light.color = hex_rgba(color)[:3]
-        light.size = 1.6
-        obj = bpy.data.objects.new(name, light)
-        scene.collection.objects.link(obj)
-        obj.location = loc
-        obj.rotation_euler = (Vector((0.5, 0.8, 0.6)) - Vector(loc)).to_track_quat("-Z", "Y").to_euler()
+    # spec.lights, or the default three-point rig on the seats (tools/che_scene_look.py default_lights).
+    place_lights(spec, look)
 
 
 def import_actor(actor, root):
@@ -172,6 +341,8 @@ def import_actor(actor, root):
             for i, m in enumerate(o.data.materials):
                 if m and m.name.split(".")[0] == "cloth":
                     o.data.materials[i] = material(f"{actor['id']} outfit", actor["cloth"], 0.7)
+    ACTOR_IDS.add(actor["id"])
+    tag(actor["id"], *[o for o in objs if o.type == "MESH"])  # spec.materials[actor id] recolours the outfit
     return arm, objs, clips
 
 
@@ -213,8 +384,9 @@ def animate_actor(arm, clips, actor, timeline, spec, fps):
     body.name = "body"
     top = arm.animation_data.nla_tracks.new()
     top.name = "upper body"
-    pos = list(actor["start"][:2])
-    heading = actor["start"][2] if len(actor["start"]) > 2 else 0
+    start = look_data.actor_start(actor)  # actor.position / actor.rotation override the start (Stage 7)
+    pos = start[:2]
+    heading = start[2]
     seated = False
 
     def key(frame, xy, head):
@@ -256,6 +428,11 @@ def animate_actor(arm, clips, actor, timeline, spec, fps):
             k.interpolation = "LINEAR"
 
 
+def inside_room(loc):
+    """Keeps the camera inside the side and front walls (it may pass behind the back wall, which is then hidden)."""
+    return Vector((min(ROOM["x1"] - INSET, max(ROOM["x0"] + INSET, loc.x)), max(ROOM["y0"] + INSET, loc.y), min(3.0, max(0.3, loc.z))))
+
+
 def camera_for(spec, frames, fps):
     """Static, or orbit: holds the opening shot until t0, blends into a circle round the target, and circles until t1.
     While the camera is behind the back wall, that wall and its window are hidden so the shot sees into the room."""
@@ -279,8 +456,14 @@ def camera_for(spec, frames, fps):
     t1 = 1 + round(float(c.get("t1", frames / fps)) * fps)
     blend = 18  # frames to glide from the opening shot onto the circle
     behind = [o for o in bpy.data.objects if o.name in ("back wall", "window") or o.name.startswith("monitor")]
+    keys = look_data.camera_keys(spec)
     for f in range(1, frames + 1):
-        if move == "orbit" and f >= t0:
+        if keys:
+            p, look_at, lens = look_data.camera_at(keys, (f - 1) / fps)
+            loc, tgt = Vector(p), Vector(look_at)
+            data.lens = lens
+            data.keyframe_insert("lens", frame=f)
+        elif move == "orbit" and f >= t0:
             p = min(1.0, (f - t0) / max(1, t1 - t0))
             loc, tgt = pose(c, c.get("angle", -25) + c.get("degrees", 360) * p)
             if f < t0 + blend:
@@ -290,11 +473,12 @@ def camera_for(spec, frames, fps):
                 loc, tgt = loc0.lerp(loc, w), tgt0.lerp(tgt, w)
         else:
             loc, tgt = pose(opening, opening.get("angle", -25))
+        loc = inside_room(loc)
         cam.location = loc
         cam.rotation_euler = (tgt - loc).to_track_quat("-Z", "Y").to_euler()
         cam.keyframe_insert("location", frame=f)
         cam.keyframe_insert("rotation_euler", frame=f)
-        hide = loc.y > 2.9
+        hide = loc.y > ROOM["y1"] - INSET
         for o in behind:
             o.hide_render = hide
             o.keyframe_insert("hide_render", frame=f)
@@ -355,7 +539,7 @@ def main():
         if seat_h is None:
             seat_h = pelvis - SEAT_BELOW_PELVIS * k + arm["floor_offset"]
         arm.animation_data.action = None
-    build_set(spec, seat_h)
+    build_set(spec, seat_h, a.root)
     for actor, arm, clips in actors:
         animate_actor(arm, clips, actor, spec["timeline"], spec, fps)
         off = arm["floor_offset"]
@@ -365,8 +549,22 @@ def main():
                     for k in fc.keyframe_points:
                         k.co.y += off
     camera_for(spec, frames, fps)
+    apply_materials(spec)
 
     scene.render.engine = "CYCLES"
+    # AgX (Blender 4.0+) rolls off bright lights and windows instead of clipping them; Filmic on older Blenders.
+    # (The colour-management enums are dynamic, so they are set and checked rather than listed.)
+    for transform, contrast in (("AgX", "AgX - Medium High Contrast"), ("Filmic", "Medium High Contrast")):
+        try:
+            scene.view_settings.view_transform = transform
+        except TypeError:
+            continue
+        try:
+            scene.view_settings.look = contrast
+        except TypeError:
+            pass
+        break
+    scene.view_settings.exposure = float(spec.get("exposure", 0.0))
     scene.cycles.device = "CPU"
     scene.cycles.samples = int(spec.get("samples", 24))
     scene.cycles.use_denoising = bool(spec.get("denoise", True))

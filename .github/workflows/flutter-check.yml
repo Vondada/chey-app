@@ -116,6 +116,7 @@ jobs:
         run: |
           python3 -m unittest discover -s tools -p 'test_che_scene_finish.py' -v
           python3 -m unittest discover -s tools -p 'test_che_scene_layout.py' -v
+          python3 -m unittest discover -s tools -p 'test_che_scene_look.py' -v
       - name: Crew models (rig, clips, viseme and blink face shapes, Orion and Vale)
         timeout-minutes: 2
         run: python3 -m unittest discover -s tools -p 'test_crew_glbs.py' -v
