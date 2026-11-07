@@ -8,7 +8,7 @@ import {
   filmIntent, imageSize, lengthFrom, loadRates, loadUsage, mp3Seconds, planFilm, recordRate, reserve, segmentSpec, shotList,
   outlineMessages, shotSeconds, speakFarm, speakPlan, speakStatus, spend, validOutline, validSceneShots, _internals,
 } from './film_studio.js';
-import { HF_SPACE_FILES, KAGGLE_WORKER_PY, durationSeconds, farmTokenOpens, kaggleAuth, kaggleWorkerScript, newFarmToken, startKaggleSession, validateKaggle } from './film_farm.js';
+import { HF_SPACE_FILES, KAGGLE_WORKER_PY, durationSeconds, farmTokenOpens, kaggleAuth, kaggleSessionLog, kaggleWorkerScript, logReason, newFarmToken, sessionLogText, startKaggleSession, validateKaggle } from './film_farm.js';
 import { filmTick, filmTokenRoute, remakeShot, setFilmState, startFilm } from './film_pipeline.js';
 import { mp4Facts } from './github_video_renderer.js';
 import { replyFromNdjson } from './brain_memory.js';
@@ -1035,4 +1035,105 @@ test('the finished film says how many shots really move and are lip-synced, and 
   const cut = shots.map((s, i) => ({ ...s, clip_key: i < 8 ? 'c' : '', lip_key: i === 8 ? 'l' : '', status: i === 9 ? 'failed' : 'verified' }));
   assert.match(speakStatus(film, cut, NOW), /Every shot moves\./);
   assert.match(speakStatus(film, cut.map((s, i) => (i === 8 ? { ...s, lip_key: '' } : s)), NOW), /8 of 9 shots move/);
+});
+
+// ─── Why a free Kaggle GPU session failed (live 2026-11-07: "Brewed Tension" said only "the Kaggle session ended
+// (error)": Kaggle's status had no failureMessage, and the worker's own report was checked after Kaggle's bare status).
+
+const KAGGLE_LOG = JSON.stringify([
+  { stream_name: 'stdout', time: 1.2, data: 'CHE farm worker starting\n' },
+  { stream_name: 'stderr', time: 2.5, data: 'Traceback (most recent call last):\n  File "script.py", line 380, in main\n' },
+  { stream_name: 'stderr', time: 2.6, data: 'urllib.error.HTTPError: HTTP Error 403: Forbidden\n' },
+  { stream_name: 'stdout', time: 2.7, data: 'CHE farm: could not report the failure to CHE: HTTPError: HTTP Error 403: Forbidden\n' },
+]);
+
+/** A Kaggle API that starts the session, then reports it ended in ERROR with no failure message. */
+function kaggleEndsInError(gh, { log = KAGGLE_LOG, calls = [], ended = () => true } = {}) {
+  return async (url, init) => {
+    const u = String(url);
+    if (u.includes('kernels.KernelsApiService/')) calls.push(u.split('/').pop());
+    if (u.endsWith('/SaveKernel')) return Response.json({ ref: 'owner/che-film-0123456789', url: 'https://kaggle.com/x', versionNumber: 1 });
+    if (u.endsWith('/GetKernelSessionStatus')) return Response.json(ended() ? { status: 'ERROR', failureMessage: '' } : { status: 'RUNNING' });
+    if (u.endsWith('/ListKernelSessionOutput')) return log == null ? new Response('', { status: 404 }) : Response.json({ files: [], log });
+    return github(gh)(url, init);
+  };
+}
+
+async function kaggleFilm(fetcher, { base = 'https://che.example' } = {}) {
+  const storage = memory(); const bucket = r2();
+  await storage.put('film:validation', { github_actions: { ok: true, checked_ms: NOW }, kaggle: { ok: true, username: 'owner', allowed_s: 30 * 3600, used_s: 0, reserved_s: 0, checked_ms: NOW } });
+  const env = { AI: fakeAI(), CHE_DATA_BUCKET: bucket, CHE_GITHUB_TOKEN: 'gh', CHE_GITHUB_REPO: 'Vondada/chey-app' };
+  const ctx = { storage, env, keys: { KAGGLE_API_TOKEN: 'owner:KGAT_abcdefghijklmnop' }, writer: writer(), base, fetcher, now: NOW };
+  assert.equal((await startFilm(ctx, { topic: 'the coffee machine breaks', seconds: 60, deadline: { seconds: 7200 } })).ok, true);
+  return { storage, ctx, store: new FilmStore(storage) };
+}
+
+test('a Kaggle session that ends in error with no message: CHE reads the reason from the session\'s own log', async () => {
+  const calls = [];
+  const { ctx } = await kaggleFilm(kaggleEndsInError({}, { calls }));
+  const film = await runUntil(ctx, ['assembling', 'failed']);
+  assert.ok(calls.includes('ListKernelSessionOutput'), 'the session log was read');
+  const said = film.notes.join(' | ');
+  assert.match(said, /moving shots became stills with camera motion: the Kaggle session ended \(error: urllib\.error\.HTTPError: HTTP Error 403: Forbidden\)/, said);
+  assert.doesNotMatch(said, /KGAT_abcdefghijklmnop/, 'the token never reaches a note');
+});
+
+test('no log either: the note says the log gave no reason, instead of a bare "error"', async () => {
+  const { ctx } = await kaggleFilm(kaggleEndsInError({}, { log: null }));
+  const film = await runUntil(ctx, ['assembling', 'failed']);
+  assert.match(film.notes.join(' | '), /the Kaggle session ended \(error, with no reason in its log\)/);
+});
+
+test('the worker\'s own failure report wins over Kaggle\'s bare "error" for the same session', async () => {
+  const calls = [];
+  let reported = false;  // the session runs until the worker has posted its failure, then Kaggle says ERROR too
+  const { ctx, storage, store } = await kaggleFilm(kaggleEndsInError({}, { calls, ended: () => reported }));
+  let film;
+  for (let i = 0; i < 40 && !(film = await store.latest())?.farm; i += 1) await filmTick(ctx);
+  assert.equal(film.farm.provider, 'kaggle', 'the session started');
+  await storage.put(`film:${film.id}:farmdone`, { error: 'OSError: CUDA out of memory on the T4', seconds: 300 });
+  reported = true;
+  film = await runUntil(ctx, ['assembling', 'failed']);
+  assert.match(film.notes.join(' | '), /became stills with camera motion: the GPU worker stopped: OSError: CUDA out of memory on the T4/);
+  assert.ok(!calls.includes('ListKernelSessionOutput'), 'no log is needed when the worker said why');
+});
+
+test('no public address: no Kaggle session is started, and the film waits saying why', async () => {
+  const calls = [];
+  const { ctx, store } = await kaggleFilm(kaggleEndsInError({}, { calls }), { base: '' });
+  for (let i = 0; i < 8; i += 1) await filmTick(ctx);
+  const film = await store.latest();
+  assert.ok(!calls.includes('SaveKernel'), 'no GPU session is burned on an address it cannot reach');
+  assert.equal(film.farm, undefined);
+  assert.match(film.waiting, /does not know her public address/);
+  let fetched = false;
+  const direct = await startKaggleSession('owner:KGAT_abcdefghijklmnop', { base: 'https://che.internal', film: { id: 'film_0123456789abcdef' }, token: 't', seconds: 3600 }, async () => { fetched = true; return Response.json({}); });
+  assert.equal(direct.ok, false);
+  assert.equal(fetched, false);
+  assert.match(direct.error, /public address/);
+});
+
+test('the session log reader: Kaggle\'s JSON log, plain text, the last exception line, and secrets hidden', async () => {
+  assert.equal(sessionLogText(KAGGLE_LOG).includes('HTTP Error 403'), true);
+  assert.equal(sessionLogText('plain text log'), 'plain text log');
+  assert.equal(logReason(sessionLogText(KAGGLE_LOG)), 'urllib.error.HTTPError: HTTP Error 403: Forbidden');
+  assert.equal(logReason('pip install ...\nModuleNotFoundError: No module named \'diffusers\'\n'), 'ModuleNotFoundError: No module named \'diffusers\'');
+  assert.equal(logReason('CHE farm: no public address for CHE (\'\'); nothing to do.\n'), 'CHE farm: no public address for CHE (\'\'); nothing to do.');
+  assert.equal(logReason('RuntimeError: bad token KGAT_abcdefghijklmnop', ['KGAT_abcdefghijklmnop']), 'RuntimeError: bad token [hidden]');
+  assert.equal(logReason(''), '');
+  let body;
+  const reason = await kaggleSessionLog('owner:KGAT_abcdefghijklmnop', { username: 'owner', slug: 'che-film-0123456789' }, async (url, init) => { body = { url: String(url), ...JSON.parse(init.body) }; return Response.json({ log: KAGGLE_LOG }); });
+  assert.equal(reason, 'urllib.error.HTTPError: HTTP Error 403: Forbidden');
+  assert.match(body.url, /kernels\.KernelsApiService\/ListKernelSessionOutput$/);
+  assert.deepEqual([body.userName, body.kernelSlug], ['owner', 'che-film-0123456789']);
+  assert.equal(await kaggleSessionLog('owner:KGAT_abcdefghijklmnop', { username: 'owner', slug: 's' }, async () => { throw new Error('offline'); }), '');
+});
+
+test('the worker script names itself, prints its traceback to the log, and a failed report never hides the first error', () => {
+  const py = kaggleWorkerScript({ base: 'https://che.example', filmId: 'film_0123456789abcdef', token: 't', deadlineS: 600 });
+  assert.match(py, /AGENT = "che-film-farm\/1\.0/);
+  assert.equal((py.match(/req\.add_header\("User-Agent", AGENT\)/g) || []).length, 2, 'both CHE calls and asset downloads send it');
+  assert.match(py, /traceback\.print_exc\(\)/);
+  assert.match(py, /except BaseException as report_error:/);
+  assert.match(py, /if not CHE_BASE\.startswith\("https:\/\/"\):/);
 });

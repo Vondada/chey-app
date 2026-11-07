@@ -11,8 +11,8 @@ import {
 import { imagePayload } from './image_payload.js';
 import { routeWork } from './compute_pool.js';
 import { recordVideoFailed, recordVideoVerified } from './action_receipts.js';
-import { farmTokenOpens, hfClip, kaggleSessionStatus, newFarmToken, startKaggleSession, validateKaggle, ensureHfSpace, HF_SPACE_FILES } from './film_farm.js';
-import { assemblyTokenOpens, filmRenderStatus, newAssemblyJob, startFilmRender, validateGithub, verifyFilmObject } from './film_render.js';
+import { farmTokenOpens, hfClip, kaggleSessionLog, kaggleSessionStatus, newFarmToken, startKaggleSession, validateKaggle, ensureHfSpace, HF_SPACE_FILES } from './film_farm.js';
+import { assemblyTokenOpens, filmRenderStatus, newAssemblyJob, publicOrigin, startFilmRender, validateGithub, verifyFilmObject } from './film_render.js';
 import { mp4Facts } from './github_video_renderer.js';
 import { assembleUpload, mediaStore, partKey, sha256Hex } from './che_media_store.js';
 import { saveFilmVideo } from './media.js';
@@ -382,6 +382,12 @@ async function assembleStep(ctx, store, film) {
 // ─── The farm ────────────────────────────────────────────────────────────────
 
 async function dispatchFarm(ctx, film, shots) {
+  // A GPU session fetches the film's pictures from CHE and uploads its clips to her. Without her public address it
+  // could only fail, so the farm waits (the film keeps making its stills) until CHE has been opened once.
+  if (!publicOrigin(ctx.base)) {
+    film.waiting = 'Waiting to start the free GPU: CHE does not know her public address yet. Open CHE on your phone once and the moving shots start.';
+    return;
+  }
   const providers = await farmProviders(ctx.env, ctx.storage, ctx);
   const kaggle = providers.find((p) => p.id === 'kaggle');
   // The one compute router (compute_pool.routeWork) picks the clip farm: free GPUs only, Kaggle first; it says why
@@ -458,12 +464,21 @@ async function settleFarm(ctx, film, shots) {
   const onFarm = (s) => (s.tier === 'A' && !s.clip_key && s.status !== 'failed') || lipPending(film, s, ledger, chosen);
   if (!shots.some(onFarm)) { film.farm.revoked = true; film.farm.closed = 'all clips arrived'; return; }
   const now = ctx.now || Date.now();
-  if (film.farm.provider === 'kaggle') {
-    const status = await kaggleSessionStatus(ctx.keys?.KAGGLE_API_TOKEN || ctx.env.KAGGLE_API_TOKEN, film.farm.session, ctx.fetcher || fetch);
-    if (status.ok && ['complete', 'error', 'cancelled'].includes(status.state)) return downgradeTierA(film, shots, `the Kaggle session ended (${status.state}${status.failure ? `: ${status.failure.slice(0, 80)}` : ''})`);
-  }
+  // The worker's own report comes first: its handler posts the error to /done and then exits, so Kaggle also says
+  // "error" for the same session, without the reason.
   const done = await ctx.storage.get(`film:${film.id}:farmdone`);
-  if (done?.error) return downgradeTierA(film, shots, `the GPU worker stopped: ${String(done.error).slice(0, 80)}`);
+  if (done?.error) return downgradeTierA(film, shots, `the GPU worker stopped: ${safe(done.error).slice(0, 160)}`);
+  if (film.farm.provider === 'kaggle') {
+    const raw = ctx.keys?.KAGGLE_API_TOKEN || ctx.env.KAGGLE_API_TOKEN;
+    const status = await kaggleSessionStatus(raw, film.farm.session, ctx.fetcher || fetch);
+    if (status.ok && ['complete', 'error', 'cancelled'].includes(status.state)) {
+      // A session that ended without reporting (it never reached CHE, or died before its handler ran): the reason is
+      // in the session's own log, read once here; Kaggle's failure message is the fallback.
+      const fromLog = status.state === 'complete' ? '' : await kaggleSessionLog(raw, film.farm.session, ctx.fetcher || fetch, [film.farm.token]);
+      const reason = safe(fromLog || status.failure || '').slice(0, 160);
+      return downgradeTierA(film, shots, `the Kaggle session ended (${status.state}${reason ? `: ${reason}` : ', with no reason in its log'})`);
+    }
+  }
   // Clips may not hold up the film: once everything else is ready they get half the planned clip time more, no more.
   const othersDone = shots.filter((s) => !onFarm(s)).every((s) => s.status === 'verified' || s.status === 'failed' || (s.tier === 'A' && !s.clip_key));
   if (othersDone) {
