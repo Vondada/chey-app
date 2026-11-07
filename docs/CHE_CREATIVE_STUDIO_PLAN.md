@@ -70,6 +70,14 @@ owner's cap.
 `createAnimationClip`); the scene spec drawn live in the app as a preview; tap Nova to select her, with simple
 controls (outfit colour, move, scale, light) and Apple Pencil input; a 3D Office mode. The chat sends the selection,
 so "make her bigger" acts on what is touched.
+- 2a (this stage's first PR): the crew's clips play in the native rooms (idle, talk while speaking); "show my scene"
+  opens `lib/create/che_scene_preview_page.dart`, which reads `GET /api/scene/latest` and draws the scene live (real
+  GLBs and clips at their timeline places, office boxes, time slider, play/pause); a finger or Apple Pencil tap selects
+  an actor; the panel's outfit, move, size and light controls send plain words through `/api/chat` with
+  `scene_selection`, so each is a versioned Scene Director edit with undo. Move and size are new edits
+  (`actors[].offset`, `actors[].scale`), drawn by `tools/che_scene_layout.py` in the render. Not yet: the outfit colour
+  in the live preview itself (the render shows it), per-actor speed, a 3D Office mode, and the home chat sending a
+  selection.
 
 **Stage 3: one timeline.** Scene renders and films open as Visual Studio projects; add overlay tracks,
 keyframes (position, scale, opacity), speed ramps and colour curves/LUTs to the document and to
