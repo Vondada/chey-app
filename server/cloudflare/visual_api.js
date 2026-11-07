@@ -5,7 +5,7 @@ import {
   ADJUSTMENTS, FILTERS, PRESETS, TEMPLATES, TEXT_STYLES, TRANSITIONS, IMPROVEMENTS, PROVIDER_FEATURES,
   newImageDoc, newVideoDoc, editState, edit, undo, redo, saveVersion, restoreVersion, compareDocs, compact,
   smartResize, useTemplate, templateFromDoc, brandKit, applyBrand, improve, suggestions, wordsToOps,
-  renderSpec, nextRenderStage, timeline, duration, applyOp, layer,
+  renderSpec, nextRenderStage, timeline, duration, applyOp, layer, migrateDoc, LOOKS, CURVES,
 } from './visual_studio.js';
 import { newRenderJob, tokenOpens, startEditRender, editRenderStatus } from './visual_render.js';
 import { githubVideoFile } from './github_video_renderer.js';
@@ -17,7 +17,11 @@ const TEMPLATES_KEY = 'visual_templates_v1';
 const BRANDS_KEY = 'visual_brands_v1';
 const clip = (v, n) => String(v ?? '').replace(/\s+/g, ' ').trim().slice(0, n);
 
-export async function loadVisual(storage, id) { return (await storage.get(KEY(id))) || null; }
+export async function loadVisual(storage, id) {
+  const state = (await storage.get(KEY(id))) || null;
+  if (state?.doc) migrateDoc(state.doc); // one-track documents gain overlay tracks, looks and ramps (stage 3)
+  return state;
+}
 export async function saveVisual(storage, id, state) { await storage.put(KEY(id), compact(state)); }
 
 function summary(project, state) {
@@ -37,7 +41,7 @@ export function projectView(project, state) {
 
 export function catalog(personal = [], brands = []) {
   return {
-    adjustments: Object.keys(ADJUSTMENTS), filters: Object.keys(FILTERS), presets: PRESETS, text_styles: Object.keys(TEXT_STYLES), transitions: TRANSITIONS,
+    adjustments: Object.keys(ADJUSTMENTS), filters: Object.keys(FILTERS), looks: LOOKS, curves: CURVES, presets: PRESETS, text_styles: Object.keys(TEXT_STYLES), transitions: TRANSITIONS,
     improvements: Object.entries(IMPROVEMENTS).map(([id, i]) => ({ id, label: i.label, video_only: Boolean(i.video) })),
     // Templates carry their built document so the app draws a real preview from it.
     templates: [...TEMPLATES.map((t) => ({ id: t.id, name: t.name, category: t.category, kind: t.kind, preset: t.preset, system: true, description: t.description || '', doc: t.build() })), ...personal.map((t) => ({ ...t, system: false }))],
@@ -50,7 +54,7 @@ export function catalog(personal = [], brands = []) {
 /// their workspace) can be used only in that workspace's projects. Untagged files are the owner's own.
 async function claimAssets(storage, doc, workspaceId) {
   const items = await listMedia(storage);
-  const used = new Set([...(doc.clips || []).map((c) => c.asset), ...(doc.audio || []).map((a) => a.asset), ...(doc.layers || []).map((l) => l.asset), ...(doc.text || []).map((t) => t.layer.asset)].filter(Boolean));
+  const used = new Set([...(doc.clips || []).map((c) => c.asset), ...(doc.overlays || []).map((o) => o.asset), ...(doc.audio || []).map((a) => a.asset), ...(doc.layers || []).map((l) => l.asset), ...(doc.text || []).map((t) => t.layer.asset)].filter(Boolean));
   for (const id of used) {
     const item = items.find((i) => i.id === id);
     if (!item) return { ok: false, why: `Media ${id} is not in your library.` };
@@ -92,8 +96,25 @@ async function runOps(ctx, project, state, ops, { brands }) {
     if (op.op === 'brand_logo') {
       const kit = brands.find((b) => (b.workspace_id || null) === (project.workspace_id || null) && b.logo);
       if (!kit) { said.push(`There is no logo in ${project.workspace_id ? 'this client\'s' : 'your'} brand kit yet. Add one with "save my logo".`); continue; }
-      const r = edit(state, { op: 'add_layer', layer: { type: 'logo', name: 'Logo', asset: kit.logo, x: op.corner === 'left' ? 0.04 : 0.83, y: op.top ? 0.04 : 0.83, w: 0.13, h: 0.13 } });
+      // On a video the logo is a picture on an overlay track for the whole video (stage 3); on a picture, a layer.
+      const r = state.doc.kind === 'video'
+        ? edit(state, { op: 'add_overlay', overlay: { asset: kit.logo, kind: 'image', name: 'Logo', track: 2, start: 0, duration: Math.max(1, duration(state.doc)), x: op.corner === 'left' ? 0.04 : 0.83, y: op.top ? 0.04 : 0.83, scale: 0.13 } })
+        : edit(state, { op: 'add_layer', layer: { type: 'logo', name: 'Logo', asset: kit.logo, x: op.corner === 'left' ? 0.04 : 0.83, y: op.top ? 0.04 : 0.83, w: 0.13, h: 0.13 } });
       said.push(r.ok ? 'Logo placed in the corner.' : r.error);
+      continue;
+    }
+    if (op.op === 'add_overlay_named') {
+      // "Add the sunset photo on top": a picture or video from the library, found by its title.
+      const want = String(op.name || '').toLowerCase().replace(/\b(?:photo|picture|image|video|clip)\b/g, '').trim();
+      const items = (await listMedia(ctx.storage)).filter((i) => ['image', 'video'].includes(i.kind) && (i.workspace_id || null) === (project.workspace_id || null));
+      const item = want ? items.find((i) => String(i.title || '').toLowerCase() === want) || items.find((i) => String(i.title || '').toLowerCase().includes(want)) : null;
+      if (!item) { said.push(`I found nothing called "${clip(op.name, 40)}" in your library, so nothing was added.`); continue; }
+      const video = item.kind === 'video';
+      const total = duration(state.doc);
+      const start = Math.min(Math.max(0, Number(op.start) || 0), Math.max(0, total - 0.5));
+      const len = Math.max(0.5, Math.min(video ? Number(item.duration_seconds || item.seconds) || 5 : 5, total - start || 5));
+      const r = edit(state, { op: 'add_overlay', overlay: { asset: item.id, kind: video ? 'video' : 'image', name: item.title || 'Overlay', start, duration: len, ...(op.corner ? { x: op.corner.left ? 0.04 : 0.71, y: op.corner.top ? 0.04 : 0.75, scale: 0.25 } : { x: 0.2, y: 0.3, scale: 0.6 }) } });
+      said.push(r.ok ? r.said : r.error);
       continue;
     }
     if (op.op === 'template_look') {
@@ -109,6 +130,12 @@ async function runOps(ctx, project, state, ops, { brands }) {
       continue;
     }
     if (op.op === 'auto_captions') { said.push((await autoCaptions(ctx, state)).said); continue; }
+    if (op.op === 'select_overlay') {
+      // A spoken choice ("select the logo") that later words use when they name no overlay.
+      const o = state.doc.overlays?.find((x) => x.id === op.id);
+      if (o) { state.selected_overlay = state.selected_now = o.id; said.push(`Selected ${o.name}.`); } else said.push('That overlay is not in the project.');
+      continue;
+    }
     const r = edit(state, op);
     said.push(r.ok ? r.said : r.error);
   }
@@ -153,7 +180,10 @@ async function startRender(ctx, project, state) {
   return { ok: true, render: project.render };
 }
 
-const REMOVE_OPS = new Set(['delete_clip', 'delete_layer']);
+const REMOVE_OPS = new Set(['delete_clip', 'delete_layer', 'delete_overlay']);
+// Removals that wait for the owner's yes even when they come as an operation from a button (AGENTS.md: ask before
+// deleting). Overlays are new in stage 3; clip and layer buttons keep their existing behaviour.
+const CONFIRM_OPS = new Set(['delete_overlay']);
 export const YES_WORDS = /^(?:yes|yeah|yep|do it|go ahead|confirm|remove it|delete it)\b/i;
 export const NO_WORDS = /^(?:no|nope|cancel|keep it|don't)\b/i;
 
@@ -258,7 +288,12 @@ export async function visualApi(ctx, { method, body, query }) {
     const peaks = Array.from({ length: n }, (_, i) => { let m = 0; for (let k = i * step; k < (i + 1) * step; k++) m = Math.max(m, Math.abs(ch[k])); return Math.round(m * 1000) / 1000; });
     return { status: 200, body: { peaks, seconds: ch.length / wav.sampleRate } };
   }
-  if (a === 'brand_kit') {
+  if (a === 'from_media') {
+    const r = await projectFromMedia(ctx, { source: body.source, media_id: body.media_id || null });
+    if (!r.ok) return { status: 404, body: { detail: r.said } };
+    return { status: 200, body: { ok: true, said: r.said, ...projectView(r.project, await loadVisual(storage, r.project.id)) } };
+  }
+    if (a === 'brand_kit') {
     const kit = brandKit(body.kit || {});
     if (kit.workspace_id && !(data.music_workspaces || []).some((w) => w.id === kit.workspace_id)) return { status: 400, body: { detail: 'No such workspace.' } };
     const i = brands.findIndex((b) => b.id === kit.id);
@@ -271,7 +306,17 @@ export async function visualApi(ctx, { method, body, query }) {
   const state = await loadVisual(storage, p.id);
   let said = [];
   let extra = {};
-  if (a === 'op' || a === 'ops') said = await runOps(ctx, p, state, a === 'op' ? [body.op] : body.ops || [], { brands });
+  if (a === 'op' || a === 'ops') {
+    const list = a === 'op' ? [body.op] : body.ops || [];
+    const at = body.confirmed === true ? -1 : list.findIndex((o) => CONFIRM_OPS.has(o?.op));
+    said = await runOps(ctx, p, state, at < 0 ? list : list.slice(0, at), { brands });
+    if (at >= 0) {
+      const o = state.doc.overlays?.find((x) => x.id === list[at].id);
+      state.pending = { ops: list.slice(at), understood: [`remove ${o?.name || 'the overlay'}`], at: Date.now() };
+      said.push(`Remove ${o?.name || 'that overlay'}? Say yes to remove it. Nothing was removed yet.`);
+      extra.needs_confirmation = true;
+    }
+  }
   else if (a === 'undo') said = [undo(state).said];
   else if (a === 'redo') said = [redo(state).said];
   else if (a === 'save_version') said = [`Saved ${saveVersion(state, body.label).label}.`];
@@ -282,7 +327,7 @@ export async function visualApi(ctx, { method, body, query }) {
   else if (a === 'words' && state.pending && YES_WORDS.test(String(body.text || '').trim())) return visualApi(ctx, { method, body: { ...body, action: 'confirm_pending' }, query });
   else if (a === 'words' && state.pending && NO_WORDS.test(String(body.text || '').trim())) return visualApi(ctx, { method, body: { ...body, action: 'cancel_pending' }, query });
   else if (a === 'words') {
-    const w = wordsToOps(body.text, state.doc, { selection: body.selection || null, playhead: Number(body.playhead) || 0 });
+    const w = wordsToOps(body.text, state.doc, { selection: body.selection || null, playhead: Number(body.playhead) || 0, spokenOverlay: state.selected_overlay || null });
     // Removing a clip or layer by voice waits for the owner's yes (AGENTS.md: ask before deleting anything).
     // The edits before it in the same sentence run now; the removal and anything after it wait with it.
     const at = body.confirmed === true ? -1 : w.ops.findIndex((o) => REMOVE_OPS.has(o.op));
@@ -339,9 +384,13 @@ export async function visualApi(ctx, { method, body, query }) {
   const claim = await claimAssets(storage, state.doc, p.workspace_id || null);
   if (!claim.ok) return { status: 400, body: { detail: claim.why } };
   p.updated_at = new Date().toISOString();
+  if (state.selected_overlay && !state.doc.overlays?.some((o) => o.id === state.selected_overlay)) state.selected_overlay = null;
+  // Only a choice made in this request is sent back, so the app's own selection is not taken over later.
+  const chosen = state.selected_now || null;
+  delete state.selected_now;
   await saveVisual(storage, p.id, state);
   ctx.dirty = true;
-  return { status: 200, body: { ok: true, said: said.filter(Boolean).join(' '), ...extra, ...projectView(p, state) } };
+  return { status: 200, body: { ok: true, said: said.filter(Boolean).join(' '), ...extra, ...(chosen ? { selected_overlay: chosen } : {}), ...projectView(p, state) } };
 }
 
 /// Creates the project behind "make me a promo video for this song": the song's own audio file (never copied),
@@ -389,6 +438,24 @@ export async function projectFromTemplateName(ctx, { name, tweak = null }) {
     await saveVisual(ctx.storage, r.project.id, r.state);
   }
   return { ok: true, project: r.project, said: said.join(' ') };
+}
+
+/// "Edit my scene in the studio" / "open my film in the editor": the newest Scene Director render or finished film
+/// (or one media item by id) becomes a Visual Studio video project whose main track holds that video, sized to it.
+/// The video itself is never copied or changed; the project points at the same media item.
+export async function projectFromMedia(ctx, { source = 'scene', media_id = null } = {}) {
+  const items = await listMedia(ctx.storage);
+  const item = media_id ? items.find((i) => i.id === media_id && i.kind === 'video')
+    : items.find((i) => i.kind === 'video' && i.mode === (source === 'film' ? 'film' : 'scene') && i.verified !== false);
+  if (!item) return { ok: false, said: media_id ? 'That video is not in your library.' : source === 'film' ? 'There is no finished film in your library yet.' : 'There is no rendered scene in your library yet. Ask me to make one first, then say "edit my scene in the studio".' };
+  const seconds = Number(item.seconds || item.duration_seconds) || 5;
+  const portrait = Number(item.height) > Number(item.width);
+  const title = `${item.title || (item.mode === 'film' ? 'Film' : 'Scene')} (edit)`;
+  const r = await newProject(ctx.storage, ctx.data, { kind: 'video', preset: portrait ? 'tiktok' : 'youtube', asset: item.id, title, fill: { duration: seconds, asset_kind: 'video' }, workspace_id: item.workspace_id || null }, []);
+  if (!r.ok) return { ok: false, said: r.why };
+  r.project.source_media = { id: item.id, mode: item.mode, scene_project_id: item.scene_project_id || null, scene_version: item.scene_version || null, film_id: item.film_id || null };
+  ctx.dirty = true;
+  return { ok: true, project: r.project, said: `"${title}" is open in Visual Studio: the ${item.mode === 'film' ? 'film' : 'scene'} (${Math.round(seconds * 10) / 10} s) is on the main track. You can add overlays on top, keyframe them, ramp the speed, or give it a look like "warm film" or "teal and orange". Say "undo" anytime.` };
 }
 
 /// Text layer from words, for the "add text" quick action.

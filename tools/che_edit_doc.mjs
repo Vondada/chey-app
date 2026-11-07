@@ -1,6 +1,6 @@
 // Builds CHE Visual Studio edit documents with the real operations (server/cloudflare/visual_studio.js), for the
 // renderer's end-to-end test. Usage: node tools/che_edit_doc.mjs <scenario> '<assets json>' → spec JSON on stdout.
-import { newImageDoc, newVideoDoc, editState, edit, undo, redo, renderSpec, smartResize, useTemplate, TEMPLATES, timeline } from '../server/cloudflare/visual_studio.js';
+import { newImageDoc, newVideoDoc, editState, edit, undo, redo, renderSpec, smartResize, useTemplate, TEMPLATES, timeline, wordsToOps } from '../server/cloudflare/visual_studio.js';
 
 const [scenario, rawAssets] = process.argv.slice(2);
 const a = JSON.parse(rawAssets || '{}');
@@ -41,7 +41,36 @@ function image({ withEdits = true } = {}) {
   return s.doc;
 }
 
+// Stage 3: two clips on the main track, a speed ramp at the end, a LUT look and a curve, and two overlay tracks
+// (a picture keyframed in position, size and opacity; a small video on top). The ramp, look, slide and fade come from
+// the owner's words through the same parser the chat uses.
+function multitrack({ look = true } = {}) {
+  const s = editState(newVideoDoc({ preset: 'youtube' }));
+  const A = must(edit(s, { op: 'add_clip', clip: { asset: a.clipA, name: 'Clip A', duration: 4 } })).id;
+  must(edit(s, { op: 'add_clip', clip: { asset: a.clipB, name: 'Clip B', duration: 3 } }));
+  const words = (text, selection = null) => {
+    const w = wordsToOps(text, s.doc, { selection });
+    if (w.unsupported.length || !w.ops.length) throw new Error(`"${text}": ${w.unsupported.join(' ') || 'no edit'}`);
+    for (const op of w.ops) must(edit(s, op));
+  };
+  words('ramp the speed up at the end');
+  if (look) { words('give it a teal and orange look'); must(edit(s, { op: 'curves', name: 'strong_contrast', scope: `clip:${A}` })); }
+  const P = must(edit(s, { op: 'add_overlay', overlay: { asset: a.photo, kind: 'image', name: 'Photo', track: 1, start: 0.5, duration: 3, x: 0.55, y: 0.1, scale: 0.35 } })).id;
+  words('slide it in from the left over one second', P);
+  words('fade it in over half a second', P);
+  must(edit(s, { op: 'keyframe', id: P, prop: 'scale', keys: [{ t: 0, v: 0.2 }, { t: 2, v: 0.35, ease: 'linear' }] }));
+  must(edit(s, { op: 'add_overlay', overlay: { asset: a.clipB, kind: 'video', name: 'Picture in picture', track: 2, start: 2, duration: 2, x: 0.05, y: 0.6, scale: 0.25, opacity: 0.8 } }));
+  must(undo(s)); must(redo(s));
+  s.doc.canvas = { ...s.doc.canvas, w: 640, h: 360 };
+  return s.doc;
+}
+
 const docs = {
+  multitrack: () => multitrack(),
+  multitrack_plain: () => multitrack({ look: false }),
+  // The editor refuses a freeze on a ramped clip; a document that has one anyway (written outside the editor) must
+  // fail to render with its reason, never render without the freeze.
+  ramp_freeze: () => { const d = multitrack({ look: false }); d.clips[1].freeze = { at: 1, duration: 1 }; return d; },
   video: () => video(),
   video_plain: () => video({ adjust: false }),
   image: () => image(),
