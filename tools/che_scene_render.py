@@ -240,31 +240,55 @@ def place_lights(spec, look):
             obj.rotation_euler = (Vector(l["look_at"]) - Vector(l["position"])).to_track_quat("-Z", "Y").to_euler()
 
 
+def edited_material(original, target, m):
+    """A copy of `original` (or a new Principled material when there is none) with only the fields `m` names changed:
+    its other colours, emission and image textures are kept (a partial edit never resets the rest of the look)."""
+    mat = original.copy() if original else bpy.data.materials.new(f"{target} edited")
+    mat.name = f"{target} edited"
+    mat.use_nodes = True
+    tree = mat.node_tree
+    bsdf = next((n for n in tree.nodes if n.type == "BSDF_PRINCIPLED"), None)
+    if bsdf is None:
+        bsdf = tree.nodes.new("ShaderNodeBsdfPrincipled")
+        out = next((n for n in tree.nodes if n.type == "OUTPUT_MATERIAL"), None) or tree.nodes.new("ShaderNodeOutputMaterial")
+        tree.links.new(bsdf.outputs["BSDF"], out.inputs["Surface"])
+
+    def put(name, value):
+        sock = bsdf.inputs[name]
+        for link in list(sock.links):  # the owner named this field, so it wins over a texture feeding it
+            tree.links.remove(link)
+        sock.default_value = value
+
+    if "base_color" in m:
+        put("Base Color", hex_rgba(m["base_color"]))
+    if "roughness" in m:
+        put("Roughness", m["roughness"])
+    if "metallic" in m:
+        put("Metallic", m["metallic"])
+    if "emission" in m:
+        put("Emission Color", hex_rgba(m["emission"]))
+        put("Emission Strength", m["emission_strength"])
+    return mat
+
+
 def apply_materials(spec):
     """spec.materials and each prop's own material: base colour, roughness, metallic and emission on the named target.
-    An actor id recolours only that actor's outfit; a prop or set target recolours every part of it."""
+    An actor id recolours only that actor's outfit; a prop or set target recolours every part of it. Each edit starts
+    from the material it replaces, so fields it does not name keep their values."""
     wanted = {**spec.get("_prop_materials", {}), **look_data.materials(spec)}
     for target, m in wanted.items():
         objs = TARGETS.get(target, [])
         if not objs:
             continue
-        mat = bpy.data.materials.new(f"{target} edited")
-        mat.use_nodes = True
-        bsdf = mat.node_tree.nodes["Principled BSDF"]
-        if "base_color" in m:
-            bsdf.inputs["Base Color"].default_value = hex_rgba(m["base_color"])
-        if "roughness" in m:
-            bsdf.inputs["Roughness"].default_value = m["roughness"]
-        if "metallic" in m:
-            bsdf.inputs["Metallic"].default_value = m["metallic"]
-        if "emission" in m:
-            bsdf.inputs["Emission Color"].default_value = hex_rgba(m["emission"])
-            bsdf.inputs["Emission Strength"].default_value = m["emission_strength"]
         actor = target in ACTOR_IDS
+        made = {}  # one edited copy per original material, shared by every part that used it
         for o in objs:
             for i, slot in enumerate(o.data.materials):
                 if not actor or (slot and slot.name.split(".")[0] in ("cloth",) or (slot and slot.name.endswith(" outfit"))):
-                    o.data.materials[i] = mat
+                    key = slot.name if slot else None
+                    if key not in made:
+                        made[key] = edited_material(slot, target, m)
+                    o.data.materials[i] = made[key]
 
 
 ACTOR_IDS = set()
