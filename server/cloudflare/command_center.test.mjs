@@ -1372,6 +1372,26 @@ test('AI model status is discoverable and slash/voice requests reach the same re
   }
 });
 
+test('/film-make and its spoken forms also open the Crew Creator and edit a crew member, on the Film Studio route with no model', async () => {
+  const c = commandById('film-make');
+  assert.match(c.handler, /crewIntent/);
+  assert.ok(c.examples.includes('Open the crew creator') && c.examples.includes("Edit Nova's look"));
+  const che = await owner({ env: READY_ENV });
+  const cases = [
+    ['Open the crew creator', 'crew_open', /^Opening the Crew Creator\. 0 of 10 crew have their reference picture/],
+    ["/film-make edit Nova's look", 'crew_edit', /^Opening Nova in the Crew Creator\. Nova has no reference picture yet/],
+    ['Use this picture for Nova', 'crew_use_latest', /^There is no picture in your media library to use\. Nothing was changed\./],
+  ];
+  for (const [said, action, reply] of cases) {
+    const out = await che.say(said);
+    assert.equal(out.route, 'che_film_studio', said);
+    assert.equal(out.modelCalls, 0, said);
+    assert.equal(out.done.film_action, action, said);
+    assert.equal(out.done.open_screen, 'crew_creator', said);
+    assert.match(out.reply, reply, said);
+  }
+});
+
 test('/film-make and its spoken forms also check and fix a finished film and re-render one from its saved script, on the Film Studio route with no model (stage 6)', async () => {
   const c = commandById('film-make');
   assert.equal(c.route, 'che_film_studio');

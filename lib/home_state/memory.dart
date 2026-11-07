@@ -1411,6 +1411,7 @@ extension _CheHomeMemory on _CHEHomeState {
                   Navigator.of(context).pop();
                   Future<void>.delayed(const Duration(milliseconds: 180), () => _openAssistantHub(tab: room));
                 },
+                onOpenCrewCreator: () => unawaited(_openCrewCreator()),
               ),
             ],
           ),

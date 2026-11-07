@@ -964,6 +964,17 @@ extension _CheHomeSend on _CHEHomeState {
       }
     }
 
+    // The Crew Creator, while it is open, takes "show Nova", "next", "add the picture", "undo", "save" and "read".
+    final crewCreatorVoice = CheCrewCreatorScreen.voiceHandler;
+    if (crewCreatorVoice != null && _pendingAttachment == null) {
+      final reply = await crewCreatorVoice(message);
+      if (reply != null) {
+        if (mounted) _set(() => controller.clear());
+        if (reply.isNotEmpty) await speakText(reply, record: false);
+        return;
+      }
+    }
+
     // A saved video whose play link failed takes "try again" and "what happened".
     final videoLinkVoice = CheVideoPlayLink.voiceHandler;
     if (videoLinkVoice != null && _pendingAttachment == null) {

@@ -1744,7 +1744,7 @@
    "category": "studio",
    "title": "Film Make",
    "summary": "Make a film from one sentence, free.",
-   "does": "Writes a screenplay, makes every shot with free compute (pictures and voices on Workers AI, moving clips on a connected free GPU farm) and assembles the film on GitHub Actions. Before starting CHE says the real ETA and the mix; a film is done only when its MP4 is stored and verified. Then CHE checks the finished film against what was asked and fixes what she can on free compute (twice at most; \"fix my film\" for one more round), and \"re-render\" a finished film by its title makes it again from its saved script.",
+   "does": "Writes a screenplay, makes every shot with free compute (pictures and voices on Workers AI, moving clips on a connected free GPU farm) and assembles the film on GitHub Actions. Before starting CHE says the real ETA and the mix; a film is done only when its MP4 is stored and verified. Then CHE checks the finished film against what was asked and fixes what she can on free compute (twice at most; \"fix my film\" for one more round), and \"re-render\" a finished film by its title makes it again from its saved script. The cast comes from the Crew Creator (\"open the crew creator\", \"edit Nova's look\", \"use this picture for Nova\"): each crew member's profile (look, outfit, colours, personality, voice, catchphrase) and the owner's own reference picture, kept privately in CHE and editable with undo; every film draws those faces from the owner's pictures.",
    "mode": "BUILD",
    "approval": {
     "required": false,
@@ -1759,13 +1759,15 @@
     "Make me a 10-minute movie about a lighthouse keeper",
     "Make me a 2-hour movie about a heist in Tokyo",
     "Re-render Brewed Anarchy",
-    "Fix my film"
+    "Fix my film",
+    "Open the crew creator",
+    "Edit Nova's look"
    ],
    "needs": [
     "video_renderer"
    ],
    "optional": [],
-   "handler": "film_studio.filmIntent → film_pipeline.startFilm / rerenderFilm / reviewFilmNow (alarm passes) → che-film-render.yml",
+   "handler": "film_studio.filmIntent → film_pipeline.startFilm / rerenderFilm / reviewFilmNow (alarm passes) → che-film-render.yml; crew_creator.crewIntent → crewChat (app: CheCrewCreatorScreen)",
    "route": "che_film_studio",
    "produces": "video",
    "evidence": "The MP4 read back from R2: length, frame size and codecs; shots that failed their checks are listed.",
@@ -1776,7 +1778,10 @@
     "feature",
     "film studio",
     "re-render film",
-    "fix my film"
+    "fix my film",
+    "crew creator",
+    "crew look",
+    "reference picture"
    ],
    "status": "setup_required",
    "missing": [
