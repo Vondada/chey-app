@@ -57,7 +57,11 @@ test('through the Worker: the app gets a play link with its token, then the play
   assert.deepEqual(new Uint8Array(await part.arrayBuffer()), film.slice(1000, 2000));
   assert.equal((await call(path)).status, 200);
   // A tampered link opens nothing; a link for a picture or a missing id is not issued.
-  assert.equal((await call(path.replace(/sig=./, 'sig=Z'))).status, 401);
+  // The tamper always changes the signature (a fixed letter would be a no-op whenever the random signature already
+  // started with it, about one run in 64).
+  const tampered = path.replace(/sig=(.)/, (_, c) => `sig=${c === 'A' ? 'B' : 'A'}`);
+  assert.notEqual(tampered, path);
+  assert.equal((await call(tampered)).status, 401);
   assert.equal((await call(`/api/media/${'0'.repeat(12)}/link`, { method: 'POST', token })).status, 404);
   assert.equal((await call(`/api/media/${item.id}/link`, { method: 'POST' })).status, 401, 'only a paired device gets a link');
 });
