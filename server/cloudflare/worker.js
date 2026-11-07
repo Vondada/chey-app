@@ -317,6 +317,7 @@ import { paidWakes, poolRoute, poolSay, reapPaid } from './compute_pool.js';
 import { projectAudit, projectLibraryRoute } from './project_library.js';
 import { officeCast } from './film_cast.js';
 import { directorTurn, sceneLatest } from './scene_director.js';
+import { publicOrigin } from './film_render.js';
 import { FILM_ACTIVE_STATES, filmPlan, filmTick, filmTokenRoute, refreshValidation as refreshFilmValidation, remakeShot, setFilmState, startFilm } from './film_pipeline.js';
 import { performanceBanner, performanceIntent, performanceReport, recordTiming, routeKey as perfRouteKey, speakPerformance } from './perf_watch.js';
 import { engineView, exportWorkflows, feedbackOnLast, importWorkflows, library as workflowLibrary, loadEngine, matchLearned, noteVersion, promoteCandidate, dismissCandidate, rankWorkflows, recordRun as recordWorkflowRun, isDisabled as workflowDisabled, restoreVersion, saveEngine, setDisabled as setWorkflowDisabled, setPreferred as setWorkflowPreferred, speakEfficiency, speakLibrary, testCandidate, workflowForRun, workflowIntent } from './workflow_engine.js';
@@ -4129,10 +4130,12 @@ export class CheState extends DurableObject {
 
   // One owner chat turn for the certification harness (tools/certification). Only the probe-token route calls this.
   // The turn goes through this object's fetch, so it is the owner's own /api/chat path; nothing is re-implemented.
-  async probeChat(body = {}) {
+  async probeChat(body = {}, origin = '') {
     const message = typeof body?.message === 'string' ? body.message : '';
     const history = Array.isArray(body?.history) ? body.history : [];
-    const request = new Request('https://che.internal/api/chat', {
+    // The turn carries the Worker's real public origin when the route knows it, so work it starts (a film's GitHub
+    // assembly, its Kaggle GPU session) is pointed at an address those machines can reach.
+    const request = new Request(`${publicOrigin(origin) || 'https://che.internal'}/api/chat`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ message, history, client: { platform: 'web' } }),
     });
@@ -6426,7 +6429,9 @@ export class CheState extends DurableObject {
   // What every film step needs. The owner's own computer is never part of it (owner, 2026-10-22).
   async filmCtx(request = null) {
     const storage = this.ctx.storage;
-    if (request) { try { await storage.put('film:base', new URL(request.url).origin); } catch (_) {} }
+    // Only a public origin is kept: a probe turn's synthetic https://che.internal must never become the address the
+    // GitHub runners and the Kaggle GPU fetch the film from (film_render.js publicOrigin).
+    if (request && publicOrigin(request.url)) { try { await storage.put('film:base', publicOrigin(request.url)); } catch (_) {} }
     let internalOnly = false; let noExport = false;
     try { internalOnly = (await storage.get(EGRESS_KEY))?.internal_only === true; } catch (_) {}
     try { noExport = ((await loadCapabilityPolicy(storage)).no_export_projects || []).length > 0; } catch (_) {}
@@ -6438,7 +6443,7 @@ export class CheState extends DurableObject {
       const reply = out?.response ?? out ?? '';
       return typeof reply === 'string' ? reply : JSON.stringify(reply);
     };
-    return { storage, env, keys, writer, base: (await storage.get('film:base')) || '', internalOnly, noExport, fetcher: fetch };
+    return { storage, env, keys, writer, base: publicOrigin(await storage.get('film:base')), internalOnly, noExport, fetcher: fetch };
   }
 
   /** One alarm pass of film work: quick steps run back to back for up to ~25 seconds, then CHE sleeps until due. */
@@ -16454,7 +16459,7 @@ async function routeRequest(request, env, ctx) {
   if (path === '/api/probe/chat' && request.method === 'POST') {
     if (!voiceProbeAuthorized(request, env)) return json({ detail: 'Not found.' }, 404);
     const body = await request.json().catch(() => ({}));
-    return json(await env.CHE_STATE.getByName('owner').probeChat(body));
+    return json(await env.CHE_STATE.getByName('owner').probeChat(body, new URL(request.url).origin));
   }
   // The GPU test budget ledger (read-only) and the one authorised blue cube render, both behind the deploy's probe token.
   // The render is refused unless it carries the exact confirm phrase and the ledger allows it (modal_cube_probe.js).
