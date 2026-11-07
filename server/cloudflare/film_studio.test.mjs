@@ -438,7 +438,8 @@ test('end to end: a one-minute film is written, made, assembled on parallel runn
   assert.equal(final.result.seconds, Math.round(film.assembly.total_s * 100) / 100);
   const { listMedia } = await import('./media.js');
   const item = (await listMedia(storage)).find((m) => m.id === final.result.media_id);
-  assert.deepEqual([item.kind, item.verified, item.blob_key, item.source], ['video', true, `film/${film.id}/film.mp4`, 'che_film_studio']);
+  assert.deepEqual([item.kind, item.verified, item.blob_key, item.source], ['video', true, film.assembly.output_key, 'che_film_studio']);
+  assert.equal(film.assembly.output_key, `film/${film.id}/film-${job}.mp4`, 'each assembly writes its own file');
   assert.equal((await filmTokenRoute(ctx, `/api/film/render/${job}/segment/0`, req(`/api/film/render/${job}/segment/0`, { token }))).status, 404, 'the token dies with the job');
 });
 
@@ -1212,4 +1213,68 @@ test('re-render: a busy studio, an unknown title, a film whose script is gone, a
   assert.ok((await store.index()).some((f) => f.title === 'Brewed Anarchy'), 'finished films outlive the newest-50 window');
   await store.save({ id: 'film_00000000000000f1', title: 'Running', state: 'making', created_at: 'x' }, { force: true });
   assert.match((await rerenderFilm(ctx, { title: 'Brewed Anarchy' })).said, /^I'm already making "Running"/);
+});
+
+
+/** The join job's side of an assembly: upload `bytes` as the film and complete it. Returns the HTTP status. */
+async function uploadFilm(ctx, gh, bytes) {
+  const film = await new FilmStore(ctx.storage).latest();
+  const job = film.assembly.job.id; const token = gh.dispatch.inputs.token;
+  const { upload_id: id } = await (await filmTokenRoute(ctx, `/api/film/render/${job}/upload/start`, req(`/api/film/render/${job}/upload/start`, { token, method: 'POST' }))).json();
+  const part = await (await filmTokenRoute(ctx, `/api/film/render/${job}/upload/part`, req(`/api/film/render/${job}/upload/part?upload_id=${id}&n=1`, { token, method: 'PUT', body: bytes }))).json();
+  return (await filmTokenRoute(ctx, `/api/film/render/${job}/upload/complete`, req(`/api/film/render/${job}/upload/complete`, { token, method: 'POST', body: JSON.stringify({ upload_id: id, parts: [part] }) }))).status;
+}
+
+test('director loop repairs (Codex #962): a remade moving shot never strands the film, a repair writes its own file, and a failed repair keeps the first video', async () => {
+  const { storage, bucket, gh, ctx } = await studio({ seconds: 30 });
+  const store = new FilmStore(storage);
+  let film = await runUntil(ctx, ['assembling', 'failed']);
+  assert.equal(film.state, 'assembling', film.errors?.join('; '));
+  assert.equal(await uploadFilm(ctx, gh, mp4({ seconds: film.assembly.total_s })), 200);
+  const first = await store.latest();
+  assert.equal(first.state, 'done');
+  const firstKey = first.result.key;
+  const firstBytes = bucket.objects.get(firstKey).bytes;
+  // The stuck case: shot 2 was planned to move (tier A) and never passed; every clip that was going to arrive had
+  // arrived, so the farm is closed. Remaking it with that closed farm left it waiting for a clip forever.
+  const shots = await store.shots(first.id, first.shot_count);
+  Object.assign(shots[1], { tier: 'A', status: 'failed', clip_key: '', check: { ok: false, reason: 'too small' } });
+  await store.putShots(first.id, shots);
+  first.farm = { closed: 'all clips arrived', revoked: true };
+  await store.save(first, { force: true });
+  const round = await reviewFilmNow(ctx, { fix: true });
+  assert.equal(round.started, true, round.said);
+  const fixing = await store.latest();
+  const shot2 = (await store.shots(fixing.id, fixing.shot_count))[1];
+  assert.equal(shot2.tier, 'B', 'no free clip farm: the remade shot becomes a still with camera motion');
+  assert.match(shot2.downgraded, /\w/);
+  assert.ok(fixing.notes.some((n) => /1 remade shot became stills with camera motion/.test(n)), fixing.notes.join(' | '));
+  film = await runUntil(ctx, ['assembling', 'failed', 'making'].slice(0, 2), 60);
+  assert.equal(film.state, 'assembling', `the repair reaches assembly instead of staying in making (${film.state})`);
+  assert.notEqual(film.assembly.output_key, firstKey);
+  assert.equal(await uploadFilm(ctx, gh, mp4({ seconds: film.assembly.total_s })), 200);
+  const repaired = await store.latest();
+  assert.equal(repaired.state, 'done');
+  assert.notEqual(repaired.result.key, firstKey, 'the repaired film is a new file');
+  assert.deepEqual(bucket.objects.get(firstKey).bytes, firstBytes, 'the first video is untouched');
+  const { listMedia } = await import('./media.js');
+  const items = await listMedia(storage);
+  assert.ok(items.some((m) => m.id === first.result.media_id && m.blob_key === firstKey), 'and its library entry still points at it');
+  assert.ok(items.some((m) => m.id === repaired.result.media_id && m.blob_key === repaired.result.key));
+  assert.deepEqual(repaired.review.fixed, [{ kind: 'remake', shots: [2] }]);
+  // A repair whose file fails its checks leaves the film done with the video it had, and says the fix is still short.
+  const again = await store.shots(repaired.id, repaired.shot_count);
+  again[2].status = 'failed';
+  await store.putShots(repaired.id, again);
+  assert.equal((await reviewFilmNow(ctx, { fix: true })).started, true);
+  film = await runUntil(ctx, ['assembling', 'failed'], 60);
+  assert.equal(film.state, 'assembling');
+  assert.equal(await uploadFilm(ctx, gh, mp4({ seconds: film.assembly.total_s + 20 })), 422);
+  const kept = await store.latest();
+  assert.equal(kept.state, 'done', 'not failed: the film still has its verified video');
+  assert.deepEqual(kept.result, repaired.result);
+  // Shot 2 is still a still that was planned to move (no free clip farm), and the failed repair of shot 3 is short too.
+  assert.deepEqual(kept.review.left, [{ kind: 'clips', shots: [2] }, { kind: 'remake', shots: [3] }]);
+  assert.match(kept.review.why, /did not pass its checks/);
+  assert.match(speakStatus(kept, await store.shots(kept.id, kept.shot_count), ctx.now), /Still short: shot 2 is a still instead of moving; shot 3 never passed its checks \(the uploaded film did not pass its checks/);
 });

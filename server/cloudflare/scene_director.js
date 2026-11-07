@@ -382,9 +382,30 @@ export const SCENE_FIX_ROUNDS = 2;
  * Checks a rendered scene against its version, from the file's own facts and the renderer's manifest: the length the
  * timeline asked for, the frame size, and a voice for every spoken line. Returns { checked: [...], short: [...] }.
  */
+/**
+ * How long the finished video of a scene is, with its speed edits: the same spans and remap as
+ * tools/che_scene_finish.py (spans not named in time_remap play at 1x; speed clamped to 0.25..4).
+ */
+export function finishedSeconds(spec) {
+  const seconds = Number(spec.seconds) || 0;
+  const remap = spec.time_remap || [];
+  const clampT = (v) => Math.min(Math.max(0, Number(v)), seconds);
+  const cuts = [...new Set([0, seconds, ...remap.flatMap((r) => [clampT(r.from), clampT(r.to)])])].sort((a, b) => a - b);
+  let total = 0;
+  for (let i = 0; i + 1 < cuts.length; i += 1) {
+    const [a, b] = [cuts[i], cuts[i + 1]];
+    if (b - a < 1e-6) continue;
+    let speed = 1;
+    for (const r of remap) if (Number(r.from) <= a + 1e-6 && b <= Number(r.to) + 1e-6) speed = Math.max(0.25, Math.min(4, Number(r.speed)));
+    total += (b - a) / speed;
+  }
+  return total;
+}
+
 export function reviewScene(spec, facts, manifest = {}) {
   const short = [];
-  if (Number(spec.seconds) && Math.abs(Number(facts.seconds) - Number(spec.seconds)) > 0.5) short.push(`it runs ${round(facts.seconds, 1)} seconds, not the ${spec.seconds} the scene asks for`);
+  const expected = finishedSeconds(spec);
+  if (expected && Math.abs(Number(facts.seconds) - expected) > 0.5) short.push(`it runs ${round(facts.seconds, 1)} seconds, not the ${round(expected, 1)} the scene asks for`);
   if (spec.width && (facts.width !== spec.width || facts.height !== spec.height)) short.push(`it is ${facts.width}x${facts.height}, not ${spec.width}x${spec.height}`);
   const lines = (spec.timeline || []).filter((step) => step.action === 'talk' && String(step.line || '').trim()).length;
   const voiced = (manifest.voices || []).length;

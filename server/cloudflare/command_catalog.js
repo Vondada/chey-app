@@ -453,12 +453,12 @@ export const COMMANDS = Object.freeze([
   // Film Studio (owner handoff 2026-10-22): long films from a sentence on free compute only, answered from
   // film_studio.js / film_pipeline.js with no model for the plan and status. The plan states the real ETA and mix.
   C('film-make', 'studio', 'BUILD', 'Make a film from one sentence, free.', {
-    does: 'Writes a screenplay, makes every shot with free compute (pictures and voices on Workers AI, moving clips on a connected free GPU farm) and assembles the film on GitHub Actions. Before starting CHE says the real ETA and the mix; a film is done only when its MP4 is stored and verified.',
-    needs: ['video_renderer'], route: 'che_film_studio', local: 'film_make', handler: 'film_studio.filmIntent → film_pipeline.startFilm (alarm passes) → che-film-render.yml',
-    input: { name: 'film', required: true, hint: 'Length and subject, for example "10-minute movie about a lighthouse keeper"' },
-    examples: ['Make me a 10-minute movie about a lighthouse keeper', 'Make me a 2-hour movie about a heist in Tokyo'],
+    does: 'Writes a screenplay, makes every shot with free compute (pictures and voices on Workers AI, moving clips on a connected free GPU farm) and assembles the film on GitHub Actions. Before starting CHE says the real ETA and the mix; a film is done only when its MP4 is stored and verified. Then CHE checks the finished film against what was asked and fixes what she can on free compute (twice at most; "fix my film" for one more round), and "re-render" a finished film by its title makes it again from its saved script.',
+    needs: ['video_renderer'], route: 'che_film_studio', local: 'film_make', handler: 'film_studio.filmIntent → film_pipeline.startFilm / rerenderFilm / reviewFilmNow (alarm passes) → che-film-render.yml',
+    input: { name: 'film', required: true, hint: 'Length and subject, for example "10-minute movie about a lighthouse keeper", or "re-render the film Brewed Anarchy"' },
+    examples: ['Make me a 10-minute movie about a lighthouse keeper', 'Make me a 2-hour movie about a heist in Tokyo', 'Re-render Brewed Anarchy', 'Fix my film'],
     prompt: 'Make me a {input}', produces: 'video', evidence: 'The MP4 read back from R2: length, frame size and codecs; shots that failed their checks are listed.',
-    cost: 'Free: Workers AI daily allowance, GitHub Actions free minutes, and free GPU quotas you connect. Hard caps; nothing paid.', keywords: ['movie', 'film', 'feature', 'film studio'],
+    cost: 'Free: Workers AI daily allowance, GitHub Actions free minutes, and free GPU quotas you connect. Hard caps; nothing paid.', keywords: ['movie', 'film', 'feature', 'film studio', 're-render film', 'fix my film'],
   }),
   // The Recording Studio (owner, 2026-10-24): an app screen (lib/music/che_recording_studio.dart); this opens it.
   C('music-studio', 'studio', 'BUILD', 'Open the Recording Studio: record, beats, mix, master, export.', {

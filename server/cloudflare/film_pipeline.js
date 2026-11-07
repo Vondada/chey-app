@@ -367,7 +367,9 @@ async function startAssembly(ctx, store, film, shots) {
     return fail(store, film, started.error);
   }
   film.state = 'assembling';
-  film.assembly = { job, total_s: plan.total_s, missing: plan.missing, segments: plan.segments.length, reported: [] };
+  // Each assembly writes its own file, so a repair round (or "remake shot N") never replaces a video already verified
+  // and in the library; an assembly started before this field existed still writes film.mp4 (the token route).
+  film.assembly = { job, total_s: plan.total_s, missing: plan.missing, segments: plan.segments.length, reported: [], output_key: `film/${film.id}/film-${job.id}.mp4` };
   await store.save(film);
   return 30_000;
 }
@@ -547,6 +549,15 @@ export async function remakeShot(ctx, n) {
 }
 
 async function fail(store, film, why) {
+  // A director-loop repair that fails leaves the film as it was: done, with the video it already had, and the fixes
+  // it tried listed as still short with the reason.
+  if (film.previous_result && film.review?.fixing?.length) {
+    Object.assign(film.review, { left: mergeFixes(film.review.left || [], film.review.fixing), fixing: [], why: safe(why) });
+    film.state = 'done'; film.result = film.previous_result; film.previous_result = null;
+    if (film.farm) film.farm.revoked = true;
+    await store.save(film, { force: true });
+    return null;
+  }
   film.state = 'failed';
   film.errors = [...(film.errors || []), safe(why)].slice(-10);
   if (film.farm) film.farm.revoked = true;
@@ -582,7 +593,7 @@ export async function filmTokenRoute(ctx, path, request) {
       return json({ ok: true });
     }
     const media = mediaStore(ctx.env, ctx.storage);
-    const key = `film/${film.id}/film.mp4`;
+    const key = film.assembly?.output_key || `film/${film.id}/film.mp4`;
     if (action === 'upload/start' && request.method === 'POST') {
       const uploadId = crypto.randomUUID();
       await ctx.storage.put(`film:${film.id}:upload`, { upload_id: uploadId, started_ms: ctx.now || Date.now(), parts: {} });
@@ -778,10 +789,13 @@ export async function directorRound(ctx, store, film, { manual = false } = {}) {
   const finish = async () => { film.review = review; await store.save(film); return { started: false, review }; };
   if (!found.fixes.length) return finish();
   if (review.rounds >= REVIEW_ROUNDS + review.extra) { review.left = found.fixes; return finish(); }
+  const byN = new Map(shots.map((s) => [s.n, s]));
   let todo = found.fixes.filter((f) => f.kind === 'remake');
   const gpu = found.fixes.filter((f) => f.kind !== 'remake');
+  // A remade shot still planned to move (tier A, no clip) needs a clip farm too; without one it could never verify.
+  const remakeMoving = (todo[0]?.shots || []).filter((n) => byN.get(n)?.tier === 'A' && !byN.get(n)?.clip_key);
+  const route = gpu.length || remakeMoving.length ? routeWork('film_clip', await farmProviders(ctx.env, ctx.storage, ctx)) : null;
   if (gpu.length) {
-    const route = routeWork('film_clip', await farmProviders(ctx.env, ctx.storage, ctx));
     // Lip sync runs only on the Kaggle GPU; moving clips on any free clip farm.
     const can = (f) => route.route && (f.kind === 'clips' || route.order.includes('kaggle'));
     todo = [...todo, ...gpu.filter(can)];
@@ -789,17 +803,22 @@ export async function directorRound(ctx, store, film, { manual = false } = {}) {
     if (review.left.length) review.why = route.route ? 'lip sync needs the free Kaggle GPU, which is not available now' : route.why;
   }
   if (!todo.length) return finish();
-  const byN = new Map(shots.map((s) => [s.n, s]));
   const remakes = todo.find((f) => f.kind === 'remake')?.shots || [];
   if (remakes.length) {
     const queue = (await ctx.storage.get(`film:${film.id}:remakes`)) || [];
     await ctx.storage.put(`film:${film.id}:remakes`, [...new Set([...queue, ...remakes])]);
     for (const n of remakes) if (byN.get(n)) byN.get(n).voice_attempts = 0;
   }
+  // Without a free clip farm, a remade shot that was planned to move becomes a still with camera motion, and says so.
+  if (remakeMoving.length && !route.route) {
+    for (const n of remakeMoving) Object.assign(byN.get(n), { tier: 'B', downgraded: route.why || 'no free GPU session could start' });
+    film.notes = [...(film.notes || []), safe(`${remakeMoving.length} remade shot${remakeMoving.length === 1 ? '' : 's'} became stills with camera motion: ${route.why || 'no free GPU session could start'}.`)];
+  }
   const again = todo.filter((f) => f.kind !== 'remake');
-  if (again.length) {
-    const ns = new Set(again.flatMap((f) => f.shots));
-    for (const n of ns) {
+  const reopen = new Set([...again.flatMap((f) => f.shots), ...(route?.route ? remakeMoving : [])]);
+  if (reopen.size) {
+    const ns = reopen;
+    for (const n of again.flatMap((f) => f.shots)) {
       const s = byN.get(n);
       if (again.some((f) => f.kind === 'clips' && f.shots.includes(n))) { s.tier = 'A'; delete s.downgraded; }
       delete s.lip_error;

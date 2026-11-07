@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import test from 'node:test';
-import { SCENE_FIX_ROUNDS, SEATS, applyEdits, directorCreateIntent, directorEditIntent, directorTurn, loadProjects, reviewScene, sceneFromWords, sceneLatest } from './scene_director.js';
+import { SCENE_FIX_ROUNDS, SEATS, applyEdits, finishedSeconds, directorCreateIntent, directorEditIntent, directorTurn, loadProjects, reviewScene, sceneFromWords, sceneLatest } from './scene_director.js';
 const round2 = (x) => Math.round(x * 100) / 100;
 import { listMedia } from './media.js';
 import { replyFromNdjson } from './brain_memory.js';
@@ -325,4 +325,26 @@ test('the scene director loop: a render missing its voice is rendered again on t
   assert.equal(ok.meta.scene_status, 'ready');
   assert.match(ok.text, /I checked its length, its picture size, a voice for every spoken line: it matches what you asked\./);
   assert.match((await directorTurn(ctx, 'check my scene again')).text, /It matches what you asked, so there is nothing to fix\./);
+});
+
+test('the scene review counts speed edits like the finisher (Codex #962): 11 s with the last 5 s at half speed is 16 s, and is not re-rendered', async () => {
+  const eleven = { seconds: 11, width: 540, height: 960, timeline: [], time_remap: [{ from: 6, to: 11, speed: 0.5 }] };
+  assert.equal(finishedSeconds(eleven), 16);
+  assert.equal(finishedSeconds({ ...eleven, time_remap: [] }), 11);
+  assert.equal(finishedSeconds({ ...eleven, time_remap: [{ from: 0, to: 4, speed: 2 }, { from: 9, to: 20, speed: 0.1 }] }), 2 + 5 + 8, 'beyond the end is clipped; speed is held to 0.25..4');
+  assert.deepEqual(reviewScene(eleven, { seconds: 16, width: 540, height: 960 }, {}).short, []);
+  assert.match(reviewScene(eleven, { seconds: 11, width: 540, height: 960 }, {}).short[0], /it runs 11 seconds, not the 16 the scene asks for/);
+  // Through the Director: the owner's slow-down edit renders a longer video, which is ready, not re-rendered.
+  const storage = memory(); const gh = github();
+  const ctx = { storage, env: ENV, fetcher: gh.fetch, now: NOW };
+  await directorTurn(ctx, OWNER_MAKE);
+  gh.finish(gh.dispatches[0].job_id, { seconds: JSON.parse(gh.dispatches[0].spec).seconds });
+  assert.equal((await directorTurn(ctx, 'is my scene ready?')).meta.scene_status, 'ready');
+  await directorTurn({ ...ctx, now: NOW + 60_000 }, 'slow down the last five seconds');
+  const slowed = JSON.parse(gh.dispatches[1].spec);
+  assert.ok(finishedSeconds(slowed) > slowed.seconds + 4);
+  gh.finish(gh.dispatches[1].job_id, { seconds: finishedSeconds(slowed) });
+  const ready = await directorTurn({ ...ctx, now: NOW + 70_000 }, 'is my scene ready?');
+  assert.equal(ready.meta.scene_status, 'ready', ready.text);
+  assert.equal(gh.dispatches.length, 2, 'no re-render of a correctly slowed video');
 });

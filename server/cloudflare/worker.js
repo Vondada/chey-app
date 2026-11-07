@@ -5895,7 +5895,9 @@ export class CheState extends DurableObject {
     // Film Studio: the command's own words go through the same intent the owner's chat uses.
     if (command.local === 'film_make' || command.local === 'film_status') {
       if (!OWNER_CHAT_REQUESTS.has(request)) return ndjsonReply('Only the CHE owner can run Film Studio. Nothing was started.', { source: 'che_film_studio', ok: false, command: command.id, model_calls: 0 });
-      const ask = filmIntent(dispatchPrompt(command, input)) || (command.local === 'film_status' ? { kind: 'status' } : null);
+      // The owner's own words first ("/film-make re-render the film Brewed Anarchy"), then the command's prompt.
+      const own = command.local === 'film_make' ? filmIntent(String(input || '')) : null;
+      const ask = (own && own.kind !== 'make' ? own : null) || filmIntent(dispatchPrompt(command, input)) || (command.local === 'film_status' ? { kind: 'status' } : null);
       if (!ask) return ndjsonReply('Say the length and the subject, for example "/film-make 10-minute movie about a lighthouse keeper".', { source: 'che_film_studio', ok: false, command: command.id, model_calls: 0 });
       return withDoneFields(await this.filmChat(request, ask), { command: command.id });
     }
