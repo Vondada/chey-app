@@ -10,6 +10,7 @@ import json, os, subprocess, sys, threading, time, traceback, urllib.request
 CHE_BASE = "__CHE_BASE__"
 FILM_ID = "__FILM_ID__"
 FARM_TOKEN = "__FARM_TOKEN__"
+CLIP_W, CLIP_H = 768, 448  # LTX-Video needs both divisible by 32
 DEADLINE_S = int("__DEADLINE_S__")
 LIPSYNC = "__LIPSYNC__" == "1"  # this film has talking shots to lip-sync
 STARTED = time.time()
@@ -52,10 +53,13 @@ def ltx():
 
 def make_clip(pipe, job):
     from diffusers.utils import export_to_video, load_image
+    from PIL import ImageOps
     fetch(job["image_url"], "frame.jpg")
-    image = load_image("frame.jpg").resize((768, 432))
+    # LTX-Video needs a width and height divisible by 32 (768x432 stopped every session: "432 and 768"). 768x448 is
+    # the nearest 16:9-like size; the picture is cropped to it (never stretched) and the edit fills 1280x720 from it.
+    image = ImageOps.fit(load_image("frame.jpg"), (CLIP_W, CLIP_H))
     frames = pipe(image=image, prompt=job["prompt"], negative_prompt="worst quality, blurry, distorted, text, watermark",
-                  width=768, height=432, num_frames=int(job.get("frames", 121)), num_inference_steps=int(job.get("steps", 30))).frames[0]
+                  width=CLIP_W, height=CLIP_H, num_frames=int(job.get("frames", 121)), num_inference_steps=int(job.get("steps", 30))).frames[0]
     export_to_video(frames, "clip.mp4", fps=int(job.get("fps", 24)))
     return "clip.mp4"
 

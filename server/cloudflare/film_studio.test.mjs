@@ -1378,3 +1378,19 @@ test('director loop repairs (Codex #962): a remade moving shot never strands the
   assert.match(kept.review.why, /did not pass its checks/);
   assert.match(speakStatus(kept, await store.shots(kept.id, kept.shot_count), ctx.now), /Still short: shot 2 is a still instead of moving; shot 3 never passed its checks \(the uploaded film did not pass its checks/);
 });
+
+// Live 2026-11-07 ("Coffee Breakdown"): every Kaggle session stopped at its first clip with
+// "ValueError: `height` and `width` have to be divisible by 32 but are 432 and 768", so no shot ever moved.
+test('the clip model is asked for a frame size it accepts (both sides divisible by 32), in the Kaggle and Hugging Face scripts', () => {
+  const scripts = [KAGGLE_WORKER_PY, ...HF_SPACE_FILES.filter((f) => f.path.endsWith('.py')).map((f) => f.content)];
+  for (const py of scripts) {
+    const m = /CLIP_W, CLIP_H = (\d+), (\d+)/.exec(py);
+    assert.ok(m, 'the clip size is one named constant');
+    const [w, h] = [Number(m[1]), Number(m[2])];
+    assert.equal(w % 32, 0); assert.equal(h % 32, 0);
+    assert.ok(w > h, 'a landscape clip for a 1280x720 film');
+    assert.match(py, /width=CLIP_W, height=CLIP_H/);
+    assert.match(py, /ImageOps\.fit\(/, 'the picture is cropped to the clip size, never stretched');
+    assert.doesNotMatch(py, /height=432/);
+  }
+});
