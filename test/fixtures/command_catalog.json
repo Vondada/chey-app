@@ -1744,7 +1744,7 @@
    "category": "studio",
    "title": "Film Make",
    "summary": "Make a film from one sentence, free.",
-   "does": "Writes a screenplay, makes every shot with free compute (pictures and voices on Workers AI, moving clips on a connected free GPU farm) and assembles the film on GitHub Actions. Before starting CHE says the real ETA and the mix; a film is done only when its MP4 is stored and verified.",
+   "does": "Writes a screenplay, makes every shot with free compute (pictures and voices on Workers AI, moving clips on a connected free GPU farm) and assembles the film on GitHub Actions. Before starting CHE says the real ETA and the mix; a film is done only when its MP4 is stored and verified. Then CHE checks the finished film against what was asked and fixes what she can on free compute (twice at most; \"fix my film\" for one more round), and \"re-render\" a finished film by its title makes it again from its saved script.",
    "mode": "BUILD",
    "approval": {
     "required": false,
@@ -1753,17 +1753,19 @@
    "input": {
     "name": "film",
     "required": true,
-    "hint": "Length and subject, for example \"10-minute movie about a lighthouse keeper\""
+    "hint": "Length and subject, for example \"10-minute movie about a lighthouse keeper\", or \"re-render the film Brewed Anarchy\""
    },
    "examples": [
     "Make me a 10-minute movie about a lighthouse keeper",
-    "Make me a 2-hour movie about a heist in Tokyo"
+    "Make me a 2-hour movie about a heist in Tokyo",
+    "Re-render Brewed Anarchy",
+    "Fix my film"
    ],
    "needs": [
     "video_renderer"
    ],
    "optional": [],
-   "handler": "film_studio.filmIntent → film_pipeline.startFilm (alarm passes) → che-film-render.yml",
+   "handler": "film_studio.filmIntent → film_pipeline.startFilm / rerenderFilm / reviewFilmNow (alarm passes) → che-film-render.yml",
    "route": "che_film_studio",
    "produces": "video",
    "evidence": "The MP4 read back from R2: length, frame size and codecs; shots that failed their checks are listed.",
@@ -1772,7 +1774,9 @@
     "movie",
     "film",
     "feature",
-    "film studio"
+    "film studio",
+    "re-render film",
+    "fix my film"
    ],
    "status": "setup_required",
    "missing": [

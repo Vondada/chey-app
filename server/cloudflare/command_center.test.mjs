@@ -1371,3 +1371,29 @@ test('AI model status is discoverable and slash/voice requests reach the same re
     assert.notEqual((await che.say(message)).route, 'che_model_status', message);
   }
 });
+
+test('/film-make and its spoken forms also check and fix a finished film and re-render one from its saved script, on the Film Studio route with no model (stage 6)', async () => {
+  const c = commandById('film-make');
+  assert.equal(c.route, 'che_film_studio');
+  assert.equal(c.local, 'film_make');
+  assert.match(c.handler, /rerenderFilm/);
+  assert.match(c.handler, /reviewFilmNow/);
+  assert.ok(c.examples.includes('Re-render Brewed Anarchy') && c.examples.includes('Fix my film'));
+  const che = await owner({ env: READY_ENV }); // /film-make needs its renderer (GitHub) connected
+  const cases = [
+    ['Re-render the film Brewed Anarchy', 'rerender', /^I have no film called "Brewed Anarchy"\./],
+    ['/film-make re-render the film Brewed Anarchy', 'rerender', /^I have no film called "Brewed Anarchy"\./],
+    ['Fix my film', 'review', /^There is no film in the studio to check\./],
+    ['Check my movie again', 'review', /^There is no film in the studio to check\./],
+  ];
+  for (const [said, action, reply] of cases) {
+    const out = await che.say(said);
+    assert.equal(out.route, 'che_film_studio', said);
+    assert.equal(out.modelCalls, 0, said);
+    assert.equal(out.done.film_action, action, said);
+    assert.match(out.reply, reply, said);
+  }
+  // Words that name no film are left to the rest of CHE.
+  assert.notEqual((await che.say('Re-render the Nova character')).route, 'che_film_studio');
+  assert.notEqual((await che.say('fix it')).route, 'che_film_studio', 'a bare "fix it" with no recent finished film');
+});
