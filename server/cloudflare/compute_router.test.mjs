@@ -10,7 +10,7 @@ import {
   MODAL_CALL_WORST_USD, MODAL_MONTHLY_CAP_USD, MODAL_POOL_KEY, OWNER_MODAL_CAP, OWNER_MODAL_SPEND_LIMIT, MODAL_USD_HR, applyModalIntent, modalCreditGate,
   modalIntent, modalMonthCheck, modalMonthCheckFor, modalMonthStop, modalStateOf,
 } from './modal_gpu.js';
-import { TEST_BUDGET_KEY, TXT2IMG_WORST_CASE_USD, testBudgetMonthUsd } from './gpu_test_budget.js';
+import { TEST_BUDGET_KEY, TXT2IMG_WORST_CASE_USD, reserveTestBudget, settleTestBudget, testBudgetMonthUsd } from './gpu_test_budget.js';
 import { startModalImage } from './media.js';
 
 const T = Date.parse('2026-11-07T12:00:00Z');
@@ -136,4 +136,51 @@ test('voice: lower the cap, state the spend limit, stop Modal, and ask what this
   assert.match(said.spoken, /^GPU money this month \(2026-11, my estimate\): \$1\.2\d\./);
   assert.match(said.spoken, /under your cap of \$10\.00 a month \("Yes cap 10 a month"\); I stop at \$9\.50/);
   assert.match(said.spoken, /Free computers \(Workers AI, GitHub runners, Kaggle, Colab\) cost nothing/);
+});
+
+test('a $0 Modal cap refuses every paid dispatch unless Modal itself cannot charge and the stated credit covers it (Codex P1)', async () => {
+  const env = { CHE_MODAL_TXT2IMG: 'enabled', MODAL_TOKEN: `bearer:${'a'.repeat(64)}@https://ownerws--che-gpu.modal.run` };
+  const picture = async (pool) => {
+    const storage = memStorage(); await storage.put(POOL_KEY, pool);
+    const sent = [];
+    const fetcher = async (url) => { sent.push(new URL(String(url)).pathname); return new Response(JSON.stringify({ ok: true, call_id: 'fc-1', state: 'started' }), { status: 200 }); };
+    return { out: await startModalImage(env, storage, { prompt: 'a glowing blue cube', width: 256 }, fetcher), sent };
+  };
+  // Capped at $0, credit unknown, Modal's own spend limit still the owner's $10: nothing may be sent.
+  const pool = {};
+  applyModalIntent(pool, { action: 'cap', usd: 0 }, 'cap Modal at zero dollars a month', T);
+  let r = await picture(pool);
+  assert.equal(r.out.status, 402, JSON.stringify(r.out));
+  assert.match(r.out.detail, /You capped Modal at \$0\.00 a month, but you have not confirmed that Modal's own spend limit is \$0/);
+  assert.deepEqual(r.sent, [], 'no /txt2img call');
+  applyModalIntent(pool, { action: 'enable' }, "use Modal's free credit", T);
+  assert.equal(modalCreditGate(pool, T).ok, false, 'the Blender gate refuses too');
+  // $0 spend limit confirmed but the credit is unknown: still refused, with the reason.
+  applyModalIntent(pool, { action: 'spend_limit_zero' }, "I set Modal's spend limit to zero", T);
+  r = await picture(pool);
+  assert.equal(r.out.status, 402); assert.match(r.out.detail, /do not know your included Modal credit/); assert.deepEqual(r.sent, []);
+  assert.equal(modalMonthCheck(pool, TXT2IMG_WORST_CASE_USD, { t: T }).kind, 'credit_unknown');
+  // Credit stated and it covers the call: allowed under the credit's stop line.
+  applyModalIntent(pool, { action: 'credit', usd: 30 }, 'my Modal credit is 30 dollars', T);
+  const ok = modalMonthCheck(pool, TXT2IMG_WORST_CASE_USD, { t: T });
+  assert.deepEqual([ok.ok, ok.stop_usd], [true, 25]);
+  doneCall(pool, 24.99);
+  assert.equal(modalMonthCheck(pool, TXT2IMG_WORST_CASE_USD, { t: T }).ok, false, 'not when the credit no longer covers it');
+});
+
+test('the picture ledger keeps each month\'s spend through compaction: 201 settled $0.02 pictures are $4.02 (Codex P2)', async () => {
+  const storage = memStorage();
+  const now = Date.parse('2026-11-07T12:00:00Z');
+  for (let i = 0; i < 201; i += 1) {
+    const hold = await reserveTestBudget(storage, { label: `p${i}`, max_usd: 0.02, id: `p${i}`, now: now + i });
+    assert.equal(hold.ok, true);
+    await settleTestBudget(storage, hold.id, { actual_usd: 0.02, provenance: 'MEASURED', now: now + i });
+  }
+  const ledger = await storage.get(TEST_BUDGET_KEY);
+  assert.ok(ledger.jobs.length <= 200, 'compaction ran');
+  assert.equal(testBudgetMonthUsd(ledger, '2026-11'), 4.02);
+  assert.equal(testBudgetMonthUsd(ledger, '2026-10'), 0);
+  // The shared Modal check sees the same $4.02.
+  const c = await modalMonthCheckFor(storage, 0, now + 1000);
+  assert.equal(c.used_usd, 4.02);
 });

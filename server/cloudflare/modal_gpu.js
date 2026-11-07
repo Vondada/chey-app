@@ -259,9 +259,14 @@ export function modalMonthCheck(pool, worstUsd, { otherUsd = 0, t = Date.now() }
   const stop = modalMonthStop(pool);
   const cap = modalPaidCap(pool);
   const base = { used_usd: used, stop_usd: stop, cap_usd: cap.usd, cap_words: cap.words, left_usd: stop == null ? null : r4(Math.max(0, stop - used)), month: monthOf(t) };
-  // Paid use at $0 and the credit unknown: no money can be spent past Modal's own $0 limit, so the caller's own rules
-  // decide (the Blender gate asks for the credit; a picture keeps its $5 test budget).
-  if (stop == null) return { ...base, ok: true, kind: 'credit_only' };
+  // Paid use at $0 (the owner capped Modal at $0, or said its spend limit is $0): only included credit may be used, and
+  // only when Modal itself cannot charge (a $0 spend limit he confirmed) and his stated credit covers the call.
+  const m = modalStateOf(pool);
+  const paid = Math.min(cap.usd, Number(modalSpendLimit(pool).usd) || 0);
+  if (!(paid > 0)) {
+    if (!m.spend_limit_zero) return { ...base, ok: false, kind: 'cap_zero', reason: `You capped Modal at ${money(cap.usd)} a month, but you have not confirmed that Modal's own spend limit is $0, so a Modal job could still cost money. I send nothing to Modal. Set it to $0 on Modal's Usage and Billing page and say "I set Modal's spend limit to zero", then tell me your included credit.` };
+    if (stop == null) return { ...base, ok: false, kind: 'credit_unknown', reason: 'Paid Modal use is $0 and I do not know your included Modal credit, so I cannot tell whether this job is covered. I send nothing to Modal. Say "my Modal credit is 30 dollars" with the amount your Modal Usage page shows.' };
+  }
   if (used + Number(worstUsd || 0) > stop + 1e-9) {
     return { ...base, ok: false, kind: 'month_cap', reason: `Modal's monthly cap is reached: my estimate of Modal use this month (${monthOf(t)}) is ${money(used)}, and this job could cost up to ${money(worstUsd)}, past my ${money(stop)} stop line under your ${money(cap.usd)} a month ("${short(cap.words, 60)}"). I send nothing more to Modal until next month; free computers still work.` };
   }
