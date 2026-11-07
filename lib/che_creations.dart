@@ -204,7 +204,7 @@ class _CreationTile extends StatelessWidget {
 
 /// The address a saved video plays from. The iPhone's player fetches a video in byte ranges and never repeats the
 /// app's Authorization header on those requests, so a video on CHE's own server is played from a signed play link
-/// (POST /api/media/<id>/link, valid six hours for that one video) instead of the token-protected address.
+/// (`POST /api/media/<id>/link`, valid six hours for that one video) instead of the token-protected address.
 Future<String> cheVideoPlayUrl(String fileUrl, Map<String, String> headers, {http.Client? client}) async {
   final link = Uri.parse(fileUrl.replaceFirst(RegExp(r'/video$'), '/link'));
   if (!fileUrl.endsWith('/video') || !headers.containsKey('Authorization')) return fileUrl;
