@@ -16,7 +16,7 @@ import {
 } from './gpu_queue.js';
 // Compute pool (compute_pool.js): held or reserved jobs are not dispatched, a cooling provider is not started, a
 // rate-limited dispatch cools GitHub down, and a Kaggle character session starts when it is the best allowed choice.
-import { modalCreditGate, modalStateOf } from './modal_gpu.js';
+import { modalCreditGate, modalPicturesUsd } from './modal_gpu.js';
 import { applyPending, cooling, dispatchable, heldReason, isQuotaAnswer, loadPool, coolDown, poolSchedule, savePool, workerUsable } from './compute_pool.js';
 
 export const DISPATCHES_KEY = 'gpu:dispatches';
@@ -133,7 +133,7 @@ export async function ensureCapacity(env = {}, { storage, now, fetcher = fetch, 
   const cpuIds = new Set(cap.cpu_runnable.map((j) => j.id));
   // A GPU-only job the owner allowed onto Modal's included credit but whose credit check stops it waits for HIS approval,
   // with the reason (modal_gpu.js); it is not dispatched.
-  const mGate = modalStateOf(pool).opt_in ? modalCreditGate(pool, t) : null;
+  const mGate = modalCreditGate(pool, t, { otherUsd: await modalPicturesUsd(storage, t) });
   const modalWait = mGate && !mGate.ok && mGate.kind !== 'off' ? mGate.reason : '';
   for (const j of jobs) {
     if ((j.state !== 'queued' && j.state !== 'paused') || j.owner_paused) continue;

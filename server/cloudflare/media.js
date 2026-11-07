@@ -4,7 +4,7 @@ import { createFacelessVideo } from './faceless_video.js';
 import { githubVideoConfigured, startGithubVideo, githubVideoStatus, githubVideoFile } from './github_video_renderer.js';
 import { mediaStore } from './che_media_store.js';
 import { imagePayload, payloadReceipt } from './image_payload.js';
-import { modalCall, modalCredential } from './modal_gpu.js';
+import { modalCall, modalCredential, modalMonthCheckFor } from './modal_gpu.js';
 import { TXT2IMG_WORST_CASE_USD, COLD_START_S, IDLE_SCALEDOWN_S, T4_USD_PER_S, reserveTestBudget, settleTestBudget, releaseTestBudget } from './gpu_test_budget.js';
 //   - Owner image connector (CHE_IMAGE_GEN_URL) wins when configured.
 //   - Otherwise Workers AI FLUX.1 [schnell] generates the image on the CHE
@@ -403,6 +403,9 @@ export async function startModalImage(env, storage, body, fetcher = fetch) {
   if (!prompt) return refuse(400, 'Describe the picture.');
   // Square pictures only, 256 or 512 px (512 is the default). The Modal app refuses any other size too.
   const size = [256, 512].includes(Number(body?.width)) ? Number(body.width) : 512;
+  // The owner's monthly Modal cap (one ledger with the Blender GPU calls): this picture's worst case must fit under it.
+  const month = await modalMonthCheckFor(storage, TXT2IMG_WORST_CASE_USD);
+  if (!month.ok) return refuse(402, `${month.reason} Nothing was generated; no other engine was used.`);
   // The $5 GPU test budget: reserve this job's worst case before it is sent. A refused reservation sends nothing.
   const hold = await reserveTestBudget(storage, { label: `picture: ${prompt.slice(0, 60)}`, max_usd: TXT2IMG_WORST_CASE_USD });
   if (!hold.ok) return refuse(402, hold.reason);
