@@ -15,12 +15,14 @@ test('POST /api/probe/chat returns 404 unless the probe token is presented, like
 });
 
 test('the probe route runs the owner object chat turn, not a second reasoning path', () => {
-  assert.match(source, /return json\(await env\.CHE_STATE\.getByName\('owner'\)\.probeChat\(body\)\);/);
-  const start = source.indexOf('  async probeChat(body = {}) {');
+  assert.match(source, /return json\(await env\.CHE_STATE\.getByName\('owner'\)\.probeChat\(body, new URL\(request\.url\)\.origin\)\);/);
+  const start = source.indexOf("  async probeChat(body = {}, origin = '') {");
   const method = source.slice(start, source.indexOf('execution_receipts: receipts, error };', start) + 'execution_receipts: receipts, error };'.length);
   assert.ok(method.includes('return { ok: response.ok'), 'the method body is found');
   assert.match(method, /this\.fetch\(request\)/, 'the turn goes through the owner object fetch, the same path as /api/chat');
-  assert.match(method, /new Request\('https:\/\/che\.internal\/api\/chat'/);
+  // The turn is addressed at the Worker's real public origin (so a film it starts is fetched from a reachable host),
+  // falling back to the synthetic one only when the route gave none.
+  assert.match(method, /new Request\(`\$\{publicOrigin\(origin\) \|\| 'https:\/\/che\.internal'\}\/api\/chat`/);
   assert.doesNotMatch(method, /callModel|runChat|reasonAbout/, 'no separate model call is made by the probe');
 });
 
