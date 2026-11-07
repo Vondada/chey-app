@@ -42,7 +42,7 @@ import { capabilityPromptLine, inferTurnCapabilities, runtimeCapabilityRegistry 
 import { identityQuestionIntent, speakIdentity } from './che_maturity.js';
 import { testBudgetReport } from './gpu_test_budget.js';
 import { modalCubeProbe, modalCubeResult } from './modal_cube_probe.js';
-import { MODAL_IMAGE_KEY, deleteMedia, finishModalImage, generateImage, modalImageCheckTimes, pendingModalImages, reconcileModalImages, generateVideo, listMedia, readBlob, saveOwnerFile, upscaleImage, verifyMediaFile } from './media.js';
+import { MODAL_IMAGE_KEY, deleteMedia, finishModalImage, generateImage, modalImageCheckTimes, pendingModalImages, reconcileModalImages, generateVideo, listMedia, mediaPlayLink, mediaPlayLinkValid, readBlob, saveOwnerFile, upscaleImage, verifyMediaFile } from './media.js';
 import { pictureStatusIntent, pictureStatusReply } from './picture_status.js';
 import { mediaVerifyProbe } from './media_verify_probe.js';
 import { parseProbeChatBody } from './probe_reply.js';
@@ -5812,6 +5812,40 @@ export class CheState extends DurableObject {
     } catch (_) { /* nothing was held */ }
   }
 
+  async serveMedia(request, mediaId, action) {
+    const item = (await listMedia(this.ctx.storage)).find((entry) => entry.id === mediaId);
+    if (!item) return json({ detail: 'Piece not found.' }, 404);
+    if (item.url) return Response.redirect(item.url, 302);
+    const bytes = await readBlob(this.keyEnv || this.env, this.ctx.storage, item);
+    if (!bytes) return json({ detail: 'Media data missing.' }, 404);
+    const fallbackType = action === '/video' ? 'video/mp4' : 'image/jpeg';
+    const mime = item.mime_type || fallbackType;
+    const mediaHeaders = { 'Content-Type': mime, 'Cache-Control': 'private, no-store' };
+    if (action === '/video') {
+      mediaHeaders['Accept-Ranges'] = 'bytes';
+      const requestedRange = request.headers.get('range');
+      if (requestedRange) {
+        const match = /^bytes=(\d+)-(\d*)$/.exec(requestedRange.trim());
+        const start = match ? Number(match[1]) : NaN;
+        const end = match && match[2] ? Number(match[2]) : bytes.byteLength - 1;
+        if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) ||
+            start >= bytes.byteLength || start < 0 || end < start) {
+          return new Response(null, { status: 416, headers: {
+            ...mediaHeaders, 'Content-Range': 'bytes */' + bytes.byteLength,
+          } });
+        }
+        const last = Math.min(end, bytes.byteLength - 1);
+        return new Response(bytes.slice(start, last + 1), { status: 206, headers: {
+          ...mediaHeaders,
+          'Content-Range': 'bytes ' + start + '-' + last + '/' + bytes.byteLength,
+          'Content-Length': String(last - start + 1),
+        } });
+      }
+    }
+    return new Response(bytes, { headers: mediaHeaders });
+
+  }
+
   async answerCommandSpeech(request, body, data, said, { ownerDevice = false } = {}) {
     if (said.kind === 'run') {
       if (!ownerDevice) return ndjsonReply('Only the CHE owner can run commands, sir.', { source: 'che_command', ok: false, model_calls: 0 });
@@ -7027,6 +7061,13 @@ export class CheState extends DurableObject {
         return json({ device_token: raw, access: consumed.invite.access, tenant_id: consumed.invite.tenant_id }, 201);
       }
 
+      // A signed play link opens one saved video without the device token (media.js mediaPlayLink).
+      const played = request.method === 'GET' && /^\/api\/media\/([A-Za-z0-9-]{8,64})\/video$/.exec(path);
+      const linkParams = played ? new URL(request.url).searchParams : null;
+      if (played && linkParams.has('sig')) {
+        return (await mediaPlayLinkValid(this.ctx.storage, played[1], linkParams.get('exp'), linkParams.get('sig')))
+          ? this.serveMedia(request, played[1], '/video') : json({ detail: 'This play link has expired. Open the video again.' }, 401);
+      }
       const authorization = request.headers.get('Authorization') || '';
       const match = /^Bearer ([A-Za-z0-9_-]{40,160})$/.exec(authorization);
       const workflowStep = WORKFLOW_STEP_REQUESTS.has(request) && path === '/api/chat';
@@ -8159,40 +8200,13 @@ export class CheState extends DurableObject {
         const { status, ...rest } = result;
         return json(rest, status);
       }
-      const mediaMatch = /^\/api\/media\/([A-Za-z0-9-]{8,64})(\/image|\/video|\/upscale)?$/.exec(path);
+      const mediaMatch = /^\/api\/media\/([A-Za-z0-9-]{8,64})(\/image|\/video|\/upscale|\/link)?$/.exec(path);
       if (mediaMatch) {
         const [, mediaId, action] = mediaMatch;
-        if ((action === '/image' || action === '/video') && request.method === 'GET') {
-          const item = (await listMedia(this.ctx.storage)).find((entry) => entry.id === mediaId);
-          if (!item) return json({ detail: 'Piece not found.' }, 404);
-          if (item.url) return Response.redirect(item.url, 302);
-          const bytes = await readBlob(this.keyEnv || this.env, this.ctx.storage, item);
-          if (!bytes) return json({ detail: 'Media data missing.' }, 404);
-          const fallbackType = action === '/video' ? 'video/mp4' : 'image/jpeg';
-          const mime = item.mime_type || fallbackType;
-          const mediaHeaders = { 'Content-Type': mime, 'Cache-Control': 'private, no-store' };
-          if (action === '/video') {
-            mediaHeaders['Accept-Ranges'] = 'bytes';
-            const requestedRange = request.headers.get('range');
-            if (requestedRange) {
-              const match = /^bytes=(\d+)-(\d*)$/.exec(requestedRange.trim());
-              const start = match ? Number(match[1]) : NaN;
-              const end = match && match[2] ? Number(match[2]) : bytes.byteLength - 1;
-              if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) ||
-                  start >= bytes.byteLength || start < 0 || end < start) {
-                return new Response(null, { status: 416, headers: {
-                  ...mediaHeaders, 'Content-Range': 'bytes */' + bytes.byteLength,
-                } });
-              }
-              const last = Math.min(end, bytes.byteLength - 1);
-              return new Response(bytes.slice(start, last + 1), { status: 206, headers: {
-                ...mediaHeaders,
-                'Content-Range': 'bytes ' + start + '-' + last + '/' + bytes.byteLength,
-                'Content-Length': String(last - start + 1),
-              } });
-            }
-          }
-          return new Response(bytes, { headers: mediaHeaders });
+        if ((action === '/image' || action === '/video') && request.method === 'GET') return this.serveMedia(request, mediaId, action);
+        if (action === '/link' && request.method === 'POST') {
+          const item = (await listMedia(this.ctx.storage)).find((entry) => entry.id === mediaId && entry.kind === 'video');
+          return item ? json(await mediaPlayLink(this.ctx.storage, mediaId, new URL(request.url).origin)) : json({ detail: 'Video not found.' }, 404);
         }
         if (action === '/upscale' && request.method === 'POST') {
           const { status, ...rest } = await upscaleImage(this.env, this.ctx.storage, mediaId);
