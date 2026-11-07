@@ -1441,6 +1441,8 @@ test('Crew Creator: the owner adds Knox\'s picture and personality in the app; t
     assert.deepEqual(new Uint8Array(await back.arrayBuffer()), jpeg, 'the owner reads back the exact picture');
     assert.equal((await call(`/api/crew/knox/reference/${sha}`, null, '', 'GET')).status, 401);
     assert.equal((await (await call('/api/crew/knox', { personality: 'quiet guardian who jokes only with Lyra' }, token)).json()).profile.version, 2);
+    // Codex #968: the outfit, signature item and colours the owner saves reach the film's picture prompts.
+    assert.equal((await (await call('/api/crew/knox', { outfit: 'a grey wool peacoat', signature: 'a silver whistle', colours: ['grey', 'red'] }, token)).json()).profile.version, 3);
 
     // The office film: Knox's portrait IS the owner's picture (no portrait made from words for him), every shot of
     // him is drawn from it, the writer gets his personality, and the status names whose faces are the owner's.
@@ -1449,6 +1451,7 @@ test('Crew Creator: the owner adds Knox\'s picture and personality in the app; t
     const store = new FilmStore(st);
     let film = await store.latest();
     assert.match(film.roster.find((r) => r.id === 'knox').personality, /quiet guardian who jokes only with Lyra/);
+    assert.match(film.roster.find((r) => r.id === 'knox').look, /eye patch.*now wearing a grey wool peacoat, with a silver whistle, colours grey, red$/);
     for (let i = 0; i < 12 && !(film.cast?.che?.key && film.cast?.knox?.key); i += 1) { await state.filmPass(); film = await store.latest(); }
     assert.equal(film.cast.knox.owner_ref, true, JSON.stringify(film.cast));
     assert.equal(film.cast.knox.key, `film/${film.id}/cast/knox.jpg`);
@@ -1457,11 +1460,14 @@ test('Crew Creator: the owner adds Knox\'s picture and personality in the app; t
     const portraitsFromWords = calls.filter((c) => /reference portrait/i.test(c.input?.form?.get('prompt') || ''));
     assert.ok(portraitsFromWords.every((c) => !/eye patch/.test(c.input.form.get('prompt'))), 'no portrait was invented for Knox');
     const shotMessages = calls.filter((c) => Array.isArray(c.input?.messages) && /shot list/.test(c.input.messages[0].content));
-    if (shotMessages.length) assert.match(shotMessages[0].input.messages[1].content, /Personality: quiet guardian/);
+    assert.ok(shotMessages.length, 'the shot list was written');
+    assert.match(shotMessages[0].input.messages[1].content, /Personality: quiet guardian/);
+    assert.match(shotMessages[0].input.messages[1].content, /now wearing a grey wool peacoat, with a silver whistle/, 'the saved outfit is in the next film\'s prompt');
     assert.match(speakStatus({ ...film, state: 'making' }, [], NOW), /Knox is drawn from your Crew Creator picture; 1 other from a portrait made from words\./);
 
-    // Undo goes back a version; nothing is lost.
-    const undone = await (await call('/api/crew/knox/undo', {}, token)).json();
+    // Undo goes back a version, revert to any version; nothing is lost.
+    assert.equal((await (await call('/api/crew/knox/undo', {}, token)).json()).profile.outfit, '');
+    const undone = await (await call('/api/crew/knox/revert', { version: 1 }, token)).json();
     assert.equal(undone.profile.personality.startsWith('protector of few words'), true);
     assert.equal(undone.profile.has_reference, true, 'the picture stays after undoing the personality edit');
   } finally { globalThis.fetch = before; }

@@ -103,6 +103,21 @@ export function officeCast(data = {}, crew = {}) {
     const own = crew?.[id] || {};
     const bible = CREW_BIBLE[id] || {};
     const acting = Object.fromEntries(['personality', 'tells', 'catchphrase'].map((f) => [f, clip(own[f] || bible[f], 160)]).filter(([, v]) => v));
-    return { id, name: a.id === 'che' ? 'CHE' : clip(a.name, 60), role: clip(a.role, 80), look: clip(own.look, 160) || (look.description || !CREW_LOOKS[id] ? lookText(look) : CREW_LOOKS[id]), ...acting };
+    const base = clip(own.look, 160) || (look.description || !CREW_LOOKS[id] ? lookText(look) : CREW_LOOKS[id]);
+    return { id, name: a.id === 'che' ? 'CHE' : clip(a.name, 60), role: clip(a.role, 80), look: crewLookText(base, own), ...acting };
   }).filter((c, i, all) => all.findIndex((x) => x.id === c.id) === i);
+}
+
+/**
+ * The look every picture prompt uses: the look in words, plus what the owner set in the Crew Creator for hair,
+ * outfit, signature item and colours, so a saved outfit change shows in the next film.
+ */
+export function crewLookText(base, own = {}) {
+  const extra = [
+    own.hair && `hair: ${clip(own.hair, 80)}`,
+    own.outfit && `now wearing ${clip(own.outfit, 120)}`,
+    own.signature && `with ${clip(own.signature, 120)}`,
+    Array.isArray(own.colours) && own.colours.length && `colours ${own.colours.slice(0, 6).map((c) => clip(c, 24)).join(', ')}`,
+  ].filter(Boolean);
+  return clip([base, ...extra].filter(Boolean).join(', '), 400);
 }

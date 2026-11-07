@@ -70,7 +70,7 @@ async function saveVersion(storage, p, change, now) {
 }
 
 /** What the app shows: no storage keys, pictures by their SHA-256 (fetched from /api/crew/<id>/reference/<sha>). */
-export function profileView(p, { history = false } = {}) {
+export function profileView(p, { history = true } = {}) {
   const primary = p.refs.find((r) => r.sha256 === p.primary) || null;
   return {
     id: p.id, name: p.name, role: p.role, ...Object.fromEntries(Object.keys(FIELDS).map((f) => [f, p[f]])), colours: p.colours, accessories: p.accessories,
@@ -99,7 +99,34 @@ export function crewIntent(text) {
   m = /\b(?:use|make|set)\s+(?:this|that|the (?:last|latest) (?:picture|photo|image))(?:\s+(?:picture|photo|image))?\s+(?:as|for)\s+(\w+)(?:'s)?(?:\s+(?:reference|picture|face|look))?\b/.exec(t);
   if (m && crewIn(m[1])) return { kind: 'use_latest', member: crewIn(m[1]) };
   if (/\bwho (?:still )?(?:needs|has no) (?:a )?reference\b|\bcrew (?:reference )?pictures?\b/.test(t)) return { kind: 'status', member: null };
+  // Numbered, the same as the screen's lists (Codex #968, voice parity). A member must be named here; while the Crew
+  // Creator is open the app takes these words for the member on screen.
+  const who = crewIn(t);
+  if (!who) return null;
+  const n = (s) => Number(NUMBERS[s] ?? s);
+  m = /\b(?:use|make|set)\s+(?:\w+'s\s+)?picture\s+(\w+)\s+(?:as|for)\s+(?:the\s+)?(?:\w+'s\s+)?face\b/.exec(t);
+  if (m && n(m[1]) > 0) return { kind: 'primary', member: who, n: n(m[1]) };
+  m = /\b(?:remove|delete)\s+(?:\w+'s\s+)?picture\s+(\w+)\b/.exec(t);
+  if (m && n(m[1]) > 0) return { kind: 'remove', member: who, n: n(m[1]) };
+  m = /\b(?:go back|revert|return)\s+(?:\w+\s+)?to\s+version\s+(\w+)\b/.exec(t);
+  if (m && n(m[1]) > 0) return { kind: 'revert', member: who, n: n(m[1]) };
+  m = /\bread\s+(?:\w+'s\s+|the\s+)?(pictures|versions|history)\b/.exec(t);
+  if (m) return { kind: m[1] === 'pictures' ? 'list_pictures' : 'list_versions', member: who };
   return null;
+}
+
+const NUMBERS = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, first: 1, second: 2, third: 3, fourth: 4, fifth: 5, sixth: 6 };
+
+/** "Nova's pictures: 1. poster (her face). 2. Picture." */
+export function speakPictures(p) {
+  if (!p.refs.length) return `${p.name} has no reference pictures yet.`;
+  return `${p.name}'s pictures: ${p.refs.map((r, i) => `${i + 1}. ${r.label || 'Picture'}${r.sha256 === p.primary ? ' (the face in films)' : ''}`).join('. ')}.`;
+}
+
+/** "Nova's versions, newest first: 3. Changed outfit. 2. …" (the last ten). */
+export function speakVersions(p) {
+  if (!p.history.length) return `${p.name} has no saved versions yet; this is the starting design.`;
+  return `${p.name}'s versions, newest first: ${p.history.slice(0, 10).map((h) => `${h.n}. ${h.change}`).join(' ')}`;
 }
 
 /** "3 of 10 crew have their reference picture: CHE, Nova and Knox. Still to add: …" */
@@ -120,7 +147,7 @@ export async function crewProfiles(storage) {
   const out = {};
   for (const p of await allProfiles(storage)) {
     if (p.version === 0) continue;
-    out[p.id] = Object.fromEntries([...ACTING, 'voice'].map((f) => [f, p[f]]).filter(([, v]) => v));
+    out[p.id] = { ...Object.fromEntries([...ACTING, 'voice', 'hair', 'outfit', 'signature'].map((f) => [f, p[f]]).filter(([, v]) => v)), ...(p.colours.length ? { colours: [...p.colours] } : {}) };
   }
   return out;
 }
@@ -271,6 +298,24 @@ export async function crewTurn(env, storage, ask) {
     const out = await referenceFromMedia(env, storage, ask.member);
     return { ok: out.ok, said: out.ok ? out.said : `${out.detail} Nothing was changed.`, meta };
   }
+  if (['primary', 'remove', 'revert', 'list_pictures', 'list_versions'].includes(ask.kind)) {
+    const p = await loadProfile(storage, ask.member);
+    if (ask.kind === 'list_pictures') return { ok: true, meta, said: speakPictures(p) };
+    if (ask.kind === 'list_versions') return { ok: true, meta, said: speakVersions(p) };
+    if (ask.kind === 'revert') {
+      const out = await revertProfile(storage, p.id, ask.n);
+      return { ok: out.ok, meta, said: out.ok ? out.said : `${out.detail} Nothing was changed.` };
+    }
+    const r = p.refs[ask.n - 1];
+    if (!r) return { ok: false, meta, said: `${p.name} has no picture ${ask.n}. ${speakPictures(p)}` };
+    if (ask.kind === 'primary') {
+      const out = await setPrimary(storage, p.id, r.sha256);
+      return { ok: out.ok, meta, said: out.said };
+    }
+    // Removing asks first (the owner's rule): nothing is removed here; the Crew Creator opens and asks yes or no.
+    const face = r.sha256 === p.primary ? ` It is ${['sage', 'atlas', 'orion', 'knox', 'vale'].includes(p.id) ? 'his' : 'her'} face in films.` : '';
+    return { ok: true, meta: { ...meta, crew_confirm: { action: 'remove', n: ask.n } }, said: `Remove ${p.name}'s picture ${ask.n}?${face} Say yes to remove it, or no to keep it. Nothing is removed until you say yes.` };
+  }
   if (ask.kind === 'edit') {
     const p = profileView(await loadProfile(storage, ask.member));
     return { ok: true, meta, said: `Opening ${p.name} in the Crew Creator.${p.has_reference ? '' : ` ${p.name} has no reference picture yet: tap Add the reference picture.`} You can change the look, outfit, colours, personality, voice and catchphrase, and say undo to go back.` };
@@ -290,7 +335,7 @@ export async function crewResponse(env, storage, path, method, body) {
 export async function crewRoute(env, storage, path, method, body = {}, now = Date.now()) {
   if (path === '/api/crew' && method === 'GET') {
     const all = await allProfiles(storage);
-    return { status: 200, body: { crew: all.map((p) => profileView(p)), said: speakCrew(all) } };
+    return { status: 200, body: { crew: all.map((p) => profileView(p, { history: false })), said: speakCrew(all) } };
   }
   const m = /^\/api\/crew\/([a-z]{2,12})(?:\/(reference(?:\/media|\/[a-f0-9]{64})?|primary|remove-reference|undo|revert))?$/.exec(path);
   if (!m) return null;

@@ -2,7 +2,7 @@
 // repository.
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { CREW_IDS, MAX_REFS, MAX_REF_BYTES, addReference, crewIntent, crewProfiles, crewRoute, loadProfile, ownerPortrait, referenceFromMedia, removeReference, revertProfile, setPrimary, speakCrew, allProfiles, updateProfile } from './crew_creator.js';
+import { CREW_IDS, MAX_REFS, MAX_REF_BYTES, addReference, crewIntent, crewProfiles, crewTurn, crewRoute, loadProfile, ownerPortrait, referenceFromMedia, removeReference, revertProfile, setPrimary, speakCrew, allProfiles, updateProfile } from './crew_creator.js';
 import { CREW_BIBLE } from './film_cast.js';
 
 function memory() {
@@ -86,6 +86,14 @@ test('voice: open it, edit a member, use the newest library picture; other words
   assert.deepEqual(crewIntent('Use this picture for Nova'), { kind: 'use_latest', member: 'nova' });
   assert.deepEqual(crewIntent("Use this as Lyra's reference"), { kind: 'use_latest', member: 'lyra' });
   assert.deepEqual(crewIntent('Who still needs a reference picture?'), { kind: 'status', member: null });
+  assert.deepEqual(crewIntent("Use Nova's picture 2 as the face"), { kind: 'primary', member: 'nova', n: 2 });
+  assert.deepEqual(crewIntent('use picture two as Knox\'s face'), { kind: 'primary', member: 'knox', n: 2 });
+  assert.deepEqual(crewIntent("Remove Lyra's picture 3"), { kind: 'remove', member: 'lyra', n: 3 });
+  assert.deepEqual(crewIntent('Go back to version 4 for Iris'), { kind: 'revert', member: 'iris', n: 4 });
+  assert.deepEqual(crewIntent('revert Sage to version two'), { kind: 'revert', member: 'sage', n: 2 });
+  assert.deepEqual(crewIntent("Read Vale's pictures"), { kind: 'list_pictures', member: 'vale' });
+  assert.deepEqual(crewIntent('read the versions for Mira'), { kind: 'list_versions', member: 'mira' });
+  assert.equal(crewIntent('remove picture 2'), null, 'no member named: the open Crew Creator takes it for the member on screen');
   for (const other of ['Nova, check the news', 'Make a short story about the office', 'Use this picture for my wallpaper', "Edit the film's look", 'Make Nova walk in and sit down']) assert.equal(crewIntent(other), null, other);
 });
 
@@ -126,4 +134,23 @@ test('routes: list, one with history, update, picture, primary, remove, undo, re
   assert.equal((await crewRoute(env, storage, '/api/crew/atlas/primary', 'POST', { sha256: 'f'.repeat(64) }, NOW)).status, 404);
   assert.equal((await crewRoute(env, storage, '/api/crew/atlas/undo', 'GET')).status, 405);
   assert.equal((await loadProfile(storage, 'atlas')).history.length, 5);
+});
+
+test('spoken numbered commands: choose the face, read pictures and versions, revert; "remove" only asks, never removes', async () => {
+  const storage = memory(); const env = { CHE_DATA_BUCKET: bucket() };
+  await addReference(env, storage, 'nova', { bytes: jpeg(1), label: 'poster' }, NOW);
+  await addReference(env, storage, 'nova', { bytes: jpeg(2), label: 'sheet' }, NOW);
+  assert.match((await crewTurn(env, storage, crewIntent("Read Nova's pictures"))).said, /^Nova's pictures: 1\. poster \(the face in films\)\. 2\. sheet\.$/);
+  const face = await crewTurn(env, storage, crewIntent("Use Nova's picture 2 as the face"));
+  assert.match(face.said, /Nova's face now comes from that picture/);
+  const after = await loadProfile(storage, 'nova');
+  assert.equal(after.primary, after.refs[1].sha256);
+  assert.match((await crewTurn(env, storage, crewIntent("Use Nova's picture 5 as the face"))).said, /^Nova has no picture 5\./);
+  const ask = await crewTurn(env, storage, crewIntent("Remove Nova's picture 2"));
+  assert.match(ask.said, /^Remove Nova's picture 2\? It is her face in films\. Say yes to remove it/);
+  assert.deepEqual(ask.meta.crew_confirm, { action: 'remove', n: 2 });
+  assert.equal((await loadProfile(storage, 'nova')).refs.length, 2, 'nothing removed until the owner says yes');
+  assert.match((await crewTurn(env, storage, crewIntent('read the versions for Nova'))).said, /^Nova's versions, newest first: 3\. Chose a different reference picture as the face\./);
+  assert.match((await crewTurn(env, storage, crewIntent('Go back to version 1 for Nova'))).said, /back to version 1/);
+  assert.equal((await loadProfile(storage, 'nova')).refs.length, 1);
 });

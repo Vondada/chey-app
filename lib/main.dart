@@ -837,12 +837,14 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
 
   /// Office → Crew Creator (also "open the crew creator" and "edit Nova's look" in chat): each crew member's reference
   /// picture, look, personality and voice, kept privately in CHE and used by every film.
-  Future<void> _openCrewCreator({String? member}) async {
+  /// [confirmRemove]: "remove Nova's picture 2" in chat opens it and asks yes or no first.
+  Future<void> _openCrewCreator({String? member, int? confirmRemove}) async {
     HapticFeedback.selectionClick();
     await Navigator.of(context).push(MaterialPageRoute<void>(
       builder: (_) => CheCrewCreatorScreen(
         client: CheCrewClient(baseUrl: cheAgentBaseUrl, headers: () => _authHeaders),
         initialMember: member,
+        confirmRemove: confirmRemove,
         onSpeak: (text) => unawaited(speakText(text, record: false, readOnDemand: true)),
       ),
     ));
