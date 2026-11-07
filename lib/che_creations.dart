@@ -202,6 +202,59 @@ class _CreationTile extends StatelessWidget {
   }
 }
 
+/// The address a saved video plays from. The iPhone's player fetches a video in byte ranges and never repeats the
+/// app's Authorization header on those requests, so a video on CHE's own server is played from a signed play link
+/// (POST /api/media/<id>/link, valid six hours for that one video) instead of the token-protected address.
+Future<String> cheVideoPlayUrl(String fileUrl, Map<String, String> headers, {http.Client? client}) async {
+  final link = Uri.parse(fileUrl.replaceFirst(RegExp(r'/video$'), '/link'));
+  if (!fileUrl.endsWith('/video') || !headers.containsKey('Authorization')) return fileUrl;
+  final c = client ?? http.Client();
+  try {
+    final res = await c.post(link, headers: headers).timeout(const Duration(seconds: 20));
+    if (res.statusCode != 200) throw Exception('play link ${res.statusCode}');
+    final url = '${(jsonDecode(res.body) as Map)['url'] ?? ''}';
+    if (!url.startsWith('https://')) throw Exception('no play link');
+    return url;
+  } finally {
+    if (client == null) c.close();
+  }
+}
+
+/// Plays a saved video from its play link; says so quietly on screen if the link cannot be had.
+class CheVideoPlayLink extends StatefulWidget {
+  const CheVideoPlayLink({super.key, required this.fileUrl, required this.headers});
+
+  final String fileUrl;
+  final Map<String, String> headers;
+
+  @override
+  State<CheVideoPlayLink> createState() => _CheVideoPlayLinkState();
+}
+
+class _CheVideoPlayLinkState extends State<CheVideoPlayLink> {
+  late Future<String> _url = cheVideoPlayUrl(widget.fileUrl, widget.headers);
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<String>(
+      future: _url,
+      builder: (context, snap) {
+        if (snap.hasError) {
+          return Column(mainAxisSize: MainAxisSize.min, children: [
+            const Text('This video could not be opened right now.'),
+            TextButton(
+              onPressed: () => setState(() => _url = cheVideoPlayUrl(widget.fileUrl, widget.headers)),
+              child: const Text('Try again'),
+            ),
+          ]);
+        }
+        if (!snap.hasData) return const SizedBox(height: 360, child: Center(child: CircularProgressIndicator()));
+        return CheInlinePreview(url: snap.data!, label: 'Video', height: 360);
+      },
+    );
+  }
+}
+
 /// One creation, full size: a video plays here, a picture is shown here. Back returns to the room.
 class CheCreationViewer extends StatelessWidget {
   const CheCreationViewer({super.key, required this.item, required this.baseUrl, required this.headers});
@@ -220,7 +273,7 @@ class CheCreationViewer extends StatelessWidget {
         : isVideo
             ? Padding(
                 padding: const EdgeInsets.all(16),
-                child: CheInlinePreview(url: url, headers: headers, label: 'Video', height: 360),
+                child: CheVideoPlayLink(fileUrl: url, headers: headers),
               )
             : Center(
                 child: InteractiveViewer(

@@ -936,3 +936,35 @@ export async function deleteMedia(env, storage, id) {
   return { status: 200, ok: true };
 }
 
+
+// ─── Play links: a signed, expiring URL for one saved video ──────────────────
+// The iPhone's video player (WKWebView / AVPlayer) fetches a video in byte ranges and never repeats the app's
+// Authorization header on those requests, so a video behind the device token cannot play (owner, 2026-11-07: the film
+// "Brewed Anarchy" showed the crossed-out play icon). A play link carries its own proof instead: an HMAC of the media id
+// and an expiry, made with a random key that never leaves CHE's storage. It opens that one video, read-only, for six
+// hours; nothing else.
+const LINK_KEY = 'media:play_link_key';
+export const PLAY_LINK_S = 6 * 3600;
+const b64url = (bytes) => btoa(String.fromCharCode(...new Uint8Array(bytes))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+async function linkKey(storage) {
+  let raw = await storage.get(LINK_KEY);
+  if (!raw) { raw = b64url(crypto.getRandomValues(new Uint8Array(32))); await storage.put(LINK_KEY, raw); }
+  return crypto.subtle.importKey('raw', new TextEncoder().encode(raw), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign', 'verify']);
+}
+async function linkSig(storage, id, exp) {
+  return b64url(await crypto.subtle.sign('HMAC', await linkKey(storage), new TextEncoder().encode(`video:${id}:${exp}`)));
+}
+/** A play link for one saved video: { url, expires_at }. */
+export async function mediaPlayLink(storage, id, origin, now = Date.now()) {
+  const exp = Math.floor(now / 1000) + PLAY_LINK_S;
+  return { url: `${origin}/api/media/${id}/video?exp=${exp}&sig=${await linkSig(storage, id, exp)}`, expires_at: new Date(exp * 1000).toISOString() };
+}
+/** Whether a play link's exp and sig open this video now (constant-time compare). */
+export async function mediaPlayLinkValid(storage, id, exp, sig, now = Date.now()) {
+  const e = Number(exp);
+  if (!Number.isSafeInteger(e) || e < now / 1000 || e > now / 1000 + PLAY_LINK_S + 60 || !/^[A-Za-z0-9_-]{43}$/.test(String(sig || ''))) return false;
+  const want = await linkSig(storage, id, e);
+  let diff = 0;
+  for (let i = 0; i < want.length; i += 1) diff |= want.charCodeAt(i) ^ String(sig).charCodeAt(i);
+  return diff === 0;
+}
