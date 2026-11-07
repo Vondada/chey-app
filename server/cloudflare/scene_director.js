@@ -11,11 +11,29 @@
 // Honest limits, said when asked for: only the eight crew members with a 3D model can act (Orion and Vale have none
 // yet); the crew's clips are idle, walk, run, wave, sit, stand, talk, think, celebrate, nod and shake, so "dance" is
 // refused; the crew have no face shapes, so a talking character moves but its lips do not follow the words.
+//
+// The look, as data (Stage 7; validated and clamped by scene_look.js normalizeLook, drawn by tools/che_scene_look.py):
+//   spec.lights    [{id, type: area|sun|point|spot, position [x,y,z], rotation [x,y,z] deg | look_at [x,y,z],
+//                    color '#rrggbb', power W (sun: strength), size m (spot: cone degrees)}]  at most 8.
+//                    Absent: the default three-point rig on the seats, coloured by spec.set.light.
+//   spec.props     [{id, asset, position [x,y,z], rotation deg | [x,y,z] deg, scale s | [x,y,z], material?}]  at most 40.
+//                    asset: bookshelf, whiteboard, print, sideboard, coffee_machine, filing_cabinet, rug, plant,
+//                    ceiling_panel, box, or a GLB under assets/. Absent: the default office dressing; [] for none.
+//   spec.materials {target: {base_color, roughness 0..1, metallic 0..1, emission, emission_strength 0..50}}  at most 40.
+//                    target: a prop id, an actor id (its outfit), or floor, wall, ceiling, desk, chair, window, trim.
+//   actor.position [x, y], actor.rotation deg   override where the actor starts.
+//   actor.voice    {engine: 'piper', voice, speed}   the crew member's own voice (crew_voices.js).
+//   spec.camera.keys [{t s, position [x,y,z], look_at [x,y,z], lens 12..135 mm}]  at most 32; when present the camera
+//                    follows them, eased between keys, instead of its static or orbit move.
+// The room is closed on every side, so no camera angle shows the empty world behind it. Positions are metres in the
+// office (the seats near the origin, the door on the left wall at x = -3.6).
 
 import { downloadArchive, githubHeaders, mp4Facts, readJson, refusalOf, zipEntry } from './github_video_renderer.js';
 import { mediaStore } from './che_media_store.js';
 import { saveSceneVideo } from './media.js';
 import { routeWork } from './compute_pool.js';
+import { cleanVoice, crewVoice, spokenSeconds } from './crew_voices.js';
+import { normalizeLook } from './scene_look.js';
 
 export const DIRECTOR_KEY = 'director:projects';
 export const DIRECTOR_LAST = 'director:last';
@@ -58,7 +76,8 @@ const GREETING = {
 const clean = (v, n = 300) => String(v ?? '').replace(/\s+/g, ' ').trim().slice(0, n);
 const round = (x, d = 3) => Math.round(x * 10 ** d) / 10 ** d;
 /** How long a spoken line needs: about 2.5 words a second, plus room to start and finish. */
-const talkSeconds = (line) => round(Math.max(3, String(line).split(/\s+/).length / 2.5 + 1.2), 2);
+// How long a talk step lasts: the line spoken in the actor's own voice and pace (crew_voices.js).
+const talkSeconds = (line, voice) => spokenSeconds(line, voice);
 const num = (w) => (/^\d+$/.test(w) ? Number(w) : NUMBERS[String(w).toLowerCase()] ?? null);
 
 // ─── Words → a scene ─────────────────────────────────────────────────────────
@@ -121,7 +140,7 @@ export function sceneFromWords(text) {
       t = round(t + 1.5, 2);
     } else if (s.action === 'talk') {
       const line = clean(s.line || GREETING[id], 240);
-      const len = talkSeconds(line);
+      const len = talkSeconds(line, crewVoice(id));
       timeline.push({ actor: id, action: 'talk', line, t0: t, t1: round(t + len, 2) });
       t = round(t + len, 2);
     } else {
@@ -134,7 +153,7 @@ export function sceneFromWords(text) {
     spec: {
       v: 1, title: clean(`${NAME[id]} in the office`, 80), fps: 24, seconds: round(t + 0.5, 2), width: 540, height: 960, samples: 8, denoise: true,
       set: { kind: 'office', light: 'warm' }, seats: { ...SEATS },
-      actors: [{ id, model: `assets/characters/crew/${id}.glb`, start: DOOR.slice(), cloth: null }],
+      actors: [{ id, model: `assets/characters/crew/${id}.glb`, start: DOOR.slice(), cloth: null, voice: crewVoice(id) }],
       timeline, camera: { ...DEFAULT_CAMERA }, time_remap: [], audio: { music: null },
     },
   };
@@ -155,8 +174,9 @@ export function directorEditIntent(text) {
 }
 
 function threeDKey(spec) {
-  const { time_remap, audio, timeline, ...rest } = spec;
-  return JSON.stringify({ ...rest, job: undefined, version: undefined, timeline: timeline.map(({ line, ...s }) => s) });
+  const { time_remap, audio, timeline, actors, ...rest } = spec;
+  // A voice changes only the sound, so it reuses the frames like the words and music do.
+  return JSON.stringify({ ...rest, job: undefined, version: undefined, timeline: timeline.map(({ line, ...s }) => s), actors: (actors || []).map(({ voice, ...a }) => a) });
 }
 
 /** Applies every edit in one sentence. Returns { spec, said: [...], unknown: [...] }; never changes what it did not say. */
@@ -228,7 +248,7 @@ export function applyEdits(prev, text, { actor: chosen = null } = {}) {
     if (talk) {
       talk.line = clean(say[1], 240);
       // A longer line gets a longer talk: the talk step, everything after it and the scene grow to fit the words.
-      const grow = round(Math.max(0, talkSeconds(talk.line) - (talk.t1 - talk.t0)), 2);
+      const grow = round(Math.max(0, talkSeconds(talk.line, (spec.actors || []).find((a) => a.id === talk.actor)?.voice || crewVoice(talk.actor)) - (talk.t1 - talk.t0)), 2);
       if (grow > 0) {
         const end = spec.seconds;
         for (const s of spec.timeline) { if (s.t0 >= talk.t1) s.t0 = round(s.t0 + grow, 2); if (s.t1 >= talk.t1) s.t1 = round(s.t1 + grow, 2); }
@@ -312,7 +332,9 @@ export async function dispatchRender(env, project, fetcher = fetch, now = Date.n
   const route = routeWork('scene_render', [{ id: 'github_actions', usable: Boolean(env.CHE_GITHUB_TOKEN && env.CHE_GITHUB_REPO),
     detail: env.CHE_GITHUB_TOKEN && env.CHE_GITHUB_REPO ? 'Blender renders the scene in segments on free runners' : 'The free GitHub renderer needs CHE_GITHUB_TOKEN and CHE_GITHUB_REPO on the Worker' }]);
   if (route.route !== 'github_actions') return { ok: false, error: 'The free GitHub renderer needs CHE_GITHUB_TOKEN and CHE_GITHUB_REPO on the Worker.', route: route.why };
-  const spec = current(project);
+  // The look (lights, props, materials, poses, camera keys) and each actor's voice are clamped before they leave CHE.
+  const spec = normalizeLook(current(project));
+  spec.actors = (spec.actors || []).map((a) => ({ ...a, voice: cleanVoice(a.voice) || crewVoice(a.id) }));
   const job = 'scj_' + crypto.randomUUID().replaceAll('-', '').slice(0, 24);
   const reuse = framesFor(project, spec, now);
   const payload = JSON.stringify({ ...spec, job });

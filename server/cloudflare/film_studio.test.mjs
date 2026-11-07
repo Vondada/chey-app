@@ -1473,6 +1473,46 @@ test('Crew Creator: the owner adds Knox\'s picture and personality in the app; t
   } finally { globalThis.fetch = before; }
 });
 
+// Fast films on Modal (film_fast.js): opt-in per film. The owner hears the cost first; the film's farm then goes to
+// Modal (every shot at once) instead of the free Kaggle session, and Kaggle is never asked.
+test('a film asked for "with Modal" quotes its cost, then sends its clips and lip syncs to Modal at once, never to Kaggle', async () => {
+  const storage = memory(); const bucket = r2(); const gh = {};
+  await storage.put('film:validation', { github_actions: { ok: true, checked_ms: NOW }, kaggle: { ok: true, username: 'owner', allowed_s: 30 * 3600, used_s: 0, reserved_s: 0, checked_ms: NOW } });
+  const env = { AI: fakeAI(), CHE_DATA_BUCKET: bucket, CHE_GITHUB_TOKEN: 'gh', CHE_GITHUB_REPO: 'Vondada/chey-app', MODAL_TOKEN: `bearer:${'b'.repeat(40)}@https://ownerws--che-gpu.modal.run` };
+  const sent = [];
+  const fetcher = async (url, init = {}) => {
+    const u = new URL(String(url));
+    if (u.hostname.endsWith('.modal.run')) {
+      const body = init.body ? JSON.parse(init.body) : null;
+      sent.push({ path: u.pathname, body });
+      if (u.pathname === '/health') return Response.json({ ok: true, app: 'che-gpu', version: 'che-modal-3', functions: ['health', 'film_farm'] });
+      if (u.pathname === '/film_farm') return Response.json({ ok: true, dispatch: 'new', state: 'started', calls: [{ kind: 'clip', call_id: 'fc-aaaaaaaaaa' }] });
+      return Response.json({ ok: true, state: 'running', calls: [] });
+    }
+    if (String(url).includes('SaveKernel')) { sent.push({ path: 'kaggle' }); return Response.json({ ref: 'owner/x' }); }
+    return github(gh)(url, init);
+  };
+  const ctx = { storage, env, keys: { KAGGLE_API_TOKEN: 'owner:KGAT_abc' }, writer: writer(), base: 'https://che.example', fetcher, now: NOW };
+  const out = await startFilm(ctx, { topic: 'a keeper', seconds: 60, deadline: { seconds: 7200 }, fast: true });
+  assert.equal(out.ok, true);
+  assert.match(out.said, /Fast mode on Modal: about \$\d+\.\d\d for this film/);
+  assert.ok(out.said.indexOf('Fast mode on Modal') < out.said.indexOf('Starting now.'), 'the cost comes before the start');
+  assert.equal(out.film.fast.on, true);
+  assert.ok(out.film.plan.segments >= 2, 'the assembly runs on several runners at once');
+  const film = await runUntil(ctx, ['making'], 40);
+  for (let i = 0; i < 3; i += 1) { ctx.now += 1000; await filmTick(ctx); }
+  const now = await new FilmStore(storage).film(film.id);
+  assert.equal(now.farm?.provider, 'modal', JSON.stringify(now.notes));
+  assert.equal(sent.filter((s) => s.path === '/film_farm').length, 1, 'one fan-out, not one per tick');
+  assert.equal(sent.filter((s) => s.path === 'kaggle').length, 0, 'the free Kaggle session is not started for a fast film');
+  // A plain film is never sent to Modal.
+  const plain = memory();
+  await plain.put('film:validation', { github_actions: { ok: true, checked_ms: NOW } });
+  const p = await startFilm({ ...ctx, storage: plain }, { topic: 'a keeper', seconds: 60, deadline: { seconds: 7200 } });
+  assert.doesNotMatch(p.said, /Modal/);
+  assert.equal(p.film.fast, undefined);
+});
+
 // ─── Live 2026-11-07, Brewed Anarchy re-render: the last shots stayed stills, lip sync could not install, one refused
 // picture turned same faces off for the whole film, and the film came out 53 s of 60.
 
@@ -1560,4 +1600,37 @@ test('a portrait the model refuses is asked for again without the name, in neutr
   assert.match(prompts[1], /neutral friendly expression/);
   assert.equal(film.cast.mara.done, true);
   assert.ok(film.cast.mara.key, 'the portrait was made on the retry');
+});
+
+// Codex #966: a fast film is planned from Modal's capabilities, not from the free farm's. With Kaggle and Hugging Face
+// both unavailable the free plan has no moving shots and no lip sync, yet that is when Modal is asked for; and the
+// screenplay's replan must keep every shot moving, the talking shots lip-synced and the six assembly runners.
+test('a fast film with no free GPU still moves every shot and lip-syncs the talkers, through the screenplay replan', async () => {
+  const storage = memory(); const bucket = r2(); const gh = {};
+  await storage.put('film:validation', { github_actions: { ok: true, checked_ms: NOW } });  // no Kaggle, no Hugging Face
+  const env = { AI: fakeAI(), CHE_DATA_BUCKET: bucket, CHE_GITHUB_TOKEN: 'gh', CHE_GITHUB_REPO: 'Vondada/chey-app', MODAL_TOKEN: `bearer:${'b'.repeat(40)}@https://ownerws--che-gpu.modal.run` };
+  const fetcher = async (url, init = {}) => {
+    const u = new URL(String(url));
+    if (u.hostname.endsWith('.modal.run')) {
+      if (u.pathname === '/health') return Response.json({ ok: true, app: 'che-gpu', version: 'che-modal-3', functions: ['health', 'film_farm'] });
+      if (u.pathname === '/film_farm') return Response.json({ ok: true, dispatch: 'new', state: 'started', calls: [] });
+      return Response.json({ ok: true, state: 'running', calls: [] });
+    }
+    return github(gh)(url, init);
+  };
+  const ctx = { storage, env, keys: {}, writer: writer(), base: 'https://che.example', fetcher, now: NOW };
+  const out = await startFilm(ctx, { topic: 'a keeper', seconds: 60, deadline: { seconds: 7200 }, fast: true });
+  assert.equal(out.ok, true);
+  assert.equal(out.film.fast?.on, true, out.said);
+  assert.equal(out.film.plan.tier_a, out.film.plan.shots, 'every shot moves on Modal');
+  assert.ok(out.film.plan.lip_sync > 0, 'the talking shots are lip-synced on Modal');
+  assert.match(out.said, /every shot a moving clip/);
+  assert.doesNotMatch(out.said, /No free GPU farm is connected/, 'the free farm\'s limits are not said for a fast film');
+  const film = await runUntil(ctx, ['making'], 40);
+  assert.equal(film.plan.fast, true, 'the replan kept the fast plan');
+  assert.equal(film.plan.tier_a, film.plan.shots);
+  assert.ok(film.plan.lip_sync > 0);
+  assert.equal(film.plan.segments, Math.min(6, film.plan.shots), 'the six assembly runners survive the replan');
+  const shots = await new FilmStore(storage).shots(film.id, film.shot_count);
+  assert.ok(shots.every((s) => s.tier === 'A'), 'every shot is planned to move');
 });

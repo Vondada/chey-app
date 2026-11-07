@@ -141,13 +141,21 @@ jobs:
           merge-multiple: true
           run-id: ${{ needs.plan.outputs.reuse }}
           github-token: ${{ github.token }}
-      - name: Install ffmpeg and the free Piper voice
+      - name: Install ffmpeg and the free Piper voices this scene's crew speak with
         timeout-minutes: 6
+        env:
+          SPEC: ${{ inputs.spec }}
         run: |
           set -euo pipefail
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ffmpeg >/dev/null
           python -m pip install --disable-pip-version-check -q piper-tts
+          # CHE's own voice is always there; each crew member's voice (server/cloudflare/crew_voices.js) is fetched as
+          # the spec names it. A voice that cannot be fetched falls back to CHE's, and the manifest records that.
           python -m piper.download_voices en_US-kristin-medium
+          printf '%s' "$SPEC" > scene.json
+          for v in $(python tools/che_scene_finish.py --spec scene.json --list-voices); do
+            python -m piper.download_voices "$v" || echo "::warning::Piper voice $v could not be downloaded; CHE's voice is used for its lines"
+          done
       - name: Retime, voice, score and check the MP4
         env:
           SPEC: ${{ inputs.spec }}

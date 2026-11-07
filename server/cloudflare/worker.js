@@ -6489,7 +6489,7 @@ export class CheState extends DurableObject {
     const ctx = await this.filmCtx(request);
     const action = String(body.action || '');
     if (action === 'make') {
-      const out = await startFilm(ctx, { roster, topic: String(body.topic || '').slice(0, 300), seconds: Math.max(20, Math.min(14400, Number(body.seconds) || 300)), deadline: body.deadline_s == null ? null : { seconds: Math.max(0, Number(body.deadline_s)), words: String(body.deadline_words || '').slice(0, 40) } });
+      const out = await startFilm(ctx, { roster, topic: String(body.topic || '').slice(0, 300), seconds: Math.max(20, Math.min(14400, Number(body.seconds) || 300)), deadline: body.deadline_s == null ? null : { seconds: Math.max(0, Number(body.deadline_s)), words: String(body.deadline_words || '').slice(0, 40) }, fast: body.fast === true });
       if (out.ok) await this.wakeFilm();
       return { ok: out.ok, said: out.said, film_id: out.film?.id || null };
     }
@@ -6503,7 +6503,7 @@ export class CheState extends DurableObject {
     if (action === 'remake') { const out = await remakeShot(ctx, Number(body.shot)); if (out.ok) await this.wakeFilm(); return { ok: out.ok, said: out.said }; }
     // The director loop on demand, and a finished film made again from its saved script (film_pipeline.js).
     if (action === 'review') { const out = await reviewFilmNow(ctx, { fix: body.fix === true }); if (out.started) await this.wakeFilm(); return { ok: out.ok, said: out.said }; }
-    if (action === 'rerender') { const out = await rerenderFilm(ctx, { title: String(body.title || '').slice(0, 120), last: body.last === true }); if (out.ok) await this.wakeFilm(); return { ok: out.ok, said: out.said, film_id: out.film?.id || null }; }
+    if (action === 'rerender') { const out = await rerenderFilm(ctx, { title: String(body.title || '').slice(0, 120), last: body.last === true, fast: body.fast === true }); if (out.ok) await this.wakeFilm(); return { ok: out.ok, said: out.said, film_id: out.film?.id || null }; }
     return { ok: false, status: 400, said: 'Unknown Film Studio action.' };
   }
 
@@ -6519,7 +6519,7 @@ export class CheState extends DurableObject {
       return say(speakFilmStatus(film, film?.shot_count ? await store.shots(film.id, film.shot_count) : []));
     }
     const map = { make: 'make', plan: 'plan', farm: 'farm', pause: 'pause', resume: 'resume', cancel: 'cancel', remake: 'remake', review: 'review', rerender: 'rerender' };
-    const out = await this.filmAction(request, { action: map[ask.kind], topic: ask.topic, seconds: ask.seconds, deadline_s: ask.deadline ? ask.deadline.seconds : undefined, deadline_words: ask.deadline?.words || '', shot: ask.shot, fix: ask.fix === true, title: ask.title, last: ask.last === true }, ask.office ? officeCast(data, await crewProfiles(this.ctx.storage).catch(() => ({}))) : null);
+    const out = await this.filmAction(request, { action: map[ask.kind], topic: ask.topic, seconds: ask.seconds, deadline_s: ask.deadline ? ask.deadline.seconds : undefined, deadline_words: ask.deadline?.words || '', shot: ask.shot, fix: ask.fix === true, title: ask.title, last: ask.last === true, fast: ask.fast === true }, ask.office ? officeCast(data, await crewProfiles(this.ctx.storage).catch(() => ({}))) : null);
     return say(out.said, { ok: out.ok !== false, ...(out.film_id ? { film_id: out.film_id } : {}) });
   }
 
