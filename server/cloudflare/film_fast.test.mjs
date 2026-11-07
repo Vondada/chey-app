@@ -127,3 +127,20 @@ test('an app without the film workers, a refusal, or a missing connection sends 
   assert.equal(fastDoneLine({ fast: { declined: 'Modal is not connected' } }), ' Fast mode did not run: Modal is not connected.');
   assert.equal(fastDoneLine({}), '', 'a free film says nothing about Modal');
 });
+
+test('a 500 from /film_farm is a definite failure: nothing runs, nothing is reserved at its worst case, the film runs free at once', async () => {
+  const storage = memStorage();
+  const sent = [];
+  const fetcher = async (url, init = {}) => {
+    const u = new URL(url);
+    sent.push(u.pathname);
+    if (u.pathname === '/health') return new Response(JSON.stringify({ ok: true, app: 'che-gpu', version: 'che-modal-3', functions: ['film_farm'] }), { status: 200 });
+    return new Response(JSON.stringify({ ok: false, error: 'spawn failed: ModuleNotFoundError' }), { status: 500 });
+  };
+  const r = await startFastFarm({ storage, env: { MODAL_TOKEN: CRED }, base: BASE, now: T, fetcher }, film(), { token: 'a'.repeat(64), record: {}, clips: 10, lips: 6 });
+  assert.equal(r.ok, false);
+  assert.match(r.why, /HTTP 500: spawn failed: ModuleNotFoundError\); nothing was charged/);
+  const call = Object.values(modalStateOf(await storage.get(MODAL_POOL_KEY)).calls)[0];
+  assert.equal(call.state, 'not_started');
+  assert.equal(modalMonthWorstUsd(await storage.get(MODAL_POOL_KEY), T), 0, 'nothing counted against the cap');
+});

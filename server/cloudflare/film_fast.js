@@ -82,6 +82,10 @@ export async function fastQuote(storage, { clips, lips, rates } = {}, t = Date.n
 }
 
 const filmKey = (film, n = 1) => `film:${film.id}:modal:${n}`;
+// Answers from the app itself that mean nothing is running: a refusal, or its own 500 (/film_farm cancels every copy it
+// spawned and frees the key before answering 500, or failed before spawning; a missing import fails the same way).
+// Only no answer at all (a timeout, a network error, a gateway 502/503/504) leaves the farm uncertain.
+const DEFINITE = [400, 401, 403, 404, 422, 500];
 
 async function editPool(storage, fn) {
   const pool = (await storage.get(MODAL_POOL_KEY)) || {};
@@ -116,11 +120,11 @@ export async function startFastFarm(ctx, film, { token, record, clips, lips }) {
   await editPool(ctx.storage, (m) => {
     const c = m.calls[key];
     if (started) { c.state = 'started'; c.calls = (r.data?.calls || []).map((x) => ({ kind: x.kind, call_id: String(x.call_id || '').slice(0, 80) })); }
-    else if ([401, 403, 404, 422].includes(r.status)) { c.state = 'not_started'; c.ended_ms = t; c.error = `Modal refused the fast film (HTTP ${r.status})`; }
+    else if (DEFINITE.includes(r.status)) { c.state = 'not_started'; c.ended_ms = t; c.error = `Modal refused the fast film (HTTP ${r.status})`; }
     else { c.state = 'unknown'; c.error = r.status ? `Modal answered HTTP ${r.status}` : `no answer from Modal (${r.error || 'network'})`; }
   });
   film.fast = { ...(film.fast || {}), attempt: n, key, estimate_usd: est.usd, worst_usd: est.worst_usd, workers: est.workers, started_ms: t };
-  if (!started && [401, 403, 404, 422].includes(r.status)) return { ok: false, why: `Modal refused the fast film (HTTP ${r.status}); nothing was charged` };
+  if (!started && DEFINITE.includes(r.status)) return { ok: false, why: `Modal refused the fast film (HTTP ${r.status}${r.data?.error ? `: ${String(r.data.error).slice(0, 120)}` : ''}); nothing was charged` };
   // An unknown answer may still have started containers: the farm is kept open (and counted at its worst case) and
   // its status is read by key, so nothing is started twice.
   return { ok: true, farm: { ...record, provider: 'modal', key, started_ms: t, workers: est.workers } };
@@ -164,10 +168,38 @@ export { fastDoneLine } from './film_fast_words.js';
  * Fast mode for a film being planned (startFilm, rerenderFilm): when the owner asked, the cost quote CHE says first,
  * and the film's fast record; the assembly gets more runners at once. { fast, said }: fast is null when not asked.
  */
-export async function planFast(ctx, plan, asked) {
+export async function planFast(ctx, plan, asked, { talking = null } = {}) {
   if (!asked) return { fast: null, said: '' };
-  const quote = await fastQuote(ctx.storage, { clips: Number(plan.tier_a) || 0, lips: Number(plan.lip_sync) || 0 }, ctx.now || Date.now());
+  // Modal's own plan, never the free farm's: with Kaggle and Hugging Face both unavailable the free plan has no moving
+  // shots and no lip sync, which is exactly when the owner asks for Modal.
+  const fp = fastReplan(plan, { talking });
+  const quote = await fastQuote(ctx.storage, { clips: fp.tier_a, lips: fp.lip_sync }, ctx.now || Date.now());
   if (!quote.ok) return { fast: { on: false, declined: quote.said.replace(/^Fast mode is not available, so this film runs free: /, '') }, said: quote.said };
-  plan.segments = Math.max(Number(plan.segments) || 1, Math.min(FAST_SEGMENTS, Number(plan.shots) || 1));
+  Object.assign(plan, fp);
   return { fast: { on: true, estimate_usd: quote.est.usd, worst_usd: quote.est.worst_usd, workers: quote.est.workers, wall_s: quote.est.wall_s, quoted_at: new Date(ctx.now || Date.now()).toISOString() }, said: quote.said };
+}
+
+// Notes from the free plan about what the free GPUs could not do; a fast film is not limited by them.
+const FREE_FARM_NOTE = /\b(?:free GPU|Kaggle|GPU farm|shots move;|No shot can move|lip sync)\b/i;
+
+/**
+ * The plan of a fast film from Modal's capabilities: every shot moves, every talking shot is lip-synced (about half
+ * until the screenplay says), the assembly runs on FAST_SEGMENTS runners at once, and the ETA is the fast estimate.
+ * Applied when the film is planned and again after the screenplay's replan (film_pipeline.writeStep), which would
+ * otherwise put back the free farm's numbers. Pure: returns a new plan.
+ */
+export function fastReplan(plan, { talking = null } = {}) {
+  if (!plan?.ok) return plan;
+  const shots = Math.max(0, Number(plan.shots) || 0);
+  const lips = Math.min(shots, Math.max(0, Math.round(talking == null ? shots / 2 : Number(talking))));
+  const est = fastEstimate({ clips: shots, lips });
+  const deadline = Number(plan.deadline_s) || 0;
+  return {
+    ...plan, fast: true, tier_a: shots, tier_b: 0, lip_sync: lips,
+    segments: Math.max(Number(plan.segments) || 1, Math.min(FAST_SEGMENTS, shots || 1)),
+    eta_s: est.wall_s, meets_deadline: deadline === 0 || est.wall_s <= deadline,
+    parts: { ...(plan.parts || {}), clips_s: est.farm_s, lip_sync_s: 0 },
+    providers_used: [...new Set([...(plan.providers_used || []).filter((id) => !['kaggle', 'hf_zerogpu'].includes(id)), 'modal'])],
+    notes: (plan.notes || []).filter((n) => !FREE_FARM_NOTE.test(n)),
+  };
 }

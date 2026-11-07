@@ -322,7 +322,9 @@ if modal is not None:  # pragma: no cover - runs on Modal, not in unit tests
         latentsync_image_setup()
 
     web_image = (modal.Image.debian_slim(python_version="3.11").pip_install("fastapi[standard]==0.115.12")
-                 .add_local_file(os.path.join(os.path.dirname(os.path.abspath(__file__)), "txt2img.py"), "/root/txt2img.py", copy=True).env(pins))
+                 .add_local_file(os.path.join(os.path.dirname(os.path.abspath(__file__)), "txt2img.py"), "/root/txt2img.py", copy=True)
+                 # The /film_farm routes import film_worker (argument checks and the fan-out plan) in this container.
+                 .add_local_file(os.path.join(os.path.dirname(os.path.abspath(__file__)), "film_worker.py"), "/root/film_worker.py", copy=True).env(pins))
     gpu_image = (modal.Image.debian_slim(python_version="3.11")
                  .apt_install("xz-utils", "ca-certificates", "libxi6", "libxkbcommon0", "libsm6", "libxrender1", "libgl1", "libegl1", "libxxf86vm1", "libxfixes3")
                  .env(pins).run_function(_install))
@@ -508,7 +510,7 @@ if modal is not None:  # pragma: no cover - runs on Modal, not in unit tests
                     except Exception:
                         pass
                 jobs.pop(key, None)
-                return JSONResponse({"ok": False, "error": f"spawn failed: {type(e).__name__}"}, status_code=502)
+                return JSONResponse({"ok": False, "error": f"spawn failed: {type(e).__name__}"}, status_code=500)  # definite: every spawned copy was cancelled (film_fast.js DEFINITE)
             entry = {**reserved, "state": "started", "calls": calls, "gpu": FILM_GPU}
             jobs[key] = entry
             return {"ok": True, "dispatch": "new", **entry}

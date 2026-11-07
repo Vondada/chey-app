@@ -103,3 +103,17 @@ class Clip(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class WebImage(unittest.TestCase):
+    def test_the_web_endpoint_image_carries_film_worker_so_film_farm_can_import_it(self):
+        app = open(os.path.join(HERE, "modal", "che_modal_app.py")).read()
+        web = re.search(r"web_image = \((.*?)\.env\(pins\)\)", app, re.S).group(1)
+        self.assertIn('"film_worker.py"', web)
+        self.assertIn('"/root/film_worker.py"', web)
+
+    def test_a_spawn_failure_answers_500_so_che_falls_back_at_once(self):
+        app = open(os.path.join(HERE, "modal", "che_modal_app.py")).read()
+        farm = app[app.index('@web.post("/film_farm")'):app.index('@web.post("/film_farm/status")')]
+        self.assertIn("status_code=500", farm)
+        self.assertNotIn("status_code=502", farm)

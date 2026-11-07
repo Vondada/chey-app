@@ -15,7 +15,7 @@ import { farmTokenOpens, hfClip, kaggleSessionLog, kaggleSessionStatus, newFarmT
 import { assemblyTokenOpens, filmRenderStatus, newAssemblyJob, publicOrigin, startFilmRender, validateGithub, verifyFilmObject } from './film_render.js';
 import { mp4Facts } from './github_video_renderer.js';
 // Fast films on Modal (opt-in per film, inside the monthly cap): film_fast.js owns it; the hooks below are marked FAST.
-import { planFast, settleFastFarm, startFastFarm } from './film_fast.js';
+import { fastReplan, planFast, settleFastFarm, startFastFarm } from './film_fast.js';
 import { assembleUpload, mediaStore, partKey, sha256Hex } from './che_media_store.js';
 import { saveFilmVideo } from './media.js';
 import { redact } from './security_intelligence.js';
@@ -59,9 +59,11 @@ export async function startFilm(ctx, ask) {
   if (!ask.topic) return { ok: false, said: 'What should the film be about? Say, for example, "make me a 10-minute movie about a lighthouse keeper".' };
   await refreshValidation(ctx);
   const { plan } = await filmPlan(ctx, ask);
+  if (!plan.ok) return { ok: false, said: speakPlan(plan, { asked: ask.deadline?.words }) };
+  // FAST: Modal's own plan (every shot moving, talking shots lip-synced), whatever the free farm could do; its cost is
+  // said before anything starts.
+  const fast = await planFast(ctx, plan, ask.fast === true);
   const said = speakPlan(plan, { asked: ask.deadline?.words });
-  if (!plan.ok) return { ok: false, said };
-  const fast = await planFast(ctx, plan, ask.fast === true);  // FAST: the cost is said before anything starts
   const film = await store.save(Object.assign(newFilm({ topic: ask.topic, targetSeconds: ask.seconds, deadline: ask.deadline, plan, roster: ask.roster, now: ctx.now || Date.now() }), fast.fast ? { fast: fast.fast } : {}));
   return { ok: true, film, said: `${said}${fast.said ? ` ${fast.said}` : ''} Starting now.` };
 }
@@ -135,7 +137,7 @@ async function writeStep(ctx, store, film) {
   const draft = shotList(film.outline, sceneShots, film.plan);
   const speech = draft.reduce((t, s) => t + s.dialogue.reduce((u, d) => u + d.line.length / 14, 0), 0);
   const replanned = planFilm({ targetSeconds: film.target_s, deadlineSeconds: film.deadline_s, providers: await farmProviders(ctx.env, ctx.storage, ctx), ...(await loadRates(ctx.storage)), dialogueSeconds: speech, uniqueWanted: draft.length, talkingShots: draft.filter((s) => s.dialogue.length && s.characters?.length).length, now });
-  if (replanned.ok) film.plan = replanned;
+  if (replanned.ok) film.plan = film.fast?.on ? fastReplan(replanned, { talking: draft.filter((s) => s.dialogue.length && s.characters?.length).length }) : replanned;  // FAST
   const shots = shotList(film.outline, sceneShots, film.plan);
   await store.putShots(film.id, shots);
   film.shot_count = shots.length;
@@ -990,9 +992,9 @@ export async function rerenderFilm(ctx, ask) {
   // The owner's own deadline carries over; a default one is planned afresh (and not quoted back as if he gave it).
   const deadline = old.deadline_s && old.deadline_words ? { seconds: old.deadline_s, words: old.deadline_words } : null;
   const plan = planFilm({ targetSeconds: old.target_s, deadlineSeconds: deadline?.seconds ?? null, providers: await farmProviders(ctx.env, ctx.storage, ctx), ...(await loadRates(ctx.storage)), dialogueSeconds: speech, uniqueWanted: draft.length, talkingShots: draft.filter((s) => s.dialogue.length && s.characters?.length).length, now });
+  if (!plan.ok) return { ok: false, said: speakPlan(plan, { asked: deadline?.words }) };
+  const fast = await planFast(ctx, plan, ask.fast === true, { talking: draft.filter((s) => s.dialogue.length && s.characters?.length).length });  // FAST: "re-render Brewed Anarchy with Modal"
   const said = speakPlan(plan, { asked: deadline?.words });
-  if (!plan.ok) return { ok: false, said };
-  const fast = await planFast(ctx, plan, ask.fast === true);  // FAST: "re-render Brewed Anarchy with Modal"
   const film = newFilm({ topic: old.topic, targetSeconds: old.target_s, deadline, plan, roster: old.roster, now });
   if (fast.fast) film.fast = fast.fast;
   Object.assign(film, { title: old.title, outline: old.outline, scene_next: old.outline.scenes.length, rerender_of: old.id, state: 'making' });
