@@ -965,9 +965,9 @@ extension _CheHomeSend on _CHEHomeState {
     }
 
     // The Crew Creator, while it is open, takes "show Nova", "next", "add the picture", "undo", "save" and "read".
-    final crewVoice = CheCrewCreatorScreen.voiceHandler;
-    if (crewVoice != null && _pendingAttachment == null) {
-      final reply = await crewVoice(message);
+    final crewCreatorVoice = CheCrewCreatorScreen.voiceHandler;
+    if (crewCreatorVoice != null && _pendingAttachment == null) {
+      final reply = await crewCreatorVoice(message);
       if (reply != null) {
         if (mounted) _set(() => controller.clear());
         if (reply.isNotEmpty) await speakText(reply, record: false);

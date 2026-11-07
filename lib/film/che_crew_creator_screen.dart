@@ -150,7 +150,7 @@ class _CheCrewCreatorScreenState extends State<CheCrewCreatorScreen> {
   void _say(String text, {bool announce = true}) {
     if (!mounted) return;
     setState(() => _status = text);
-    if (announce) SemanticsService.announce(text, TextDirection.ltr);
+    if (announce) unawaited(SemanticsService.sendAnnouncement(View.of(context), text, TextDirection.ltr));
   }
 
   Future<void> _run(Future<Map<String, dynamic>> Function() action, {String? done}) async {

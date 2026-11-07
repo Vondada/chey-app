@@ -74,7 +74,7 @@ void main() {
     ));
     await tester.pumpAndSettle();
     expect(find.text('Add the reference picture'), findsOneWidget);
-    expect(CheCrewCreatorScreen.voiceHandler, isNotNull, 'the screen takes spoken commands while open');
+    expect(CheCrewCreatorScreen.voiceHandler, isNotNull, reason: 'the screen takes spoken commands while open');
     await tester.tap(find.text('Add the reference picture'));
     await tester.pumpAndSettle();
     expect(base64Decode(posts['/api/crew/knox/reference']!['image_base64'] as String), jpeg);
@@ -86,6 +86,6 @@ void main() {
     expect(posts['/api/crew/knox']!['catchphrase'], 'Nobody gets past me.');
     expect(posts['/api/crew/knox']!['colours'], ['black', 'gunmetal']);
     await tester.pumpWidget(const SizedBox());
-    expect(CheCrewCreatorScreen.voiceHandler, isNull, 'closed: chat words go back to the chat');
+    expect(CheCrewCreatorScreen.voiceHandler, isNull, reason: 'closed: chat words go back to the chat');
   });
 }
