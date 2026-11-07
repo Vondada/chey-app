@@ -1024,10 +1024,15 @@ test('when every shot moves, the shots without dialogue move too (talking shots 
 
 test('the finished film says how many shots really move and are lip-synced, and why when the GPU did not deliver', () => {
   const film = { id: 'f1', state: 'done', title: 'Brewed Anarchy', started_ms: NOW, result: { seconds: 60, at: new Date(NOW + 11 * 60_000).toISOString() }, notes: ['Kaggle: the GPU session could not start (quota).', 'Lip sync needs the Kaggle GPU, which could not start, so talking shots use their pictures as they are.', 'This uses starting numbers.'] };
-  const shots = Array.from({ length: 10 }, (_, i) => ({ n: i + 1, clip_key: i < 2 ? `c${i}` : '', dialogue: [] }));
+  const shots = Array.from({ length: 10 }, (_, i) => ({ n: i + 1, status: 'verified', clip_key: i < 2 ? `c${i}` : '', dialogue: [] }));
   const said = speakStatus(film, shots, NOW + 12 * 60_000);
   assert.match(said, /2 of 10 shots move; the rest are stills with camera motion\./);
   assert.match(said, /Kaggle: the GPU session could not start \(quota\)\. Lip sync needs the Kaggle GPU/);
   assert.doesNotMatch(said, /starting numbers/, 'only the notes that explain motion and lip sync');
   assert.match(speakStatus(film, shots.map((s) => ({ ...s, clip_key: 'c' })), NOW), /Every shot moves\./);
+  // A lip-synced video is what the film cuts in for a talking shot, so it moves even without a separate clip;
+  // a failed shot is left out of the film, so it is left out of the count.
+  const cut = shots.map((s, i) => ({ ...s, clip_key: i < 8 ? 'c' : '', lip_key: i === 8 ? 'l' : '', status: i === 9 ? 'failed' : 'verified' }));
+  assert.match(speakStatus(film, cut, NOW), /Every shot moves\./);
+  assert.match(speakStatus(film, cut.map((s, i) => (i === 8 ? { ...s, lip_key: '' } : s)), NOW), /8 of 9 shots move/);
 });

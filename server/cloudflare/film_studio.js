@@ -861,11 +861,12 @@ export function filmProgress(film, shots = [], now = Date.now()) {
   return { state: film.state, shots_total: shots.length || film.shot_count, shots_verified: verified, shots_failed: failed, elapsed_s: elapsed, eta_s: eta, remaining_s: Math.max(0, eta - elapsed) };
 }
 
-/** How many shots really move, from the shots themselves (a clip that arrived), never from the plan. */
+/** How many shots in the film really move, from the shots it was cut from (a moving clip or lip-synced video that arrived), never from the plan. */
 function motionLine(shots) {
-  if (!shots.length) return '';
-  const moving = shots.filter((s) => s.clip_key).length;
-  return moving === shots.length ? ` Every shot moves.` : ` ${moving} of ${shots.length} shots move; the rest are stills with camera motion.`;
+  const used = shots.filter((s) => s.status === 'verified');
+  if (!used.length) return '';
+  const moving = used.filter((s) => s.lip_key || s.clip_key).length;
+  return moving === used.length ? ` Every shot moves.` : ` ${moving} of ${used.length} shots move; the rest are stills with camera motion.`;
 }
 
 /** Why the film differs from its plan (the GPU farm did not start, clips became stills, lip sync failed), said once. */
