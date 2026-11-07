@@ -17,6 +17,8 @@
 //     estimate. A deadline that free compute cannot meet is said plainly, with the best real time.
 //   - A shot ships only after it passed its checks; a film is done only when its MP4 is in R2 and was verified.
 
+import { fastAsked, fastDoneLine, withoutFastWords } from './film_fast_words.js';
+
 export const FILM_INDEX_KEY = 'film:index';
 export const FILM_RATES_KEY = 'film:throughput';
 export const FILM_USAGE_KEY = 'film:usage';
@@ -467,15 +469,18 @@ export function filmIntent(message = '') {
   const review = /^(?:please\s+)?(?:(check|review|look at)\s+(it|the (?:film|movie)|my (?:film|movie))\s+again|(fix)\s+(it|the (?:film|movie)|my (?:film|movie)))\s*(?:please)?[.!]*$/i.exec(t);
   if (review) return { kind: 'review', fix: Boolean(review[3]), bare: /^it$/i.test(review[2] || review[4] || '') };
   // "Re-render Brewed Anarchy" / "re-render my last film": the finished film made again from its saved script.
-  const rerender = rerenderAsk(t);
-  if (rerender) return rerender;
+  // Fast mode on Modal is opt-in per film ("make it fast with Modal"); the phrase is taken out so it never becomes
+  // part of a title or a topic (film_fast.js).
+  const fast = fastAsked(t);
+  const rerender = rerenderAsk(fast ? withoutFastWords(t) : t);
+  if (rerender) return fast ? { ...rerender, fast: true } : rerender;
   // A story set in the office is a film played by the crew, even when the owner calls it a video.
   const office = /\b(?:the|my|our|your|che'?s)\s+(?:office|crew|team)\b|\bla agencia\b/i.test(t);
   if (office && /\b(?:make|create|produce|shoot|render|generate)\b/i.test(t) && /\b(?:story|episode|skit|movie|film)\b/i.test(t) && !/\b(?:how(?:'s| is)|status|ready)\b/i.test(t)) {
     // Asking how long one would take only plans it; it never starts a film.
     if (/\bhow long\b|\bhow fast\b|\bcould you\b.*\bin\b|\bcan you make\b.*\bin\b/i.test(t) && !/\b(?:please|now|go ahead)\b/i.test(t)) return { kind: 'plan', seconds: lengthFrom(t) || 60, deadline: deadlineFrom(t) };
     const about = /\b(?:about|on|of|starring|featuring|where|in which)\s+(.{3,300}?)[.!?]*$/i.exec(t);
-    return { kind: 'make', seconds: lengthFrom(t) || 60, deadline: deadlineFrom(t) || OFFICE_STORY_DEADLINE, topic: clean(about ? about[1] : 'something that happens in the office', 300), office: true };
+    return { kind: 'make', seconds: lengthFrom(t) || 60, deadline: deadlineFrom(t) || OFFICE_STORY_DEADLINE, topic: clean(about ? (fast ? withoutFastWords(about[1]) : about[1]) : 'something that happens in the office', 300), office: true, ...(fast ? { fast: true } : {}) };
   }
   if (!FILM_WORD.test(t)) return null;
   if (/\b(?:cancel|stop|pause|halt)\b.*\b(?:movie|film)\b/i.test(t)) return { kind: /\bpause\b/i.test(t) ? 'pause' : 'cancel' };
@@ -488,7 +493,7 @@ export function filmIntent(message = '') {
   if (!make) return null;
   const about = /\b(?:about|on|of|starring|featuring|where|in which)\s+(.{3,300}?)[.!?]*$/i.exec(t);
   const topic = (about ? about[1] : '').replace(/\b(?:in|within|under|by)\s+(?:about\s+)?(?:\d+|an?|one|half)\b.*$/i, '').replace(/\s+as fast as (?:possible|you can).*$/i, '').trim();
-  return { kind: 'make', seconds: seconds || 300, deadline, topic: topic.slice(0, 300) };
+  return { kind: 'make', seconds: seconds || 300, deadline, topic: (fast ? withoutFastWords(topic) : topic).slice(0, 300), ...(fast ? { fast: true } : {}) };
 }
 
 /** "re-render Brewed Anarchy", "re-render the film Brewed Anarchy", "re-render my last movie", or null. */
@@ -971,7 +976,7 @@ export function speakStatus(film, shots = [], now = Date.now()) {
     case 'making': return `${name}: ${p.shots_verified} of ${p.shots_total} shots done${p.shots_failed ? `, ${p.shots_failed} failed after ${MAX_ATTEMPTS} tries` : ''}. ${time}.${film.review?.fixing?.length ? ` My check of the finished film found work to do, so I'm fixing it (round ${film.review.rounds}): ${sayFixes(film.review.fixing, false)}.` : ''}${film.waiting ? ` ${film.waiting}` : ''}${faces(film)}${lipLine(shots)}`;
     case 'assembling': return `${name} is being assembled on ${film.plan?.segments || 1} GitHub runners. ${time}.`;
     case 'verifying': return `${name} is uploaded and I am checking the file. ${time}.`;
-    case 'done': return `${name} is done: ${spokenDuration(film.result?.seconds || 0)}, checked from the file itself, in your media library.${film.result?.missing?.length ? ` ${film.result.missing.length} shots never passed their checks and were left out.` : ''}${motionLine(shots)}${lipLine(shots)} It took ${spokenDuration((Date.parse(film.result?.at || '') - film.started_ms) / 1000)}.${whyNotes(film)}${reviewLine(film)}`;
+    case 'done': return `${name} is done: ${spokenDuration(film.result?.seconds || 0)}, checked from the file itself, in your media library.${film.result?.missing?.length ? ` ${film.result.missing.length} shots never passed their checks and were left out.` : ''}${motionLine(shots)}${lipLine(shots)} It took ${spokenDuration((Date.parse(film.result?.at || '') - film.started_ms) / 1000)}.${whyNotes(film)}${fastDoneLine(film)}${reviewLine(film)}`;
     case 'paused': return `${name} is paused at ${p.shots_verified} of ${p.shots_total} shots. Say "resume my movie" to continue; nothing is lost.`;
     case 'cancelled': return `${name} was stopped. Its finished shots are kept.`;
     case 'failed': return `${name} could not be finished: ${film.errors?.slice(-1)[0] || 'an unknown error'}. No film was made.`;

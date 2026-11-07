@@ -200,7 +200,9 @@ export function modalStateOf(pool) {
 const entered = (words, t, extra = {}) => ({ at: iso(t), words: short(words, 200), provenance: 'USER-ENTERED', ...extra });
 function remember(m, what, words, t) { m.history = [...(m.history || []), { at: iso(t), what, words: short(words, 200) }].slice(-30); }
 
-export const openCalls = (pool) => Object.values(modalStateOf(pool).calls).filter((c) => ['dispatching', 'unknown', 'started', 'running', 'reserving'].includes(c.state));
+// Blender calls only: a fast film's farm (kind 'film', film_fast.js) has its own status route and is settled by the
+// film, never cancelled by the Blender reconciler. Both count against the month's cap (modalMonthWorstUsd).
+export const openCalls = (pool) => Object.values(modalStateOf(pool).calls).filter((c) => c.kind !== 'film' && ['dispatching', 'unknown', 'started', 'running', 'reserving'].includes(c.state));
 
 /** Estimated cost of one call: measured (or wall) seconds + cold start + idle scale-down, at the published T4 price. */
 export function callSeconds(c, t = Date.now()) {
@@ -210,6 +212,9 @@ export function callSeconds(c, t = Date.now()) {
 }
 export function callCostUsd(c, t = Date.now()) {
   if (c.state === 'not_started') return 0;
+  // A fast film's farm (film_fast.js) is many short containers: its seconds are already the sum over them, cold starts
+  // included, and until they are measured its estimate stands (never less).
+  if (c.kind === 'film') return r4(Math.max(Number(c.gpu_seconds) || 0, Number.isFinite(c.gpu_seconds) ? 0 : Number(c.estimate_s) || 0) * (Number(c.usd_hr) || MODAL_USD_HR) / 3600);
   const s = callSeconds(c, t).seconds + MODAL_STARTUP_S + MODAL_SCALEDOWN_S;
   return r4(s * (Number(c.usd_hr) || MODAL_USD_HR) / 3600);
 }
@@ -222,7 +227,7 @@ const OPEN = ['dispatching', 'unknown', 'started', 'running', 'reserving'];
 /** The month's Blender GPU calls for the cap: an open call counts at its worst case (it may still run to its timeout). */
 export function modalMonthWorstUsd(pool, t = Date.now(), month = monthOf(t)) {
   return r4(Object.values(modalStateOf(pool).calls).filter((c) => monthOf(c.dispatched_ms) === month)
-    .reduce((s, c) => s + (OPEN.includes(c.state) ? Math.max(callCostUsd(c, t), MODAL_CALL_WORST_USD) : callCostUsd(c, t)), 0));
+    .reduce((s, c) => s + (OPEN.includes(c.state) ? Math.max(callCostUsd(c, t), Number(c.worst_usd) || MODAL_CALL_WORST_USD) : callCostUsd(c, t)), 0));
 }
 /** The owner's monthly cap in force: his own lower figure if he gave one, else his $10 approval; never above the ceiling. */
 export function modalPaidCap(pool) {
@@ -318,7 +323,7 @@ export function modalCreditGate(pool, t = Date.now(), { otherUsd = 0 } = {}) {
 
 // ─── Calls: dispatch, status, cancel (one job per call, one idempotency key per attempt) ─────────────────────────
 export function nextKey(pool, jobId) {
-  const n = Object.values(modalStateOf(pool).calls).filter((c) => c.job_ids.includes(jobId) && c.state !== 'not_started').length + 1;
+  const n = Object.values(modalStateOf(pool).calls).filter((c) => (c.job_ids || []).includes(jobId) && c.state !== 'not_started').length + 1;
   return `job:${jobId}:modal:${n}`;
 }
 function keepCalls(m) {

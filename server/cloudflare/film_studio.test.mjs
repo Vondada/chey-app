@@ -1394,3 +1394,43 @@ test('the clip model is asked for a frame size it accepts (both sides divisible 
     assert.doesNotMatch(py, /height=432/);
   }
 });
+
+// Fast films on Modal (film_fast.js): opt-in per film. The owner hears the cost first; the film's farm then goes to
+// Modal (every shot at once) instead of the free Kaggle session, and Kaggle is never asked.
+test('a film asked for "with Modal" quotes its cost, then sends its clips and lip syncs to Modal at once, never to Kaggle', async () => {
+  const storage = memory(); const bucket = r2(); const gh = {};
+  await storage.put('film:validation', { github_actions: { ok: true, checked_ms: NOW }, kaggle: { ok: true, username: 'owner', allowed_s: 30 * 3600, used_s: 0, reserved_s: 0, checked_ms: NOW } });
+  const env = { AI: fakeAI(), CHE_DATA_BUCKET: bucket, CHE_GITHUB_TOKEN: 'gh', CHE_GITHUB_REPO: 'Vondada/chey-app', MODAL_TOKEN: `bearer:${'b'.repeat(40)}@https://ownerws--che-gpu.modal.run` };
+  const sent = [];
+  const fetcher = async (url, init = {}) => {
+    const u = new URL(String(url));
+    if (u.hostname.endsWith('.modal.run')) {
+      const body = init.body ? JSON.parse(init.body) : null;
+      sent.push({ path: u.pathname, body });
+      if (u.pathname === '/health') return Response.json({ ok: true, app: 'che-gpu', version: 'che-modal-3', functions: ['health', 'film_farm'] });
+      if (u.pathname === '/film_farm') return Response.json({ ok: true, dispatch: 'new', state: 'started', calls: [{ kind: 'clip', call_id: 'fc-aaaaaaaaaa' }] });
+      return Response.json({ ok: true, state: 'running', calls: [] });
+    }
+    if (String(url).includes('SaveKernel')) { sent.push({ path: 'kaggle' }); return Response.json({ ref: 'owner/x' }); }
+    return github(gh)(url, init);
+  };
+  const ctx = { storage, env, keys: { KAGGLE_API_TOKEN: 'owner:KGAT_abc' }, writer: writer(), base: 'https://che.example', fetcher, now: NOW };
+  const out = await startFilm(ctx, { topic: 'a keeper', seconds: 60, deadline: { seconds: 7200 }, fast: true });
+  assert.equal(out.ok, true);
+  assert.match(out.said, /Fast mode on Modal: about \$\d+\.\d\d for this film/);
+  assert.ok(out.said.indexOf('Fast mode on Modal') < out.said.indexOf('Starting now.'), 'the cost comes before the start');
+  assert.equal(out.film.fast.on, true);
+  assert.ok(out.film.plan.segments >= 2, 'the assembly runs on several runners at once');
+  const film = await runUntil(ctx, ['making'], 40);
+  for (let i = 0; i < 3; i += 1) { ctx.now += 1000; await filmTick(ctx); }
+  const now = await new FilmStore(storage).film(film.id);
+  assert.equal(now.farm?.provider, 'modal', JSON.stringify(now.notes));
+  assert.equal(sent.filter((s) => s.path === '/film_farm').length, 1, 'one fan-out, not one per tick');
+  assert.equal(sent.filter((s) => s.path === 'kaggle').length, 0, 'the free Kaggle session is not started for a fast film');
+  // A plain film is never sent to Modal.
+  const plain = memory();
+  await plain.put('film:validation', { github_actions: { ok: true, checked_ms: NOW } });
+  const p = await startFilm({ ...ctx, storage: plain }, { topic: 'a keeper', seconds: 60, deadline: { seconds: 7200 } });
+  assert.doesNotMatch(p.said, /Modal/);
+  assert.equal(p.film.fast, undefined);
+});

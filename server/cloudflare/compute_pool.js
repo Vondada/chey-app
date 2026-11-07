@@ -540,6 +540,9 @@ export const WORKLOADS = Object.freeze({
   scene_render: { label: 'a 3D scene render', order: ['github_actions'], modal: 'Scene renders are CPU work on free GitHub runners; CPU work never goes to a metered GPU.' },
   film_clip: { label: 'moving clips and lip sync', order: ['kaggle', 'hf_zerogpu'], modal: MODAL_CANNOT_CLIPS },
   picture_gpu: { label: 'a GPU picture', order: ['modal'] },
+  // Fast films (owner, 2026-11-07: "at least a 1-minute video in 5 minutes", Modal for speed, default free): only when
+  // the owner asked for this film to be fast on Modal, and only within the monthly cap (film_fast.js).
+  film_clip_fast: { label: 'fast moving clips and lip sync', order: ['modal'] },
 });
 const ROUTE_LABEL = { workers_ai: 'Cloudflare Workers AI (free)', github_actions: 'free GitHub runners', kaggle: 'the free Kaggle GPU', hf_zerogpu: 'the free Hugging Face GPU', modal: 'Modal (paid, capped at $10 a month)' };
 export const routeLabel = (id) => ROUTE_LABEL[id] || providerLabel(id);
