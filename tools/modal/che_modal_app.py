@@ -40,6 +40,7 @@ import re
 import subprocess
 import sys
 import time
+import urllib.request
 
 import hmac
 
@@ -66,6 +67,11 @@ APP_NAME = "che-gpu"
 APP_VERSION = "che-modal-3"            # server/cloudflare/modal_gpu.js MODAL_APP_VERSION must match
 ENDPOINT_LABEL = "che-gpu"             # URL: https://<workspace>--che-gpu.modal.run
 GPU = "T4"
+# Fast films (film_worker.py): the GPU, the per-copy timeout and how many copies run at once.
+FILM_GPU = "L40S"
+FILM_WORKER_TIMEOUT_S = 420
+FILM_MAX_CLIP_WORKERS = 10
+FILM_MAX_LIP_WORKERS = 6
 MAX_CALL_S = 45 * 60                   # hard timeout of one GPU call
 SCALEDOWN_S = 60                       # an idle container stops after a minute (scale to zero)
 # The text-to-image function stops after 2 s idle: one picture is one short call, and an idle minute is billed GPU time.
@@ -301,8 +307,24 @@ if modal is not None:  # pragma: no cover - runs on Modal, not in unit tests
         from txt2img import MODEL_ID, MODEL_REVISION
         snapshot_download(MODEL_ID, revision=MODEL_REVISION, allow_patterns=["*.json", "*.txt", "*.safetensors", "*.model"])
 
+    def _film_clip_setup():
+        import sys
+        if "/root" not in sys.path:
+            sys.path.insert(0, "/root")
+        from film_worker import clip_image_setup
+        clip_image_setup()
+
+    def _film_lip_setup():
+        import sys
+        if "/root" not in sys.path:
+            sys.path.insert(0, "/root")
+        from film_worker import latentsync_image_setup
+        latentsync_image_setup()
+
     web_image = (modal.Image.debian_slim(python_version="3.11").pip_install("fastapi[standard]==0.115.12")
-                 .add_local_file(os.path.join(os.path.dirname(os.path.abspath(__file__)), "txt2img.py"), "/root/txt2img.py", copy=True).env(pins))
+                 .add_local_file(os.path.join(os.path.dirname(os.path.abspath(__file__)), "txt2img.py"), "/root/txt2img.py", copy=True)
+                 # The /film_farm routes import film_worker (argument checks and the fan-out plan) in this container.
+                 .add_local_file(os.path.join(os.path.dirname(os.path.abspath(__file__)), "film_worker.py"), "/root/film_worker.py", copy=True).env(pins))
     gpu_image = (modal.Image.debian_slim(python_version="3.11")
                  .apt_install("xz-utils", "ca-certificates", "libxi6", "libxkbcommon0", "libsm6", "libxrender1", "libgl1", "libegl1", "libxxf86vm1", "libxfixes3")
                  .env(pins).run_function(_install))
@@ -360,6 +382,56 @@ if modal is not None:  # pragma: no cover - runs on Modal, not in unit tests
         check_png(png)
         return result_receipt(args, png, time.time() - started, gpu)
 
+    # Fast films (tools/modal/film_worker.py): one container per moving shot and per lip-synced shot, all at once,
+    # each a copy of the same farm worker the free Kaggle session runs. Weights are baked into the images, so a cold
+    # start loads from disk. Each copy has a hard timeout (FILM_WORKER_TIMEOUT_S) and scales to zero when it returns.
+    here = os.path.dirname(os.path.abspath(__file__))
+    film_clip_image = (modal.Image.debian_slim(python_version="3.11").apt_install("ffmpeg")
+                       .pip_install("torch==2.5.1", "diffusers==0.34.0", "transformers==4.51.3", "accelerate==1.6.0", "sentencepiece==0.2.0",
+                                    "safetensors==0.5.3", "huggingface_hub==0.30.2", "imageio[ffmpeg]==2.37.0", "pillow==11.2.1")
+                       .add_local_file(os.path.join(here, "film_worker.py"), "/root/film_worker.py", copy=True)
+                       .run_function(_film_clip_setup))
+    film_lip_image = (modal.Image.debian_slim(python_version="3.11").apt_install("ffmpeg", "git", "libgl1", "libglib2.0-0")
+                      .pip_install("huggingface_hub==0.30.2")
+                      .add_local_file(os.path.join(here, "film_worker.py"), "/root/film_worker.py", copy=True)
+                      .run_function(_film_lip_setup))
+
+    def _film_che(a):
+        from film_worker import che_call
+        return lambda method, path, body=None, raw=None: che_call(a["che_base"], a["film_id"], a["farm_token"], method, path, body=body, raw=raw)
+
+    def _film_fetch(a):
+        def fetch(url, dest):
+            if not url.startswith(a["che_base"] + "/"):          # only CHE's own asset routes
+                raise ValueError("asset URL is not on the film's CHE host")
+            req = urllib.request.Request(url)
+            req.add_header("X-CHE-Farm-Token", a["farm_token"])
+            req.add_header("User-Agent", "che-film-farm/1.0 (+modal)")
+            with urllib.request.urlopen(req, timeout=120) as res, open(dest, "wb") as out:
+                out.write(res.read())
+        return fetch
+
+    @app.function(image=film_clip_image, gpu=FILM_GPU, timeout=FILM_WORKER_TIMEOUT_S, scaledown_window=2, max_containers=FILM_MAX_CLIP_WORKERS, retries=0)
+    def film_clip_worker(a: dict) -> dict:
+        import sys
+        if "/root" not in sys.path:
+            sys.path.insert(0, "/root")
+        from film_worker import load_clip_pipeline, make_clip, work_loop
+        started = time.time()
+        pipe = load_clip_pipeline()
+        out = work_loop("clip", _film_che(a), lambda job: make_clip(pipe, job, _film_fetch(a)), a["deadline_s"] - (time.time() - started))
+        return {**out, "gpu_seconds": round(time.time() - started, 1), "gpu": FILM_GPU}
+
+    @app.function(image=film_lip_image, gpu=FILM_GPU, timeout=FILM_WORKER_TIMEOUT_S, scaledown_window=2, max_containers=FILM_MAX_LIP_WORKERS, retries=0)
+    def film_lipsync_worker(a: dict) -> dict:
+        import sys
+        if "/root" not in sys.path:
+            sys.path.insert(0, "/root")
+        from film_worker import make_lipsync, work_loop
+        started = time.time()
+        out = work_loop("lipsync", _film_che(a), lambda job: make_lipsync(job, _film_fetch(a)), a["deadline_s"])
+        return {**out, "gpu_seconds": round(time.time() - started, 1), "gpu": FILM_GPU}
+
     @app.function(image=web_image, scaledown_window=SCALEDOWN_S, timeout=60, secrets=[modal.Secret.from_name(AUTH_SECRET_NAME)])
     @modal.asgi_app(label=ENDPOINT_LABEL)
     def api():
@@ -408,9 +480,67 @@ if modal is not None:  # pragma: no cover - runs on Modal, not in unit tests
                 return JSONResponse({"ok": False, "call_id": call_id, "state": "failed", "error": f"{type(e).__name__}: {str(e)[:200]}"}, status_code=502)
             return {"ok": True, "call_id": call_id, "state": "done", **result}
 
+        @web.post("/film_farm")
+        async def film_farm(request: Request):
+            """Starts every copy of the film's farm worker at once; answers with their call ids. Idempotent per key."""
+            from film_worker import FilmArgError, spawn_plan, validate_film_farm_args
+            try:
+                args = validate_film_farm_args(await body_of(request), ALLOWED_BASES)
+            except FilmArgError as e:
+                return bad(e)
+            key = args["idempotency_key"]
+            reserved = {"state": "reserving", "kind": "film", "film_id": args["film_id"], "started_at": time.time()}
+            try:
+                fresh = jobs.put(key, reserved, skip_if_exists=True)
+            except TypeError:
+                fresh = plan_dispatch(jobs.get(key)) == "new"
+                if fresh:
+                    jobs[key] = reserved
+            if not fresh:
+                return {**(jobs.get(key) or {}), "ok": True, "dispatch": "existing"}
+            calls = []
+            try:
+                for a in spawn_plan(args):
+                    fn = film_clip_worker if a["kind"] == "clip" else film_lipsync_worker
+                    calls.append({"kind": a["kind"], "call_id": fn.spawn(a).object_id})
+            except Exception as e:
+                for c in calls:
+                    try:
+                        modal.FunctionCall.from_id(c["call_id"]).cancel()
+                    except Exception:
+                        pass
+                jobs.pop(key, None)
+                return JSONResponse({"ok": False, "error": f"spawn failed: {type(e).__name__}"}, status_code=500)  # definite: every spawned copy was cancelled (film_fast.js DEFINITE)
+            entry = {**reserved, "state": "started", "calls": calls, "gpu": FILM_GPU}
+            jobs[key] = entry
+            return {"ok": True, "dispatch": "new", **entry}
+
+        @web.post("/film_farm/status")
+        async def film_farm_status(request: Request):
+            """Each copy's state and, when finished, its measured GPU seconds (CHE reconciles the cost from these)."""
+            try:
+                key = validate_key_args(await body_of(request))
+            except ArgError as e:
+                return bad(e)
+            entry = jobs.get(key)
+            if not isinstance(entry, dict) or entry.get("kind") != "film":
+                return {"ok": True, "idempotency_key": key, "state": "unknown", "calls": []}
+            out = []
+            for c in entry.get("calls", []):
+                row = {"kind": c["kind"], "call_id": c["call_id"]}
+                try:
+                    r = modal.FunctionCall.from_id(c["call_id"]).get(timeout=0)
+                    row.update({"state": "done", "gpu_seconds": r.get("gpu_seconds"), "made": r.get("made"), "failed": r.get("failed"), "stopped": r.get("stopped")})
+                except TimeoutError:
+                    row["state"] = "running"
+                except Exception as e:
+                    row.update({"state": "failed", "error": f"{type(e).__name__}: {str(e)[:200]}"})
+                out.append(row)
+            return {"ok": True, "idempotency_key": key, "state": "done" if out and all(r["state"] != "running" for r in out) else "running", "gpu": entry.get("gpu"), "calls": out}
+
         @web.get("/health")
         def health():
-            return {"ok": True, "app": APP_NAME, "version": APP_VERSION, "functions": ["health", "blender_preview", "txt2img"], "gpu": GPU,
+            return {"ok": True, "app": APP_NAME, "version": APP_VERSION, "functions": ["health", "blender_preview", "txt2img", "film_farm"], "gpu": GPU,
                     "blender": BLENDER_VERSION, "mpfb_commit": MPFB_COMMIT, "pool_commit": POOL_COMMIT, "max_call_s": MAX_CALL_S, "scaledown_s": SCALEDOWN_S}
 
         @web.post("/blender_preview")
