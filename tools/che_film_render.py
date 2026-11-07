@@ -89,7 +89,17 @@ def render_shot(shot, sources, w, h, fps, work, captions):
     cap = caption_filter(shot.get('caption', ''), w, h, work, shot['n']) if captions else ''
     if shot.get('clip'):
         src = Path(sources) / shot['clip']
-        vf = (f"scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h},fps={fps},"
+        # A 5-second moving clip in a 6-second shot is slowed to fill it (up to 1.3x longer) rather than frozen on its
+        # last frame for the rest of the shot; a longer gap still holds the last frame.
+        slow = ''
+        try:
+            have = probe(src)['seconds']
+            ratio = float(shot['seconds']) / have if have > 0 else 1
+            if 1.01 < ratio <= 1.3:
+                slow = f"setpts=PTS*{ratio:.4f},"
+        except Exception:
+            pass
+        vf = (f"{slow}scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h},fps={fps},"
               f"tpad=stop_mode=clone:stop_duration={float(shot['seconds']) + 1},trim=end_frame={frames},setpts=PTS-STARTPTS,format=yuv420p{cap}")
         ff('-i', str(src), '-an', '-vf', vf, '-frames:v', str(frames), *encode_args(fps), str(out))
     else:

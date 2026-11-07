@@ -167,7 +167,8 @@ async function castStep(ctx, film, media) {
     const entry = film.cast[c.id] || { tries: 0 };
     try {
       // Made at 448x448 by the reference model itself, so it can be that model's input as it is (no resizing).
-      const out = await klein(env, { prompt: portraitPrompt(c), width: PORTRAIT_SIZE, height: PORTRAIT_SIZE, seed: c.seed });
+      // After a content-filter refusal the portrait is asked for again in plainer words (no name, neutral look).
+      const out = await klein(env, { prompt: entry.flagged ? portraitPrompt(c, { plain: true }) : portraitPrompt(c), width: PORTRAIT_SIZE, height: PORTRAIT_SIZE, seed: c.seed });
       const bytes = out?.image ? b64ToBytes(out.image) : null;
       const check = bytes ? checkPortrait(bytes) : { ok: false, reason: 'the image model returned no picture' };
       if (!check.ok) throw new Error(check.reason);
@@ -178,6 +179,7 @@ async function castStep(ctx, film, media) {
     } catch (error) {
       entry.tries += 1;
       entry.reason = safe(error?.message || error);
+      if (FLAGGED.test(entry.reason)) entry.flagged = true;
       if (entry.tries >= MAX_ATTEMPTS) { entry.done = true; film.ref_off = film.ref_off || `portrait: ${entry.reason}`; } // given up: description only
       film.cast[c.id] = entry;
     }
@@ -193,6 +195,14 @@ async function referenceStill(env, media, prompt, portraitKey, seed) {
   const portrait = await media.get(portraitKey);
   if (!portrait?.body?.length) throw new Error('the portrait file is missing');
   return klein(env, { prompt, width: 1024, height: 576, seed }, portrait.body);
+}
+
+/** A refusal by the image model's content filter (Workers AI 3030 "Your output has been flagged"). */
+const FLAGGED = /\b3030\b|flagged/i;
+
+/** A shot's picture asked for in plain, neutral words: the setting and who is there, without the scene's action. */
+function plainStillPrompt(shot) {
+  return `Photorealistic film still, 16:9, natural light. ${String(shot.setting || 'An office').slice(0, 200)}. The person from the reference picture, calm, medium shot. No text, no watermark.`;
 }
 
 /** One FLUX.2 klein call: its input is a multipart form, with an optional reference picture. */
@@ -244,9 +254,25 @@ async function makeStep(ctx, store, film) {
             if (!out?.image) throw new Error('the reference model returned no picture');
             shot.from_portrait = true;
           } catch (error) {
-            // The reference model is not working: say why once, and draw this and later shots from the description.
-            film.ref_off = safe(error?.message || error);
-            out = null;
+            const why = safe(error?.message || error);
+            if (FLAGGED.test(why)) {
+              // The model's filter refused this one picture (3030, "flagged"): try it once more from a plainer
+              // description with the same face; if that is refused too, only this shot is drawn without the face.
+              // One refusal no longer turns same faces off for the whole film (live 2026-11-07, Brewed Anarchy).
+              try {
+                out = await referenceStill(env, media, plainStillPrompt(shot), portrait, seedFor(shot, film.outline));
+                if (!out?.image) throw new Error('the reference model returned no picture');
+                shot.from_portrait = true;
+              } catch (again) {
+                out = null;
+                shot.ref_skipped = safe(again?.message || again);
+                film.notes = [...(film.notes || []), safe(`Shot ${shot.n} is drawn from its description: the reference model refused its picture (${shot.ref_skipped.slice(0, 80)}).`)];
+              }
+            } else {
+              // The reference model is not working: say why once, and draw this and later shots from the description.
+              film.ref_off = why;
+              out = null;
+            }
           }
         }
         if (!out) out = await env.AI.run(STILL_MODEL, imagePayload(STILL_MODEL, { prompt, steps: 4, seed: seedFor(shot, film.outline) }).payload);
@@ -433,7 +459,11 @@ async function dispatchFarm(ctx, film, shots) {
     const want = shots.filter((s) => s.tier === 'A' && !s.clip_key).length;
     const lips = [...talkers(film, shots)].filter((n) => !shots.find((s) => s.n === n)?.lip_key).length;
     const left = Number(kaggle.remaining.gpu_seconds);
-    const seconds = Math.floor(Math.min(left, 11.5 * 3600, rates.kaggle_startup_s + want * rates.kaggle_clip_s + (lips ? rates.lipsync_setup_s + lips * rates.kaggle_lipsync_s : 0) + 900));
+    // The work is given half again its measured time (a clip took longer than the rate on a cold session), so the
+    // session's own deadline does not stop the worker before the last planned clips; free quota only, never more than
+    // the week has left.
+    const work = want * rates.kaggle_clip_s + (lips ? rates.lipsync_setup_s + lips * rates.kaggle_lipsync_s : 0);
+    const seconds = Math.floor(Math.min(left, 11.5 * 3600, rates.kaggle_startup_s + work * 1.5 + 900));
     const usage = await loadUsage(ctx.storage, ctx.now || Date.now());
     const paid = await spend(ctx.storage, 'kaggle_seconds', seconds, { now: ctx.now || Date.now(), caps: { kaggle_seconds: usage.kaggle_seconds + left } });
     if (paid.ok) {
@@ -489,7 +519,7 @@ function downgradeTierA(film, shots, why) {
   film.farm = { ...(film.farm || {}), revoked: true, closed: why };
 }
 
-async function settleFarm(ctx, film, shots) {
+export async function settleFarm(ctx, film, shots) {
   // FAST: the Modal farm is read until every container has returned, so its real cost is recorded even after the
   // last clip arrived; when it ended with shots still missing, they become stills with the reason.
   if (film.farm?.provider === 'modal' && !film.fast?.ended_ms) {
@@ -522,12 +552,16 @@ async function settleFarm(ctx, film, shots) {
       return downgradeTierA(film, shots, `the Kaggle session ended (${status.state}${reason ? `: ${reason}` : ', with no reason in its log'})`);
     }
   }
-  // Clips may not hold up the film: once everything else is ready they get half the planned clip time more, no more.
+  // Clips may not hold up the film forever: once everything else is ready they get half the planned clip time more.
+  // A Kaggle session still running inside its own window keeps its time: it is still making the planned clips, and
+  // cutting it off left the last shots as stills (live 2026-11-07, Brewed Anarchy: shots 8-10, with the session still
+  // working; the pictures were ready within minutes, long before the GPU could have made ten clips).
   const othersDone = shots.filter((s) => !onFarm(s)).every((s) => s.status === 'verified' || s.status === 'failed' || (s.tier === 'A' && !s.clip_key));
   if (othersDone) {
     film.farm.others_done_ms = film.farm.others_done_ms || now;
     const grace = ((film.plan?.parts?.clips_s || 600) + (film.plan?.parts?.lip_sync_s || 0)) * 500 + 120_000;
-    if (now - film.farm.others_done_ms > grace) return downgradeTierA(film, shots, 'the GPU farm ran past its planned time');
+    const sessionEnds = film.farm.provider === 'kaggle' && film.farm.started_ms && film.farm.window_s ? film.farm.started_ms + film.farm.window_s * 1000 : 0;
+    if (now - film.farm.others_done_ms > grace && now > sessionEnds) return downgradeTierA(film, shots, 'the GPU farm ran past its planned time');
   }
 }
 

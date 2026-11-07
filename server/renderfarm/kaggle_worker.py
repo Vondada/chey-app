@@ -81,22 +81,39 @@ def ffmpeg():
     return imageio_ffmpeg.get_ffmpeg_exe()
 
 
+def sh(cmd, **kw):
+    """Runs a setup command; a failure carries the end of its own output, so CHE can say what actually broke."""
+    r = subprocess.run(cmd, capture_output=True, text=True, **kw)
+    if r.returncode:
+        tail = (r.stderr or r.stdout or "").strip().splitlines()[-3:]
+        raise RuntimeError(f"{os.path.basename(cmd[0])} {' '.join(cmd[1:4])} failed: {' | '.join(tail)[-220:]}")
+    return r
+
+
 def lipsync_setup():
     root, env = os.path.abspath("LatentSync"), os.path.abspath("lsenv")
     if not os.path.isdir(root):
-        subprocess.run(["git", "clone", "-q", LATENTSYNC_REPO, root], check=True)
-    subprocess.run(["git", "-C", root, "checkout", "-q", LATENTSYNC_COMMIT], check=True)
-    # uv installs the pinned packages in parallel, several times faster than pip; pip stays the fallback.
+        sh(["git", "clone", "-q", LATENTSYNC_REPO, root])
+    sh(["git", "-C", root, "checkout", "-q", LATENTSYNC_COMMIT])
     py = os.path.join(env, "bin", "python")
+    req = os.path.join(root, "requirements.txt")
+    # uv makes the environment and installs the pinned packages in parallel (several times faster than pip). Kaggle's
+    # system python has no ensurepip, so "python -m venv" cannot make one (live 2026-11-07: "returned non-zero exit
+    # status 1"); virtualenv brings its own pip and is the fallback.
     try:
-        subprocess.run([sys.executable, "-m", "pip", "install", "-q", "uv"], check=True)
-        subprocess.run([sys.executable, "-m", "uv", "venv", "-q", "--python", sys.executable, env], check=True)
-        subprocess.run([sys.executable, "-m", "uv", "pip", "install", "-q", "--python", py, "-r", os.path.join(root, "requirements.txt")], check=True)
-    except Exception:
-        subprocess.run([sys.executable, "-m", "venv", "--clear", env], check=True)
-        subprocess.run([py, "-m", "pip", "install", "-q", "-r", os.path.join(root, "requirements.txt")], check=True)
+        sh([sys.executable, "-m", "pip", "install", "-q", "uv"])
+        sh([sys.executable, "-m", "uv", "venv", "-q", "--seed", "--clear", "--python", sys.executable, env])
+        sh([sys.executable, "-m", "uv", "pip", "install", "-q", "--python", py, "-r", req])
+    except Exception as uv_error:
+        print("lip sync: uv setup failed, trying virtualenv:", uv_error, flush=True)
+        try:
+            sh([sys.executable, "-m", "pip", "install", "-q", "virtualenv"])
+            sh([sys.executable, "-m", "virtualenv", "-q", "--clear", env])
+            sh([py, "-m", "pip", "install", "-q", "-r", req])
+        except Exception as venv_error:
+            raise RuntimeError(f"lip sync install failed (uv: {str(uv_error)[-120:]}; virtualenv: {str(venv_error)[-120:]})")
     get = "from huggingface_hub import hf_hub_download as d; [d('%s', f, local_dir='checkpoints') for f in ('latentsync_unet.pt', 'whisper/tiny.pt')]" % LATENTSYNC_WEIGHTS
-    subprocess.run([py, "-c", get], check=True, cwd=root)
+    sh([py, "-c", get], cwd=root)
     return root, py
 
 
