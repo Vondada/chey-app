@@ -10,7 +10,7 @@ import {
   REVIEW_ROUNDS, reviewFilm,
 } from './film_studio.js';
 import { HF_SPACE_FILES, KAGGLE_WORKER_PY, durationSeconds, farmTokenOpens, kaggleAuth, kaggleSessionLog, kaggleWorkerScript, logReason, newFarmToken, sessionLogText, startKaggleSession, validateKaggle } from './film_farm.js';
-import { directorRound, filmAskApplies, filmReviewApplies, filmTick, filmTokenRoute, remakeShot, rerenderFilm, reviewFilmNow, setFilmState, startFilm } from './film_pipeline.js';
+import { settleFarm, directorRound, filmAskApplies, filmReviewApplies, filmTick, filmTokenRoute, remakeShot, rerenderFilm, reviewFilmNow, setFilmState, startFilm } from './film_pipeline.js';
 import { mp4Facts } from './github_video_renderer.js';
 import { replyFromNdjson } from './brain_memory.js';
 import { saveKey } from './resilience.js';
@@ -1393,4 +1393,93 @@ test('the clip model is asked for a frame size it accepts (both sides divisible 
     assert.match(py, /ImageOps\.fit\(/, 'the picture is cropped to the clip size, never stretched');
     assert.doesNotMatch(py, /height=432/);
   }
+});
+
+// ─── Live 2026-11-07, Brewed Anarchy re-render: the last shots stayed stills, lip sync could not install, one refused
+// picture turned same faces off for the whole film, and the film came out 53 s of 60.
+
+test('a Kaggle session still running inside its window keeps making clips after the pictures are ready; past it, the shots become stills', async () => {
+  const storage = memory();
+  const film = { id: 'film_00000000000000e1', state: 'making', shot_count: 2, outline: validOutline(OUTLINE, { shots: 2 }), plan: { lip_sync: 0, parts: { clips_s: 600, lip_sync_s: 0 } },
+    farm: { provider: 'kaggle', started_ms: NOW, window_s: 5100, session: { username: 'owner', slug: 'che-film-x' }, others_done_ms: NOW }, notes: [] };
+  const shots = [shotRec(1, { tier: 'B', clip_key: '' }), shotRec(2, { status: 'planned', clip_key: '' })];
+  const running = async () => Response.json({ status: 'RUNNING' });
+  const ctx = (now) => ({ storage, env: {}, keys: { KAGGLE_API_TOKEN: 'owner:KGAT_x' }, fetcher: running, now });
+  // 20 minutes after the pictures were ready: far past the old grace (5 minutes here), well inside the session window.
+  await settleFarm(ctx(NOW + 20 * 60_000), film, shots);
+  assert.equal(film.farm.closed, undefined, 'the farm stays open');
+  assert.equal(shots[1].tier, 'A', 'the shot still waits for its moving clip');
+  // Past the session's own window, the farm is closed and the shot becomes a still with motion, said once.
+  await settleFarm(ctx(NOW + 5101 * 1000), film, shots);
+  assert.equal(shots[1].tier, 'B');
+  assert.match(film.notes.join(' '), /ran past its planned time/);
+});
+
+test('every shot is planned at its full length, so moving shots no longer make the film short (53 s of 60)', () => {
+  const still = { tier: 'B', dialogue: [] };
+  const moving = { tier: 'A', dialogue: [] };
+  assert.equal(shotSeconds(moving), shotSeconds(still), 'a moving shot is as long as a still one');
+  assert.equal(shotSeconds(moving), _internals.SHOT_SECONDS);
+  const ten = Array.from({ length: 10 }, (_, i) => (i < 7 ? moving : still));
+  assert.equal(ten.reduce((t, s) => t + shotSeconds(s), 0), 60);
+});
+
+test('the edit slows a 5-second clip to fill its 6-second shot instead of freezing its last frame', () => {
+  const py = readFileSync(new URL('../../tools/che_film_render.py', import.meta.url), 'utf8');
+  assert.match(py, /ratio = float\(shot\['seconds'\]\) \/ have/);
+  assert.match(py, /if 1\.01 < ratio <= 1\.3:/);
+  assert.match(py, /setpts=PTS\*\{ratio:\.4f\}/);
+});
+
+test('lip sync installs on Kaggle without "python -m venv" (no ensurepip there), and a failed step says what broke', () => {
+  assert.doesNotMatch(KAGGLE_WORKER_PY, /"-m", "venv"/, 'the system venv module is never used');
+  assert.match(KAGGLE_WORKER_PY, /"uv", "venv", "-q", "--seed"/, 'uv makes the environment, with pip in it');
+  assert.match(KAGGLE_WORKER_PY, /"-m", "virtualenv", "-q", "--clear", env/, 'virtualenv is the fallback');
+  assert.match(KAGGLE_WORKER_PY, /def sh\(cmd, \*\*kw\):[\s\S]*capture_output=True[\s\S]*raise RuntimeError/, 'a failed step carries its own output');
+  assert.match(KAGGLE_WORKER_PY, /lip sync install failed \(uv: /);
+});
+
+test('a picture the reference model refuses (3030 flagged) is tried once more in plain words; one refusal never turns same faces off for the film', async () => {
+  const { storage, ai, ctx } = await studio({ seconds: 60 });
+  const run = ai.run;
+  let refused = 0; let plain = 0;
+  // Like the existing reference test: the fake model reads its form first, then this one refuses.
+  ai.run = async (model, input) => {
+    const out = await run(model, input);
+    const prompt = input?.form?.get('prompt') || '';
+    if (input?.form?.get('input_image_0')) {
+      if (/^Photorealistic film still, 16:9, natural light\./.test(prompt)) plain += 1;
+      else if (!refused) { refused += 1; throw new Error('3030: Your output has been flagged. Please choose another prompt / input image combination'); }
+    }
+    return out;
+  };
+  const film = await runUntil(ctx, ['assembling', 'failed']);
+  assert.equal(film.state, 'assembling', film.errors?.join('; '));
+  assert.equal(refused, 1);
+  assert.equal(plain, 1, 'the refused shot was asked for once more, in plain words');
+  assert.equal(film.ref_off, undefined, 'same faces stay on');
+  const shots = await new FilmStore(storage).shots(film.id, film.shot_count);
+  assert.ok(shots.filter((s) => s.still_of === s.n).every((s) => s.from_portrait), 'every new picture still starts from the portrait');
+});
+
+test('a portrait the model refuses is asked for again without the name, in neutral words', async () => {
+  const { ai, ctx } = await studio({ seconds: 60 });
+  const run = ai.run;
+  const prompts = [];
+  ai.run = async (model, input) => {
+    const out = await run(model, input);
+    const prompt = input?.form?.get('prompt') || '';
+    if (/portrait/i.test(prompt) && !input?.form?.get('input_image_0')) {
+      prompts.push(prompt);
+      if (prompts.length === 1) throw new Error('3030: Your output has been flagged.');
+    }
+    return out;
+  };
+  const film = await runUntil(ctx, ['assembling', 'failed']);
+  assert.equal(film.state, 'assembling', film.errors?.join('; '));
+  assert.match(prompts[0], /Mara:/);
+  assert.doesNotMatch(prompts[1], /Mara/, 'the retry leaves the name out');
+  assert.match(prompts[1], /neutral friendly expression/);
+  assert.equal(film.cast.mara.done, true);
+  assert.ok(film.cast.mara.key, 'the portrait was made on the retry');
 });
