@@ -143,11 +143,14 @@ export function sceneFromWords(text) {
 // ─── Edits ───────────────────────────────────────────────────────────────────
 
 const PRONOUN = /\b(?:her|his|him|their|she|he|they|them)\b/i;
+/** The director loop on demand for a scene: "check my scene again", "fix the scene". */
+const SCENE_REVIEW = /\b(?:check|review)\s+(?:my|the)\s+scene\s+again\b|\bfix\s+(?:my|the)\s+scene\b/;
 /** Is this an edit of the scene the owner just made? Only checked while a scene is recent. */
 export function directorEditIntent(text) {
   const t = String(text || '').toLowerCase();
   if (/^\s*(?:undo|redo)\b|^\s*(?:undo|go back)(?: that| the last)?(?: change| edit)?\s*[.!]?$/.test(t)) return true;
   if (/\b(?:is|how(?:'s| is)) (?:my |the )?scene\b|\bscene (?:ready|done|status)\b|\brender (?:it|the scene|my scene) again\b/.test(t)) return true;
+  if (SCENE_REVIEW.test(t)) return true;
   return [/\bmove (?:her|him|them)\b|\bmake (?:her|him|them) (?:bigger|taller|larger|smaller|shorter)\b/, /\b(?:relight|lighting)\b|\bmake it (?:sunset|night|morning|golden hour|evening)\b/, /\boutfit\b|\bclothes\b|\b(?:put|dress) (?:her|him|them) in\b/, /\bcamera\b|\bcircle around\b|\borbit\b/, /\bslow(?:er)?(?: it)? down\b|\bslow[- ]?mo(?:tion)?\b|\bspeed (?:it |that )?up\b|\bfaster\b/, /\bmusic\b|\bsoundtrack\b/, /\b(?:make|have|let) (?:her|him|them) say\b/].some((r) => r.test(t)) && (PRONOUN.test(t) || /\b(?:scene|camera|music|slow|speed|relight|lighting|sunset|night|morning|evening|golden hour)\b/.test(t));
 }
 
@@ -365,7 +368,38 @@ export async function collectRender(ctx, project) {
   if (!saved.ok) { render.status = 'failed'; render.error = saved.error; return { state: 'failed', render }; }
   const item = await saveSceneVideo(storage, { key, title: `${project.title} (v${render.version})`, seconds: round(facts.seconds, 2), width: facts.width, height: facts.height, bytes: video.length, project_id: project.id, version: render.version, blob: media.provider });
   Object.assign(render, { status: 'ready', media_id: item.id, seconds: round(facts.seconds, 2), voices: manifest.voices || [], ready_at: now });
+  // The director loop: the finished video checked against the version it was asked to render.
+  render.review = reviewScene(project.versions.find((v) => v.version === render.version) || current(project), facts, manifest);
   return { state: 'ready', render, item };
+}
+
+// ─── The director loop ───────────────────────────────────────────────────────
+
+/** Automatic re-renders per version when the finished video does not match what was asked. */
+export const SCENE_FIX_ROUNDS = 2;
+
+/**
+ * Checks a rendered scene against its version, from the file's own facts and the renderer's manifest: the length the
+ * timeline asked for, the frame size, and a voice for every spoken line. Returns { checked: [...], short: [...] }.
+ */
+export function reviewScene(spec, facts, manifest = {}) {
+  const short = [];
+  if (Number(spec.seconds) && Math.abs(Number(facts.seconds) - Number(spec.seconds)) > 0.5) short.push(`it runs ${round(facts.seconds, 1)} seconds, not the ${spec.seconds} the scene asks for`);
+  if (spec.width && (facts.width !== spec.width || facts.height !== spec.height)) short.push(`it is ${facts.width}x${facts.height}, not ${spec.width}x${spec.height}`);
+  const lines = (spec.timeline || []).filter((step) => step.action === 'talk' && String(step.line || '').trim()).length;
+  const voiced = (manifest.voices || []).length;
+  if (voiced < lines) short.push(`${lines - voiced} of ${lines} spoken line${lines === 1 ? ' has' : 's have'} no voice`);
+  return { checked: ['its length', 'its picture size', 'a voice for every spoken line'], short };
+}
+
+/** Starts a fix render of the current version (bounded per version unless the owner asked). Returns dispatchRender's answer. */
+async function fixRender(env, project, fetcher, now, { manual = false } = {}) {
+  const version = current(project).version;
+  const rounds = project.renders.filter((r) => r.version === version && r.director_fix).length;
+  if (!manual && rounds >= SCENE_FIX_ROUNDS) return { ok: false, limit: true };
+  const started = await dispatchRender(env, project, fetcher, now);
+  if (started.ok) project.renders[0].director_fix = true;
+  return { ...started, round: rounds + 1 };
 }
 
 // ─── Chat ────────────────────────────────────────────────────────────────────
@@ -431,10 +465,25 @@ export async function directorTurn(ctx, text, selection = null) {
     const got = await collectRender(ctx, project);
     await updateProject(storage, project, now);
     const r = got.render;
-    if (got.state === 'ready') return { text: `Your scene is ready: "${project.title}", version ${r.version}, ${r.seconds} seconds, checked from the file itself and saved in your media library.${r.voices?.length ? ` The voice is the free Piper voice; the lips do not move with the words yet.` : ''}`, meta: { source: 'che_scene_director', ok: true, project_id: project.id, media_id: r.media_id, scene_status: 'ready' } };
+    if (got.state === 'ready' && r.review?.short?.length && r.version === current(project).version) {
+      // It rendered but does not match what was asked: render it again on the free runners, at most twice a version.
+      const fix = await fixRender(env, project, fetcher, now);
+      await updateProject(storage, project, now);
+      if (fix.ok) return { text: `Version ${r.version} rendered, but my check found ${r.review.short.join('; ')}, so I'm rendering it again (fix ${fix.round} of ${SCENE_FIX_ROUNDS}), ${eta(project.renders[0])}. The first video is still in your media library.`, meta: { source: 'che_scene_director', ok: true, project_id: project.id, scene_status: 'fixing', media_id: r.media_id } };
+      return { text: `Your scene is in your media library: "${project.title}", version ${r.version}, ${r.seconds} seconds. My check still finds ${r.review.short.join('; ')}${fix.limit ? ` after ${SCENE_FIX_ROUNDS} re-renders. Say "fix the scene" to try once more` : `, and the re-render did not start: ${fix.error}`}.`, meta: { source: 'che_scene_director', ok: true, project_id: project.id, media_id: r.media_id, scene_status: 'ready' } };
+    }
+    if (got.state === 'ready') return { text: `Your scene is ready: "${project.title}", version ${r.version}, ${r.seconds} seconds, checked from the file itself and saved in your media library.${r.review ? ` I checked ${r.review.checked.join(', ')}: it matches what you asked.` : ''}${r.voices?.length ? ` The voice is the free Piper voice; the lips do not move with the words yet.` : ''}`, meta: { source: 'che_scene_director', ok: true, project_id: project.id, media_id: r.media_id, scene_status: 'ready' } };
     if (got.state === 'failed') return { text: `That render did not work: ${r.error} Say "render it again" to try once more.`, meta: { source: 'che_scene_director', ok: false, project_id: project.id, scene_status: 'failed' } };
     if (got.state === 'none') return { text: 'This scene has not been rendered yet. Say "render it again".', meta: { source: 'che_scene_director', ok: false } };
     return { text: `Still rendering version ${r.version} (${got.state} on GitHub${r.run_id ? `, run ${r.run_id}` : ''}). ${r.reused_run ? 'Only the timing and sound are being redone.' : `${r.segments} runners are drawing the frames.`}`, meta: { source: 'che_scene_director', ok: true, project_id: project.id, scene_status: got.state } };
+  }
+  if (SCENE_REVIEW.test(lower)) {
+    const r = project.renders.find((x) => x.status === 'ready' && x.version === current(project).version);
+    if (!r) return { text: `Version ${current(project).version} has no finished video to check yet. Ask "is my scene ready?" first.`, meta: { source: 'che_scene_director', ok: false, project_id: project.id } };
+    if (!r.review?.short?.length) return { text: `I checked version ${r.version} again: ${(r.review?.checked || ['its length', 'its picture size', 'a voice for every spoken line']).join(', ')}. It matches what you asked, so there is nothing to fix.`, meta: { source: 'che_scene_director', ok: true, project_id: project.id } };
+    const fix = await fixRender(env, project, fetcher, now, { manual: true });
+    await updateProject(storage, project, now);
+    return { text: fix.ok ? `My check of version ${r.version} found ${r.review.short.join('; ')}. Rendering it again now, ${eta(project.renders[0])}.` : `The re-render did not start: ${fix.error}`, meta: { source: 'che_scene_director', ok: fix.ok, project_id: project.id } };
   }
   if (/\brender (?:it|the scene|my scene) again\b/.test(lower)) {
     const started = await dispatchRender(env, project, fetcher, now);

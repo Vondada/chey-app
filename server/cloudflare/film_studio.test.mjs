@@ -7,9 +7,10 @@ import {
   DEFAULT_RATES, FARM_PROVIDERS, FILM_NEURON_SHARE, FilmStore, NEURONS, assemblyPlan, checkStill, deadlineFrom, farmProviders,
   filmIntent, imageSize, lengthFrom, loadRates, loadUsage, mp3Seconds, planFilm, recordRate, reserve, segmentSpec, shotList,
   outlineMessages, shotSeconds, speakFarm, speakPlan, speakStatus, spend, validOutline, validSceneShots, _internals,
+  REVIEW_ROUNDS, reviewFilm,
 } from './film_studio.js';
 import { HF_SPACE_FILES, KAGGLE_WORKER_PY, durationSeconds, farmTokenOpens, kaggleAuth, kaggleWorkerScript, newFarmToken, startKaggleSession, validateKaggle } from './film_farm.js';
-import { filmTick, filmTokenRoute, remakeShot, setFilmState, startFilm } from './film_pipeline.js';
+import { directorRound, filmAskApplies, filmReviewApplies, filmTick, filmTokenRoute, remakeShot, rerenderFilm, reviewFilmNow, setFilmState, startFilm } from './film_pipeline.js';
 import { mp4Facts } from './github_video_renderer.js';
 import { replyFromNdjson } from './brain_memory.js';
 import { saveKey } from './resilience.js';
@@ -1035,4 +1036,180 @@ test('the finished film says how many shots really move and are lip-synced, and 
   const cut = shots.map((s, i) => ({ ...s, clip_key: i < 8 ? 'c' : '', lip_key: i === 8 ? 'l' : '', status: i === 9 ? 'failed' : 'verified' }));
   assert.match(speakStatus(film, cut, NOW), /Every shot moves\./);
   assert.match(speakStatus(film, cut.map((s, i) => (i === 8 ? { ...s, lip_key: '' } : s)), NOW), /8 of 9 shots move/);
+});
+
+
+// ─── Stage 6: the director loop, and a finished film re-rendered from its saved script ────────────────────────────
+
+/** A finished film with known shot records (the director loop reads only these and the stored MP4's facts). */
+async function finishedFilm(storage, shots, extra = {}) {
+  const store = new FilmStore(storage);
+  const film = { id: 'film_00000000000000d1', title: 'Brewed Anarchy', topic: 'the office coffee machine breaks', state: 'done', target_s: 60, shot_count: shots.length,
+    outline: validOutline(OUTLINE, { shots: shots.length }), plan: { lip_sync: 2, tier_a: shots.length }, stats: { clips_made: 0, lines_voiced: 0 }, notes: [], started_ms: NOW,
+    result: { media_id: 'm1', seconds: 60, width: 1280, height: 720, at: new Date(NOW + 600_000).toISOString(), missing: [] }, farm: { closed: 'all clips arrived', revoked: true }, ...extra };
+  await store.save(film, { force: true });
+  await store.putShots(film.id, shots);
+  return { store, film };
+}
+const shotRec = (n, over = {}) => ({ n, scene: 's1', setting: 'office', description: `Shot ${n}`, characters: ['mara'], dialogue: [], tier: 'A', still_of: n, still_key: `film/film_00000000000000d1/stills/${n}.jpg`, clip_key: `film/film_00000000000000d1/clips/${n}.mp4`, status: 'verified', attempts: 0, ...over });
+
+test('the owner\'s words: "re-render Brewed Anarchy", "re-render my last film", "fix it" and "check my film again"', () => {
+  assert.deepEqual(filmIntent('re-render Brewed Anarchy'), { kind: 'rerender', title: 'Brewed Anarchy', bare: true }, 'no "film" word: it is the Film Studio\'s only if a film has that title');
+  assert.deepEqual(filmIntent('Che, re-render my last film'), { kind: 'rerender', last: true });
+  assert.deepEqual(filmIntent('Rerender the movie "Brewed Anarchy" from its saved script.'), { kind: 'rerender', title: 'Brewed Anarchy' });
+  assert.deepEqual(filmIntent('re-render shot 3'), { kind: 'remake', shot: 3 }, 'a shot stays a shot remake');
+  assert.equal(filmIntent('re-render it again'), null, '"it" is the Scene Director\'s');
+  assert.equal(filmIntent('re-render the thumbnail'), null);
+  assert.deepEqual(filmIntent('re-render the film Brewed Anarchy'), { kind: 'rerender', title: 'Brewed Anarchy' });
+  assert.deepEqual(filmIntent('fix it'), { kind: 'review', fix: true, bare: true });
+  assert.deepEqual(filmIntent('check my film again'), { kind: 'review', fix: false, bare: false });
+  assert.equal(filmIntent('fix the login bug'), null);
+  assert.equal(filmIntent('what is a good movie?'), null);
+});
+
+test('the review: only evidence from the shots and the file, and a still by plan is not a mismatch', () => {
+  const film = { target_s: 60, result: { seconds: 40, width: 1280, height: 720 } };
+  const shots = [
+    shotRec(1),
+    shotRec(2, { status: 'failed', clip_key: '' }),
+    shotRec(3, { tier: 'B', downgraded: 'no free GPU session could start', clip_key: '' }),
+    shotRec(4, { tier: 'B', clip_key: '' }), // a still by plan (the owner wanted it fast)
+    shotRec(5, { lip_error: 'no face found' }),
+    shotRec(6, { lip_key: 'film/x/lips/6.mp4', clip_key: '' }), // a lip-synced still moves
+  ];
+  const r = reviewFilm(film, shots);
+  assert.deepEqual(r.fixes, [{ kind: 'remake', shots: [2] }, { kind: 'clips', shots: [3] }, { kind: 'lipsync', shots: [5] }]);
+  assert.deepEqual(r.short, ['it runs 40 seconds against the 60 seconds you asked for']);
+  assert.equal(REVIEW_ROUNDS, 2);
+});
+
+test('director loop: a shot that never passed is remade; clips with no free GPU are reported with the router\'s reason, never sent to a paid one', async () => {
+  const storage = memory();
+  const shots = [shotRec(1), shotRec(2, { status: 'failed', clip_key: '', voice_attempts: 3 }), shotRec(3, { tier: 'B', downgraded: 'the Kaggle session ended (error)', clip_key: '' })];
+  const { store, film } = await finishedFilm(storage, shots);
+  const ctx = { storage, env: { AI: fakeAI() }, keys: {}, base: 'https://che.example', fetcher: offline, now: NOW };
+  const out = await directorRound(ctx, store, film);
+  assert.equal(out.started, true);
+  const after = await store.latest();
+  assert.equal(after.state, 'making', 'back to work, then reassembled and checked again');
+  assert.equal(after.result, null);
+  assert.equal(after.previous_result.media_id, 'm1', 'the first video stays in the library');
+  assert.deepEqual(await storage.get(`film:${film.id}:remakes`), [2]);
+  assert.equal((await store.shots(film.id, 3))[1].voice_attempts, 0);
+  assert.deepEqual(after.review.fixing, [{ kind: 'remake', shots: [2] }]);
+  assert.deepEqual(after.review.left, [{ kind: 'clips', shots: [3] }]);
+  assert.match(after.review.why, /\w/, 'the router says why no free GPU can take the clip');
+  assert.equal(after.review.rounds, 1);
+  assert.match(speakStatus(after, await store.shots(film.id, 3), NOW), /found work to do, so I'm fixing it \(round 1\): shot 2 never passed its checks/);
+});
+
+test('director loop: with the free Kaggle GPU, a lost moving clip and a failed lip sync are sent back to the farm for those shots only', async () => {
+  const storage = memory();
+  await storage.put('film:validation', { github_actions: { ok: true, checked_ms: NOW }, kaggle: { ok: true, username: 'owner', allowed_s: 30 * 3600, used_s: 0, reserved_s: 0, checked_ms: NOW } });
+  const shots = [shotRec(1), shotRec(2, { tier: 'B', downgraded: 'the GPU farm ran past its planned time', clip_key: '' }), shotRec(3, { lip_error: 'the lip-synced clip was not usable twice', dialogue: [{ character: 'Mara', line: 'Hi.', audio_key: 'v', audio_s: 1 }] })];
+  const { store, film } = await finishedFilm(storage, shots);
+  await storage.put(`film:${film.id}:clips`, { 1: { key: 'k1' }, 2: { claimed_ms: NOW, rejected: 1 }, 3: { key: 'k3', lip_error: 'the lip-synced clip was not usable twice', lip_rejected: 2 } });
+  await storage.put(`film:${film.id}:farmdone`, { error: 'old' });
+  const ctx = { storage, env: { AI: fakeAI() }, keys: { KAGGLE_API_TOKEN: 'owner:KGAT_abc' }, base: 'https://che.example', fetcher: offline, now: NOW };
+  const out = await directorRound(ctx, store, film);
+  assert.equal(out.started, true);
+  const after = await store.latest();
+  assert.deepEqual(after.review.fixing, [{ kind: 'clips', shots: [2] }, { kind: 'lipsync', shots: [3] }]);
+  assert.equal(after.farm, null, 'a new free GPU session will be started');
+  const s = await store.shots(film.id, 3);
+  assert.equal(s[1].tier, 'A'); assert.equal(s[1].downgraded, undefined); assert.equal(s[1].status, 'planned');
+  assert.equal(s[2].lip_error, undefined); assert.equal(s[2].status, 'planned');
+  assert.equal(s[0].status, 'verified', 'a shot that matches is left alone');
+  const ledger = await storage.get(`film:${film.id}:clips`);
+  assert.deepEqual(ledger[1], { key: 'k1' });
+  assert.deepEqual(ledger[2], {}, 'its old claim is forgotten');
+  assert.deepEqual(ledger[3], { key: 'k3' }, 'its clip is kept; only the lip-sync failure is forgotten');
+  assert.equal(await storage.get(`film:${film.id}:farmdone`), undefined);
+});
+
+test('director loop: at most two automatic rounds; "fix it" allows one more, and a clean film says so', async () => {
+  const storage = memory();
+  const { store, film } = await finishedFilm(storage, [shotRec(1), shotRec(2, { status: 'failed', clip_key: '' })], { review: { rounds: 2, extra: 0, fixed: [{ kind: 'remake', shots: [4] }], fixing: [{ kind: 'remake', shots: [2] }] } });
+  const ctx = { storage, env: { AI: fakeAI() }, keys: {}, base: 'https://che.example', fetcher: offline, now: NOW };
+  const auto = await directorRound(ctx, store, film);
+  assert.equal(auto.started, false, 'the automatic rounds are used up');
+  let done = await store.latest();
+  assert.equal(done.state, 'done');
+  assert.deepEqual(done.review.left, [{ kind: 'remake', shots: [2] }]);
+  const said = speakStatus(done, await store.shots(film.id, 2), NOW);
+  assert.match(said, /I checked its length, its picture size and sound, every shot's picture, moving clip and lip sync\. I fixed it myself: remade shot 4\. Still short: shot 2 never passed its checks\. Say "fix it" for one more try\./);
+  assert.equal(await filmReviewApplies(storage, NOW + 700_000), true);
+  assert.equal(await filmReviewApplies(storage, NOW + 7 * 3600_000), false, 'a bare "fix it" hours later is not about this film');
+  const manual = await reviewFilmNow(ctx, { fix: true });
+  assert.equal(manual.started, true);
+  assert.match(manual.said, /^I checked "Brewed Anarchy" again: .*I'm fixing it now: remade shot 2\./);
+  // A film with nothing to fix.
+  const clean = memory();
+  const c = await finishedFilm(clean, [shotRec(1), shotRec(2)]);
+  const ok = await reviewFilmNow({ ...ctx, storage: clean }, { fix: true });
+  assert.equal(ok.started, undefined);
+  assert.match(ok.said, /Everything matches what you asked, so there is nothing to fix\./);
+  done = await c.store.latest();
+  assert.match(speakStatus(done, await c.store.shots(done.id, 2), NOW), /Everything matches what you asked\.$/);
+});
+
+test('"re-render Brewed Anarchy": the same script, cast portraits and recorded voices, made again with today\'s pipeline; the writer is never called', async () => {
+  const { storage, bucket, ctx, ai } = await studio({ seconds: 60 });
+  const store = new FilmStore(storage);
+  const made = await runUntil(ctx, ['assembling']);
+  assert.equal(made.state, 'assembling');
+  // It finished: the owner named it "Brewed Anarchy" (the writer's title in this test is "The Keeper").
+  Object.assign(made, { state: 'done', title: 'Brewed Anarchy', result: { media_id: 'm1', seconds: 60, at: new Date(ctx.now).toISOString() } });
+  await store.save(made, { force: true });
+  const oldShots = await store.shots(made.id, made.shot_count);
+  const oldLines = oldShots.flatMap((s) => s.dialogue.map((d) => d.line));
+  const voiced = oldShots.reduce((n, s) => n + s.dialogue.filter((d) => d.audio_key).length, 0);
+  assert.ok(voiced > 0);
+  ctx.writer = async () => { throw new Error('the writer must not be called for a re-render'); };
+  let tts = 0;
+  const run = ai.run;
+  ctx.env.AI = { ...ai, run: async (model, input) => { if (/melotts/.test(model)) tts += 1; return run(model, input); } };
+  const ask = filmIntent('re-render Brewed Anarchy');
+  const out = await rerenderFilm(ctx, ask);
+  assert.equal(out.ok, true, out.said);
+  assert.match(out.said, new RegExp(`^Re-rendering "Brewed Anarchy" from its saved script: the same 2 scenes, ${made.shot_count} shots and ${oldLines.length} lines of dialogue, nothing rewritten, reusing ${voiced} recorded voice lines? and the same 1 character portrait\\. A 60-second film takes about `));
+  assert.doesNotMatch(out.said, /inside your/, 'no deadline was given, so none is quoted back');
+  assert.match(out.said, /Starting now\.$/);
+  assert.deepEqual(Object.values((await store.latest()).cast).map((c) => c.key), Object.values(made.cast).filter((c) => c.key).map((c) => c.key), 'the same faces');
+  const film = await store.latest();
+  assert.notEqual(film.id, made.id, 'a new film; the finished one and its video stay as they are');
+  assert.equal(film.rerender_of, made.id);
+  assert.equal(film.state, 'making', 'no writing step');
+  assert.deepEqual(film.outline, made.outline);
+  assert.equal((await store.film(made.id)).state, 'done');
+  const again = await runUntil(ctx, ['assembling', 'failed']);
+  assert.equal(again.state, 'assembling', again.errors?.join('; '));
+  const newShots = await store.shots(film.id, film.shot_count);
+  assert.deepEqual(newShots.flatMap((s) => s.dialogue.map((d) => d.line)), oldLines, 'the same words, in the same order');
+  assert.deepEqual(newShots.map((s) => s.description), oldShots.map((s) => s.description));
+  assert.equal(tts, 0, 'every line reused its recording; no voice was generated again');
+  assert.equal(again.stats.voices_reused, voiced);
+  assert.ok(newShots.every((s) => s.dialogue.every((d) => d.audio_key.startsWith(`film/${film.id}/voice/`) && bucket.objects.has(d.audio_key))), 'copied under the new film, which the runners may fetch');
+});
+
+test('re-render: a busy studio, an unknown title, a film whose script is gone, and an old finished film past the newest 50', async () => {
+  const storage = memory();
+  const ctx = { storage, env: { AI: fakeAI() }, keys: {}, base: 'https://che.example', fetcher: offline, now: NOW };
+  // Words that are not a film's title are left to the rest of CHE ("re-render the Nova character").
+  assert.equal(await filmAskApplies(storage, filmIntent('re-render the Nova character')), false);
+  assert.equal(await filmAskApplies(storage, filmIntent('re-render the film Nope')), true, 'with the word "film", the studio answers');
+  const unknown = await rerenderFilm(ctx, { title: 'Nope' });
+  assert.equal(unknown.ok, false);
+  assert.match(unknown.said, /^I have no film called "Nope"\./);
+  const store = new FilmStore(storage);
+  await store.save({ id: 'film_00000000000000e1', title: 'Brewed Anarchy', state: 'done', shot_count: 4, outline: null, created_at: 'x' }, { force: true });
+  assert.equal(await filmAskApplies(storage, filmIntent('re-render brewed anarchy')), true, 'a film has that title, in any case');
+  const gone = await rerenderFilm(ctx, filmIntent('re-render Brewed Anarchy'));
+  assert.equal(gone.ok, false);
+  assert.match(gone.said, /^I can't re-render "Brewed Anarchy" from its script: its screenplay was never finished\./);
+  // Sixty newer films later, the finished one is still in the index and can be found by its title.
+  for (let i = 0; i < 60; i += 1) await store.save({ id: `film_${String(i).padStart(16, '0')}`, title: `Draft ${i}`, state: 'failed', created_at: 'x' }, { force: true });
+  assert.ok((await store.index()).some((f) => f.title === 'Brewed Anarchy'), 'finished films outlive the newest-50 window');
+  await store.save({ id: 'film_00000000000000f1', title: 'Running', state: 'making', created_at: 'x' }, { force: true });
+  assert.match((await rerenderFilm(ctx, { title: 'Brewed Anarchy' })).said, /^I'm already making "Running"/);
 });

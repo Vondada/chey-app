@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import test from 'node:test';
-import { SEATS, applyEdits, directorCreateIntent, directorEditIntent, directorTurn, loadProjects, sceneFromWords, sceneLatest } from './scene_director.js';
+import { SCENE_FIX_ROUNDS, SEATS, applyEdits, directorCreateIntent, directorEditIntent, directorTurn, loadProjects, reviewScene, sceneFromWords, sceneLatest } from './scene_director.js';
 const round2 = (x) => Math.round(x * 100) / 100;
 import { listMedia } from './media.js';
 import { replyFromNdjson } from './brain_memory.js';
@@ -57,11 +57,11 @@ function github() {
     return new Response('not found', { status: 404 });
   };
   gh.zips = {};
-  gh.finish = (job, { seconds = 11, status = 'verified' } = {}) => {
+  gh.finish = (job, { seconds = 11, status = 'verified', voices = [{ text: 'Hey!', at: 5.3 }] } = {}) => {
     const id = 9000 + gh.runs.length;
     gh.runs.unshift({ id, display_title: `CHE scene render ${job}`, status: 'completed', conclusion: 'success' });
     gh.artifacts[id] = [{ id: id + 1, name: `che-scene-${job}`, expired: false }];
-    gh.zips[id + 1] = storedZip({ 'video.mp4': mp4({ seconds }), 'manifest.json': JSON.stringify({ status, job, duration_seconds: seconds, voices: [{ text: 'Hey!', at: 5.3 }] }) });
+    gh.zips[id + 1] = storedZip({ 'video.mp4': mp4({ seconds }), 'manifest.json': JSON.stringify({ status, job, duration_seconds: seconds, voices }) });
     return id;
   };
   return gh;
@@ -283,4 +283,46 @@ test('a selection from the preview sends the edit to that project and actor, eve
   assert.equal(status.meta.project_id, project_id, 'the status is of the displayed project');
   assert.match(status.text, /GitHub never started this render/, 'the fake GitHub never ran it, and after 15 minutes that is said');
   assert.deepEqual(await sceneLatest(memory()), { ok: false, detail: 'There is no scene yet. Say something like "make Nova walk into my office, sit beside me, and start talking".' });
+});
+
+
+// ─── Stage 6: the director loop on a scene ──────────────────────────────────────────────────────────────────────────
+
+test('the scene review: the length asked for, the frame size, and a voice for every spoken line', () => {
+  const { spec } = sceneFromWords(OWNER_MAKE);
+  const good = reviewScene(spec, { seconds: spec.seconds, width: 540, height: 960 }, { voices: [{ text: 'Hey!' }] });
+  assert.deepEqual(good.short, []);
+  assert.deepEqual(good.checked, ['its length', 'its picture size', 'a voice for every spoken line']);
+  const bad = reviewScene(spec, { seconds: spec.seconds - 3, width: 1080, height: 1920 }, { voices: [] });
+  assert.equal(bad.short.length, 3);
+  assert.match(bad.short.join('; '), /not the [\d.]+ the scene asks for; it is 1080x1920, not 540x960; 1 of 1 spoken line has no voice/);
+  assert.equal(directorEditIntent('check my scene again'), true);
+  assert.equal(directorEditIntent('fix the scene'), true);
+});
+
+test('the scene director loop: a render missing its voice is rendered again on the free runners, twice at most, then "fix the scene" tries once more', async () => {
+  const storage = memory(); const gh = github();
+  const ctx = { storage, env: ENV, fetcher: gh.fetch, now: NOW };
+  await directorTurn(ctx, OWNER_MAKE);
+  const spec = JSON.parse(gh.dispatches[0].spec);
+  gh.finish(gh.dispatches[0].job_id, { seconds: spec.seconds, voices: [] });
+  const first = await directorTurn(ctx, 'is my scene ready?');
+  assert.equal(first.meta.scene_status, 'fixing', first.text);
+  assert.match(first.text, /^Version 1 rendered, but my check found 1 of 1 spoken line has no voice, so I'm rendering it again \(fix 1 of 2\)/);
+  assert.equal(gh.dispatches.length, 2);
+  assert.ok((await listMedia(storage)).some((m) => m.id === first.meta.media_id), 'the first video is kept in the library');
+  gh.finish(gh.dispatches[1].job_id, { seconds: spec.seconds, voices: [] });
+  assert.match((await directorTurn(ctx, 'is my scene ready?')).text, /\(fix 2 of 2\)/);
+  gh.finish(gh.dispatches[2].job_id, { seconds: spec.seconds, voices: [] });
+  const limit = await directorTurn(ctx, 'is my scene ready?');
+  assert.equal(gh.dispatches.length, 3, `no third automatic re-render (limit ${SCENE_FIX_ROUNDS})`);
+  assert.match(limit.text, /My check still finds 1 of 1 spoken line has no voice after 2 re-renders\. Say "fix the scene" to try once more\./);
+  const manual = await directorTurn(ctx, 'fix the scene');
+  assert.match(manual.text, /^My check of version 1 found 1 of 1 spoken line has no voice\. Rendering it again now/);
+  assert.equal(gh.dispatches.length, 4);
+  gh.finish(gh.dispatches[3].job_id, { seconds: spec.seconds });
+  const ok = await directorTurn(ctx, 'is my scene ready?');
+  assert.equal(ok.meta.scene_status, 'ready');
+  assert.match(ok.text, /I checked its length, its picture size, a voice for every spoken line: it matches what you asked\./);
+  assert.match((await directorTurn(ctx, 'check my scene again')).text, /It matches what you asked, so there is nothing to fix\./);
 });
