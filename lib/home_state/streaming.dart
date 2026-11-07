@@ -500,6 +500,10 @@ extension _CheHomeStreaming on _CHEHomeState {
         if (data['open_screen'] == 'workflows' && data['source'] == 'che_workflow_engine' && mounted) unawaited(_openWorkflows());
         if (data['open_screen'] == 'security' && data['source'] == 'che_security' && mounted) unawaited(_openSecurity(section: data['security_section']?.toString()));
         if (data['open_screen'] == 'film_studio' && data['source'] == 'che_film_studio' && mounted) unawaited(_openFilmStudio());
+        // "Open the crew creator" / "edit Nova's look": the Film Studio's Crew Creator reply opens it on that member.
+        if (data['open_screen'] == 'crew_creator' && data['source'] == 'che_film_studio' && mounted && CheCrewCreatorScreen.voiceHandler == null) {
+          unawaited(_openCrewCreator(member: data['crew_member']?.toString()));
+        }
         if (data['open_screen'] == 'recording_studio' && data['source'] == 'che_recording_studio' && mounted) unawaited(_openRecordingStudio());
         // "Open your cloud computer": only the Cloud Computer Manager's own reply opens the room.
         if (data['open_screen'] == 'cloud_computer' && data['source'] == 'che_cloud_computer' && mounted) unawaited(_openCloudComputer());

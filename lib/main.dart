@@ -47,6 +47,7 @@ import 'brain/che_brain_sections.dart' show CheBrainEvidence, CheEvidenceKind, c
 import 'che_ui/che_owner_improvements.dart';
 import 'workflows/che_workflows_screen.dart';
 import 'film/che_film_studio_screen.dart';
+import 'film/che_crew_creator_screen.dart';
 import 'mailbox/che_fact_check.dart';
 import 'music/che_beat_producer.dart';
 import 'music/che_recording_studio.dart';
@@ -830,6 +831,19 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
         tools: _filmTools(),
         onSpeak: (text) => unawaited(speakText(text, record: false, readOnDemand: true)),
         onListen: () => unawaited(toggleListening()),
+      ),
+    ));
+  }
+
+  /// Office → Crew Creator (also "open the crew creator" and "edit Nova's look" in chat): each crew member's reference
+  /// picture, look, personality and voice, kept privately in CHE and used by every film.
+  Future<void> _openCrewCreator({String? member}) async {
+    HapticFeedback.selectionClick();
+    await Navigator.of(context).push(MaterialPageRoute<void>(
+      builder: (_) => CheCrewCreatorScreen(
+        client: CheCrewClient(baseUrl: cheAgentBaseUrl, headers: () => _authHeaders),
+        initialMember: member,
+        onSpeak: (text) => unawaited(speakText(text, record: false, readOnDemand: true)),
       ),
     ));
   }

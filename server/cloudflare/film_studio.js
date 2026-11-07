@@ -567,7 +567,9 @@ export function validOutline(raw, { shots, roster = null }) {
     // A fixed cast: the writer picks who appears; names and looks come from the cast, never from the writer.
     const picked = (Array.isArray(o.characters) ? o.characters : []).map((c) => clean(typeof c === 'string' ? c : c?.id || c?.name, 60).toLowerCase());
     characters = roster.filter((r) => picked.includes(r.id) || picked.includes(r.name.toLowerCase())).slice(0, 6)
-      .map((r) => ({ id: r.id, name: r.name, look: r.look, voice: '', seed: Math.abs(hash(`${r.name}|${r.look}`)) % 2 ** 31 }));
+      .map((r) => ({ id: r.id, name: r.name, look: r.look, voice: '', seed: Math.abs(hash(`${r.name}|${r.look}`)) % 2 ** 31,
+        // Crew Creator: how each one acts and talks (film_cast.officeCast), so dialogue and acting fit the character.
+        ...Object.fromEntries(['personality', 'tells', 'catchphrase'].map((f) => [f, clean(r[f], 160)]).filter(([, v]) => v)) }));
     if (!characters.length) return { error: 'the outline used none of the cast' };
   }
   const scenes = (Array.isArray(o.scenes) ? o.scenes : []).slice(0, 400).map((s, i) => ({
@@ -616,7 +618,7 @@ export function outlineShots(scene, characters) {
 
 export function outlineMessages({ topic, targetSeconds, shots, roster = null }) {
   if (roster?.length) {
-    const cast = roster.map((r) => `${r.id} (${r.name}${r.role ? `, ${r.role}` : ''})`).join('; ');
+    const cast = roster.map((r) => `${r.id} (${r.name}${r.role ? `, ${r.role}` : ''}${r.personality ? `: ${r.personality}` : ''})`).join('; ');
     return [
       { role: 'system', content: 'You are a screenwriter. Reply with JSON only, no prose. Original work only: no real people, no copyrighted characters.' },
       { role: 'user', content: `Write the outline of an original ${spokenDuration(targetSeconds)} film about: ${topic}. It is played by this fixed cast of office members; pick the 2 to 5 the story needs and use their exact ids: ${cast}. Their looks are fixed, so do not describe them. It has about ${shots} shots of about 6 seconds each. JSON: {"title":"","logline":"","characters":[{"id":"cast id"}],"scenes":[{"setting":"place in the office, time of day, look","summary":"what happens","shots":number}]}. Use ${Math.max(2, Math.round(shots / 12))} scenes.` },
@@ -629,9 +631,10 @@ export function outlineMessages({ topic, targetSeconds, shots, roster = null }) 
 }
 
 export function sceneMessages(outline, scene, count = scene.shots) {
-  const cast = outline.characters.map((c) => `${c.id}: ${c.name}, ${c.look}`).join('\n');
+  const cast = outline.characters.map((c) => `${c.id}: ${c.name}, ${c.look}${c.personality ? `. Personality: ${c.personality}` : ''}${c.tells ? `. Tells: ${c.tells}` : ''}${c.catchphrase ? `. Catchphrase (use rarely): "${c.catchphrase}"` : ''}`).join('\n');
+  const acted = outline.characters.some((c) => c.personality);
   return [
-    { role: 'system', content: 'You are a screenwriter writing a shot list. Reply with JSON only, no prose.' },
+    { role: 'system', content: `You are a screenwriter writing a shot list. Reply with JSON only, no prose.${acted ? ' Each character speaks and acts in their own personality, and shows their tells in the shot descriptions.' : ''}` },
     { role: 'user', content: `Film: ${outline.title}. ${outline.logline}\nCast:\n${cast}\nScene ${scene.id} of ${outline.scenes.length}: ${scene.setting}. ${scene.summary}\nWrite exactly ${count} shots. JSON: {"shots":[{"description":"what the camera sees, concrete and visual","camera":"slow push in|pull out|pan left|pan right|tilt up|static","characters":["id"],"dialogue":[{"character":"id","line":"short spoken line"}],"sound":"ambient sound or effect"}]}. Keep lines short; about half the shots have dialogue. Inside a line use single quotes, never double quotes.` },
   ];
 }
@@ -913,7 +916,10 @@ function faces(film) {
   if (!cast.length) return '';
   if (film.ref_off) return ` Faces come from the written descriptions only: the reference picture model failed (${film.ref_off}).`;
   const made = cast.filter((c) => c.key).length;
-  return made ? ` ${made} character portrait${made === 1 ? '' : 's'} keep${made === 1 ? 's' : ''} faces the same from shot to shot.` : '';
+  // Which faces come from the owner's own Crew Creator pictures, and which were drawn from words.
+  const own = Object.entries(film.cast || {}).filter(([, c]) => c.owner_ref && c.key).map(([id]) => film.outline?.characters?.find((x) => x.id === id)?.name || id);
+  const mine = own.length ? ` ${own.join(', ')} ${own.length === 1 ? 'is' : 'are'} drawn from your Crew Creator picture${own.length === 1 ? '' : 's'}${made > own.length ? `; ${made - own.length} other${made - own.length === 1 ? '' : 's'} from a portrait made from words` : ''}.` : '';
+  return made ? ` ${made} character portrait${made === 1 ? '' : 's'} keep${made === 1 ? 's' : ''} faces the same from shot to shot.${mine}` : '';
 }
 
 // ─── The director loop ───────────────────────────────────────────────────────

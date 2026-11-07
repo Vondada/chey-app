@@ -1394,3 +1394,75 @@ test('the clip model is asked for a frame size it accepts (both sides divisible 
     assert.doesNotMatch(py, /height=432/);
   }
 });
+
+// Crew Creator (owner, 2026-11-07: "use the reference photos that I sent you as Che's office crew, not made up
+// depictions"). Synthetic bytes only: the owner's real pictures are never in the repository.
+test('Crew Creator: the owner adds Knox\'s picture and personality in the app; the next office film draws Knox from that picture and says so', async () => {
+  const { writeFileSync, unlinkSync } = await import('node:fs');
+  const generated = new URL('./.film_crew.test.generated.mjs', import.meta.url);
+  writeFileSync(generated, readFileSync(new URL('./worker.js', import.meta.url), 'utf8').replace("import { DurableObject } from 'cloudflare:workers';", 'class DurableObject { constructor(ctx, env) { this.ctx = ctx; this.env = env; } }'), 'utf8');
+  let mod;
+  try { mod = await import(generated.href + '?t=' + Date.now()); } finally { try { unlinkSync(generated); } catch (_) {} }
+  const st = memory(); const bucket = r2(); const ai = fakeAI(); const pending = [];
+  const calls = []; const run = ai.run; ai.run = async (model, input) => { const out = await run(model, input); calls.push({ model, input }); return out; };
+  const env = { CHE_PAIR_CODE: '123456', CHE_DISABLE_KEYLESS_AI: '1', AI: ai, CHE_DATA_BUCKET: bucket, CHE_GITHUB_TOKEN: 'gh', CHE_GITHUB_REPO: 'Vondada/chey-app' };
+  const before = globalThis.fetch; globalThis.fetch = github({});
+  try {
+    const state = new mod.CheState({ storage: st, waitUntil: (p) => pending.push(p) }, env);
+    env.CHE_STATE = { getByName: () => state };
+    const call = (path, body, token = '', method = 'POST') => mod.default.fetch(new Request(`https://che.example${path}`, { method, headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) }, ...(method === 'GET' ? {} : { body: JSON.stringify(body) }) }), env);
+    const token = (await (await call('/api/pair', { code: '123456' })).json()).device_token;
+    assert.equal((await call('/api/agents', { name: 'Knox', role: 'Office Security Chief' }, token)).status < 300, true);
+    const say = async (message) => { const raw = await (await call('/api/chat', { message, history: [] }, token)).text(); return { reply: replyFromNdjson(raw), done: raw.trim().split('\n').map((l) => JSON.parse(l)).find((l) => l.type === 'done') || {} }; };
+
+    // Before any picture: every member shows the design and "Add the reference picture"; only the paired device opens it.
+    assert.equal((await call('/api/crew', null, '', 'GET')).status, 401);
+    const list = await (await call('/api/crew', null, token, 'GET')).json();
+    assert.equal(list.crew.length, 10);
+    const k0 = list.crew.find((c) => c.id === 'knox');
+    assert.match(k0.look, /eye patch/);
+    assert.equal(k0.catchphrase, 'I watch. I protect.');
+    assert.equal(k0.needs, 'Add the reference picture');
+    const opened = await say('Open the crew creator');
+    assert.equal(opened.done.open_screen, 'crew_creator');
+    assert.equal(opened.done.model_calls, 0);
+    assert.match(opened.reply, /0 of 10 crew have their reference picture/);
+    assert.equal((await say("Edit Knox's look")).done.crew_member, 'knox');
+
+    // The owner adds the picture (a tiny synthetic JPEG) and edits his personality.
+    const jpeg = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, ...new Array(400).fill(7), 0xff, 0xd9]);
+    const add = await (await call('/api/crew/knox/reference', { image_base64: Buffer.from(jpeg).toString('base64'), label: 'poster' }, token)).json();
+    assert.equal(add.ok, true, JSON.stringify(add));
+    assert.equal(add.profile.has_reference, true);
+    assert.equal((await call('/api/crew/knox/reference', { image_base64: Buffer.from('not a picture').toString('base64') }, token)).status, 415);
+    const sha = add.profile.primary;
+    const back = await call(`/api/crew/knox/reference/${sha}`, null, token, 'GET');
+    assert.equal(back.headers.get('content-type'), 'image/jpeg');
+    assert.deepEqual(new Uint8Array(await back.arrayBuffer()), jpeg, 'the owner reads back the exact picture');
+    assert.equal((await call(`/api/crew/knox/reference/${sha}`, null, '', 'GET')).status, 401);
+    assert.equal((await (await call('/api/crew/knox', { personality: 'quiet guardian who jokes only with Lyra' }, token)).json()).profile.version, 2);
+
+    // The office film: Knox's portrait IS the owner's picture (no portrait made from words for him), every shot of
+    // him is drawn from it, the writer gets his personality, and the status names whose faces are the owner's.
+    const film0 = await say('Make a short story about the office coffee machine breaking');
+    assert.equal(film0.done.source, 'che_film_studio', film0.reply);
+    const store = new FilmStore(st);
+    let film = await store.latest();
+    assert.match(film.roster.find((r) => r.id === 'knox').personality, /quiet guardian who jokes only with Lyra/);
+    for (let i = 0; i < 12 && !(film.cast?.che?.key && film.cast?.knox?.key); i += 1) { await state.filmPass(); film = await store.latest(); }
+    assert.equal(film.cast.knox.owner_ref, true, JSON.stringify(film.cast));
+    assert.equal(film.cast.knox.key, `film/${film.id}/cast/knox.jpg`);
+    assert.deepEqual(new Uint8Array(await (await bucket.get(film.cast.knox.key)).arrayBuffer()), jpeg, 'copied into the film\'s own files');
+    assert.ok(!film.cast.che.owner_ref, 'CHE has no picture yet, so hers is made from her description');
+    const portraitsFromWords = calls.filter((c) => /reference portrait/i.test(c.input?.form?.get('prompt') || ''));
+    assert.ok(portraitsFromWords.every((c) => !/eye patch/.test(c.input.form.get('prompt'))), 'no portrait was invented for Knox');
+    const shotMessages = calls.filter((c) => Array.isArray(c.input?.messages) && /shot list/.test(c.input.messages[0].content));
+    if (shotMessages.length) assert.match(shotMessages[0].input.messages[1].content, /Personality: quiet guardian/);
+    assert.match(speakStatus({ ...film, state: 'making' }, [], NOW), /Knox is drawn from your Crew Creator picture; 1 other from a portrait made from words\./);
+
+    // Undo goes back a version; nothing is lost.
+    const undone = await (await call('/api/crew/knox/undo', {}, token)).json();
+    assert.equal(undone.profile.personality.startsWith('protector of few words'), true);
+    assert.equal(undone.profile.has_reference, true, 'the picture stays after undoing the personality edit');
+  } finally { globalThis.fetch = before; }
+});

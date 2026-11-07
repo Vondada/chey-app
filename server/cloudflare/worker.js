@@ -316,6 +316,7 @@ import { creationProbeRoute } from './creation_probe.js';
 import { paidWakes, poolRoute, poolSay, reapPaid } from './compute_pool.js';
 import { projectAudit, projectLibraryRoute } from './project_library.js';
 import { officeCast } from './film_cast.js';
+import { crewIntent, crewProfiles, crewResponse, crewTurn } from './crew_creator.js';
 import { directorTurn, sceneLatest } from './scene_director.js';
 import { publicOrigin } from './film_render.js';
 import { FILM_ACTIVE_STATES, filmAskApplies, filmPlan, filmTick, filmTokenRoute, refreshValidation as refreshFilmValidation, remakeShot, rerenderFilm, reviewFilmNow, setFilmState, startFilm } from './film_pipeline.js';
@@ -5896,6 +5897,8 @@ export class CheState extends DurableObject {
     if (command.local === 'film_make' || command.local === 'film_status') {
       if (!OWNER_CHAT_REQUESTS.has(request)) return ndjsonReply('Only the CHE owner can run Film Studio. Nothing was started.', { source: 'che_film_studio', ok: false, command: command.id, model_calls: 0 });
       // The owner's own words first ("/film-make re-render the film Brewed Anarchy"), then the command's prompt.
+      const crewAsk = command.local === 'film_make' ? crewIntent(String(input || '')) : null;
+      if (crewAsk) return withDoneFields(await this.crewChat(crewAsk), { command: command.id });
       const own = command.local === 'film_make' ? filmIntent(String(input || '')) : null;
       const ask = (own && own.kind !== 'make' ? own : null) || filmIntent(dispatchPrompt(command, input)) || (command.local === 'film_status' ? { kind: 'status' } : null);
       if (!ask) return ndjsonReply('Say the length and the subject, for example "/film-make 10-minute movie about a lighthouse keeper".', { source: 'che_film_studio', ok: false, command: command.id, model_calls: 0 });
@@ -6504,6 +6507,9 @@ export class CheState extends DurableObject {
     return { ok: false, status: 400, said: 'Unknown Film Studio action.' };
   }
 
+  /** Crew Creator by voice (crew_creator.crewTurn): no model call; the app opens it on the member named. */
+  async crewChat(ask) { const t = await crewTurn(this.keyEnv || this.env, this.ctx.storage, ask); return ndjsonReply(t.said, { source: 'che_film_studio', ok: t.ok, model_calls: 0, ...t.meta }); }
+
   async filmChat(request, ask, data) {
     const say = (text, extra = {}) => ndjsonReply(text, { source: 'che_film_studio', ok: true, model_calls: 0, film_action: ask.kind, ...extra });
     if (ask.kind === 'open') return say('Opening Film Studio.', { open_screen: 'film_studio' });
@@ -6513,7 +6519,7 @@ export class CheState extends DurableObject {
       return say(speakFilmStatus(film, film?.shot_count ? await store.shots(film.id, film.shot_count) : []));
     }
     const map = { make: 'make', plan: 'plan', farm: 'farm', pause: 'pause', resume: 'resume', cancel: 'cancel', remake: 'remake', review: 'review', rerender: 'rerender' };
-    const out = await this.filmAction(request, { action: map[ask.kind], topic: ask.topic, seconds: ask.seconds, deadline_s: ask.deadline ? ask.deadline.seconds : undefined, deadline_words: ask.deadline?.words || '', shot: ask.shot, fix: ask.fix === true, title: ask.title, last: ask.last === true }, ask.office ? officeCast(data) : null);
+    const out = await this.filmAction(request, { action: map[ask.kind], topic: ask.topic, seconds: ask.seconds, deadline_s: ask.deadline ? ask.deadline.seconds : undefined, deadline_words: ask.deadline?.words || '', shot: ask.shot, fix: ask.fix === true, title: ask.title, last: ask.last === true }, ask.office ? officeCast(data, await crewProfiles(this.ctx.storage).catch(() => ({}))) : null);
     return say(out.said, { ok: out.ok !== false, ...(out.film_id ? { film_id: out.film_id } : {}) });
   }
 
@@ -7713,6 +7719,8 @@ export class CheState extends DurableObject {
         if (!ownerDevice) return json({ detail: 'Only the CHE owner can read his brain.' }, 403);
         return json(await brainTruthView(this.ctx.storage));
       }
+      // Crew Creator (crew_creator.js): crew profiles and the owner's reference pictures. Owner only.
+      if (path === '/api/crew' || path.startsWith('/api/crew/')) return ownerDevice ? (await crewResponse(this.keyEnv || this.env, this.ctx.storage, path, request.method, body)) || json({ detail: 'Not found.' }, 404) : json({ detail: 'Only the CHE owner can open the Crew Creator.' }, 403);
       if (path === '/api/scene/latest' && request.method === 'GET') return ownerDevice ? json(await sceneLatest(this.ctx.storage)) : json({ detail: 'Only the CHE owner can open the scene preview.' }, 403);
       // Create Studio scenes (scene_store.js, M2b): owner only, optimistic versions, refused rather than overwritten.
       if (path === '/api/scenes' || /^\/api\/scenes\/scene_[a-f0-9]{12}$/.test(path)) {
@@ -10761,6 +10769,9 @@ export class CheState extends DurableObject {
           const secAsk = ownerDevice && !body.attachment && !body.workflow_step ? (securityIntent(rawMessage) || securityChiefIntent(rawMessage)) : null;
           if (secAsk) return this.securityChat(data, secAsk, tokenHash);
           // Film Studio: make, plan, status, remake, pause/resume/stop and the free render farm (film_studio.filmIntent).
+          // Crew Creator (crew_creator.js): open it, edit a member, use a library picture.
+          const crewAsk = ownerDevice && !body.attachment && !body.workflow_step ? crewIntent(rawMessage) : null;
+          if (crewAsk) return this.crewChat(crewAsk);
           // Scene Director: a crew scene by voice, and its edits while it is recent (scene_director.js).
           const scene = ownerDevice && !body.attachment && !body.workflow_step ? await directorTurn({ storage: this.ctx.storage, env: this.env }, rawMessage, body.scene_selection) : null;
           if (scene) return ndjsonReply(scene.text, { model_calls: 0, ...scene.meta });

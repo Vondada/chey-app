@@ -15,6 +15,7 @@ import { farmTokenOpens, hfClip, kaggleSessionLog, kaggleSessionStatus, newFarmT
 import { assemblyTokenOpens, filmRenderStatus, newAssemblyJob, publicOrigin, startFilmRender, validateGithub, verifyFilmObject } from './film_render.js';
 import { mp4Facts } from './github_video_renderer.js';
 import { assembleUpload, mediaStore, partKey, sha256Hex } from './che_media_store.js';
+import { ownerPortrait } from './crew_creator.js';
 import { saveFilmVideo } from './media.js';
 import { redact } from './security_intelligence.js';
 
@@ -155,9 +156,17 @@ async function castStep(ctx, film, media) {
   const now = ctx.now || Date.now();
   film.cast = film.cast || {};
   if (film.plan?.faces !== true) return false; // planned without same-face pictures (or planned before they existed)
-  const want = (film.outline?.characters || []).slice(0, MAX_CAST).filter((c) => !film.cast[c.id]?.done).slice(0, STILL_BATCH);
+  let want = (film.outline?.characters || []).slice(0, MAX_CAST).filter((c) => !film.cast[c.id]?.done).slice(0, STILL_BATCH);
   if (!want.length) return false;
   film.waiting = '';
+  // Crew Creator: a member with the owner's own reference picture gets it as the portrait, at no allowance; only
+  // the others get one made from their description (crew_creator.ownerPortrait).
+  for (const c of want) {
+    const own = await ownerPortrait(env, storage, media, film.id, c.id).catch(() => null);
+    if (own) film.cast[c.id] = own;
+  }
+  want = want.filter((c) => !film.cast[c.id]?.done);
+  if (!want.length) return true;
   const paid = await reserve(storage, 'neurons', NEURONS.portrait, want.length, { now });
   if (!paid) { film.waiting = 'Waiting for tomorrow\'s free picture allowance (it resets at midnight UTC).'; return true; }
   await Promise.all(want.slice(0, paid).map(async (c) => {
@@ -189,14 +198,15 @@ async function castStep(ctx, film, media) {
 async function referenceStill(env, media, prompt, portraitKey, seed) {
   const portrait = await media.get(portraitKey);
   if (!portrait?.body?.length) throw new Error('the portrait file is missing');
-  return klein(env, { prompt, width: 1024, height: 576, seed }, portrait.body);
+  return klein(env, { prompt, width: 1024, height: 576, seed }, portrait.body, portrait.contentType);
 }
 
 /** One FLUX.2 klein call: its input is a multipart form, with an optional reference picture. */
-function klein(env, fields, image = null) {
+function klein(env, fields, image = null, type = 'image/jpeg') {
   const form = new FormData();
   for (const [k, v] of Object.entries(fields)) form.append(k, String(v));
-  if (image) form.append('input_image_0', new Blob([image], { type: 'image/jpeg' }), 'portrait.jpg');
+  const png = type === 'image/png'; // the owner's Crew Creator picture may be a PNG
+  if (image) form.append('input_image_0', new Blob([image], { type: png ? 'image/png' : 'image/jpeg' }), png ? 'portrait.png' : 'portrait.jpg');
   const body = new Response(form);
   return env.AI.run(REFERENCE_MODEL, { multipart: { body: body.body, contentType: body.headers.get('content-type') } });
 }
