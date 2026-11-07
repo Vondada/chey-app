@@ -25,8 +25,9 @@ const MAX_VERSIONS = 40;
 
 const RECENT_MS = 6 * 3600_000; // edits like "change her outfit" go to the scene the owner worked on in the last six hours
 
-export const CREW_MODELS = Object.freeze(['che', 'nova', 'atlas', 'mira', 'knox', 'sage', 'lyra', 'iris']);
-const NO_MODEL = Object.freeze(['orion', 'vale']);
+export const CREW_MODELS = Object.freeze(['che', 'nova', 'atlas', 'mira', 'knox', 'sage', 'lyra', 'iris', 'orion', 'vale']);
+// Crew named in a request who have no rigged model yet (none today; Orion and Vale have theirs).
+const NO_MODEL = Object.freeze([]);
 const NAME = { che: 'CHE', nova: 'Nova', atlas: 'Atlas', mira: 'Mira', knox: 'Knox', sage: 'Sage', lyra: 'Lyra', iris: 'Iris', orion: 'Orion', vale: 'Vale' };
 const FEMALE = new Set(['che', 'nova', 'mira', 'sage', 'lyra', 'iris', 'vale']);
 const CLIPS = Object.freeze({ wave: 2, nod: 1.5, think: 2.5, celebrate: 2, shake: 1.5 });

@@ -81,8 +81,11 @@ test('the owner\'s words become a real scene: Nova walks in from the door, sits 
   assert.deepEqual([spec.width, spec.height, spec.fps], [540, 960, 24]);
 });
 
-test('honest limits: Orion has no model, dancing is not an animation the crew has, and questions are not orders', () => {
-  assert.match(sceneFromWords('make Orion walk in and sit down').error, /Orion has no 3D model yet/);
+test('Orion and Vale act with their own models; dancing is not an animation the crew has, and questions are not orders', () => {
+  const orion = sceneFromWords('make Orion walk in and sit down');
+  assert.equal(orion.error, undefined);
+  assert.equal(orion.spec.actors[0].model, 'assets/characters/crew/orion.glb');
+  assert.equal(sceneFromWords('make Vale walk in and wave').spec.actors[0].model, 'assets/characters/crew/vale.glb');
   assert.match(sceneFromWords('make Nova walk in and dance').error, /dance \(the crew have no dance animation yet\)/);
   assert.equal(directorCreateIntent('What does Nova do when she walks in?'), false);
   assert.equal(directorCreateIntent('Assign Nova the task to sit with Atlas and review the build'), false);

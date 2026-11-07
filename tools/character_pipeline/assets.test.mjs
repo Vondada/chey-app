@@ -18,10 +18,10 @@ function changedModel(edit) {
   return result;
 }
 
-test('all eight real characters and both offline scene dependency sets are packaged', () => {
+test('all ten real characters (Orion and Vale included) and both offline scene dependency sets are packaged', () => {
   const results = validateCrew();
-  assert.equal(results.length, 8);
-  for (const model of results) assert.equal(model.clips, 11);
+  assert.equal(results.length, 10);
+  for (const model of results) assert.equal(model.clips, 18);
 });
 
 test('a truncated export fails before it can be packaged', () => {
@@ -50,7 +50,7 @@ test('the crew page starts idle, takes real states, reports real readiness and s
   const script = page.slice(page.lastIndexOf('<script>') + 8, page.lastIndexOf('</script>'));
   assert.doesNotThrow(() => new Function(script), 'the page script parses');
   const crew = script.slice(script.indexOf('const CREW = ['), script.indexOf('];', script.indexOf('const CREW = [')));
-  assert.equal((crew.match(/clip: '([a-z]+)'/g) || []).length, 7, 'seven crew members');
+  assert.equal((crew.match(/clip: '([a-z]+)'/g) || []).length, 9, 'nine crew members (Orion and Vale since Stage 4)');
   assert.doesNotMatch(crew, /clip: '(?!idle')/, 'no member starts on a working clip');
   assert.match(script, /setStates: \(states\) => setStates\(states\)/);
   assert.match(script, /pause: \(p\) =>/);
@@ -69,7 +69,7 @@ test('the crew page uses the server roles, names Atlas\'s workstation and expose
   const script = page.slice(page.lastIndexOf('<script>') + 8, page.lastIndexOf('</script>'));
   const crew = script.slice(script.indexOf('const CREW = ['), script.indexOf('];', script.indexOf('const CREW = [')));
   const members = [...crew.matchAll(/name: '([A-Za-z]+)', role: '([^']+)'/g)];
-  assert.equal(members.length, 7);
+  assert.equal(members.length, 9);
   const words = (text) => text.toLowerCase().split(/[^a-z]+/).filter((w) => w.length > 3);
   for (const [, name, role] of members) {
     const server = LA_AGENCIA_ROLES[name]?.role;

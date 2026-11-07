@@ -46,4 +46,37 @@ void main() {
     expect(states.containsKey('temp helper'), isFalse);
     expect(states['nova']!.toJson(), {'clip': 'think', 'still': false});
   });
+
+  // Stage 4 (2026-11-06): the new clips have a voice route in the crew room, not only buttons (Codex on #956).
+  test('the crew room hears a clip by name in plain words, and leaves other chat alone', () {
+    expect(cheCrewClips, containsAll(['dance', 'happy', 'sad', 'surprised', 'angry', 'point', 'clap']));
+    expect(cheCrewModelIds, containsAll(['orion', 'vale']));
+    const said = {
+      'dance': 'dance',
+      'CHE, dance!': 'dance',
+      'make CHE clap': 'clap',
+      'make everyone dance': 'dance',
+      'play the wave animation': 'wave',
+      'look surprised': 'surprised',
+      'can you point': 'point',
+      'shake your head': 'shake',
+      'sit down': 'sit',
+      'be happy': 'happy',
+      'look angry': 'angry',
+      'sad': 'sad',
+    };
+    for (final e in said.entries) {
+      expect(cheCrewClipCommand(e.key), e.value, reason: e.key);
+      expect(cheCrewClips, contains(cheCrewClipCommand(e.key)), reason: e.key);
+    }
+    for (final words in ['what is the weather today', 'run the tests on the worker', 'dance music playlist for tonight', 'che', '']) {
+      expect(cheCrewClipCommand(words), isNull, reason: words);
+    }
+    expect(cheCrewClipSaid('dance'), 'CHE is dancing.');
+    expect(cheCrewClipSaid('surprised'), 'CHE looks surprised.');
+    for (final clip in cheCrewClips) {
+      expect(cheCrewClipSaid(clip), isNot(contains('playing $clip')), reason: '$clip has its own words');
+    }
+    expect(cheCrewClipOptions(), allOf(contains('dance'), contains('clap'), contains('shake her head')));
+  });
 }
