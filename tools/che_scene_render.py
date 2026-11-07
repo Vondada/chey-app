@@ -27,6 +27,8 @@ from pathlib import Path
 import bpy
 from mathutils import Euler, Vector
 
+from che_scene_layout import apply_layout  # touch edits (offset, scale); tools/ is on the path as this script's folder
+
 LEG_BONES = ("pelvis", "thigh", "shin", "foot", "toe", "leg", "hip", "knee", "ankle")
 ACTOR_HEIGHT = 1.62  # the crew are drawn small; scaled to an adult's height in a life-size office
 SEAT_BELOW_PELVIS = 0.06  # the crew's sit pose keeps the hips where they are and folds the legs; the seat goes just under
@@ -301,7 +303,7 @@ def camera_for(spec, frames, fps):
 
 def main():
     a = args()
-    spec = json.loads(Path(a.spec).read_text())
+    spec = apply_layout(json.loads(Path(a.spec).read_text()))
     fps = int(spec.get("fps", 24))
     frames = int(round(float(spec["seconds"]) * fps))
     start = a.start or 1

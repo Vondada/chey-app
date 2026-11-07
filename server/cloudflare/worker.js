@@ -316,7 +316,7 @@ import { creationProbeRoute } from './creation_probe.js';
 import { paidWakes, poolRoute, poolSay, reapPaid } from './compute_pool.js';
 import { projectAudit, projectLibraryRoute } from './project_library.js';
 import { officeCast } from './film_cast.js';
-import { directorTurn } from './scene_director.js';
+import { directorTurn, sceneLatest } from './scene_director.js';
 import { FILM_ACTIVE_STATES, filmPlan, filmTick, filmTokenRoute, refreshValidation as refreshFilmValidation, remakeShot, setFilmState, startFilm } from './film_pipeline.js';
 import { performanceBanner, performanceIntent, performanceReport, recordTiming, routeKey as perfRouteKey, speakPerformance } from './perf_watch.js';
 import { engineView, exportWorkflows, feedbackOnLast, importWorkflows, library as workflowLibrary, loadEngine, matchLearned, noteVersion, promoteCandidate, dismissCandidate, rankWorkflows, recordRun as recordWorkflowRun, isDisabled as workflowDisabled, restoreVersion, saveEngine, setDisabled as setWorkflowDisabled, setPreferred as setWorkflowPreferred, speakEfficiency, speakLibrary, testCandidate, workflowForRun, workflowIntent } from './workflow_engine.js';
@@ -7662,6 +7662,7 @@ export class CheState extends DurableObject {
         if (!ownerDevice) return json({ detail: 'Only the CHE owner can read his brain.' }, 403);
         return json(await brainTruthView(this.ctx.storage));
       }
+      if (path === '/api/scene/latest' && request.method === 'GET') return ownerDevice ? json(await sceneLatest(this.ctx.storage)) : json({ detail: 'Only the CHE owner can open the scene preview.' }, 403);
       // Create Studio scenes (scene_store.js, M2b): owner only, optimistic versions, refused rather than overwritten.
       if (path === '/api/scenes' || /^\/api\/scenes\/scene_[a-f0-9]{12}$/.test(path)) {
         if (!ownerDevice) return json({ detail: 'Only the CHE owner can use the Create Studio.' }, 403);
@@ -10737,7 +10738,7 @@ export class CheState extends DurableObject {
           if (secAsk) return this.securityChat(data, secAsk, tokenHash);
           // Film Studio: make, plan, status, remake, pause/resume/stop and the free render farm (film_studio.filmIntent).
           // Scene Director: a crew scene by voice, and its edits while it is recent (scene_director.js).
-          const scene = ownerDevice && !body.attachment && !body.workflow_step ? await directorTurn({ storage: this.ctx.storage, env: this.env }, rawMessage) : null;
+          const scene = ownerDevice && !body.attachment && !body.workflow_step ? await directorTurn({ storage: this.ctx.storage, env: this.env }, rawMessage, body.scene_selection) : null;
           if (scene) return ndjsonReply(scene.text, { model_calls: 0, ...scene.meta });
           const filmAsk = ownerDevice && !body.attachment && !body.workflow_step ? filmIntent(rawMessage) : null;
           if (filmAsk) return this.filmChat(request, filmAsk, data);
