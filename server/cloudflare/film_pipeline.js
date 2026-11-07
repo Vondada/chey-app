@@ -9,6 +9,7 @@ import {
   _internals,
 } from './film_studio.js';
 import { imagePayload } from './image_payload.js';
+import { routeWork } from './compute_pool.js';
 import { recordVideoFailed, recordVideoVerified } from './action_receipts.js';
 import { farmTokenOpens, hfClip, kaggleSessionStatus, newFarmToken, startKaggleSession, validateKaggle, ensureHfSpace, HF_SPACE_FILES } from './film_farm.js';
 import { assemblyTokenOpens, filmRenderStatus, newAssemblyJob, startFilmRender, validateGithub, verifyFilmObject } from './film_render.js';
@@ -383,9 +384,11 @@ async function assembleStep(ctx, store, film) {
 async function dispatchFarm(ctx, film, shots) {
   const providers = await farmProviders(ctx.env, ctx.storage, ctx);
   const kaggle = providers.find((p) => p.id === 'kaggle');
-  const hf = providers.find((p) => p.id === 'hf_zerogpu');
+  // The one compute router (compute_pool.routeWork) picks the clip farm: free GPUs only, Kaggle first; it says why
+  // when none can take the clips (Modal's app has no clip function, so the paid route never applies here).
+  const route = routeWork('film_clip', providers);
   const { token, record } = await newFarmToken(ctx.now || Date.now());
-  if (kaggle?.usable) {
+  if (route.order.includes('kaggle')) {
     const { rates } = await loadRates(ctx.storage);
     const want = shots.filter((s) => s.tier === 'A').length;
     const lips = talkers(film, shots).size;
@@ -401,7 +404,9 @@ async function dispatchFarm(ctx, film, shots) {
   }
   // The Space receives the farm token with each call, so this provider keeps it (it opens only this film's farm routes).
   // The Space makes moving clips only, never lip sync.
-  if (hf?.usable && shots.some((s) => s.tier === 'A')) { film.farm = { ...record, provider: 'hf_zerogpu', token, started_ms: ctx.now || Date.now() }; if (film.plan?.lip_sync) film.notes = [...(film.notes || []), 'Lip sync needs the Kaggle GPU, which could not start, so talking shots use their pictures as they are.']; return; }
+  if (route.order.includes('hf_zerogpu') && shots.some((s) => s.tier === 'A')) { film.farm = { ...record, provider: 'hf_zerogpu', token, started_ms: ctx.now || Date.now() }; if (film.plan?.lip_sync) film.notes = [...(film.notes || []), 'Lip sync needs the Kaggle GPU, which could not start, so talking shots use their pictures as they are.']; return; }
+  // Why no clip farm ran, in the router's words, so the finished film can say it (film_studio.whyNotes).
+  if (!route.route) film.notes = [...(film.notes || []), safe(route.why)];
   downgradeTierA(film, shots, 'no free GPU session could start');
 }
 

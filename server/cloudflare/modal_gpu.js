@@ -28,6 +28,7 @@
 //   in a view, a log, a letter or a reply.
 import { MODAL_PASTE_REFUSAL, storedKeys } from './resilience.js';
 import { PAID_GPU_PRICES } from './compute_budget.js';
+import { testBudgetMonthOf } from './gpu_test_budget.js';
 
 export const MODAL_APP_VERSION = 'che-modal-3';          // tools/modal/che_modal_app.py APP_VERSION
 export const MODAL_ENV = 'MODAL_TOKEN';                  // the key-store slot "CHE, connect Modal" saves into
@@ -54,6 +55,22 @@ const short = (v, n = 160) => String(v ?? '').replace(/\s+/g, ' ').slice(0, n);
 const monthOf = (ms) => iso(ms).slice(0, 7);
 /** CHE stops auto-dispatch this far below the stated credit: 15% of it, at least $5 ($25 of $30). */
 export const creditStopUsd = (credit) => Math.max(0, Math.round((Number(credit || 0) - Math.max(5, Number(credit || 0) * 0.15)) * 100) / 100);
+
+// ─── The owner's monthly Modal cap (Creative Studio stage 5) ──────────────────────────────────────────────────────
+// Asked "should Modal be capped at $10 a month, for when a paid GPU is needed?", the owner answered "Yes cap 10 a month"
+// (2026-11-06 22:29 UTC, Claude Code session), then "Done, set to $10" (22:30 UTC: he set Modal's own workspace spend
+// limit to $10). So CHE may use Modal past its included credit, but its own estimate of ALL Modal use in a calendar
+// month (UTC) — Blender GPU calls, GPU pictures, open calls at their worst case — stays at least marginUsd(cap) under
+// the cap. MODAL_MONTHLY_CAP_USD is the ceiling: the owner can lower it by voice ("cap Modal at 5 dollars a month"),
+// and raising it is a code change he approves. Modal's own $10 spend limit is the backstop behind CHE's stop line.
+export const MODAL_MONTHLY_CAP_USD = 10;
+export const MODAL_POOL_KEY = 'pool:state';              // compute_pool.POOL_KEY (the pool holds the Modal ledger)
+export const OWNER_MODAL_CAP = Object.freeze({ usd: MODAL_MONTHLY_CAP_USD, at: '2026-11-06T22:29:41.139Z', words: 'Yes cap 10 a month', provenance: 'OWNER-APPROVED', via: 'Claude Code session' });
+export const OWNER_MODAL_SPEND_LIMIT = Object.freeze({ usd: 10, at: '2026-11-06T22:30:59.623Z', words: 'Done, set to $10', provenance: 'OWNER-APPROVED', via: 'Claude Code session' });
+/** The money kept back under the monthly cap: 5% of it, at least 25 cents (compute_budget.marginUsd). */
+export const capMarginUsd = (cap) => (cap > 0 ? Math.max(0.25, Math.round(Number(cap) * 5) / 100) : 0);
+/** Worst case of one Blender GPU call: its whole timeout plus cold start and idle time, at the T4 price. */
+export const MODAL_CALL_WORST_USD = Math.round((MODAL_CALL_S + MODAL_STARTUP_S + MODAL_SCALEDOWN_S) * MODAL_USD_HR / 3600 * 10000) / 10000;
 
 // ─── Credential: wk-ID:ws-SECRET@<endpoint> ──────────────────────────────────────────────────────────────────────
 /**
@@ -175,7 +192,7 @@ export function modalStateOf(pool) {
   // Normalized in place: every caller holds the same object.
   if (!pool.modal || typeof pool.modal !== 'object') pool.modal = {};
   const m = pool.modal;
-  for (const k of ['opt_in', 'spend_limit_zero', 'stated_credit', 'approve_next']) if (m[k] === undefined) m[k] = null;
+  for (const k of ['opt_in', 'opt_out', 'spend_limit_zero', 'spend_limit', 'paid_cap', 'stated_credit', 'approve_next']) if (m[k] === undefined) m[k] = null;
   if (!Array.isArray(m.history)) m.history = [];
   if (!m.calls || typeof m.calls !== 'object') m.calls = {};
   return m;
@@ -201,18 +218,89 @@ export function modalMonthUsd(pool, t = Date.now(), month = monthOf(t)) {
   return r4(Object.values(modalStateOf(pool).calls).filter((c) => monthOf(c.dispatched_ms) === month).reduce((s, c) => s + callCostUsd(c, t), 0));
 }
 const reserveUsd = () => r4((MODAL_JOB_RESERVE_S + MODAL_STARTUP_S + MODAL_SCALEDOWN_S) * MODAL_USD_HR / 3600);
+const OPEN = ['dispatching', 'unknown', 'started', 'running', 'reserving'];
+/** The month's Blender GPU calls for the cap: an open call counts at its worst case (it may still run to its timeout). */
+export function modalMonthWorstUsd(pool, t = Date.now(), month = monthOf(t)) {
+  return r4(Object.values(modalStateOf(pool).calls).filter((c) => monthOf(c.dispatched_ms) === month)
+    .reduce((s, c) => s + (OPEN.includes(c.state) ? Math.max(callCostUsd(c, t), MODAL_CALL_WORST_USD) : callCostUsd(c, t)), 0));
+}
+/** The owner's monthly cap in force: his own lower figure if he gave one, else his $10 approval; never above the ceiling. */
+export function modalPaidCap(pool) {
+  const m = modalStateOf(pool);
+  const rec = m.paid_cap || OWNER_MODAL_CAP;
+  return { ...rec, usd: Math.max(0, Math.min(MODAL_MONTHLY_CAP_USD, Number(rec.usd) || 0)) };
+}
+/** Modal's spend limit as the owner stated it: $0, a dollar figure, or (by default) his "set to $10". */
+export function modalSpendLimit(pool) {
+  const m = modalStateOf(pool);
+  if (m.spend_limit) return m.spend_limit;
+  if (m.spend_limit_zero) return { ...m.spend_limit_zero, usd: 0 };
+  return OWNER_MODAL_SPEND_LIMIT;
+}
+/**
+ * CHE's stop line for ALL Modal use this month: the included credit's stop line (when the owner stated his credit and
+ * his spend limit allows paid use, the credit is spent first) plus the paid cap less its margin. With paid use at $0
+ * the credit stop line alone (null when the credit is unknown).
+ */
+export function modalMonthStop(pool) {
+  const m = modalStateOf(pool);
+  const paid = Math.min(modalPaidCap(pool).usd, Number(modalSpendLimit(pool).usd) || 0);
+  const credit = m.stated_credit ? creditStopUsd(m.stated_credit.usd) : 0;
+  if (!(paid > 0)) return m.stated_credit ? credit : null;
+  return r4(credit + paid - capMarginUsd(paid));
+}
+/**
+ * The ONE monthly cap check every Modal caller makes before it sends anything: CHE's estimate of this month's Modal
+ * use (Blender calls at worst case while open, plus `otherUsd`: GPU pictures from gpu_test_budget), plus this call's
+ * worst case, must stay at or under the stop line. Returns { ok, used_usd, stop_usd, cap_usd, left_usd, reason }.
+ */
+export function modalMonthCheck(pool, worstUsd, { otherUsd = 0, t = Date.now() } = {}) {
+  const used = r4(modalMonthWorstUsd(pool, t) + Number(otherUsd || 0));
+  const stop = modalMonthStop(pool);
+  const cap = modalPaidCap(pool);
+  const base = { used_usd: used, stop_usd: stop, cap_usd: cap.usd, cap_words: cap.words, left_usd: stop == null ? null : r4(Math.max(0, stop - used)), month: monthOf(t) };
+  // Paid use at $0 and the credit unknown: no money can be spent past Modal's own $0 limit, so the caller's own rules
+  // decide (the Blender gate asks for the credit; a picture keeps its $5 test budget).
+  if (stop == null) return { ...base, ok: true, kind: 'credit_only' };
+  if (used + Number(worstUsd || 0) > stop + 1e-9) {
+    return { ...base, ok: false, kind: 'month_cap', reason: `Modal's monthly cap is reached: my estimate of Modal use this month (${monthOf(t)}) is ${money(used)}, and this job could cost up to ${money(worstUsd)}, past my ${money(stop)} stop line under your ${money(cap.usd)} a month ("${short(cap.words, 60)}"). I send nothing more to Modal until next month; free computers still work.` };
+  }
+  return { ...base, ok: true };
+}
+/** This month's GPU-picture spend on Modal (gpu_test_budget), the other half of the one monthly Modal ledger. */
+export const modalPicturesUsd = (storage, t = Date.now()) => (storage ? testBudgetMonthOf(storage, monthOf(t)).catch(() => 0) : 0);
+/**
+ * The monthly cap check for a caller outside the pool (a GPU picture): reads the pool's Modal calls and the picture
+ * ledger from storage, then modalMonthCheck. The picture's own $5 test budget still applies on top.
+ */
+export async function modalMonthCheckFor(storage, worstUsd, t = Date.now()) {
+  const pool = (await storage.get(MODAL_POOL_KEY)) || {};
+  return modalMonthCheck(pool, worstUsd, { otherUsd: await modalPicturesUsd(storage, t), t });
+}
 
 /**
- * Whether included-credit dispatch is allowed now. { ok, kind, reason, used_usd, stop_usd, credit_usd }.
- * kind: off | needs_spend_limit | credit_unknown | approval (estimate at the stop line). `approved_once` when the
- * owner's one-shot "approve the next Modal job" lets one job past CHE's stop line (Modal's $0 limit still holds).
+ * Whether a Blender GPU dispatch to Modal is allowed now. { ok, kind, reason, used_usd, stop_usd, credit_usd, cap_usd }.
+ * kind: off | month_cap | credit_unknown | approval (estimate at the stop line). Use is on when the owner opted in, or
+ * by his $10-a-month approval (OWNER_MODAL_CAP) unless he said "stop using Modal". With paid use allowed (his cap and
+ * his stated spend limit both above $0), the monthly cap check (modalMonthCheck, this call at its worst case) decides
+ * and is never passed, not even by a one-shot approval. With paid use at $0 (he said the spend limit is zero, or capped
+ * Modal at $0) the included-credit rules apply as before: `approved_once` lets one job past CHE's credit stop line
+ * (Modal's $0 limit still holds). `otherUsd` is this month's GPU-picture spend from gpu_test_budget.
  */
-export function modalCreditGate(pool, t = Date.now()) {
+export function modalCreditGate(pool, t = Date.now(), { otherUsd = 0 } = {}) {
   const m = modalStateOf(pool);
-  const used = modalMonthUsd(pool, t);
-  const base = { used_usd: used, credit_usd: m.stated_credit?.usd ?? null, stop_usd: m.stated_credit ? creditStopUsd(m.stated_credit.usd) : null };
-  if (!m.opt_in) return { ...base, ok: false, kind: 'off', reason: 'Using Modal\'s included credit is off. Say "use Modal\'s free credit" to allow it.' };
-  if (!m.spend_limit_zero) return { ...base, ok: false, kind: 'needs_spend_limit', reason: 'You have not confirmed that Modal\'s spend limit is $0, so a job could cost money past the credit. Set it on Modal\'s Usage and Billing page, then say "I set Modal\'s spend limit to zero".' };
+  const used = r4(modalMonthUsd(pool, t) + Number(otherUsd || 0));
+  const cap = modalPaidCap(pool);
+  const paid = Math.min(cap.usd, Number(modalSpendLimit(pool).usd) || 0);
+  const base = { used_usd: used, credit_usd: m.stated_credit?.usd ?? null, stop_usd: modalMonthStop(pool), cap_usd: cap.usd, paid_usd: paid };
+  const on = Boolean(m.opt_in) || (cap.usd > 0 && !m.opt_out);
+  if (!on) return { ...base, ok: false, kind: 'off', reason: 'Using Modal is off. Say "use Modal\'s free credit" to allow it.' };
+  if (paid > 0) {
+    const month = modalMonthCheck(pool, MODAL_CALL_WORST_USD, { otherUsd, t });
+    if (!month.ok) return { ...base, used_usd: month.used_usd, ok: false, kind: month.kind, reason: month.reason, worst_usd: MODAL_CALL_WORST_USD };
+    return { ...base, used_usd: month.used_usd, ok: true, paid: true, worst_usd: MODAL_CALL_WORST_USD, left_before_stop_usd: month.left_usd };
+  }
+  if (!m.spend_limit_zero) return { ...base, ok: false, kind: 'off', reason: `You capped Modal at ${money(cap.usd)} a month and have not confirmed a $0 Modal spend limit, so I send nothing to Modal.` };
   const once = Boolean(m.approve_next);
   if (!m.stated_credit) {
     return once ? { ...base, ok: true, approved_once: true } : { ...base, ok: false, kind: 'credit_unknown', reason: `Waiting for approval: Modal does not let CHE read your remaining credit, and you have not told me your monthly credit (third-party listings say about ${money(THIRD_PARTY_CREDIT_USD)} on Starter; not confirmed on modal.com). Say "my Modal credit is 30 dollars" with the amount your Modal Usage page shows, or "approve the next Modal job".` };
@@ -325,7 +413,7 @@ const MODAL = "modal(?:'s|s)?";
 const CREDIT = '(?:free |included )?(?:credits?|compute|gpu credit)';
 const ZERO = "(?:zero|0|\\$0|\\$ 0|0 dollars|zero dollars|nothing)";
 const SPEND = `(?:i(?:'ve| have)? set|i put|i changed) (?:the |my )?(?:${MODAL} )?spend(?:ing)? limit (?:to|at) ${ZERO}|(?:the |my )?(?:${MODAL} )?spend(?:ing)? limit is (?:set to |now )?${ZERO}`;
-const WORDN = { ten: 10, fifteen: 15, twenty: 20, 'twenty five': 25, thirty: 30, forty: 40, fifty: 50 };
+const WORDN = { zero: 0, five: 5, ten: 10, fifteen: 15, twenty: 20, 'twenty five': 25, thirty: 30, forty: 40, fifty: 50 };
 
 /** The owner's Modal request as { action, ... }, or null. */
 export function modalIntent(message) {
@@ -337,6 +425,10 @@ export function modalIntent(message) {
   if (new RegExp(`^(?:yes,? )?(?:${SPEND})$`).test(t)) return { action: 'spend_limit_zero' };
   const amt = new RegExp(`^(?:my |the )?${MODAL} (?:monthly |free |included )?credit is \\$?\\s*(\\d{1,3}(?:\\.\\d{1,2})?|[a-z]+(?: [a-z]+)?)(?: dollars?)?(?: a month| per month| monthly)?$`).exec(t);
   if (amt) { const usd = /^\d/.test(amt[1]) ? Number(amt[1]) : WORDN[amt[1].replace(/ dollars?$/, '')] ?? null; return usd == null ? null : { action: 'credit', usd }; }
+  const lim = new RegExp(`^(?:(?:i(?:'ve| have)? set|i put|i changed) (?:the |my )?(?:${MODAL} )?spend(?:ing)? limit (?:to|at)|(?:the |my )?(?:${MODAL} )?spend(?:ing)? limit is (?:set to |now )?)\\s*\\$?\\s*(\\d{1,3}(?:\\.\\d{1,2})?|[a-z]+(?: [a-z]+)?)(?: dollars?)?(?: a month| per month| monthly)?$`).exec(t);
+  if (lim && /\bmodal/.test(t)) { const usd = /^\d/.test(lim[1]) ? Number(lim[1]) : WORDN[lim[1]] ?? null; if (usd != null) return usd === 0 ? { action: 'spend_limit_zero' } : { action: 'spend_limit', usd }; }
+  const capm = new RegExp(`^(?:cap|limit) ${MODAL}(?: gpus?| spending| use)? (?:at|to) \\$?\\s*(\\d{1,3}(?:\\.\\d{1,2})?|[a-z]+(?: [a-z]+)?)(?: dollars?)? (?:a|per|each) month$`).exec(t);
+  if (capm) { const usd = /^\d/.test(capm[1]) ? Number(capm[1]) : WORDN[capm[1]] ?? null; return usd == null ? null : { action: 'cap', usd }; }
   if (/^(?:approve|allow) (?:the )?next modal (?:gpu )?job$/.test(t)) return { action: 'approve_next' };
   if (new RegExp(`^(?:how much (?:of )?(?:my )?${MODAL} credit (?:have i|has che|did i|is) (?:used|left)|${MODAL} (?:credit|usage)(?: status)?|(?:show|read|check)(?: me)? (?:my )?${MODAL} (?:credit|usage|status))$`).test(t)) return { action: 'status' };
   return null;
@@ -346,18 +438,30 @@ export function modalIntent(message) {
 export function applyModalIntent(pool, intent, words, t = Date.now()) {
   const m = modalStateOf(pool);
   if (intent.action === 'enable') {
-    m.opt_in = entered(words, t);
-    if (intent.spend_limit_zero) m.spend_limit_zero = entered(words, t);
+    m.opt_in = entered(words, t); m.opt_out = null;
+    if (intent.spend_limit_zero) { m.spend_limit_zero = entered(words, t); m.spend_limit = null; }
     remember(m, 'opt_in', words, t);
     const gate = modalCreditGate(pool, t);
-    return { ok: true, spoken: `Recorded at ${iso(t).slice(11, 16)} UTC, in your words: "${short(words, 120)}". I may use Modal's included credit for GPU-only jobs, after free GPUs (Colab, Kaggle) and never for CPU work.${gate.ok ? ` My estimate of Modal use this month is ${money(gate.used_usd)}; I stop at ${money(gate.stop_usd)}.` : ` Before I dispatch anything: ${gate.reason}`}` };
+    return { ok: true, spoken: `Recorded at ${iso(t).slice(11, 16)} UTC, in your words: "${short(words, 120)}". I may use Modal${gate.paid ? `, within your ${money(gate.cap_usd)} a month,` : '\'s included credit'} for GPU-only jobs, after free GPUs (Colab, Kaggle) and never for CPU work.${gate.ok ? ` My estimate of Modal use this month is ${money(gate.used_usd)}; I stop at ${money(gate.stop_usd)}.` : ` Before I dispatch anything: ${gate.reason}`}` };
   }
   if (intent.action === 'disable') {
-    m.opt_in = null; m.approve_next = null; remember(m, 'opt_out', words, t);
+    m.opt_in = null; m.approve_next = null; m.opt_out = entered(words, t); remember(m, 'opt_out', words, t);
     return { ok: true, spoken: 'Modal\'s included credit is off: I send no new jobs to Modal, and I cancel any Modal call still running.' };
   }
+  if (intent.action === 'spend_limit') {
+    if (!(intent.usd > 0) || intent.usd > 1000) return { ok: false, spoken: 'I need Modal\'s spend limit in dollars, as you set it on Modal\'s Usage and Billing page. Nothing changed.' };
+    m.spend_limit = entered(words, t, { usd: Math.round(intent.usd * 100) / 100 }); m.spend_limit_zero = null; remember(m, 'spend_limit', words, t);
+    const cap = modalPaidCap(pool);
+    return { ok: true, spoken: `Recorded at ${iso(t).slice(11, 16)} UTC: you said Modal's spend limit is ${money(intent.usd)} ("${short(words, 120)}"). That is your word; CHE cannot read Modal's settings. My own stop line stays under your ${money(cap.usd)} a month cap: ${money(modalMonthStop(pool))}.` };
+  }
+  if (intent.action === 'cap') {
+    if (!(intent.usd >= 0)) return { ok: false, spoken: 'I need the monthly Modal cap in dollars. Nothing changed.' };
+    if (intent.usd > MODAL_MONTHLY_CAP_USD) return { ok: false, spoken: `Modal's monthly cap is ${money(MODAL_MONTHLY_CAP_USD)}, your approval ("${OWNER_MODAL_CAP.words}"). I can lower it by voice; raising it is a code change you approve. Nothing changed.` };
+    m.paid_cap = entered(words, t, { usd: Math.round(intent.usd * 100) / 100 }); remember(m, 'cap', words, t);
+    return { ok: true, spoken: `Recorded: Modal may use at most ${money(intent.usd)} a month${intent.usd > 0 ? `; I stop at ${money(modalMonthStop(pool) ?? 0)}, my estimate including a safety margin` : ', so I send nothing past your included credit'}.` };
+  }
   if (intent.action === 'spend_limit_zero') {
-    m.spend_limit_zero = entered(words, t); remember(m, 'spend_limit_zero', words, t);
+    m.spend_limit_zero = entered(words, t); m.spend_limit = null; remember(m, 'spend_limit_zero', words, t);
     return { ok: true, spoken: `Recorded at ${iso(t).slice(11, 16)} UTC: you said Modal's spend limit is $0 ("${short(words, 120)}"). That is your word; CHE cannot read Modal's settings.${m.opt_in ? '' : ' Included-credit use is still off until you say "use Modal\'s free credit".'}` };
   }
   if (intent.action === 'credit') {
@@ -373,13 +477,16 @@ export function applyModalIntent(pool, intent, words, t = Date.now()) {
 }
 
 /** "How much Modal credit have I used", in plain sentences, with what is known and what is not. */
-export function speakModal(pool, t = Date.now(), { connected = null } = {}) {
+export function speakModal(pool, t = Date.now(), { connected = null, otherUsd = 0 } = {}) {
   const m = modalStateOf(pool);
-  const gate = modalCreditGate(pool, t);
+  const gate = modalCreditGate(pool, t, { otherUsd });
   const open = openCalls(pool);
+  const cap = modalPaidCap(pool); const lim = modalSpendLimit(pool);
+  const when = (r) => `${String(r.at).slice(0, 16).replace('T', ' ')} UTC`;
   return [connected === null ? '' : connected ? 'Modal is connected and verified.' : 'Modal is not connected.',
-    `Included-credit use is ${m.opt_in ? `on (you said so at ${m.opt_in.at.slice(0, 16).replace('T', ' ')} UTC)` : 'off'}.`,
-    m.spend_limit_zero ? `You confirmed a $0 Modal spend limit at ${m.spend_limit_zero.at.slice(0, 16).replace('T', ' ')} UTC.` : 'You have not confirmed a $0 Modal spend limit.',
+    `Modal use is ${m.opt_in ? `on (you said so at ${when(m.opt_in)})` : gate.kind === 'off' ? 'off' : `on, within your ${money(cap.usd)} a month ("${short(cap.words, 60)}", ${when(cap)})`}.`,
+    m.spend_limit_zero ? `You confirmed a $0 Modal spend limit at ${when(m.spend_limit_zero)}.` : `Modal's spend limit, in your words: ${money(lim.usd)} ("${short(lim.words, 60)}", ${when(lim)}).`,
+    gate.stop_usd != null ? `My stop line this month: ${money(gate.stop_usd)}.` : '',
     m.stated_credit ? `Your stated credit: ${money(m.stated_credit.usd)} a month; my stop line: ${money(creditStopUsd(m.stated_credit.usd))}.` : 'Your monthly credit is not known to me.',
     `My estimate of Modal use this month: ${money(gate.used_usd)} (measured GPU seconds plus start and idle time, times Modal's published T4 price). Modal's own credit balance is not available to CHE on the Starter plan.`,
     open.length ? `${open.length} Modal call${open.length === 1 ? ' is' : 's are'} open.` : 'No Modal call is running.',

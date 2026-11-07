@@ -63,6 +63,18 @@ function boundedLedger(ledger, jobs) {
 const load = async (storage) => (await storage.get(TEST_BUDGET_KEY)) || { cap_usd: TEST_BUDGET_USD, jobs: [] };
 
 /**
+ * This ledger's Modal spend in one calendar month (UTC 'YYYY-MM'), for the shared monthly Modal cap
+ * (modal_gpu.modalMonthCheck): an open reservation at its worst case, a settled job at its actual cost (else the
+ * reserved maximum), a released job at $0. Jobs are dated by when they were reserved.
+ */
+export function testBudgetMonthUsd(ledger, month) {
+  const jobs = Array.isArray(ledger?.jobs) ? ledger.jobs : [];
+  return round6(jobs.filter((j) => Number.isFinite(j.reserved_at) && new Date(j.reserved_at).toISOString().slice(0, 7) === month)
+    .reduce((s, j) => s + (j.state === 'reserved' ? j.max_usd : j.state === 'settled' ? (j.actual_usd ?? j.max_usd) : 0), 0));
+}
+export const testBudgetMonthOf = async (storage, month) => testBudgetMonthUsd(await load(storage), month);
+
+/**
  * Reserve the worst case of one job before sending it. Refused, with the reason, when the reservation would take the total
  * past the cap. Returns { ok, id, remaining_usd, reason }.
  */

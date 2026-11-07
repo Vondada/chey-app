@@ -22,9 +22,10 @@ import { storedKeys } from './resilience.js';
 import { loadPolicy } from './capability_engine.js';
 import { ONLINE_MS, engineRecord, engineSettingsOf, isGpuName, needOf } from './gpu_queue.js';
 import { MIN_PAID_SESSION_S, PAID_GPU_PRICES, PAID_PROVIDERS, approveSpend, budgetOf, budgetView, canStartPaid, cheapestGpu, closeSession, marginUsd, maxUsdHr, mustEnd,
-  budgetIntent, openSession, openSessions, reconcileSession, remainingUsd, revokeSpend, setMonthlyCap, speakRunway } from './compute_budget.js';
+  budgetIntent, openSession, openSessions, reconcileSession, remainingUsd, revokeSpend, setMonthlyCap, speakRunway, spentUsd } from './compute_budget.js';
 import { ADAPTERS } from './gpu_providers.js';
-import { MODAL_RESERVE_MS, MODAL_USD_HR, applyModalIntent, callReceipt, modalCancel, modalCredential, modalCreditGate, modalDispatch, modalIntent, modalStateOf, modalStatus, openCalls, speakModal } from './modal_gpu.js';
+import { farmProviders } from './film_studio.js';
+import { MODAL_RESERVE_MS, MODAL_USD_HR, applyModalIntent, callReceipt, modalCancel, modalCredential, modalCreditGate, modalDispatch, modalIntent, modalMonthCheck, modalMonthCheckFor, modalMonthUsd, modalPaidCap, modalStateOf, modalStatus, modalPicturesUsd, openCalls, speakModal } from './modal_gpu.js';
 
 export const POOL_KEY = 'pool:state';
 export const MAX_PROVIDER_ATTEMPTS = 3;            // provider failures per job before it waits with a reason
@@ -466,7 +467,7 @@ export async function providerStatuses(env = {}, { storage, now, fetcher = fetch
   const mc = await modalCredential(env, storage);
   const onb = mc.cred ? await storage.get('onboarding:modal:default').catch(() => null) : null;
   const mConnected = onb?.state === 'verified' && onb?.verification?.ok === true;
-  const mGate = modalCreditGate(pool, t);
+  const mGate = modalCreditGate(pool, t, { otherUsd: await modalPicturesUsd(storage, t) });
   let mSt; let mWhy;
   if (!mc.exists) { mSt = 'no_credential'; mWhy = 'Modal is not connected: the "CHE Modal deploy" workflow has not connected me yet. Say "CHE, connect Modal" for the steps; never paste a key into chat.'; }
   else if (!mc.cred) { mSt = 'no_credential'; mWhy = mc.deploy_token ? 'The saved Modal key is an API (deploy) token. The deploy workflow connects me instead; the API token belongs in GitHub secrets. Say "CHE, connect Modal" again.' : 'The saved Modal connection is not in a form I can use. Run the "CHE Modal deploy" workflow again.'; }
@@ -523,6 +524,92 @@ export function selectProvider(statuses, job, { pool = null, t = Date.now(), all
   const gpuish = statuses.filter((p) => p.compatible === true && (need !== 'required' || p.gpu));
   const why = gpuish.map((p) => `${p.label}: ${p.reason}`).join(' ');
   return { provider: null, why: need === 'required' ? `This job needs a GPU and none is ready. ${why}` : `No computer can take it now. ${why}` };
+}
+
+// ─── One compute router (Creative Studio stage 5) ──────────────────────────────────────────────────────────────────
+// Every Studio workload asks here where it runs, free computers first; this is not a second pool: the facts come from
+// the film farm's provider list (film_studio.farmProviders), the pool's statuses above (selectProvider for Blender
+// characters) and the ONE monthly Modal ledger (modal_gpu.modalMonthCheck / modalCreditGate, $10 a month, owner
+// 2026-11-06). Modal is chosen only for GPU work no free computer can take now, only for work CHE's Modal app can
+// actually do (tools/modal/che_modal_app.py: Blender GPU previews and pictures), and only while the call fits under
+// the month's cap; CPU work never goes to a metered GPU. Each answer carries a plain reason CHE can say.
+export const MODAL_CANNOT_CLIPS = 'CHE\'s Modal app has Blender GPU previews and pictures, but no moving-clip or lip-sync function, so a paid GPU cannot make clips.';
+export const WORKLOADS = Object.freeze({
+  text: { label: 'writing', order: ['workers_ai'], modal: 'Writing runs on hosted models; it never goes to a metered GPU.' },
+  picture: { label: 'film pictures', order: ['workers_ai'], modal: 'Film pictures come from free hosted models; they never go to a metered GPU.' },
+  scene_render: { label: 'a 3D scene render', order: ['github_actions'], modal: 'Scene renders are CPU work on free GitHub runners; CPU work never goes to a metered GPU.' },
+  film_clip: { label: 'moving clips and lip sync', order: ['kaggle', 'hf_zerogpu'], modal: MODAL_CANNOT_CLIPS },
+  picture_gpu: { label: 'a GPU picture', order: ['modal'] },
+});
+const ROUTE_LABEL = { workers_ai: 'Cloudflare Workers AI (free)', github_actions: 'free GitHub runners', kaggle: 'the free Kaggle GPU', hf_zerogpu: 'the free Hugging Face GPU', modal: 'Modal (paid, capped at $10 a month)' };
+export const routeLabel = (id) => ROUTE_LABEL[id] || providerLabel(id);
+
+/**
+ * Where a Studio workload runs. `providers` is film_studio.farmProviders' list ({ id, usable, detail }); `modal` is a
+ * monthly-cap check (modal_gpu.modalMonthCheck) for the GPU workloads Modal can do. Returns { workload, route, order,
+ * steps, paid, why }: `order` is every usable route, best first (the caller tries them in turn); `why` says the choice.
+ */
+export function routeWork(workload, providers = [], { modal = null } = {}) {
+  const w = WORKLOADS[workload];
+  if (!w) return { workload, route: null, order: [], steps: [], paid: false, why: `I do not know where "${workload}" work runs.` };
+  const by = Object.fromEntries((providers || []).map((p) => [p.id, p]));
+  const steps = []; const order = [];
+  for (const id of w.order) {
+    if (id === 'modal') {
+      if (modal?.ok) { order.push(id); steps.push({ id, ok: true, why: `fits this month's cap (${modal.left_usd != null ? `$${Number(modal.left_usd).toFixed(2)} left before my stop line` : 'paid use at $0, included credit only'})` }); }
+      else steps.push({ id, ok: false, why: modal?.reason || 'Modal is not available.' });
+      continue;
+    }
+    const p = by[id];
+    if (p?.usable) { order.push(id); steps.push({ id, ok: true, why: p.detail || 'ready' }); } else steps.push({ id, ok: false, why: p ? p.detail || p.status || 'not usable now' : 'not set up' });
+  }
+  if (w.modal) steps.push({ id: 'modal', ok: false, why: w.modal });
+  const route = order[0] || null;
+  const cap = (x) => x.charAt(0).toUpperCase() + x.slice(1);
+  const said = (s) => `${cap(routeLabel(s.id))}: ${String(s.why).replace(/\.$/, '')}.`;
+  const why = route ? `${w.label[0].toUpperCase()}${w.label.slice(1)} runs on ${routeLabel(route)}. ${said(steps.find((s) => s.id === route))}`
+    : `No computer can take ${w.label} now. ${steps.map(said).join(' ')}`;
+  return { workload, route, order, steps, paid: route === 'modal', why };
+}
+
+/**
+ * The router with its facts gathered: the film farm's providers and, for GPU work Modal can do, the monthly Modal cap.
+ * Blender characters (`person_model`, a queue job) keep the pool's own selection (selectProvider over providerStatuses).
+ */
+export async function routeCompute(env = {}, { storage, now, fetcher = fetch, keys = {} } = {}, { workload, job = null, worstUsd = 0 } = {}) {
+  const t = clock(now)();
+  if (workload === 'person_model') {
+    const pool = await loadPool(storage);
+    const statuses = await providerStatuses(env, { storage, now: () => t, fetcher, pool, refreshQuota: false });
+    const pick = selectProvider(statuses, job || { requires: { gpu: 'required' } }, { pool, t, allowUnverified: pool.settings?.allow_unverified_gpu });
+    return { workload, route: pick.provider, order: pick.provider ? [pick.provider] : [], steps: [], paid: Boolean(pick.paid || pick.provider === 'modal'), why: pick.why };
+  }
+  const providers = WORKLOADS[workload]?.order.some((id) => id !== 'modal') ? await farmProviders(env, storage, { now: t, keys }) : [];
+  const modal = WORKLOADS[workload]?.order.includes('modal') ? await modalMonthCheckFor(storage, worstUsd, t) : null;
+  return routeWork(workload, providers, { modal });
+}
+
+/**
+ * This calendar month's GPU money from the one ledger: Modal (Blender calls, measured or estimated seconds x the T4
+ * price, plus GPU pictures from the picture ledger) and paid GPU sessions (RunPod, Vast). Free computers cost nothing.
+ */
+export async function computeMonth(storage, pool, t = Date.now()) {
+  const d = new Date(t); const since = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1);
+  const calls = modalMonthUsd(pool, t); const pictures = await modalPicturesUsd(storage, t);
+  const gate = modalMonthCheck(pool, 0, { otherUsd: pictures, t });
+  const cap = modalPaidCap(pool);
+  const paid = spentUsd(pool, t, { since });
+  const r2 = (n) => Math.round(Number(n || 0) * 100) / 100;
+  return { month: new Date(t).toISOString().slice(0, 7), modal_calls_usd: r2(calls), modal_pictures_usd: r2(pictures), modal_usd: r2(calls + pictures),
+    modal_cap_usd: cap.usd, modal_cap_words: cap.words, modal_cap_at: cap.at, modal_stop_usd: gate.stop_usd, modal_left_usd: gate.left_usd,
+    open_modal_calls: openCalls(pool).length, paid_sessions_usd: r2(paid), total_usd: r2(calls + pictures + paid), provenance: 'ESTIMATED' };
+}
+export function speakComputeMonth(m) {
+  const usd = (n) => `$${Number(n || 0).toFixed(2)}`;
+  return [`GPU money this month (${m.month}, my estimate): ${usd(m.total_usd)}.`,
+    `Modal: ${usd(m.modal_usd)} (${usd(m.modal_calls_usd)} for 3D GPU jobs, ${usd(m.modal_pictures_usd)} for GPU pictures)${m.open_modal_calls ? `, with ${m.open_modal_calls} call${m.open_modal_calls === 1 ? '' : 's'} still running` : ''}, under your cap of ${usd(m.modal_cap_usd)} a month ("${m.modal_cap_words}")${m.modal_stop_usd != null ? `; I stop at ${usd(m.modal_stop_usd)}, ${usd(m.modal_left_usd)} from now` : ''}.`,
+    m.paid_sessions_usd > 0 ? `Other paid GPUs (RunPod, Vast): ${usd(m.paid_sessions_usd)}.` : 'No other paid GPU ran.',
+    'Free computers (Workers AI, GitHub runners, Kaggle, Colab) cost nothing. Modal does not let me read its bill on your plan, so these are my measured-time estimates; Modal\'s own $10 spend limit is the backstop.'].join(' ');
 }
 
 // ─── Kaggle character kernel ─────────────────────────────────────────────────────────────────────────────────────
@@ -708,7 +795,7 @@ export async function poolSchedule(env = {}, { storage, now, fetcher = fetch, jo
     if (mWant.length && !openCalls(pool).length) {
       const j = mWant[0];
       const { cred } = await modalCredential(env, storage);
-      const gate = modalCreditGate(pool, t);
+      const gate = modalCreditGate(pool, t, { otherUsd: await modalPicturesUsd(storage, t) });
       if (cred && gate.ok) {
         const m = modalStateOf(pool);
         const res = await modalDispatch({ cred, pool, job: j, base: base || env.CHE_URL || 'https://chey-app.henryjavoni.workers.dev', t, fetcher, issueToken: issuePoolToken,
@@ -953,10 +1040,10 @@ export async function modalCommand(env = {}, { storage, now, fetcher = fetch } =
   if (intent.action === 'status') {
     const mc = await modalCredential(env, storage);
     const onb = mc.cred ? await storage.get('onboarding:modal:default').catch(() => null) : null;
-    spoken = speakModal(pool, t, { connected: onb?.state === 'verified' && onb?.verification?.ok === true });
+    spoken = speakModal(pool, t, { otherUsd: await modalPicturesUsd(storage, t), connected: onb?.state === 'verified' && onb?.verification?.ok === true });
   }
   await savePool(storage, pool);
-  const g = modalCreditGate(pool, t); const m = modalStateOf(pool);
+  const g = modalCreditGate(pool, t, { otherUsd: await modalPicturesUsd(storage, t) }); const m = modalStateOf(pool);
   return { ok: out.ok, spoken, modal: { opt_in: m.opt_in, spend_limit_zero: m.spend_limit_zero, stated_credit_usd: m.stated_credit?.usd ?? null, used_estimate_usd: g.used_usd, stop_usd: g.stop_usd, dispatch_allowed: g.ok, reason: g.ok ? '' : g.reason } };
 }
 
@@ -1077,6 +1164,9 @@ export async function budgetCommand(env = {}, { storage, now, fetcher = fetch } 
     const b = budgetOf(pool);
     b.speed_opt_in = intent.on === true;
     spoken = b.speed_opt_in ? `Paid GPUs may now also speed up GPU-preferred jobs when no free GPU is ready, within your budget${b.total_cap_usd > 0 ? '' : ', which is zero dollars right now, so nothing paid will run until you set one'}. CPU-only work never goes to a paid GPU.` : 'Paid GPUs are back to GPU-only jobs; GPU-preferred jobs wait for a free GPU or use the free CPU worker.';
+  } else if (intent.action === 'month') {
+    const m = await computeMonth(storage, pool, t);
+    return { ok: true, spoken: speakComputeMonth(m), month: m };
   } else if (intent.action === 'runway' || intent.action === 'gpus') {
     const view = await poolView(env, { storage, now: () => t, fetcher });
     const k = view.providers.find((p) => p.id === 'kaggle');
