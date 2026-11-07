@@ -964,6 +964,17 @@ extension _CheHomeSend on _CHEHomeState {
       }
     }
 
+    // A saved video whose play link failed takes "try again" and "what happened".
+    final videoLinkVoice = CheVideoPlayLink.voiceHandler;
+    if (videoLinkVoice != null && _pendingAttachment == null) {
+      final reply = await videoLinkVoice(message);
+      if (reply != null) {
+        if (mounted) _set(() => controller.clear());
+        if (reply.isNotEmpty) await speakText(reply, record: false);
+        return;
+      }
+    }
+
     // Trade Replay, while it is open, takes play, pause, back or forward 10 seconds, restart and read.
     final replayVoice = CheTradeReplayPage.voiceHandler;
     if (replayVoice != null && _pendingAttachment == null) {

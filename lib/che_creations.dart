@@ -224,6 +224,10 @@ Future<String> cheVideoPlayUrl(String fileUrl, Map<String, String> headers, {htt
 class CheVideoPlayLink extends StatefulWidget {
   const CheVideoPlayLink({super.key, required this.fileUrl, required this.headers});
 
+  /// While a video's link could not be had, the voice navigator (home_state/send.dart) passes the owner's words here:
+  /// "try again" retries, "what happened" reads the problem. Anything else returns null and goes to the chat.
+  static Future<String?> Function(String words)? voiceHandler;
+
   final String fileUrl;
   final Map<String, String> headers;
 
@@ -231,21 +235,59 @@ class CheVideoPlayLink extends StatefulWidget {
   State<CheVideoPlayLink> createState() => _CheVideoPlayLinkState();
 }
 
+/// The video viewer's spoken commands while its link failed: 'retry', 'read', or null (not for the viewer).
+String? cheVideoLinkCommand(String words) {
+  final t = words.toLowerCase().replaceAll(RegExp(r"[^a-z' ]"), ' ').replaceAll(RegExp(r'\s+'), ' ').trim();
+  if (RegExp(r'^(?:(?:che|please) )?(?:try (?:it |that |the video )?again|retry|reload(?: the video)?|play (?:it|the video) again)(?: please)?$').hasMatch(t)) return 'retry';
+  if (RegExp(r"^(?:what happened|what's wrong|what is wrong|read (?:it|the screen|the error))$").hasMatch(t)) return 'read';
+  return null;
+}
+
 class _CheVideoPlayLinkState extends State<CheVideoPlayLink> {
   late Future<String> _url = cheVideoPlayUrl(widget.fileUrl, widget.headers);
+  bool _failed = false;
+
+  @override
+  void initState() {
+    super.initState();
+    CheVideoPlayLink.voiceHandler = _voice;
+  }
+
+  @override
+  void dispose() {
+    if (CheVideoPlayLink.voiceHandler == _voice) CheVideoPlayLink.voiceHandler = null;
+    super.dispose();
+  }
+
+  Future<String?> _voice(String words) async {
+    if (!_failed) return null;
+    final command = cheVideoLinkCommand(words);
+    if (command == 'retry') {
+      _retry();
+      return 'Trying the video again.';
+    }
+    if (command == 'read') return 'This video could not be opened right now. Say try again to retry.';
+    return null;
+  }
+
+  void _retry() {
+    if (!mounted) return;
+    setState(() {
+      _failed = false;
+      _url = cheVideoPlayUrl(widget.fileUrl, widget.headers);
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
     return FutureBuilder<String>(
       future: _url,
       builder: (context, snap) {
+        _failed = snap.hasError;
         if (snap.hasError) {
           return Column(mainAxisSize: MainAxisSize.min, children: [
-            const Text('This video could not be opened right now.'),
-            TextButton(
-              onPressed: () => setState(() => _url = cheVideoPlayUrl(widget.fileUrl, widget.headers)),
-              child: const Text('Try again'),
-            ),
+            const Text('This video could not be opened right now. Say "try again", or tap below.'),
+            TextButton(onPressed: _retry, child: const Text('Try again')),
           ]);
         }
         if (!snap.hasData) return const SizedBox(height: 360, child: Center(child: CircularProgressIndicator()));

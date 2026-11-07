@@ -80,4 +80,16 @@ void main() {
     expect(await cheVideoPlayUrl('$base/api/media/v1/video', const {}, client: client), '$base/api/media/v1/video');
     expect(cheVideoPlayUrl('$base/api/media/v1/video', {'Authorization': 'Bearer t'}, client: client), throwsException);
   });
+
+  test('voice: a failed video is retried or read by words, and other words go to the chat', () {
+    for (final w in ['try again', 'Try it again', 'CHE, retry', 'reload the video', 'play the video again please']) {
+      expect(cheVideoLinkCommand(w), 'retry', reason: w);
+    }
+    for (final w in ['what happened?', "what's wrong", 'read the error']) {
+      expect(cheVideoLinkCommand(w), 'read', reason: w);
+    }
+    for (final w in ['make a new video', 'try again tomorrow with Nova', 'open my scene']) {
+      expect(cheVideoLinkCommand(w), isNull, reason: w);
+    }
+  });
 }
