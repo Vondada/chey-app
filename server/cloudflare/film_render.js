@@ -25,7 +25,21 @@ export async function assemblyTokenOpens(job, token, now = Date.now()) {
   return Boolean(job && token && now < job.expires && (await sha256(String(token))) === job.token_hash);
 }
 
+/**
+ * The origin GitHub runners and the Kaggle GPU can reach CHE at, or '' when a URL is not one: only https on a public
+ * host. CHE's own synthetic requests (the probe chat turn's https://che.internal) and local hosts never count, because
+ * a runner told to fetch from them fails before it renders anything (2026-11-07: "Could not resolve host: che.internal").
+ */
+export function publicOrigin(url) {
+  let u;
+  try { u = new URL(String(url || '')); } catch { return ''; }
+  const host = u.hostname.toLowerCase();
+  if (u.protocol !== 'https:' || !host.includes('.') || /(^|\.)(internal|local|localhost|test|invalid)$/.test(host) || /^[\d.]+$|^\[|:/.test(host)) return '';
+  return u.origin;
+}
+
 export async function startFilmRender(env, job, { base, token }, fetcher = fetch) {
+  if (!publicOrigin(base)) return { ok: false, error: 'CHE does not know her public address yet, so the GitHub runners could not fetch the film. Open CHE on your phone once and I will try again.', retryable: true };
   if (!credentials(env)) return { ok: false, error: 'Assembly runs on your GitHub Actions and needs CHE_GITHUB_TOKEN and CHE_GITHUB_REPO on the Worker.' };
   try {
     const res = await fetcher(`https://api.github.com/repos/${REPO}/actions/workflows/${FILM_WORKFLOW}/dispatches`, {
