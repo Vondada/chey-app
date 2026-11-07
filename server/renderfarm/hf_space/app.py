@@ -9,7 +9,9 @@ import spaces
 import torch
 from diffusers import LTXImageToVideoPipeline
 from diffusers.utils import export_to_video, load_image
+from PIL import ImageOps
 
+CLIP_W, CLIP_H = 768, 448  # LTX-Video needs both divisible by 32
 pipe = LTXImageToVideoPipeline.from_pretrained("Lightricks/LTX-Video", torch_dtype=torch.bfloat16)
 pipe.to("cuda")
 
@@ -26,9 +28,9 @@ def fetch(url, token):
 @spaces.GPU(duration=60)
 def clip(request_json):
     job = json.loads(request_json)
-    image = load_image(fetch(job["image_url"], job["farm_token"])).resize((768, 432))
+    image = ImageOps.fit(load_image(fetch(job["image_url"], job["farm_token"])), (CLIP_W, CLIP_H))  # divisible by 32
     frames = pipe(image=image, prompt=job["prompt"], negative_prompt="worst quality, blurry, distorted, text, watermark",
-                  width=768, height=432, num_frames=int(job.get("frames", 121)), num_inference_steps=int(job.get("steps", 30))).frames[0]
+                  width=CLIP_W, height=CLIP_H, num_frames=int(job.get("frames", 121)), num_inference_steps=int(job.get("steps", 30))).frames[0]
     out = tempfile.mktemp(suffix=".mp4")
     export_to_video(frames, out, fps=int(job.get("fps", 24)))
     with open(out, "rb") as f:
