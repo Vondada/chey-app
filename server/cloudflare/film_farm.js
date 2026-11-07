@@ -14,6 +14,8 @@
 // The farm token a session carries opens only that film's farm routes, expires with the session, and is revoked
 // when the film ends. It is never the owner's device token, and it is stored only as a hash.
 
+import { publicOrigin } from './film_render.js';
+
 export const KAGGLE_API = 'https://api.kaggle.com/v1/kernels.KernelsApiService';
 export const HF_API = 'https://huggingface.co/api';
 export const FARM_TOKEN_MS = 12 * 3600_000;
@@ -151,7 +153,7 @@ export const KAGGLE_WORKER_PY = String.raw`# CHE render farm worker for a Kaggle
 # shots are then lip-synced to their voice lines (LatentSync 1.5) and uploaded the same way.
 # The token is a film-scoped farm token: it opens only this film's farm jobs, expires, and CHE can revoke it.
 # It is never the owner's device token. Model weights download from Hugging Face inside the session.
-import json, os, subprocess, sys, threading, time, urllib.request
+import json, os, subprocess, sys, threading, time, traceback, urllib.request
 
 CHE_BASE = "__CHE_BASE__"
 FILM_ID = "__FILM_ID__"
@@ -160,12 +162,15 @@ DEADLINE_S = int("__DEADLINE_S__")
 LIPSYNC = "__LIPSYNC__" == "1"  # this film has talking shots to lip-sync
 STARTED = time.time()
 MODEL = "Lightricks/LTX-Video"  # LTXV open-weights license; see server/renderfarm/LICENSES.md
+# A named client: Python's default "Python-urllib/x.y" agent is one that Cloudflare's bot checks may refuse.
+AGENT = "che-film-farm/1.0 (+kaggle)"
 
 
 def che(method, path, body=None, raw=None, timeout=120):
     data = raw if raw is not None else (json.dumps(body).encode() if body is not None else None)
     req = urllib.request.Request(f"{CHE_BASE}/api/film/farm/{FILM_ID}{path}", data=data, method=method)
     req.add_header("X-CHE-Farm-Token", FARM_TOKEN)
+    req.add_header("User-Agent", AGENT)
     req.add_header("Content-Type", "video/mp4" if raw is not None else "application/json")
     with urllib.request.urlopen(req, timeout=timeout) as res:
         text = res.read()
@@ -175,6 +180,7 @@ def che(method, path, body=None, raw=None, timeout=120):
 def fetch(url, dest):
     req = urllib.request.Request(url)
     req.add_header("X-CHE-Farm-Token", FARM_TOKEN)
+    req.add_header("User-Agent", AGENT)
     with urllib.request.urlopen(req, timeout=300) as res, open(dest, "wb") as out:
         out.write(res.read())
 
@@ -368,14 +374,24 @@ def main():
     che("POST", "/done", body={**TOTALS, "gpus": gpu_count(), "seconds": round(time.time() - STARTED)})
 
 
+def failure_line(error):
+    """The exception as one line a person can read, e.g. "HTTPError: HTTP Error 403: Forbidden"."""
+    return f"{type(error).__name__}: {error}".strip()[:400]
+
+
 if __name__ == "__main__":
+    if not CHE_BASE.startswith("https://"):
+        print(f"CHE farm: no public address for CHE ({CHE_BASE!r}); nothing to do.", flush=True)
+        sys.exit(2)
     try:
         main()
-    except Exception as error:  # Report the failure to CHE so the owner hears what happened.
+    except BaseException as error:  # Report the failure to CHE so the owner hears what happened.
+        traceback.print_exc()  # the full trace goes to the session log, which CHE reads when the session ends in error
         try:
-            che("POST", "/done", body={"error": str(error)[:400], "seconds": round(time.time() - STARTED)})
-        finally:
-            raise
+            che("POST", "/done", body={"error": failure_line(error), "seconds": round(time.time() - STARTED)}, timeout=30)
+        except BaseException as report_error:  # CHE unreachable: the log above still says why
+            print(f"CHE farm: could not report the failure to CHE: {failure_line(report_error)}", flush=True)
+        raise
 `;
 
 export function kaggleWorkerScript({ base, filmId, token, deadlineS, lipsync = false }) {
@@ -389,6 +405,9 @@ export function kaggleWorkerScript({ base, filmId, token, deadlineS, lipsync = f
 export async function startKaggleSession(raw, { base, film, token, seconds, username: knownName = '', lipsync = false }, fetcher = fetch) {
   const auth = kaggleAuth(raw);
   if (!auth) return { ok: false, error: 'That is not a Kaggle token. Paste your Kaggle API token in Keys.' };
+  // The session fetches its pictures from CHE and uploads its clips to her: without a public address it would only burn
+  // GPU time and end in error, so none is started (film_render.publicOrigin).
+  if (!publicOrigin(base)) return { ok: false, retryable: true, error: 'CHE does not know her public address yet, so a Kaggle GPU session could not reach her. No session started.' };
   // The name a session is filed under: the typed prefix (legacy), or the name Kaggle returned for this token.
   const name = auth.username || String(knownName || '').trim();
   if (!name) return { ok: false, error: 'CHE has not read your Kaggle account name yet. Your token is saved; the session starts once Kaggle returns it.' };
@@ -414,6 +433,43 @@ export async function kaggleSessionStatus(raw, session, fetcher = fetch) {
     const state = /COMPLETE/.test(s) ? 'complete' : /ERROR/.test(s) ? 'error' : /CANCEL/.test(s) ? 'cancelled' : /RUNNING/.test(s) ? 'running' : 'queued';
     return { ok: true, state, failure: r.data.failureMessage || '' };
   } catch (e) { return { ok: false, error: String(e?.message || e).slice(0, 80) }; }
+}
+
+/**
+ * The text of a session's own log (what the script printed, and Python's traceback when it failed). Kaggle returns it
+ * from ListKernelSessionOutput (kagglesdk 0.1.38 KernelsApiService: {userName, kernelSlug} -> {files, log}); the log
+ * is a JSON list of {stream_name, time, data} entries, or plain text.
+ */
+export function sessionLogText(log) {
+  const raw = String(log ?? '');
+  try {
+    const entries = JSON.parse(raw);
+    if (Array.isArray(entries)) return entries.map((e) => String(e?.data ?? '')).join('');
+  } catch (_) { /* plain text */ }
+  return raw;
+}
+
+/** Why a script ended, from its log: the last exception line ("Name: message"), else CHE's own line, else the last lines. */
+export function logReason(text, secrets = []) {
+  let t = String(text || '');
+  for (const secret of secrets) if (secret && String(secret).length >= 8) t = t.split(String(secret)).join('[hidden]');
+  const lines = t.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  if (!lines.length) return '';
+  const exception = [...lines].reverse().find((l) => /^[A-Za-z_][\w.]*(?:Error|Exception|Exit|Interrupt)(?::|$)/.test(l));
+  const farm = [...lines].reverse().find((l) => /^CHE farm:/.test(l));
+  const pick = exception || farm || lines.slice(-2).join(' ');
+  return pick.replace(/\s+/g, ' ').slice(0, 200);
+}
+
+/** The reason a finished session failed, read from its own log; '' when Kaggle returns no log. Never throws. */
+export async function kaggleSessionLog(raw, session, fetcher = fetch, secrets = []) {
+  const auth = kaggleAuth(raw);
+  if (!auth || !session?.username || !session?.slug) return '';
+  try {
+    const r = await kaggleCall(auth, 'ListKernelSessionOutput', { userName: session.username, kernelSlug: session.slug }, fetcher);
+    if (!r.ok) return '';
+    return logReason(sessionLogText(r.data?.log), [auth.token, ...secrets]);
+  } catch (_) { return ''; }
 }
 
 // ─── Hugging Face ZeroGPU ────────────────────────────────────────────────────
