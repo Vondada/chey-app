@@ -1,0 +1,3 @@
+[
+  {"id": "brewed-rerender-01", "category": "creative", "difficulty": "medium", "question": "Re-render Brewed Anarchy", "expected": {"criteria": "Film Studio makes a new film from Brewed Anarchy's saved script (same title, shots and dialogue) with the current motion and lip sync pipeline, and says what it reuses and the ETA; or says plainly that the saved script is gone.", "must_contain_any": ["Brewed Anarchy"], "must_not_contain": []}, "receipt_required": false}
+]
