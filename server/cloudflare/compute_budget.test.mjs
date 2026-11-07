@@ -465,7 +465,8 @@ test('Modal is Connected only after its app answers an authenticated /health; a 
   assert.ok(!che.wire.join('\n').includes('ws-ZyXwVu987654'), 'the secret never comes back');
   const on = await che.say("CHE, use Modal's free credit");
   assert.equal(on.modelCalls, 0); assert.equal(on.done.command, 'cloud-gpu', JSON.stringify(on.done));
-  assert.match(on.reply, /Recorded at \d\d:\d\d UTC/); assert.match(on.reply, /spend limit is \$0/);
+  // Owner, 2026-11-06: "Yes cap 10 a month" and Modal's spend limit "set to $10": paid use within the cap, stop line $9.50.
+  assert.match(on.reply, /Recorded at \d\d:\d\d UTC/); assert.match(on.reply, /within your \$10\.00 a month/); assert.match(on.reply, /I stop at \$9\.50/);
   const lim = await che.say("I set Modal's spend limit to zero");
   assert.equal(lim.modelCalls, 0); assert.match(lim.reply, /you said Modal's spend limit is \$0/);
   const cr = await che.say('my Modal credit is 30 dollars');

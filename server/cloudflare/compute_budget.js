@@ -256,6 +256,8 @@ export function budgetIntent(message) {
   if (!t || t.length > 160) return null;
   if (new RegExp(`^(?:how long (?:will|would|does|is) (?:my|the) (?:gpu|graphics) (?:money|budget|credit|credits)(?: going to)? last|what(?:'s| is) (?:my|the) (?:gpu )?runway|how much (?:gpu|graphics) (?:money|budget|credit) (?:do i have )?(?:is )?left|(?:show|read|check)(?: me)? (?:my|the) gpu (?:budget|money|spending))$`).test(t)) return { action: 'runway' };
   if (/^(?:what|which) (?:gpus?|graphics cards?|computers?) (?:can|could) (?:che|you|she) use$/.test(t)) return { action: 'gpus' };
+  // The one monthly ledger: paid GPU sessions plus all Modal use (Blender calls and GPU pictures) this month.
+  if (/^(?:how much (?:gpu |graphics |compute )?(?:money|spending|credit)? ?(?:have i|did i|has che|have you|did you|did we|have we) (?:used|spent)(?: on (?:gpus?|modal|graphics cards?|compute))? this month|what (?:have i|did i|has che|have you|did you) (?:spent|spend) on (?:gpus?|modal|compute) this month|(?:my |the )?(?:gpu|modal|compute) (?:spending|spend|money|costs?)(?: so far)? this month)$/.test(t)) return { action: 'month' };
   if (new RegExp(`^(?:stop|turn off|disable|cancel|no more|end) (?:all |the |my |using )?${GPUS}(?: now)?$`).test(t) && /paid|money|budget|rental|cloud/.test(t)) return { action: 'stop' };
   const month = new RegExp(`^(?:limit|cap) ${GPUS} (?:to|at) ${AMOUNT} (?:a|per|each) month$`).exec(t);
   if (month) { const usd = dollars(month[1]); return usd == null ? null : { action: 'monthly', monthly_usd: usd }; }

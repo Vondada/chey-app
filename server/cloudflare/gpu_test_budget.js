@@ -48,19 +48,44 @@ export function budgetTotals(ledger) {
 }
 
 /** Bound the record list: fold the oldest settled or released records into archived spend, never a reservation. */
+// A folded job's cost is also kept under its month (UTC 'YYYY-MM' of its reservation), so the monthly Modal cap never
+// loses spend to compaction. Only the most recent months are kept; older ones can no longer affect a cap.
+const MAX_ARCHIVED_MONTHS = 24;
+const monthOfJob = (j) => { const at = Number.isFinite(j.reserved_at) ? j.reserved_at : j.settled_at; return Number.isFinite(at) ? new Date(at).toISOString().slice(0, 7) : null; };
 function boundedLedger(ledger, jobs) {
   let archived = Number(ledger.archived_usd) || 0;
+  const byMonth = { ...(ledger.archived_by_month || {}) };
   const kept = [...jobs];
   while (kept.length > MAX_JOB_RECORDS) {
     const i = kept.findIndex((j) => j.state !== 'reserved');
     if (i < 0) break;
     const [old] = kept.splice(i, 1);
-    if (old.state === 'settled') archived += old.actual_usd ?? old.max_usd;
+    if (old.state === 'settled') {
+      const usd = old.actual_usd ?? old.max_usd;
+      archived += usd;
+      const m = monthOfJob(old);
+      if (m) byMonth[m] = round6((Number(byMonth[m]) || 0) + usd);
+    }
   }
-  return { ...ledger, cap_usd: TEST_BUDGET_USD, archived_usd: round6(archived), jobs: kept };
+  const months = Object.keys(byMonth).sort().slice(-MAX_ARCHIVED_MONTHS);
+  return { ...ledger, cap_usd: TEST_BUDGET_USD, archived_usd: round6(archived), archived_by_month: Object.fromEntries(months.map((m) => [m, byMonth[m]])), jobs: kept };
 }
 
 const load = async (storage) => (await storage.get(TEST_BUDGET_KEY)) || { cap_usd: TEST_BUDGET_USD, jobs: [] };
+
+/**
+ * This ledger's Modal spend in one calendar month (UTC 'YYYY-MM'), for the shared monthly Modal cap
+ * (modal_gpu.modalMonthCheck): an open reservation at its worst case, a settled job at its actual cost (else the
+ * reserved maximum), a released job at $0, plus that month's jobs already folded away by compaction. Jobs are dated
+ * by when they were reserved.
+ */
+export function testBudgetMonthUsd(ledger, month) {
+  const jobs = Array.isArray(ledger?.jobs) ? ledger.jobs : [];
+  const live = jobs.filter((j) => monthOfJob(j) === month)
+    .reduce((s, j) => s + (j.state === 'reserved' ? j.max_usd : j.state === 'settled' ? (j.actual_usd ?? j.max_usd) : 0), 0);
+  return round6(live + (Number(ledger?.archived_by_month?.[month]) || 0));
+}
+export const testBudgetMonthOf = async (storage, month) => testBudgetMonthUsd(await load(storage), month);
 
 /**
  * Reserve the worst case of one job before sending it. Refused, with the reason, when the reservation would take the total

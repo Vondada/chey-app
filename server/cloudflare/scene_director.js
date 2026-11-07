@@ -15,6 +15,7 @@
 import { downloadArchive, githubHeaders, mp4Facts, readJson, refusalOf, zipEntry } from './github_video_renderer.js';
 import { mediaStore } from './che_media_store.js';
 import { saveSceneVideo } from './media.js';
+import { routeWork } from './compute_pool.js';
 
 export const DIRECTOR_KEY = 'director:projects';
 export const DIRECTOR_LAST = 'director:last';
@@ -303,7 +304,11 @@ function framesFor(project, spec, now) {
 }
 
 export async function dispatchRender(env, project, fetcher = fetch, now = Date.now()) {
-  if (!env.CHE_GITHUB_TOKEN || !env.CHE_GITHUB_REPO) return { ok: false, error: 'The free GitHub renderer needs CHE_GITHUB_TOKEN and CHE_GITHUB_REPO on the Worker.' };
+  // The one compute router decides (compute_pool.routeWork): a scene render is CPU work on free GitHub runners, never a
+  // metered GPU.
+  const route = routeWork('scene_render', [{ id: 'github_actions', usable: Boolean(env.CHE_GITHUB_TOKEN && env.CHE_GITHUB_REPO),
+    detail: env.CHE_GITHUB_TOKEN && env.CHE_GITHUB_REPO ? 'Blender renders the scene in segments on free runners' : 'The free GitHub renderer needs CHE_GITHUB_TOKEN and CHE_GITHUB_REPO on the Worker' }]);
+  if (route.route !== 'github_actions') return { ok: false, error: 'The free GitHub renderer needs CHE_GITHUB_TOKEN and CHE_GITHUB_REPO on the Worker.', route: route.why };
   const spec = current(project);
   const job = 'scj_' + crypto.randomUUID().replaceAll('-', '').slice(0, 24);
   const reuse = framesFor(project, spec, now);
