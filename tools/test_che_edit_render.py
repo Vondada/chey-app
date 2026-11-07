@@ -24,7 +24,9 @@ class EditRender(unittest.TestCase):
         src.mkdir()
         ff('-f', 'lavfi', '-i', 'testsrc=size=1280x720:rate=30:duration=4', '-f', 'lavfi', '-i', 'sine=frequency=440:duration=4', '-shortest', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-c:a', 'aac', str(src / 'clipA.mp4'))
         ff('-f', 'lavfi', '-i', 'testsrc2=size=640x480:rate=30:duration=3', '-f', 'lavfi', '-i', 'sine=frequency=660:duration=3', '-shortest', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-c:a', 'aac', str(src / 'clipB.mp4'))
-        ff('-f', 'lavfi', '-i', 'gradients=size=800x600:duration=1:seed=7', '-frames:v', '1', str(src / 'photo.png'))
+        # A fixed gradient photo. (ffmpeg's `gradients` source picks new colours on every run even with a seed, so a
+        # photo that happened to match the bars' colours made the overlay checks below fail at random.)
+        ff('-f', 'lavfi', '-i', "color=c=black:s=800x600:d=1,format=rgb24,geq=r='X*255/W':g='Y*255/H':b='255-X*255/W'", '-frames:v', '1', str(src / 'photo.png'))
         ff('-f', 'lavfi', '-i', 'sine=frequency=220:duration=12', '-ac', '2', str(src / 'song.wav'))
         cls.assets = json.dumps({'clipA': 'clipA', 'clipB': 'clipB', 'photo': 'photo', 'song': 'song'})
         cls.src = src
