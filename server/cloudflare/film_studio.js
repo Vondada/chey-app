@@ -734,7 +734,8 @@ export function stillPrompt(shot, outline, lessons = []) {
 }
 
 /** A character's reference portrait: one fixed face that every picture of them starts from. */
-export function portraitPrompt(character) {
+export function portraitPrompt(character, { plain = false } = {}) {
+  if (plain) return clean(`Photorealistic head-and-shoulders portrait photo of an adult office worker, facing the camera, plain grey background, soft even light, neutral friendly expression. ${character.look}. No text, no watermark.`, 1000);
   return clean(`Photorealistic character reference portrait, head and shoulders, facing the camera, plain neutral studio background, soft even light. ${character.name}: ${character.look}. Natural face and skin, no text, no watermark.`, 1000);
 }
 
@@ -854,7 +855,10 @@ export function voiceTimes(shot) {
 /** A shot's length in the film: long enough for its clip or its lines. */
 export function shotSeconds(s) {
   const speech = s.dialogue.reduce((t, d) => t + (d.audio_s || 0), 0) + 0.35 * s.dialogue.length;
-  return round(Math.max(s.tier === 'A' ? CLIP_SECONDS : SHOT_SECONDS, speech + 0.6), 2);
+  // Every shot is planned at SHOT_SECONDS (target / shots): a 5-second moving clip is slowed to fill its shot by the
+  // edit (che_film_render.py), so moving shots no longer make the film short (Brewed Anarchy came out 53 s of 60:
+  // seven 5-second clips and three 6-second stills).
+  return round(Math.max(SHOT_SECONDS, speech + 0.6), 2);
 }
 
 /** The spec one runner renders: pictures or clips with their moves, voice lines at their times, sound and music. */
