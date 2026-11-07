@@ -56,5 +56,51 @@ class RealEncode(unittest.TestCase):
             self.assertIn("runs past the end", " ".join(manifest["problems"]))
 
 
+class CrewVoices(unittest.TestCase):
+    """Stage 7: each actor speaks with its own free Piper voice and pace (spec.actors[].voice, from crew_voices.js)."""
+
+    SPEC = {
+        "actors": [{"id": "nova", "voice": {"engine": "piper", "voice": "en_US-amy-medium", "speed": 1.0}},
+                   {"id": "knox", "voice": {"engine": "piper", "voice": "en_US-joe-medium", "speed": 9}},
+                   {"id": "evil", "voice": {"engine": "piper", "voice": "../../etc/passwd", "speed": 1}},
+                   {"id": "che"}],
+        "timeline": [{"actor": "nova", "action": "talk", "line": "Hi", "t0": 0, "t1": 3},
+                     {"actor": "knox", "action": "talk", "line": "Morning", "t0": 3, "t1": 6},
+                     {"actor": "che", "action": "wave", "t0": 6, "t1": 7}],
+    }
+
+    def test_each_actor_gets_its_own_voice_and_a_sane_pace(self):
+        self.assertEqual(finish.actor_voice(self.SPEC, "nova"), ("en_US-amy-medium", 1.0))
+        self.assertEqual(finish.actor_voice(self.SPEC, "knox"), ("en_US-joe-medium", 1.4), "the pace is clamped")
+        self.assertEqual(finish.actor_voice(self.SPEC, "evil"), (finish.VOICE_MODEL, 1.0), "a malformed voice falls back to CHE's")
+        self.assertEqual(finish.actor_voice(self.SPEC, "che"), (finish.VOICE_MODEL, 1.0), "an old spec keeps CHE's voice")
+
+    def test_the_workflow_downloads_only_the_voices_that_speak(self):
+        self.assertEqual(finish.spec_voices(self.SPEC), ["en_US-amy-medium", "en_US-joe-medium"])
+        self.assertEqual(finish.spec_voices({"actors": [], "timeline": []}), [finish.VOICE_MODEL])
+        with tempfile.TemporaryDirectory() as d:
+            spec = Path(d) / "spec.json"
+            spec.write_text(json.dumps(self.SPEC))
+            out = subprocess.run([sys.executable, str(Path(finish.__file__)), "--spec", str(spec), "--list-voices"], check=True, capture_output=True, text=True)
+            self.assertEqual(out.stdout.split(), ["en_US-amy-medium", "en_US-joe-medium"])
+
+    def test_a_voice_that_was_not_downloaded_falls_back_and_is_recorded(self):
+        finish.FALLBACKS.clear()
+        calls = []
+        real_run, real_duration = finish.run, finish.duration
+        finish.run = lambda cmd: calls.append(cmd)
+        finish.duration = lambda p: 1.0
+        try:
+            with tempfile.TemporaryDirectory() as d:
+                lines = finish.voice_lines(self.SPEC, Path(d), "piper")
+        finally:
+            finish.run, finish.duration = real_run, real_duration
+        self.assertEqual([c[c.index("-m", 2) + 1] for c in calls], [finish.VOICE_MODEL, finish.VOICE_MODEL], "no .onnx here, so CHE's voice")
+        self.assertEqual([c[c.index("--length-scale") + 1] for c in calls], ["1.00", "1.40"])
+        self.assertEqual([f["wanted"] for f in finish.FALLBACKS], ["en_US-amy-medium", "en_US-joe-medium"])
+        self.assertEqual([l["actor"] for l in lines], ["nova", "knox"])
+        finish.FALLBACKS.clear()
+
+
 if __name__ == "__main__":
     unittest.main()

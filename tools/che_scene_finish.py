@@ -13,6 +13,7 @@ Usage: python3 tools/che_scene_finish.py --spec scene.json --frames frames --out
 """
 import argparse
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -23,9 +24,10 @@ VOICE_MODEL = "en_US-kristin-medium"
 def args():
     p = argparse.ArgumentParser()
     p.add_argument("--spec", required=True)
-    p.add_argument("--frames", required=True)
-    p.add_argument("--out", required=True)
+    p.add_argument("--frames")
+    p.add_argument("--out")
     p.add_argument("--voice", default="piper", choices=["piper", "tone"], help="tone: a placeholder for tests without the Piper voice")
+    p.add_argument("--list-voices", action="store_true", help="print the Piper voices this spec needs, one per line, and stop")
     return p.parse_args()
 
 
@@ -68,6 +70,32 @@ def remap_time(t, parts):
     return acc
 
 
+PIPER_NAME = re.compile(r"^[a-z]{2}_[A-Z]{2}-[a-z0-9_]{1,40}-(?:x_low|low|medium|high)$")
+
+
+def actor_voice(spec, actor_id):
+    """The Piper voice and pace an actor speaks with (spec.actors[].voice, written from crew_voices.js); CHE's voice for
+    an old spec that carries none."""
+    for a in spec.get("actors", []):
+        v = a.get("voice") or {}
+        if a.get("id") == actor_id and v.get("engine") == "piper" and PIPER_NAME.match(str(v.get("voice", ""))):
+            try:
+                speed = min(1.4, max(0.7, float(v.get("speed", 1))))
+            except (TypeError, ValueError):
+                speed = 1.0
+            return v["voice"], speed
+    return VOICE_MODEL, 1.0
+
+
+def spec_voices(spec):
+    """Every Piper voice the spec's talking actors use (che-scene-render.yml downloads just these)."""
+    talkers = {s.get("actor") for s in spec.get("timeline", []) if s.get("action") in ("talk", "speak") and s.get("line")}
+    return sorted({actor_voice(spec, a)[0] for a in talkers} or {VOICE_MODEL})
+
+
+FALLBACKS = []
+
+
 def voice_lines(spec, out, mode):
     lines = []
     for i, step in enumerate(spec.get("timeline", [])):
@@ -75,18 +103,29 @@ def voice_lines(spec, out, mode):
         if step.get("action") not in ("talk", "speak") or not text:
             continue
         wav = out / f"line{i}.wav"
+        voice, speed = actor_voice(spec, step.get("actor"))
+        if mode == "piper" and voice != VOICE_MODEL and not Path(f"{voice}.onnx").exists():
+            # The workflow downloads each voice the spec names; one that could not be downloaded falls back to CHE's
+            # voice, and the manifest says so (never a silent swap).
+            FALLBACKS.append({"actor": step.get("actor"), "wanted": voice, "used": VOICE_MODEL})
+            voice = VOICE_MODEL
         if mode == "piper":
-            run([sys.executable, "-m", "piper", "-m", VOICE_MODEL, "-f", str(wav), "--", text])
+            run([sys.executable, "-m", "piper", "-m", voice, "--length-scale", f"{speed:.2f}", "-f", str(wav), "--", text])
         else:
             seconds = max(1.0, len(text.split()) / 2.5)
             run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", f"sine=frequency=220:duration={seconds}", "-ar", "24000", str(wav)])
-        lines.append({"at": float(step["t0"]) + 0.3, "path": wav, "seconds": duration(wav), "text": text})
+        lines.append({"at": float(step["t0"]) + 0.3, "path": wav, "seconds": duration(wav), "text": text, "actor": step.get("actor"), "voice": voice})
     return lines
 
 
 def main():
     a = args()
     spec = json.loads(Path(a.spec).read_text())
+    if a.list_voices:
+        print("\n".join(spec_voices(spec)))
+        return
+    if not a.frames or not a.out:
+        raise SystemExit("--frames and --out are required")
     frames = Path(a.frames)
     out = Path(a.out)
     out.mkdir(parents=True, exist_ok=True)
@@ -156,7 +195,8 @@ def main():
         "duration_seconds": round(got, 3), "scene_seconds": seconds, "fps": fps,
         "video_width": int(streams.get("video", {}).get("width", 0)), "video_height": int(streams.get("video", {}).get("height", 0)),
         "spans": [{"from": s0, "to": s1, "speed": sp} for s0, s1, sp in parts],
-        "voices": [{"text": l["text"], "at": l["at_out"], "seconds": round(l["seconds"], 2)} for l in lines],
+        "voices": [{"text": l["text"], "at": l["at_out"], "seconds": round(l["seconds"], 2), "actor": l.get("actor"), "voice": l.get("voice")} for l in lines],
+        "voice_fallbacks": FALLBACKS,
         "voice_provider": "piper-neural" if a.voice == "piper" and lines else ("test-tone" if lines else "none"),
         "music": bool(music), "renderer": "blender-cycles", "paid_media": False, "youtube_uploaded": False,
     }
