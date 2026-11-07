@@ -14,6 +14,8 @@ import { recordVideoFailed, recordVideoVerified } from './action_receipts.js';
 import { farmTokenOpens, hfClip, kaggleSessionLog, kaggleSessionStatus, newFarmToken, startKaggleSession, validateKaggle, ensureHfSpace, HF_SPACE_FILES } from './film_farm.js';
 import { assemblyTokenOpens, filmRenderStatus, newAssemblyJob, publicOrigin, startFilmRender, validateGithub, verifyFilmObject } from './film_render.js';
 import { mp4Facts } from './github_video_renderer.js';
+// Fast films on Modal (opt-in per film, inside the monthly cap): film_fast.js owns it; the hooks below are marked FAST.
+import { fastReplan, planFast, settleFastFarm, startFastFarm } from './film_fast.js';
 import { assembleUpload, mediaStore, partKey, sha256Hex } from './che_media_store.js';
 import { saveFilmVideo } from './media.js';
 import { redact } from './security_intelligence.js';
@@ -57,10 +59,13 @@ export async function startFilm(ctx, ask) {
   if (!ask.topic) return { ok: false, said: 'What should the film be about? Say, for example, "make me a 10-minute movie about a lighthouse keeper".' };
   await refreshValidation(ctx);
   const { plan } = await filmPlan(ctx, ask);
+  if (!plan.ok) return { ok: false, said: speakPlan(plan, { asked: ask.deadline?.words }) };
+  // FAST: Modal's own plan (every shot moving, talking shots lip-synced), whatever the free farm could do; its cost is
+  // said before anything starts.
+  const fast = await planFast(ctx, plan, ask.fast === true);
   const said = speakPlan(plan, { asked: ask.deadline?.words });
-  if (!plan.ok) return { ok: false, said };
-  const film = await store.save(newFilm({ topic: ask.topic, targetSeconds: ask.seconds, deadline: ask.deadline, plan, roster: ask.roster, now: ctx.now || Date.now() }));
-  return { ok: true, film, said: `${said} Starting now.` };
+  const film = await store.save(Object.assign(newFilm({ topic: ask.topic, targetSeconds: ask.seconds, deadline: ask.deadline, plan, roster: ask.roster, now: ctx.now || Date.now() }), fast.fast ? { fast: fast.fast } : {}));
+  return { ok: true, film, said: `${said}${fast.said ? ` ${fast.said}` : ''} Starting now.` };
 }
 
 // ─── One pass of work ────────────────────────────────────────────────────────
@@ -132,7 +137,7 @@ async function writeStep(ctx, store, film) {
   const draft = shotList(film.outline, sceneShots, film.plan);
   const speech = draft.reduce((t, s) => t + s.dialogue.reduce((u, d) => u + d.line.length / 14, 0), 0);
   const replanned = planFilm({ targetSeconds: film.target_s, deadlineSeconds: film.deadline_s, providers: await farmProviders(ctx.env, ctx.storage, ctx), ...(await loadRates(ctx.storage)), dialogueSeconds: speech, uniqueWanted: draft.length, talkingShots: draft.filter((s) => s.dialogue.length && s.characters?.length).length, now });
-  if (replanned.ok) film.plan = replanned;
+  if (replanned.ok) film.plan = film.fast?.on ? fastReplan(replanned, { talking: draft.filter((s) => s.dialogue.length && s.characters?.length).length }) : replanned;  // FAST
   const shots = shotList(film.outline, sceneShots, film.plan);
   await store.putShots(film.id, shots);
   film.shot_count = shots.length;
@@ -401,6 +406,8 @@ async function startAssembly(ctx, store, film, shots) {
 }
 
 async function assembleStep(ctx, store, film) {
+  // FAST: the Modal containers usually return just after the last clip; their real cost is read while assembling.
+  if (film.farm?.provider === 'modal' && !film.fast?.ended_ms) await settleFastFarm(ctx, film);
   const status = await filmRenderStatus(ctx.env, film.assembly.job, ctx.fetcher || fetch, ctx.now || Date.now());
   if (status.pending) {
     if (status.run_started_ms && !film.assembly.run_started_ms) {
@@ -431,6 +438,17 @@ async function dispatchFarm(ctx, film, shots) {
   if (!publicOrigin(ctx.base)) {
     film.waiting = 'Waiting to start the free GPU: CHE does not know her public address yet. Open CHE on your phone once and the moving shots start.';
     return;
+  }
+  // FAST: the owner asked for this film on Modal, so every clip and lip sync is made at once there (within the cap,
+  // checked again in startFastFarm). If Modal cannot take it, the free farm below runs and the notes say why.
+  if (film.fast?.on && !film.fast.key) {
+    const { token, record } = await newFarmToken(ctx.now || Date.now());
+    const clips = shots.filter((s) => s.tier === 'A' && !s.clip_key && s.status !== 'failed').length;
+    const lips = [...talkers(film, shots)].filter((n) => !shots.find((s) => s.n === n)?.lip_key).length;
+    const fast = await startFastFarm(ctx, film, { token, record, clips, lips });
+    if (fast.ok) { film.farm = fast.farm; return; }
+    film.fast = { ...film.fast, on: false, declined: fast.why };
+    film.notes = [...(film.notes || []), safe(`Fast mode did not run, so this film uses the free GPU: ${fast.why}.`)];
   }
   const providers = await farmProviders(ctx.env, ctx.storage, ctx);
   const kaggle = providers.find((p) => p.id === 'kaggle');
@@ -491,7 +509,7 @@ function takeFarmResults(film, shots, ledger) {
 
 /** A talking shot that must wait for its lip-synced clip: the Kaggle farm is open and it has neither the clip nor a failure. */
 function lipPending(film, s, ledger, chosen) {
-  return film.farm?.provider === 'kaggle' && !film.farm.closed && chosen.has(s.n) && !s.lip_key && !ledger[s.n]?.lip_key && !ledger[s.n]?.lip_error;
+  return ['kaggle', 'modal'].includes(film.farm?.provider) && !film.farm.closed && chosen.has(s.n) && !s.lip_key && !ledger[s.n]?.lip_key && !ledger[s.n]?.lip_error;
 }
 
 function downgradeTierA(film, shots, why) {
@@ -504,6 +522,15 @@ function downgradeTierA(film, shots, why) {
 }
 
 export async function settleFarm(ctx, film, shots) {
+  // FAST: the Modal farm is read until every container has returned, so its real cost is recorded even after the
+  // last clip arrived; when it ended with shots still missing, they become stills with the reason.
+  if (film.farm?.provider === 'modal' && !film.fast?.ended_ms) {
+    const end = await settleFastFarm(ctx, film);
+    if (end && !film.farm.closed) {
+      takeFarmResults(film, shots, await farmLedger(ctx.storage, film));
+      if (shots.some((s) => s.tier === 'A' && !s.clip_key && s.status !== 'failed')) return downgradeTierA(film, shots, end);
+    }
+  }
   if (!film.farm || film.farm.closed) return;
   // Read again: a clip may have arrived during this pass. Copy it onto the shots before deciding to close the farm.
   const ledger = await farmLedger(ctx.storage, film);
@@ -731,7 +758,7 @@ export async function filmTokenRoute(ctx, path, request) {
     const saved = await mediaStore(ctx.env, ctx.storage).put(key, bytes, { contentType: 'video/mp4' });
     if (!saved.ok) return json({ ok: false, detail: saved.error }, 507);
     await patchLedger(ctx.storage, ledgerKey, n, (cur) => ({ ...cur, lip_key: key, lip_s: facts.seconds }));
-    if (Number(url.searchParams.get('seconds')) > 0) await recordRate(ctx.storage, 'kaggle_lipsync_s', Number(url.searchParams.get('seconds')));
+    if (Number(url.searchParams.get('seconds')) > 0 && film.farm.provider === 'kaggle') await recordRate(ctx.storage, 'kaggle_lipsync_s', Number(url.searchParams.get('seconds')));
     if (Number(url.searchParams.get('setup')) > 0) await recordRate(ctx.storage, 'lipsync_setup_s', Number(url.searchParams.get('setup')));
     return json({ ok: true });
   }
@@ -965,9 +992,11 @@ export async function rerenderFilm(ctx, ask) {
   // The owner's own deadline carries over; a default one is planned afresh (and not quoted back as if he gave it).
   const deadline = old.deadline_s && old.deadline_words ? { seconds: old.deadline_s, words: old.deadline_words } : null;
   const plan = planFilm({ targetSeconds: old.target_s, deadlineSeconds: deadline?.seconds ?? null, providers: await farmProviders(ctx.env, ctx.storage, ctx), ...(await loadRates(ctx.storage)), dialogueSeconds: speech, uniqueWanted: draft.length, talkingShots: draft.filter((s) => s.dialogue.length && s.characters?.length).length, now });
+  if (!plan.ok) return { ok: false, said: speakPlan(plan, { asked: deadline?.words }) };
+  const fast = await planFast(ctx, plan, ask.fast === true, { talking: draft.filter((s) => s.dialogue.length && s.characters?.length).length });  // FAST: "re-render Brewed Anarchy with Modal"
   const said = speakPlan(plan, { asked: deadline?.words });
-  if (!plan.ok) return { ok: false, said };
   const film = newFilm({ topic: old.topic, targetSeconds: old.target_s, deadline, plan, roster: old.roster, now });
+  if (fast.fast) film.fast = fast.fast;
   Object.assign(film, { title: old.title, outline: old.outline, scene_next: old.outline.scenes.length, rerender_of: old.id, state: 'making' });
   // The same faces: the old film's portraits are reused (the Worker reads them directly; no runner fetches them).
   const portraits = Object.fromEntries(Object.entries(old.cast || {}).filter(([, c]) => c?.key).map(([id, c]) => [id, { done: true, key: c.key }]));
@@ -980,7 +1009,7 @@ export async function rerenderFilm(ctx, ask) {
   const lines = made.reduce((n, s) => n + s.dialogue.length, 0);
   const recorded = made.reduce((n, s) => n + s.dialogue.filter((d) => d.from_key).length, 0);
   const faces = Object.keys(portraits).length;
-  return { ok: true, film, said: `Re-rendering "${title}" from its saved script: the same ${old.outline.scenes.length} scenes, ${made.length} shots and ${lines} lines of dialogue, nothing rewritten${recorded ? `, reusing ${recorded} recorded voice line${recorded === 1 ? '' : 's'}` : ''}${faces ? ` and the same ${faces} character portrait${faces === 1 ? '' : 's'}` : ''}. ${said} Starting now.` };
+  return { ok: true, film, said: `Re-rendering "${title}" from its saved script: the same ${old.outline.scenes.length} scenes, ${made.length} shots and ${lines} lines of dialogue, nothing rewritten${recorded ? `, reusing ${recorded} recorded voice line${recorded === 1 ? '' : 's'}` : ''}${faces ? ` and the same ${faces} character portrait${faces === 1 ? '' : 's'}` : ''}. ${said}${fast.said ? ` ${fast.said}` : ''} Starting now.` };
 }
 
 export const FILM_ACTIVE_STATES = ACTIVE;
