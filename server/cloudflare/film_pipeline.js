@@ -3,7 +3,7 @@
 // film/<id>/, so a film survives restarts and can be paused and resumed without losing anything.
 
 import {
-  FilmStore, FILM_VALIDATION_KEY, MAX_CAST, NEURONS, PORTRAIT_SIZE, REFERENCE_MODEL, STILL_MODEL, TTS_MODEL,
+  FilmStore, sayFixes, FILM_VALIDATION_KEY, MAX_CAST, NEURONS, PORTRAIT_SIZE, REFERENCE_MODEL, REVIEW_ROUNDS, STILL_MODEL, TTS_MODEL, reviewFilm,
   assemblyPlan, checkPortrait, checkStill, farmProviders, learnFromCheck, loadRates, loadUsage, mp3Seconds, newFilm, outlineMessages, planFilm,
   portraitPrompt, recordRate, reserve, sceneMessages, seedFor, shotSeconds, voiceTimes, segmentSpec, shotList, spend, speakPlan, stillPrompt, validOutline, validSceneShots, outlineShots,
   _internals,
@@ -11,8 +11,8 @@ import {
 import { imagePayload } from './image_payload.js';
 import { routeWork } from './compute_pool.js';
 import { recordVideoFailed, recordVideoVerified } from './action_receipts.js';
-import { farmTokenOpens, hfClip, kaggleSessionStatus, newFarmToken, startKaggleSession, validateKaggle, ensureHfSpace, HF_SPACE_FILES } from './film_farm.js';
-import { assemblyTokenOpens, filmRenderStatus, newAssemblyJob, startFilmRender, validateGithub, verifyFilmObject } from './film_render.js';
+import { farmTokenOpens, hfClip, kaggleSessionLog, kaggleSessionStatus, newFarmToken, startKaggleSession, validateKaggle, ensureHfSpace, HF_SPACE_FILES } from './film_farm.js';
+import { assemblyTokenOpens, filmRenderStatus, newAssemblyJob, publicOrigin, startFilmRender, validateGithub, verifyFilmObject } from './film_render.js';
 import { mp4Facts } from './github_video_renderer.js';
 import { assembleUpload, mediaStore, partKey, sha256Hex } from './che_media_store.js';
 import { saveFilmVideo } from './media.js';
@@ -269,9 +269,25 @@ async function makeStep(ctx, store, film) {
     }
   }
 
+  // A re-render from the saved script reuses the lines already recorded: each is copied under this film (the farm
+  // and the runners may fetch only this film's files) at no voice allowance. A recording that is gone is voiced again.
+  const copies = [];
+  for (const s of shots) s.dialogue.forEach((d, i) => { if (!d.audio_key && d.from_key && s.status !== 'failed') copies.push({ s, d, i }); });
+  await Promise.all(copies.slice(0, VOICE_BATCH * 2).map(async ({ s, d, i }) => {
+    try {
+      const obj = await media.get(d.from_key);
+      if (!obj?.body?.length) throw new Error('gone');
+      const key = `film/${film.id}/voice/${s.n}-${i}.mp3`;
+      const saved = await media.put(key, obj.body, { contentType: 'audio/mpeg' });
+      if (!saved.ok) throw new Error(saved.error);
+      Object.assign(s.dialogue[i], { audio_key: key, audio_s: Number(d.from_s) || mp3Seconds(obj.body), from_key: '' });
+      film.stats.lines_voiced += 1; film.stats.voices_reused = (film.stats.voices_reused || 0) + 1;
+    } catch { s.dialogue[i].from_key = ''; }
+  }));
+
   // Voices: up to eight lines at once, reserved the same way (about 14 characters a second of speech).
   const lines = [];
-  for (const s of shots) s.dialogue.forEach((d, i) => { if (!d.audio_key && s.status !== 'failed') lines.push({ s, d, i }); });
+  for (const s of shots) s.dialogue.forEach((d, i) => { if (!d.audio_key && !d.from_key && s.status !== 'failed') lines.push({ s, d, i }); });
   const batch = lines.slice(0, VOICE_BATCH);
   const lineCost = batch.length ? Math.max(0.5, Math.max(...batch.map((l) => (l.d.line.length / 14 / 60) * NEURONS.tts_per_minute))) : 0;
   const voicesPaid = batch.length && !film.waiting ? await reserve(storage, 'neurons', lineCost, batch.length, { now }) : 0;
@@ -351,7 +367,9 @@ async function startAssembly(ctx, store, film, shots) {
     return fail(store, film, started.error);
   }
   film.state = 'assembling';
-  film.assembly = { job, total_s: plan.total_s, missing: plan.missing, segments: plan.segments.length, reported: [] };
+  // Each assembly writes its own file, so a repair round (or "remake shot N") never replaces a video already verified
+  // and in the library; an assembly started before this field existed still writes film.mp4 (the token route).
+  film.assembly = { job, total_s: plan.total_s, missing: plan.missing, segments: plan.segments.length, reported: [], output_key: `film/${film.id}/film-${job.id}.mp4` };
   await store.save(film);
   return 30_000;
 }
@@ -382,6 +400,12 @@ async function assembleStep(ctx, store, film) {
 // ─── The farm ────────────────────────────────────────────────────────────────
 
 async function dispatchFarm(ctx, film, shots) {
+  // A GPU session fetches the film's pictures from CHE and uploads its clips to her. Without her public address it
+  // could only fail, so the farm waits (the film keeps making its stills) until CHE has been opened once.
+  if (!publicOrigin(ctx.base)) {
+    film.waiting = 'Waiting to start the free GPU: CHE does not know her public address yet. Open CHE on your phone once and the moving shots start.';
+    return;
+  }
   const providers = await farmProviders(ctx.env, ctx.storage, ctx);
   const kaggle = providers.find((p) => p.id === 'kaggle');
   // The one compute router (compute_pool.routeWork) picks the clip farm: free GPUs only, Kaggle first; it says why
@@ -390,8 +414,8 @@ async function dispatchFarm(ctx, film, shots) {
   const { token, record } = await newFarmToken(ctx.now || Date.now());
   if (route.order.includes('kaggle')) {
     const { rates } = await loadRates(ctx.storage);
-    const want = shots.filter((s) => s.tier === 'A').length;
-    const lips = talkers(film, shots).size;
+    const want = shots.filter((s) => s.tier === 'A' && !s.clip_key).length;
+    const lips = [...talkers(film, shots)].filter((n) => !shots.find((s) => s.n === n)?.lip_key).length;
     const left = Number(kaggle.remaining.gpu_seconds);
     const seconds = Math.floor(Math.min(left, 11.5 * 3600, rates.kaggle_startup_s + want * rates.kaggle_clip_s + (lips ? rates.lipsync_setup_s + lips * rates.kaggle_lipsync_s : 0) + 900));
     const usage = await loadUsage(ctx.storage, ctx.now || Date.now());
@@ -458,12 +482,21 @@ async function settleFarm(ctx, film, shots) {
   const onFarm = (s) => (s.tier === 'A' && !s.clip_key && s.status !== 'failed') || lipPending(film, s, ledger, chosen);
   if (!shots.some(onFarm)) { film.farm.revoked = true; film.farm.closed = 'all clips arrived'; return; }
   const now = ctx.now || Date.now();
-  if (film.farm.provider === 'kaggle') {
-    const status = await kaggleSessionStatus(ctx.keys?.KAGGLE_API_TOKEN || ctx.env.KAGGLE_API_TOKEN, film.farm.session, ctx.fetcher || fetch);
-    if (status.ok && ['complete', 'error', 'cancelled'].includes(status.state)) return downgradeTierA(film, shots, `the Kaggle session ended (${status.state}${status.failure ? `: ${status.failure.slice(0, 80)}` : ''})`);
-  }
+  // The worker's own report comes first: its handler posts the error to /done and then exits, so Kaggle also says
+  // "error" for the same session, without the reason.
   const done = await ctx.storage.get(`film:${film.id}:farmdone`);
-  if (done?.error) return downgradeTierA(film, shots, `the GPU worker stopped: ${String(done.error).slice(0, 80)}`);
+  if (done?.error) return downgradeTierA(film, shots, `the GPU worker stopped: ${safe(done.error).slice(0, 160)}`);
+  if (film.farm.provider === 'kaggle') {
+    const raw = ctx.keys?.KAGGLE_API_TOKEN || ctx.env.KAGGLE_API_TOKEN;
+    const status = await kaggleSessionStatus(raw, film.farm.session, ctx.fetcher || fetch);
+    if (status.ok && ['complete', 'error', 'cancelled'].includes(status.state)) {
+      // A session that ended without reporting (it never reached CHE, or died before its handler ran): the reason is
+      // in the session's own log, read once here; Kaggle's failure message is the fallback.
+      const fromLog = status.state === 'complete' ? '' : await kaggleSessionLog(raw, film.farm.session, ctx.fetcher || fetch, [film.farm.token]);
+      const reason = safe(fromLog || status.failure || '').slice(0, 160);
+      return downgradeTierA(film, shots, `the Kaggle session ended (${status.state}${reason ? `: ${reason}` : ', with no reason in its log'})`);
+    }
+  }
   // Clips may not hold up the film: once everything else is ready they get half the planned clip time more, no more.
   const othersDone = shots.filter((s) => !onFarm(s)).every((s) => s.status === 'verified' || s.status === 'failed' || (s.tier === 'A' && !s.clip_key));
   if (othersDone) {
@@ -531,6 +564,15 @@ export async function remakeShot(ctx, n) {
 }
 
 async function fail(store, film, why) {
+  // A director-loop repair that fails leaves the film as it was: done, with the video it already had, and the fixes
+  // it tried listed as still short with the reason.
+  if (film.previous_result && film.review?.fixing?.length) {
+    Object.assign(film.review, { left: mergeFixes(film.review.left || [], film.review.fixing), fixing: [], why: safe(why) });
+    film.state = 'done'; film.result = film.previous_result; film.previous_result = null;
+    if (film.farm) film.farm.revoked = true;
+    await store.save(film, { force: true });
+    return null;
+  }
   film.state = 'failed';
   film.errors = [...(film.errors || []), safe(why)].slice(-10);
   if (film.farm) film.farm.revoked = true;
@@ -566,7 +608,7 @@ export async function filmTokenRoute(ctx, path, request) {
       return json({ ok: true });
     }
     const media = mediaStore(ctx.env, ctx.storage);
-    const key = `film/${film.id}/film.mp4`;
+    const key = film.assembly?.output_key || `film/${film.id}/film.mp4`;
     if (action === 'upload/start' && request.method === 'POST') {
       const uploadId = crypto.randomUUID();
       await ctx.storage.put(`film:${film.id}:upload`, { upload_id: uploadId, started_ms: ctx.now || Date.now(), parts: {} });
@@ -728,7 +770,183 @@ async function finishFilm(ctx, store, film, key) {
   if (film.farm) film.farm.revoked = true;
   film.assembly.job.expires = 0;
   await store.save(film);
+  // The director loop: check the finished film against what was asked and, within its rounds, fix what it can.
+  try { await directorRound(ctx, store, film); } catch (error) { film.notes = [...(film.notes || []), safe(`My check of the finished film did not run: ${error?.message || error}`)]; await store.save(film); }
   return { ok: true, item };
+}
+
+// ─── The director loop ───────────────────────────────────────────────────────
+
+const sameFix = (a, b) => a.kind === b.kind;
+function mergeFixes(into, add) {
+  const out = into.map((f) => ({ ...f, shots: [...f.shots] }));
+  for (const f of add) {
+    const at = out.find((x) => sameFix(x, f));
+    if (at) at.shots = [...new Set([...at.shots, ...f.shots])].sort((a, b) => a - b); else out.push({ ...f, shots: [...f.shots] });
+  }
+  return out;
+}
+
+/**
+ * One round of the director loop on a finished film: review it (film_studio.reviewFilm), say what the last round
+ * fixed, and start the fixes it can make: remake shots that never passed, and moving clips or lip sync again on a
+ * free GPU the one compute router offers (compute_pool.routeWork; never a paid route). At most REVIEW_ROUNDS
+ * automatic rounds; `manual` (the owner's "fix it" / "check it again") allows one more. A fix it cannot make is kept,
+ * with the router's reason, for the finished film's status. Returns { started, review }.
+ */
+export async function directorRound(ctx, store, film, { manual = false } = {}) {
+  const shots = await store.shots(film.id, film.shot_count);
+  const prev = film.review || {};
+  const found = reviewFilm(film, shots);
+  const open = (kind, n) => found.fixes.some((f) => f.kind === kind && f.shots.includes(n));
+  const fixedNow = (prev.fixing || []).map((f) => ({ kind: f.kind, shots: f.shots.filter((n) => !open(f.kind, n)) })).filter((f) => f.shots.length);
+  const review = { rounds: prev.rounds || 0, extra: (prev.extra || 0) + (manual ? 1 : 0), checked: found.checked, short: found.short, fixed: mergeFixes(prev.fixed || [], fixedNow), fixing: [], left: [], why: '', at: new Date(ctx.now || Date.now()).toISOString() };
+  const finish = async () => { film.review = review; await store.save(film); return { started: false, review }; };
+  if (!found.fixes.length) return finish();
+  if (review.rounds >= REVIEW_ROUNDS + review.extra) { review.left = found.fixes; return finish(); }
+  const byN = new Map(shots.map((s) => [s.n, s]));
+  let todo = found.fixes.filter((f) => f.kind === 'remake');
+  const gpu = found.fixes.filter((f) => f.kind !== 'remake');
+  // A remade shot still planned to move (tier A, no clip) needs a clip farm too; without one it could never verify.
+  const remakeMoving = (todo[0]?.shots || []).filter((n) => byN.get(n)?.tier === 'A' && !byN.get(n)?.clip_key);
+  const route = gpu.length || remakeMoving.length ? routeWork('film_clip', await farmProviders(ctx.env, ctx.storage, ctx)) : null;
+  if (gpu.length) {
+    // Lip sync runs only on the Kaggle GPU; moving clips on any free clip farm.
+    const can = (f) => route.route && (f.kind === 'clips' || route.order.includes('kaggle'));
+    todo = [...todo, ...gpu.filter(can)];
+    review.left = gpu.filter((f) => !can(f));
+    if (review.left.length) review.why = route.route ? 'lip sync needs the free Kaggle GPU, which is not available now' : route.why;
+  }
+  if (!todo.length) return finish();
+  const remakes = todo.find((f) => f.kind === 'remake')?.shots || [];
+  if (remakes.length) {
+    const queue = (await ctx.storage.get(`film:${film.id}:remakes`)) || [];
+    await ctx.storage.put(`film:${film.id}:remakes`, [...new Set([...queue, ...remakes])]);
+    for (const n of remakes) if (byN.get(n)) byN.get(n).voice_attempts = 0;
+  }
+  // Without a free clip farm, a remade shot that was planned to move becomes a still with camera motion, and says so.
+  if (remakeMoving.length && !route.route) {
+    for (const n of remakeMoving) Object.assign(byN.get(n), { tier: 'B', downgraded: route.why || 'no free GPU session could start' });
+    film.notes = [...(film.notes || []), safe(`${remakeMoving.length} remade shot${remakeMoving.length === 1 ? '' : 's'} became stills with camera motion: ${route.why || 'no free GPU session could start'}.`)];
+  }
+  const again = todo.filter((f) => f.kind !== 'remake');
+  const reopen = new Set([...again.flatMap((f) => f.shots), ...(route?.route ? remakeMoving : [])]);
+  if (reopen.size) {
+    const ns = reopen;
+    for (const n of again.flatMap((f) => f.shots)) {
+      const s = byN.get(n);
+      if (again.some((f) => f.kind === 'clips' && f.shots.includes(n))) { s.tier = 'A'; delete s.downgraded; }
+      delete s.lip_error;
+      s.status = 'planned';
+    }
+    // The farm's ledger forgets these shots' old answers, and a new free GPU session is started for them only.
+    const ledgerKey = `film:${film.id}:clips`;
+    const ledger = (await ctx.storage.get(ledgerKey)) || {};
+    for (const n of ns) { const { claimed_ms, lip_claimed_ms, lip_error, lip_rejected, rejected, ...keep } = ledger[n] || {}; ledger[n] = keep; }
+    await ctx.storage.put(ledgerKey, ledger);
+    await ctx.storage.delete(`film:${film.id}:farmdone`);
+    film.farm = null;
+  }
+  await store.putShots(film.id, shots);
+  review.rounds += 1;
+  review.fixing = todo;
+  film.review = review;
+  film.previous_result = film.result;
+  film.result = null;
+  film.state = 'making';
+  await store.save(film);
+  return { started: true, review };
+}
+
+/**
+ * Words that may not be for the Film Studio at all. "Check it again" and "fix it" name no film: they are its only
+ * while a finished film is recent. "Re-render <words>" without the word film is its only when the words are a film's
+ * title ("re-render the Nova character" is not). Any other ask applies.
+ */
+export async function filmAskApplies(storage, ask, now = Date.now()) {
+  if (!ask?.bare) return true;
+  const store = new FilmStore(storage);
+  if (ask.kind === 'rerender') return Boolean(filmByTitle(await store.index(), ask.title));
+  const film = await store.latest();
+  return Boolean(film && film.state === 'done' && now - Date.parse(film.result?.at || film.updated_at || 0) < 6 * 3600_000);
+}
+export const filmReviewApplies = (storage, now = Date.now()) => filmAskApplies(storage, { kind: 'review', bare: true }, now);
+
+/** The owner's "fix it" / "check it again": one more round of the director loop on the latest finished film. */
+export async function reviewFilmNow(ctx, { fix = false } = {}) {
+  const store = new FilmStore(ctx.storage);
+  const film = await store.latest();
+  if (!film) return { ok: false, said: 'There is no film in the studio to check.' };
+  const name = film.title ? `"${film.title}"` : 'your film';
+  if (film.state !== 'done') return { ok: false, said: `${name} is not finished yet (${film.state}); I check it myself as soon as it is.` };
+  const out = await directorRound(ctx, store, film, { manual: true });
+  const r = out.review;
+  if (out.started) return { ok: true, started: true, film, said: `I checked ${name} again: ${r.checked.join(', ')}. I'm fixing it now: ${sayFixes(r.fixing)}.${r.left.length ? ` I can't fix the rest right now: ${sayFixes(r.left, false)} (${r.why}).` : ''} Then I reassemble it and check it once more.` };
+  const short = [...r.short, ...(r.left.length ? [sayFixes(r.left, false)] : [])];
+  if (!short.length) return { ok: true, film, said: `I checked ${name} again: ${r.checked.join(', ')}. Everything matches what you asked${fix ? ', so there is nothing to fix' : ''}.` };
+  return { ok: true, film, said: `I checked ${name} again: ${r.checked.join(', ')}. Still short: ${short.join('; ')}${r.why ? ` (${r.why})` : ''}. I can't fix that with the free tools right now.` };
+}
+
+// ─── Re-render from the saved script ─────────────────────────────────────────
+
+const norm = (t) => String(t || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+/** The film an owner names, by its title in any case: exact first, then a title the words contain or are part of. */
+function filmByTitle(index, title) {
+  const want = norm(title);
+  if (!want) return null;
+  return index.find((f) => norm(f.title) === want) || index.find((f) => f.title && want.length >= 4 && (norm(f.title).includes(want) || want.includes(norm(f.title)))) || null;
+}
+
+/**
+ * "Re-render Brewed Anarchy": a NEW film made from a finished film's saved outline, title, cast, shots and dialogue
+ * (and its recorded voices while they are stored), with today's pipeline (moving clips, lip sync). The writer is never
+ * called, so the words are the same. The old film and its video stay as they are.
+ */
+export async function rerenderFilm(ctx, ask) {
+  const store = new FilmStore(ctx.storage);
+  const index = await store.index();
+  const busy = index.find((f) => ACTIVE.has(f.state));
+  if (busy) return { ok: false, said: `I'm already making "${busy.title || 'a film'}". Say "how's my movie going" for its progress, or "cancel my movie" first.` };
+  const entry = ask.last ? index.find((f) => f.state === 'done') : filmByTitle(index, ask.title);
+  if (!entry) {
+    const named = index.filter((f) => f.title && f.state === 'done').slice(0, 5).map((f) => `"${f.title}"`);
+    return { ok: false, said: `${ask.last ? 'You have no finished film yet.' : `I have no film called "${ask.title}".`}${named.length ? ` Your finished films: ${named.join(', ')}.` : ''}` };
+  }
+  const old = await store.film(entry.id);
+  const shots = old?.shot_count ? await store.shots(old.id, old.shot_count) : [];
+  const title = old?.title || entry.title || ask.title;
+  if (!old?.outline?.scenes?.length || !shots.length || shots.length < old.shot_count) {
+    return { ok: false, said: `I can't re-render "${title}" from its script: ${!old ? 'its record is no longer stored' : !old.outline?.scenes?.length ? 'its screenplay was never finished' : 'its shot list is no longer complete'}. Ask for a new film instead and I'll write it fresh.` };
+  }
+  // The saved shots, scene by scene, as the writer gave them; each line keeps its recording to reuse.
+  const sceneShots = {};
+  for (const s of shots) {
+    (sceneShots[s.scene] ||= []).push({ description: s.description, characters: s.characters, sound: s.sound, camera: s.camera,
+      dialogue: s.dialogue.map(({ audio_key, audio_s, from_key, from_s, ...d }) => ({ ...d, from_key: audio_key || '', from_s: audio_s || 0 })) });
+  }
+  await refreshValidation(ctx);
+  const now = ctx.now || Date.now();
+  const draft = shotList(old.outline, sceneShots, { tier_a: 0, reuse: 1 });
+  const speech = draft.reduce((t, s) => t + s.dialogue.reduce((u, d) => u + (d.from_s || d.line.length / 14), 0), 0);
+  // The owner's own deadline carries over; a default one is planned afresh (and not quoted back as if he gave it).
+  const deadline = old.deadline_s && old.deadline_words ? { seconds: old.deadline_s, words: old.deadline_words } : null;
+  const plan = planFilm({ targetSeconds: old.target_s, deadlineSeconds: deadline?.seconds ?? null, providers: await farmProviders(ctx.env, ctx.storage, ctx), ...(await loadRates(ctx.storage)), dialogueSeconds: speech, uniqueWanted: draft.length, talkingShots: draft.filter((s) => s.dialogue.length && s.characters?.length).length, now });
+  const said = speakPlan(plan, { asked: deadline?.words });
+  if (!plan.ok) return { ok: false, said };
+  const film = newFilm({ topic: old.topic, targetSeconds: old.target_s, deadline, plan, roster: old.roster, now });
+  Object.assign(film, { title: old.title, outline: old.outline, scene_next: old.outline.scenes.length, rerender_of: old.id, state: 'making' });
+  // The same faces: the old film's portraits are reused (the Worker reads them directly; no runner fetches them).
+  const portraits = Object.fromEntries(Object.entries(old.cast || {}).filter(([, c]) => c?.key).map(([id, c]) => [id, { done: true, key: c.key }]));
+  if (Object.keys(portraits).length) film.cast = portraits;
+  const made = shotList(old.outline, sceneShots, plan);
+  await store.putShots(film.id, made);
+  film.shot_count = made.length;
+  film.eta_at = new Date(now + plan.eta_s * 1000).toISOString();
+  await store.save(film);
+  const lines = made.reduce((n, s) => n + s.dialogue.length, 0);
+  const recorded = made.reduce((n, s) => n + s.dialogue.filter((d) => d.from_key).length, 0);
+  const faces = Object.keys(portraits).length;
+  return { ok: true, film, said: `Re-rendering "${title}" from its saved script: the same ${old.outline.scenes.length} scenes, ${made.length} shots and ${lines} lines of dialogue, nothing rewritten${recorded ? `, reusing ${recorded} recorded voice line${recorded === 1 ? '' : 's'}` : ''}${faces ? ` and the same ${faces} character portrait${faces === 1 ? '' : 's'}` : ''}. ${said} Starting now.` };
 }
 
 export const FILM_ACTIVE_STATES = ACTIVE;

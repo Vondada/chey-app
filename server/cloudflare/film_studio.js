@@ -461,6 +461,14 @@ export function filmIntent(message = '') {
   if (/\b(?:render farm|gpu farm|free gpus?|gpu (?:quota|status))\b/i.test(t) && /\b(?:status|how|what|which|show|check|left|quota)\b/i.test(t)) return { kind: 'farm' };
   const shot = /\b(?:remake|redo|regenerate|re-?render)\s+shot\s+(?:number\s+)?(\d{1,5})\b/i.exec(t);
   if (shot) return { kind: 'remake', shot: Number(shot[1]) };
+  // The director loop on demand: one more round of checking the finished film against what was asked, and fixing it.
+  // "Check it again" and "fix it" name no film, so they count only while a finished film is recent (worker.js asks
+  // film_pipeline.filmReviewApplies before taking them).
+  const review = /^(?:please\s+)?(?:(check|review|look at)\s+(it|the (?:film|movie)|my (?:film|movie))\s+again|(fix)\s+(it|the (?:film|movie)|my (?:film|movie)))\s*(?:please)?[.!]*$/i.exec(t);
+  if (review) return { kind: 'review', fix: Boolean(review[3]), bare: /^it$/i.test(review[2] || review[4] || '') };
+  // "Re-render Brewed Anarchy" / "re-render my last film": the finished film made again from its saved script.
+  const rerender = rerenderAsk(t);
+  if (rerender) return rerender;
   // A story set in the office is a film played by the crew, even when the owner calls it a video.
   const office = /\b(?:the|my|our|your|che'?s)\s+(?:office|crew|team)\b|\bla agencia\b/i.test(t);
   if (office && /\b(?:make|create|produce|shoot|render|generate)\b/i.test(t) && /\b(?:story|episode|skit|movie|film)\b/i.test(t) && !/\b(?:how(?:'s| is)|status|ready)\b/i.test(t)) {
@@ -481,6 +489,19 @@ export function filmIntent(message = '') {
   const about = /\b(?:about|on|of|starring|featuring|where|in which)\s+(.{3,300}?)[.!?]*$/i.exec(t);
   const topic = (about ? about[1] : '').replace(/\b(?:in|within|under|by)\s+(?:about\s+)?(?:\d+|an?|one|half)\b.*$/i, '').replace(/\s+as fast as (?:possible|you can).*$/i, '').trim();
   return { kind: 'make', seconds: seconds || 300, deadline, topic: topic.slice(0, 300) };
+}
+
+/** "re-render Brewed Anarchy", "re-render the film Brewed Anarchy", "re-render my last movie", or null. */
+function rerenderAsk(t) {
+  const m = /^(?:please\s+)?re-?render\s+(.{2,140}?)(?:\s+again)?(?:\s+from\s+(?:its|the)\s+(?:saved\s+)?script)?(?:\s+please)?[.!]*$/i.exec(t);
+  if (!m) return null;
+  const what = m[1].trim();
+  if (/^(?:my|the)\s+(?:last|latest|previous)\s+(?:film|movie)$/i.test(what)) return { kind: 'rerender', last: true };
+  const named = /^(?:(?:my|the)\s+)?(?:film|movie)\s+(.+)$/i.exec(what);
+  const title = (named ? named[1] : what).replace(/^["'“”‘’]+|["'“”‘’]+$/g, '').trim();
+  // The scene, a shot, a picture or "it" belong elsewhere (Scene Director, "remake shot 3").
+  if (!title || /^(?:it|this|that|them|everything|the scene|my scene|the video|my video|the picture|the image|the thumbnail|shot\b)/i.test(title)) return null;
+  return { kind: 'rerender', title: clean(title, 120), ...(named ? {} : { bare: true }) };
 }
 
 // ─── The screenplay ──────────────────────────────────────────────────────────
@@ -635,7 +656,9 @@ export class FilmStore {
     await this.storage.put(`film:${film.id}`, film);
     const idx = (await this.index()).filter((f) => f.id !== film.id);
     idx.unshift({ id: film.id, title: film.title || film.topic, state: film.state, created_at: film.created_at });
-    await this.storage.put(FILM_INDEX_KEY, idx.slice(0, 50));
+    // The newest 50 films, plus finished ones beyond them (up to 200 in all), so a finished film can still be found by
+    // its title and re-rendered from its saved script. Film records and their files are never deleted here.
+    await this.storage.put(FILM_INDEX_KEY, [...idx.slice(0, 50), ...idx.slice(50).filter((f) => f.state === 'done')].slice(0, 200));
     return film;
   }
   async shots(id, count) {
@@ -893,6 +916,51 @@ function faces(film) {
   return made ? ` ${made} character portrait${made === 1 ? '' : 's'} keep${made === 1 ? 's' : ''} faces the same from shot to shot.` : '';
 }
 
+// ─── The director loop ───────────────────────────────────────────────────────
+
+/** Automatic review-and-fix rounds per film; "fix it" or "check it again" allows one more each time. */
+export const REVIEW_ROUNDS = 2;
+
+/**
+ * Checks a finished film against what was asked, from evidence only: the stored MP4's facts (length, frame size;
+ * verifyFilmObject already required H.264 video and AAC audio) and each shot's own record (the picture that passed,
+ * the moving clip or lip-synced video that arrived, the lip sync that failed). Every mismatch is a bounded fix:
+ * remake a shot that never passed, make the moving clip a shot planned to move is missing, or lip-sync again.
+ * Returns { checked: [...], fixes: [{ kind, shots }], short: [...] }.
+ */
+export function reviewFilm(film, shots, facts = film.result || {}) {
+  const checked = ['its length', 'its picture size and sound', 'every shot\'s picture, moving clip and lip sync'];
+  const short = [];
+  const target = Number(film.target_s || 0);
+  if (target && facts.seconds && facts.seconds < target * 0.8) short.push(`it runs ${spokenDuration(facts.seconds)} against the ${spokenDuration(target)} you asked for`);
+  if (facts.width && (facts.width !== 1280 || facts.height !== 720)) short.push(`it is ${facts.width}x${facts.height}, not 1280x720`);
+  const fixes = [];
+  const failed = shots.filter((s) => s.status === 'failed').map((s) => s.n);
+  if (failed.length) fixes.push({ kind: 'remake', shots: failed });
+  // A still is a mismatch only when the shot was planned to move (tier A, or moved down when the GPU fell through);
+  // a film the owner wanted fast, with stills by plan, is not "fixed" into a slow one.
+  const stills = shots.filter((s) => s.status === 'verified' && (s.tier === 'A' || s.downgraded) && !s.clip_key && !s.lip_key).map((s) => s.n);
+  if (stills.length) fixes.push({ kind: 'clips', shots: stills });
+  const unsynced = shots.filter((s) => s.status === 'verified' && s.lip_error && !s.lip_key && !stills.includes(s.n)).map((s) => s.n);
+  if (unsynced.length) fixes.push({ kind: 'lipsync', shots: unsynced });
+  return { checked, fixes, short };
+}
+
+const shotNames = (ns) => (ns.length === 1 ? `shot ${ns[0]}` : `shots ${ns.slice(0, -1).join(', ')} and ${ns.at(-1)}`);
+const FIX_DONE = { remake: (ns) => `remade ${shotNames(ns)}`, clips: (ns) => `made the moving clip for ${shotNames(ns)}`, lipsync: (ns) => `lip-synced ${shotNames(ns)}` };
+const FIX_SHORT = { remake: (ns) => `${shotNames(ns)} never passed ${ns.length === 1 ? 'its' : 'their'} checks`, clips: (ns) => `${shotNames(ns)} ${ns.length === 1 ? 'is a still' : 'are stills'} instead of moving`, lipsync: (ns) => `${shotNames(ns)} ${ns.length === 1 ? 'has' : 'have'} no lip sync` };
+/** Fixes said plainly: done ("remade shot 3") or still to do ("shot 3 never passed its checks"). */
+export const sayFixes = (fixes, done = true) => (fixes || []).map((f) => (done ? FIX_DONE : FIX_SHORT)[f.kind]?.(f.shots)).filter(Boolean).join('; ');
+
+/** What the director loop checked, fixed and could not fix, for the finished film's status. */
+function reviewLine(film) {
+  const r = film.review;
+  if (!r?.checked) return '';
+  const fixed = sayFixes(r.fixed);
+  const short = [...(r.short || []), ...(r.left?.length ? [sayFixes(r.left, false)] : [])].filter(Boolean);
+  return ` I checked ${r.checked.join(', ')}.${fixed ? ` I fixed it myself: ${fixed}.` : ''}${short.length ? ` Still short: ${short.join('; ')}${r.why ? ` (${clean(r.why, 160)})` : ''}. Say "fix it" for one more try.` : ' Everything matches what you asked.'}`;
+}
+
 export function speakStatus(film, shots = [], now = Date.now()) {
   if (!film) return 'You have no film in the studio yet. Say "make me a 10-minute movie about" and a subject.';
   const p = filmProgress(film, shots, now);
@@ -900,10 +968,10 @@ export function speakStatus(film, shots = [], now = Date.now()) {
   const time = `${spokenDuration(p.elapsed_s)} in, against an estimate of ${spokenDuration(p.eta_s)}`;
   switch (film.state) {
     case 'scripting': return `${name} is being written: scene ${film.scene_next} of ${film.outline?.scenes?.length || 'the outline'}. ${time}.`;
-    case 'making': return `${name}: ${p.shots_verified} of ${p.shots_total} shots done${p.shots_failed ? `, ${p.shots_failed} failed after ${MAX_ATTEMPTS} tries` : ''}. ${time}.${film.waiting ? ` ${film.waiting}` : ''}${faces(film)}${lipLine(shots)}`;
+    case 'making': return `${name}: ${p.shots_verified} of ${p.shots_total} shots done${p.shots_failed ? `, ${p.shots_failed} failed after ${MAX_ATTEMPTS} tries` : ''}. ${time}.${film.review?.fixing?.length ? ` My check of the finished film found work to do, so I'm fixing it (round ${film.review.rounds}): ${sayFixes(film.review.fixing, false)}.` : ''}${film.waiting ? ` ${film.waiting}` : ''}${faces(film)}${lipLine(shots)}`;
     case 'assembling': return `${name} is being assembled on ${film.plan?.segments || 1} GitHub runners. ${time}.`;
     case 'verifying': return `${name} is uploaded and I am checking the file. ${time}.`;
-    case 'done': return `${name} is done: ${spokenDuration(film.result?.seconds || 0)}, checked from the file itself, in your media library.${film.result?.missing?.length ? ` ${film.result.missing.length} shots never passed their checks and were left out.` : ''}${motionLine(shots)}${lipLine(shots)} It took ${spokenDuration((Date.parse(film.result?.at || '') - film.started_ms) / 1000)}.${whyNotes(film)}`;
+    case 'done': return `${name} is done: ${spokenDuration(film.result?.seconds || 0)}, checked from the file itself, in your media library.${film.result?.missing?.length ? ` ${film.result.missing.length} shots never passed their checks and were left out.` : ''}${motionLine(shots)}${lipLine(shots)} It took ${spokenDuration((Date.parse(film.result?.at || '') - film.started_ms) / 1000)}.${whyNotes(film)}${reviewLine(film)}`;
     case 'paused': return `${name} is paused at ${p.shots_verified} of ${p.shots_total} shots. Say "resume my movie" to continue; nothing is lost.`;
     case 'cancelled': return `${name} was stopped. Its finished shots are kept.`;
     case 'failed': return `${name} could not be finished: ${film.errors?.slice(-1)[0] || 'an unknown error'}. No film was made.`;
