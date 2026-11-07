@@ -9,15 +9,16 @@ const memStorage = (seed = {}) => {
   return { get: async (k) => data.get(k), put: async (k, v) => { data.set(k, v); }, data };
 };
 
-test('all ten named characters exist with their bundled GLBs; Orion and Vale are reported missing', () => {
+test('all ten named characters exist with their bundled GLBs, Orion and Vale included (Stage 4, 2026-11-06)', () => {
   const registry = defaultRegistry(1000);
   assert.deepEqual(Object.keys(registry.characters), [...CHARACTER_IDS]);
   assert.equal(CHARACTER_IDS.length, 10);
   const { ready, missing } = modelStatus(registry);
-  assert.deepEqual(missing, ['orion', 'vale']);
-  assert.equal(ready.length, 8);
+  assert.deepEqual(missing, []);
+  assert.equal(ready.length, 10);
   assert.deepEqual(bundledModel('nova'), { format: 'glb', path: 'assets/characters/crew/nova.glb' });
-  assert.equal(bundledModel('orion'), null);
+  assert.deepEqual(bundledModel('orion'), { format: 'glb', path: 'assets/characters/crew/orion.glb' });
+  assert.equal(bundledModel('nobody'), null);
 });
 
 test('publishing a change appends a version, keeps the earlier one, and does not mutate the input', () => {

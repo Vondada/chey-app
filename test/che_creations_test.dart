@@ -1,4 +1,8 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:chey/che_creations.dart';
@@ -57,5 +61,35 @@ void main() {
     expect(find.bySemanticsLabel('Video: Sunrise. Tap to play.'), findsOneWidget);
     expect(find.bySemanticsLabel('Picture: Logo. Tap to view.'), findsOneWidget);
     expect(find.byIcon(Icons.play_circle_fill), findsOneWidget);
+  });
+
+  test('a saved video plays from its signed play link, asked for with the device token (the iPhone player drops headers)', () async {
+    final seen = <String>[];
+    final client = MockClient((req) async {
+      seen.add('${req.method} ${req.url} ${req.headers['Authorization']}');
+      return http.Response(jsonEncode({'url': '$base/api/media/v1/video?exp=1&sig=abc'}), 200);
+    });
+    final url = await cheVideoPlayUrl('$base/api/media/v1/video', {'Authorization': 'Bearer t'}, client: client);
+    expect(url, '$base/api/media/v1/video?exp=1&sig=abc');
+    expect(seen, ['POST $base/api/media/v1/link Bearer t']);
+  });
+
+  test('no play link is asked for without a token or for a non-video address, and a refused link is an error', () async {
+    final client = MockClient((req) async => http.Response('{"detail":"no"}', 404));
+    expect(await cheVideoPlayUrl('https://cdn.example/v.mp4', {'Authorization': 'Bearer t'}, client: client), 'https://cdn.example/v.mp4');
+    expect(await cheVideoPlayUrl('$base/api/media/v1/video', const {}, client: client), '$base/api/media/v1/video');
+    expect(cheVideoPlayUrl('$base/api/media/v1/video', {'Authorization': 'Bearer t'}, client: client), throwsException);
+  });
+
+  test('voice: a failed video is retried or read by words, and other words go to the chat', () {
+    for (final w in ['try again', 'Try it again', 'CHE, retry', 'reload the video', 'play the video again please']) {
+      expect(cheVideoLinkCommand(w), 'retry', reason: w);
+    }
+    for (final w in ['what happened?', "what's wrong", 'read the error']) {
+      expect(cheVideoLinkCommand(w), 'read', reason: w);
+    }
+    for (final w in ['make a new video', 'try again tomorrow with Nova', 'open my scene']) {
+      expect(cheVideoLinkCommand(w), isNull, reason: w);
+    }
   });
 }

@@ -10,7 +10,7 @@
 
 export const CHARACTER_REGISTRY_KEY = 'characters:registry';
 export const CHARACTER_IDS = Object.freeze(['che', 'nova', 'atlas', 'mira', 'knox', 'sage', 'lyra', 'iris', 'orion', 'vale']);
-const BUNDLED_IDS = new Set(['che', 'nova', 'atlas', 'mira', 'knox', 'sage', 'lyra', 'iris']);
+const BUNDLED_IDS = new Set(['che', 'nova', 'atlas', 'mira', 'knox', 'sage', 'lyra', 'iris', 'orion', 'vale']);
 const MODEL_FORMATS = new Set(['glb']);
 const MAX_VERSIONS = 200;
 const DISPLAY = { che: 'CHE', nova: 'Nova', atlas: 'Atlas', mira: 'Mira', knox: 'Knox', sage: 'Sage', lyra: 'Lyra', iris: 'Iris', orion: 'Orion', vale: 'Vale' };

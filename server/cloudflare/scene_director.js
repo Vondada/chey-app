@@ -25,8 +25,9 @@ const MAX_VERSIONS = 40;
 
 const RECENT_MS = 6 * 3600_000; // edits like "change her outfit" go to the scene the owner worked on in the last six hours
 
-export const CREW_MODELS = Object.freeze(['che', 'nova', 'atlas', 'mira', 'knox', 'sage', 'lyra', 'iris']);
-const NO_MODEL = Object.freeze(['orion', 'vale']);
+export const CREW_MODELS = Object.freeze(['che', 'nova', 'atlas', 'mira', 'knox', 'sage', 'lyra', 'iris', 'orion', 'vale']);
+// Crew named in a request who have no rigged model yet (none today; Orion and Vale have theirs).
+const NO_MODEL = Object.freeze([]);
 const NAME = { che: 'CHE', nova: 'Nova', atlas: 'Atlas', mira: 'Mira', knox: 'Knox', sage: 'Sage', lyra: 'Lyra', iris: 'Iris', orion: 'Orion', vale: 'Vale' };
 const FEMALE = new Set(['che', 'nova', 'mira', 'sage', 'lyra', 'iris', 'vale']);
 const CLIPS = Object.freeze({ wave: 2, nod: 1.5, think: 2.5, celebrate: 2, shake: 1.5 });
@@ -140,13 +141,13 @@ export function sceneFromWords(text) {
 
 // ─── Edits ───────────────────────────────────────────────────────────────────
 
-const PRONOUN = /\b(?:her|his|their|she|he|they|them)\b/i;
+const PRONOUN = /\b(?:her|his|him|their|she|he|they|them)\b/i;
 /** Is this an edit of the scene the owner just made? Only checked while a scene is recent. */
 export function directorEditIntent(text) {
   const t = String(text || '').toLowerCase();
   if (/^\s*(?:undo|redo)\b|^\s*(?:undo|go back)(?: that| the last)?(?: change| edit)?\s*[.!]?$/.test(t)) return true;
   if (/\b(?:is|how(?:'s| is)) (?:my |the )?scene\b|\bscene (?:ready|done|status)\b|\brender (?:it|the scene|my scene) again\b/.test(t)) return true;
-  return [/\b(?:relight|lighting)\b|\bmake it (?:sunset|night|morning|golden hour|evening)\b/, /\boutfit\b|\bclothes\b|\b(?:put|dress) (?:her|him|them) in\b/, /\bcamera\b|\bcircle around\b|\borbit\b/, /\bslow(?:er)?(?: it)? down\b|\bslow[- ]?mo(?:tion)?\b|\bspeed (?:it |that )?up\b|\bfaster\b/, /\bmusic\b|\bsoundtrack\b/, /\b(?:make|have|let) (?:her|him|them) say\b/].some((r) => r.test(t)) && (PRONOUN.test(t) || /\b(?:scene|camera|music|slow|speed|relight|lighting|sunset|night|morning|evening|golden hour)\b/.test(t));
+  return [/\bmove (?:her|him|them)\b|\bmake (?:her|him|them) (?:bigger|taller|larger|smaller|shorter)\b/, /\b(?:relight|lighting)\b|\bmake it (?:sunset|night|morning|golden hour|evening)\b/, /\boutfit\b|\bclothes\b|\b(?:put|dress) (?:her|him|them) in\b/, /\bcamera\b|\bcircle around\b|\borbit\b/, /\bslow(?:er)?(?: it)? down\b|\bslow[- ]?mo(?:tion)?\b|\bspeed (?:it |that )?up\b|\bfaster\b/, /\bmusic\b|\bsoundtrack\b/, /\b(?:make|have|let) (?:her|him|them) say\b/].some((r) => r.test(t)) && (PRONOUN.test(t) || /\b(?:scene|camera|music|slow|speed|relight|lighting|sunset|night|morning|evening|golden hour)\b/.test(t));
 }
 
 function threeDKey(spec) {
@@ -155,13 +156,29 @@ function threeDKey(spec) {
 }
 
 /** Applies every edit in one sentence. Returns { spec, said: [...], unknown: [...] }; never changes what it did not say. */
-export function applyEdits(prev, text) {
+export function applyEdits(prev, text, { actor: chosen = null } = {}) {
   const spec = structuredClone(prev);
   const t = String(text || '').toLowerCase();
   const said = [];
-  const actor = spec.actors[0];
+  // The actor touched in the app's live preview, when one is selected; otherwise the scene's lead.
+  const actor = spec.actors.find((a) => a.id === chosen) || spec.actors[0];
   const who = NAME[actor.id] || actor.id;
   const pron = FEMALE.has(actor.id) ? 'her' : 'his';
+
+  // Touch edits from the live preview (tools/che_scene_layout.py draws them): move in half-metre steps, resize by 15%.
+  const move = t.match(/\bmove (?:her|him|them)(?: a (?:bit|little))? (left|right|closer|forward|back(?:ward)?|further away)\b/);
+  if (move) {
+    const [dx, dy] = { left: [-0.5, 0], right: [0.5, 0], closer: [0, -0.5], forward: [0, -0.5], back: [0, 0.5], backward: [0, 0.5], 'further away': [0, 0.5] }[move[1]];
+    const was = actor.offset || [0, 0];
+    actor.offset = [round(Math.max(-1.5, Math.min(1.5, was[0] + dx)), 2), round(Math.max(-1.5, Math.min(1.5, was[1] + dy)), 2)];
+    said.push(`${who} moves ${move[1]}${actor.offset[0] === was[0] && actor.offset[1] === was[1] ? ' (already as far as the room allows)' : ''}`);
+  }
+  const size = t.match(/\bmake (?:her|him|them) (bigger|taller|larger|smaller|shorter)\b/);
+  if (size) {
+    const grow = /bigger|taller|larger/.test(size[1]);
+    actor.scale = round(Math.max(0.6, Math.min(1.6, (actor.scale || 1) * (grow ? 1.15 : 1 / 1.15))), 3);
+    said.push(`${who} is ${grow ? 'bigger' : 'smaller'} (${Math.round(actor.scale * 100)}% of ${pron} usual height)`);
+  }
 
   if (/\boutfit\b|\bclothes\b|\b(?:put|dress) (?:her|him|them) in\b/.test(t)) {
     const word = Object.keys(COLORS).find((c) => new RegExp(`\\b${c}\\b`).test(t));
@@ -354,8 +371,26 @@ function eta(render) {
   return 'about four to six minutes';
 }
 
-/** One chat turn of the Scene Director. Returns { text, meta } or null when the words are not for it. */
-export async function directorTurn(ctx, text) {
+/**
+ * The scene the app's live preview draws: the project the owner worked on last, its version on screen and its recent
+ * renders. Read-only; { ok: false } when there is no scene yet.
+ */
+export async function sceneLatest(storage) {
+  const last = await storage.get(DIRECTOR_LAST);
+  const project = last?.id ? await storage.get(projectKey(last.id)) : null;
+  if (!project) return { ok: false, detail: 'There is no scene yet. Say something like "make Nova walk into my office, sit beside me, and start talking".' };
+  const spec = current(project);
+  return {
+    ok: true, project_id: project.id, title: project.title, version: spec.version, versions: project.versions.length, spec,
+    renders: project.renders.slice(0, 5).map((r) => ({ job: r.job, version: r.version, status: r.status, media_id: r.media_id || null, seconds: r.seconds ?? null })),
+  };
+}
+
+/**
+ * One chat turn of the Scene Director. Returns { text, meta } or null when the words are not for it. `selection`
+ * ({ project_id, actor }) comes from the app's live preview when the owner has touched an actor.
+ */
+export async function directorTurn(ctx, text, selection = null) {
   const { storage, env, fetcher = fetch, now = Date.now() } = ctx;
   if (directorCreateIntent(text)) {
     const made = sceneFromWords(text);
@@ -373,7 +408,9 @@ export async function directorTurn(ctx, text) {
   }
   // Ordinary chat costs nothing here: storage is read only when the words are a scene edit.
   if (!directorEditIntent(text)) return null;
-  const project = await recentProject(storage, now);
+  // A selection from the live preview names its project and actor, so a touch edit lands there even after six hours.
+  const picked = selection && /^scp_[a-f0-9]{16}$/.test(String(selection.project_id || '')) ? await storage.get(projectKey(selection.project_id)) : null;
+  const project = picked || await recentProject(storage, now);
   if (!project) return null;
   const lower = String(text).toLowerCase();
   if (/^\s*undo\b|^\s*go back\b/.test(lower) || /^\s*redo\b/.test(lower)) {
@@ -399,7 +436,7 @@ export async function directorTurn(ctx, text) {
     await updateProject(storage, project, now);
     return { text: started.ok ? `Rendering version ${current(project).version} again, ${eta(project.renders[0])}.` : started.error, meta: { source: 'che_scene_director', ok: started.ok, project_id: project.id } };
   }
-  const edited = applyEdits(current(project), text);
+  const edited = applyEdits(current(project), text, { actor: picked ? String(selection.actor || '') : null });
   if (!edited.said.length) return null;
   const version = Math.max(...project.versions.map((v) => v.version)) + 1;
   project.versions = [...project.versions.slice(0, project.at + 1), { ...edited.spec, version }].slice(-MAX_VERSIONS);

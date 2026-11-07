@@ -243,8 +243,11 @@ export async function farmProviders(env = {}, storage, { now = Date.now(), inter
 
 /** The owner's speed targets (2026-10-22): 2 hours in about an hour, 10 minutes in under 5, 5 minutes as fast as possible. */
 export function defaultDeadline(targetSeconds) {
-  if (targetSeconds <= 300) return 0; // as fast as possible
-  return Math.round(targetSeconds / 2);
+  // Owner, 2026-11-07: "I need them to be actually moving and talking like an actual video, not pictures." A film
+  // without a stated deadline gets the time its moving, lip-synced shots need (two hours at most for a short one);
+  // "as fast as possible" (deadline 0) still means stills with camera motion.
+  if (targetSeconds <= 300) return 7200;
+  return Math.max(7200, Math.round(targetSeconds / 2));
 }
 
 /**
@@ -322,15 +325,16 @@ function planAt({ targetSeconds, deadlineSeconds = null, providers = [], rates =
   let unique = Math.ceil(wanted / reuse);
   while (deadline > 0 && reuse < reuseCap && etaFor(unique, 0).total + waitS > deadline) { reuse += 1; unique = Math.ceil(wanted / reuse); }
 
-  // Moving clips: only key dialogue moments (at most a fifth of the shots), only on connected farm GPUs, and only as
-  // many as finish inside the picture stage so they never stretch the ETA.
+  // Moving clips: every shot moves when the free GPU time and the deadline allow (talking shots first); the rest are
+  // stills with camera motion, and the plan says how many.
   const farmOk = Boolean(p.kaggle?.usable || p.hf_zerogpu?.usable);
   let clips = 0;
   if (farmOk && deadline > 0) {
     const budget = farmClipBudget(p, rates);
     const stage = Math.max(etaFor(unique, 0).stills_s, ttsS);
     const window = deadline - (scriptS + encodeS + finishS + waitS);
-    clips = Math.max(0, Math.min(Math.floor(shots / 5), budget, clipsWithin(Math.max(stage, window), p, rates)));
+    clips = Math.max(0, Math.min(shots, budget, clipsWithin(Math.max(stage, window), p, rates)));
+    if (clips < shots) notes.push(clips ? `${clips} of ${shots} shots move; the free GPU time and your deadline cover no more, so the rest are stills with camera motion.` : 'No shot can move: the free GPU time or your deadline does not cover a moving clip, so every shot is a still with camera motion.');
   }
   // Lip sync: talking shots, on the Kaggle GPU only (the Hugging Face Space makes clips only), as many as its free hours
   // and the deadline allow. About half the shots talk until the screenplay says exactly how many.
@@ -351,7 +355,7 @@ function planAt({ targetSeconds, deadlineSeconds = null, providers = [], rates =
   if (!farmOk) notes.push('No free GPU farm is connected, so every shot is a still picture with camera motion, with voices and a simple synthesized score; sound effects need the GPU farm.');
   for (const id of ['kaggle', 'hf_zerogpu']) if (p[id]?.status === 'blocked') notes.push(p[id].detail[0].toUpperCase() + p[id].detail.slice(1) + '.');
   return {
-    ok: true, target_s: target, deadline_s: deadline, as_fast_as_possible: deadline === 0,
+    ok: true, target_s: target, deadline_s: deadline, as_fast_as_possible: deadline === 0, deadline_given: deadlineSeconds != null,
     lip_sync: lips,
     shots, tier_a: clips, tier_b: shots - clips, unique_stills: unique, reuse, segments,
     eta_s: eta, meets_deadline: meets, waits_for_reset_s: waitS, estimated,
@@ -402,14 +406,14 @@ export function spokenDuration(seconds) {
 export function speakPlan(plan, { asked = '' } = {}) {
   if (!plan.ok) return plan.said;
   const length = lengthAdjective(plan.target_s);
-  const mix = plan.tier_a
-    ? `${plan.tier_a} moving clips for key moments and ${plan.tier_b} stills with camera motion`
-    : 'all stills with camera motion';
+  const mix = plan.tier_a >= plan.shots ? `every shot a moving clip (${plan.shots})`
+    : plan.tier_a ? `${plan.tier_a} moving clips and ${plan.tier_b} stills with camera motion`
+      : 'all stills with camera motion';
   const pictures = plan.reuse > 1 ? `, ${plan.unique_stills} new pictures each framed ${plan.reuse} ways` : `, ${plan.unique_stills} new pictures`;
   const eta = spokenDuration(plan.eta_s);
   let lead;
   if (plan.as_fast_as_possible) lead = `A ${length} film takes about ${eta} as fast as free compute allows: ${mix}${pictures}.`;
-  else if (plan.meets_deadline) lead = `A ${length} film takes about ${eta}, inside your ${spokenDuration(plan.deadline_s)}: ${mix}${pictures}.`;
+  else if (plan.meets_deadline) lead = plan.deadline_given === false ? `A ${length} film takes about ${eta}: ${mix}${pictures}.` : `A ${length} film takes about ${eta}, inside your ${spokenDuration(plan.deadline_s)}: ${mix}${pictures}.`;
   else lead = `I can't make a ${length} film in ${asked || spokenDuration(plan.deadline_s)} with free compute. The fastest I can do is about ${eta}, ${mix}${pictures}.`;
   return [lead, ...plan.notes].join(' ');
 }
@@ -671,7 +675,7 @@ export function shotList(outline, sceneShots, plan) {
   for (const scene of outline.scenes) for (const s of sceneShots[scene.id] || []) shots.push({ ...s, scene: scene.id, setting: scene.setting });
   const moves = ['push_in', 'pull_out', 'pan_left', 'pan_right', 'tilt_up', 'push_in'];
   const dialogueRank = shots.map((s, i) => ({ i, w: s.dialogue.length })).sort((a, b) => b.w - a.w || a.i - b.i);
-  const tierA = new Set(dialogueRank.slice(0, plan.tier_a || 0).filter((x) => x.w > 0).map((x) => x.i));
+  const tierA = new Set(dialogueRank.slice(0, plan.tier_a || 0).map((x) => x.i)); // talking shots first, then the rest
   let lastStill = 0;
   return shots.map((s, i) => {
     const n = i + 1;
@@ -857,6 +861,21 @@ export function filmProgress(film, shots = [], now = Date.now()) {
   return { state: film.state, shots_total: shots.length || film.shot_count, shots_verified: verified, shots_failed: failed, elapsed_s: elapsed, eta_s: eta, remaining_s: Math.max(0, eta - elapsed) };
 }
 
+/** How many shots in the film really move, from the shots it was cut from (a moving clip or lip-synced video that arrived), never from the plan. */
+function motionLine(shots) {
+  const used = shots.filter((s) => s.status === 'verified');
+  if (!used.length) return '';
+  const moving = used.filter((s) => s.lip_key || s.clip_key).length;
+  return moving === used.length ? ` Every shot moves.` : ` ${moving} of ${used.length} shots move; the rest are stills with camera motion.`;
+}
+
+/** Why the film differs from its plan (the GPU farm did not start, clips became stills, lip sync failed), said once. */
+function whyNotes(film) {
+  const seen = new Set();
+  const notes = (film.notes || []).filter((n) => /kaggle|gpu|lip sync|moving shots|became stills|not written/i.test(n) && !seen.has(n) && seen.add(n)).slice(-3);
+  return notes.length ? ` ${notes.join(' ')}` : '';
+}
+
 function lipLine(shots) {
   const n = shots.filter((s) => s.lip_key).length;
   const failed = shots.filter((s) => s.lip_error && !s.lip_key);
@@ -884,7 +903,7 @@ export function speakStatus(film, shots = [], now = Date.now()) {
     case 'making': return `${name}: ${p.shots_verified} of ${p.shots_total} shots done${p.shots_failed ? `, ${p.shots_failed} failed after ${MAX_ATTEMPTS} tries` : ''}. ${time}.${film.waiting ? ` ${film.waiting}` : ''}${faces(film)}${lipLine(shots)}`;
     case 'assembling': return `${name} is being assembled on ${film.plan?.segments || 1} GitHub runners. ${time}.`;
     case 'verifying': return `${name} is uploaded and I am checking the file. ${time}.`;
-    case 'done': return `${name} is done: ${spokenDuration(film.result?.seconds || 0)}, checked from the file itself, in your media library.${film.result?.missing?.length ? ` ${film.result.missing.length} shots never passed their checks and were left out.` : ''}${lipLine(shots)} It took ${spokenDuration((Date.parse(film.result?.at || '') - film.started_ms) / 1000)}.`;
+    case 'done': return `${name} is done: ${spokenDuration(film.result?.seconds || 0)}, checked from the file itself, in your media library.${film.result?.missing?.length ? ` ${film.result.missing.length} shots never passed their checks and were left out.` : ''}${motionLine(shots)}${lipLine(shots)} It took ${spokenDuration((Date.parse(film.result?.at || '') - film.started_ms) / 1000)}.${whyNotes(film)}`;
     case 'paused': return `${name} is paused at ${p.shots_verified} of ${p.shots_total} shots. Say "resume my movie" to continue; nothing is lost.`;
     case 'cancelled': return `${name} was stopped. Its finished shots are kept.`;
     case 'failed': return `${name} could not be finished: ${film.errors?.slice(-1)[0] || 'an unknown error'}. No film was made.`;

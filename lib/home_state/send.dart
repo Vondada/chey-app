@@ -338,6 +338,9 @@ extension _CheHomeSend on _CHEHomeState {
       case SceneVoiceRoute.newCharacter:
         _openNewCharacter();
         return true;
+      case SceneVoiceRoute.scenePreview:
+        _openScenePreview();
+        return true;
       case null:
         break;
     }
@@ -949,6 +952,29 @@ extension _CheHomeSend on _CHEHomeState {
       }
     }
 
+    // The live scene preview, while it is open, takes play, pause, go to a time, select an actor, read the scene, the
+    // numbered options, and scene edits sent with its project and selection (lib/create/che_scene_preview_page.dart).
+    final scenePreviewVoice = CheScenePreviewPage.voiceHandler;
+    if (scenePreviewVoice != null && _pendingAttachment == null) {
+      final reply = await scenePreviewVoice(message);
+      if (reply != null) {
+        if (mounted) _set(() => controller.clear());
+        if (reply.isNotEmpty) await speakText(reply, record: false);
+        return;
+      }
+    }
+
+    // A saved video whose play link failed takes "try again" and "what happened".
+    final videoLinkVoice = CheVideoPlayLink.voiceHandler;
+    if (videoLinkVoice != null && _pendingAttachment == null) {
+      final reply = await videoLinkVoice(message);
+      if (reply != null) {
+        if (mounted) _set(() => controller.clear());
+        if (reply.isNotEmpty) await speakText(reply, record: false);
+        return;
+      }
+    }
+
     // Trade Replay, while it is open, takes play, pause, back or forward 10 seconds, restart and read.
     final replayVoice = CheTradeReplayPage.voiceHandler;
     if (replayVoice != null && _pendingAttachment == null) {
@@ -987,6 +1013,17 @@ extension _CheHomeSend on _CHEHomeState {
       if (reply != null) {
         if (mounted) _set(() => controller.clear());
         if (reply.isNotEmpty) await speakText(reply, record: false, show: true);
+        return;
+      }
+    }
+
+    // The 3D crew room, while it is open, plays an animation by name ("dance", "make CHE clap") and lists them.
+    final crewVoice = CheCharactersRoom.voiceHandler;
+    if (crewVoice != null && _pendingAttachment == null) {
+      final reply = await crewVoice(message);
+      if (reply != null) {
+        if (mounted) _set(() => controller.clear());
+        if (reply.isNotEmpty) await speakText(reply, record: false);
         return;
       }
     }

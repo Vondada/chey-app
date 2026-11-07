@@ -111,7 +111,7 @@ test('short deadlines force the FAST tier: five minutes "in seconds" and ten min
   const ten = planFilm({ targetSeconds: 600, deadlineSeconds: 300, providers: providers(kaggleOn), now: NOW });
   assert.equal(ten.tier_a, 0, 'a GPU session takes ten minutes just to start, so it cannot help a five-minute deadline');
   const two = planFilm({ targetSeconds: 7200, deadlineSeconds: 3600, providers: providers(kaggleOn), now: NOW });
-  assert.ok(two.tier_a > 0 && two.tier_a <= two.shots / 5, 'with an hour, moving clips go only to key moments');
+  assert.ok(two.tier_a > 0, 'with an hour, shots move');
   assert.ok(two.parts.clips_s <= Math.max(two.parts.stills_s, two.parts.voices_s, 1) || two.parts.clips_s < 3600, 'clips never stretch the ETA past the picture stage');
 });
 
@@ -403,7 +403,7 @@ const req = (path, { token, method = 'GET', body, header = 'X-CHE-Render-Token' 
 test('end to end: a one-minute film is written, made, assembled on parallel runners, uploaded in parts and done only after the stored MP4 checks out', async () => {
   const { storage, bucket, gh, ctx, started } = await studio({ seconds: 60 });
   assert.equal(started.ok, true);
-  assert.match(started.said, /^A 60-second film takes about .* as fast as free compute allows: all stills with camera motion/);
+  assert.match(started.said, /^A 60-second film takes about [^,]*: all stills with camera motion/, 'no farm connected, so stills; no deadline was given, so none is quoted back');
   assert.match(started.said, /Starting now\.$/);
   const film = await runUntil(ctx, ['assembling', 'failed']);
   assert.equal(film.state, 'assembling', film.errors?.join('; '));
@@ -997,4 +997,42 @@ test('when only the shorter third ask works, the film still has every planned sh
   for (const s of film.outline.scenes) got += (await ctx.storage.get(`film:${film.id}:scene:${s.id}`)).length;
   assert.equal(got, want);
   assert.equal(film.notes.filter((n) => /the writer gave \d+ of \d+ shots/.test(n)).length, film.outline.scenes.length);
+});
+
+// ─── Moving and talking, not pictures (owner, 2026-11-07, on "Brewed Anarchy") ───────────────────────────────────
+
+test('with the free GPU connected and no deadline given, every shot of a one-minute film moves and the talking shots are lip-synced', () => {
+  const plan = planFilm({ targetSeconds: 60, providers: providers(kaggleOn), now: NOW });
+  assert.equal(plan.tier_a, plan.shots, `${plan.tier_a} of ${plan.shots} shots move`);
+  assert.ok(plan.lip_sync > 0, 'talking shots get lip sync');
+  assert.ok(plan.meets_deadline);
+  const said = speakPlan(plan);
+  assert.match(said, /^A 60-second film takes about [^:]*: every shot a moving clip \(10\)/);
+  assert.doesNotMatch(said, /inside your/, 'no deadline was given, so none is quoted back');
+  // "As fast as possible" is still the owner's choice of stills.
+  assert.equal(planFilm({ targetSeconds: 60, deadlineSeconds: 0, providers: providers(kaggleOn), now: NOW }).tier_a, 0);
+});
+
+test('when every shot moves, the shots without dialogue move too (talking shots are picked first only when some must stay still)', () => {
+  const outline = validOutline(OUTLINE, { shots: 6 });
+  const sceneShots = { 1: SHOTS(3).shots.map((s) => validSceneShots({ shots: [s] }, { id: 1, shots: 1 }, outline.characters).shots[0]), 2: SHOTS(3).shots.map((s) => validSceneShots({ shots: [s] }, { id: 2, shots: 1 }, outline.characters).shots[0]) };
+  const all = shotList(outline, sceneShots, { tier_a: 6, reuse: 1, segments: 1 });
+  assert.deepEqual(all.map((s) => s.tier), ['A', 'A', 'A', 'A', 'A', 'A']);
+  const some = shotList(outline, sceneShots, { tier_a: 2, reuse: 1, segments: 1 });
+  assert.ok(some.filter((s) => s.tier === 'A').every((s) => s.dialogue.length > 0), 'with two clips, talking shots move first');
+});
+
+test('the finished film says how many shots really move and are lip-synced, and why when the GPU did not deliver', () => {
+  const film = { id: 'f1', state: 'done', title: 'Brewed Anarchy', started_ms: NOW, result: { seconds: 60, at: new Date(NOW + 11 * 60_000).toISOString() }, notes: ['Kaggle: the GPU session could not start (quota).', 'Lip sync needs the Kaggle GPU, which could not start, so talking shots use their pictures as they are.', 'This uses starting numbers.'] };
+  const shots = Array.from({ length: 10 }, (_, i) => ({ n: i + 1, status: 'verified', clip_key: i < 2 ? `c${i}` : '', dialogue: [] }));
+  const said = speakStatus(film, shots, NOW + 12 * 60_000);
+  assert.match(said, /2 of 10 shots move; the rest are stills with camera motion\./);
+  assert.match(said, /Kaggle: the GPU session could not start \(quota\)\. Lip sync needs the Kaggle GPU/);
+  assert.doesNotMatch(said, /starting numbers/, 'only the notes that explain motion and lip sync');
+  assert.match(speakStatus(film, shots.map((s) => ({ ...s, clip_key: 'c' })), NOW), /Every shot moves\./);
+  // A lip-synced video is what the film cuts in for a talking shot, so it moves even without a separate clip;
+  // a failed shot is left out of the film, so it is left out of the count.
+  const cut = shots.map((s, i) => ({ ...s, clip_key: i < 8 ? 'c' : '', lip_key: i === 8 ? 'l' : '', status: i === 9 ? 'failed' : 'verified' }));
+  assert.match(speakStatus(film, cut, NOW), /Every shot moves\./);
+  assert.match(speakStatus(film, cut.map((s, i) => (i === 8 ? { ...s, lip_key: '' } : s)), NOW), /8 of 9 shots move/);
 });

@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """CHE Visual Studio renderer: turns an edit document into a real file, then checks the file.
 
-Video: ffmpeg trims, speeds, crops, colour-adjusts, joins clips with transitions, draws text and captions, mixes
+Video: ffmpeg trims, speeds (and speed-ramps), crops, colour-adjusts (adjustments, curves, LUT looks), joins clips with
+transitions, draws overlay tracks with keyframed position, size and opacity, then text and captions, mixes
 clip audio, voice and music (volume, fades, normalising, voice clean-up, ducking) and writes an H.264/AAC MP4.
 Image: Pillow applies the same adjustments, crop, rotation and flips, then draws the layers and writes a PNG.
 
@@ -114,6 +115,152 @@ def ffmpeg_adjust(a):
     return f
 
 
+# ─── Looks: LUTs and curves (Creative Studio stage 3) ──────────────────────
+
+CURVE_PRESETS = ('strong_contrast', 'medium_contrast', 'lighter', 'darker', 'vintage', 'cross_process')  # ffmpeg curves presets
+LOOKS = ('warm_film', 'teal_orange', 'mono', 'film')
+
+
+def look_rgb(name, r, g, b):
+    """One LUT entry. Each look is a fixed colour transform, the same on every render."""
+    luma = 0.2126 * r + 0.7152 * g + 0.0722 * b
+    clamp = lambda c: min(1.0, max(0.0, c))
+    if name == 'mono':
+        v = clamp((luma - 0.5) * 1.12 + 0.5)
+        return v, v, v
+    if name == 'teal_orange':
+        # Shadows lean teal, highlights lean orange.
+        w = (luma - 0.5) * 2
+        return clamp(r + 0.07 * w), clamp(g + 0.01 * (1 - abs(w))), clamp(b - 0.08 * w)
+    if name == 'warm_film':
+        # Warmer, blacks lifted a little, a soft S-curve.
+        out = []
+        for c in (r * 1.06 + 0.015, g * 1.01 + 0.005, b * 0.88):
+            c = clamp(c)
+            c = c + 0.08 * (c - 0.5) * (1 - abs(2 * c - 1))
+            out.append(clamp(0.03 + 0.97 * c))
+        return tuple(out)
+    if name == 'film':
+        # Lifted blacks, softer highlights, a little less saturation, an S-curve in the middle.
+        out = []
+        for c in (r, g, b):
+            c = luma + (c - luma) * 0.88
+            c = c + 0.10 * (c - 0.5) * (1 - abs(2 * c - 1))
+            out.append(clamp(0.04 + 0.92 * c))
+        return tuple(out)
+    return r, g, b
+
+
+def write_cube(name, path, n=17):
+    """A 3D LUT in the .cube format (red changes fastest), read by ffmpeg's lut3d."""
+    lines = [f'TITLE "CHE {name}"', f'LUT_3D_SIZE {n}']
+    for bi in range(n):
+        for gi in range(n):
+            for ri in range(n):
+                r, g, b = look_rgb(name, ri / (n - 1), gi / (n - 1), bi / (n - 1))
+                lines.append(f'{r:.5f} {g:.5f} {b:.5f}')
+    Path(path).write_text('\n'.join(lines) + '\n')
+    return path
+
+
+def look_filters(doc, clip, workdir):
+    """The clip's own curve and look, else the project's."""
+    f = []
+    curve = (clip or {}).get('curves') or doc.get('curves')
+    if curve in CURVE_PRESETS:
+        f.append(f'curves=preset={curve}')
+    look = (clip or {}).get('look') or doc.get('look')
+    if look in LOOKS:
+        cube = Path(workdir) / f'look_{look}.cube'
+        if not cube.exists():
+            write_cube(look, cube)
+        f.append(f"lut3d=file='{cube}'")
+    return f
+
+
+# ─── Speed ramps and keyframes ──────────────────────────────────────────────
+
+def ramp_segments(c):
+    """Mirrors visual_studio.js rampSegments: the clip's source cut into stretches, each at one speed."""
+    length = max(0.0, c['out'] - c['in'])
+    pts = sorted([p for p in (c.get('ramp') or []) if 0.01 < float(p['at']) < length - 0.01], key=lambda p: float(p['at']))
+    out, frm, speed = [], 0.0, c.get('speed') or 1
+    for p in pts:
+        if float(p['at']) - frm > 0.01:
+            out.append((frm, float(p['at']), speed))
+        frm, speed = float(p['at']), min(4.0, max(0.25, float(p['speed'])))
+    if length - frm > 0.001:
+        out.append((frm, length, speed))
+    return out
+
+
+def expand_ramps(clips):
+    """A ramped clip is played as consecutive pieces of itself, each at its own speed, joined by cuts; the clip's own
+    transition stays on its last piece. Audio follows each piece's speed (atempo), so it stays in sync."""
+    out = []
+    for c in clips:
+        segs = ramp_segments(c) if c.get('ramp') else []
+        if segs and (c.get('freeze') or c.get('reverse')):
+            # The editor refuses this combination; a document that has it anyway fails here with its reason rather
+            # than rendering without the freeze or the reverse.
+            raise RuntimeError(f"{c.get('name', 'a clip')} has a speed ramp and a {'reverse' if c.get('reverse') else 'freeze'}, which do not combine")
+        if len(segs) <= 1:
+            out.append(c)
+            continue
+        for i, (a, b, sp) in enumerate(segs):
+            piece = dict(c, id=f"{c['id']}_r{i}", ramp=None, freeze=None, reverse=False, speed=sp)
+            piece['in'], piece['out'] = c['in'] + a, c['in'] + b
+            piece['transition'] = c.get('transition') if i == len(segs) - 1 else {'type': 'cut', 'duration': 0}
+            out.append(piece)
+    return out
+
+
+def key_expr(ov, prop, var):
+    """An overlay property as an ffmpeg expression of time: its keyframes (linear, or smoothstep ease-in-out) or its
+    constant value. `var` is the filter's time variable; keyframe times are relative to the overlay's start."""
+    ks = sorted((ov.get('keys') or {}).get(prop) or [], key=lambda k: k['t'])
+    if not ks:
+        return f"{float(ov.get(prop, 0)):.5f}"
+    u = f"({var}-{float(ov['start']):.4f})"
+    expr = f"{float(ks[-1]['v']):.5f}"
+    for a, b in reversed(list(zip(ks, ks[1:]))):
+        span = max(1e-4, float(b['t']) - float(a['t']))
+        p = f"(({u}-{float(a['t']):.4f})/{span:.4f})"
+        e = p if b.get('ease') == 'linear' else f"({p}*{p}*(3-2*{p}))"
+        expr = f"if(lt({u},{float(b['t']):.4f}),{float(a['v']):.5f}+({float(b['v']) - float(a['v']):.5f})*{e},{expr})"
+    return f"if(lt({u},{float(ks[0]['t']):.4f}),{float(ks[0]['v']):.5f},{expr})"
+
+
+def overlay_graph(doc, sources, args, graph, idx, cur_v, total, W, H, fps):
+    """Overlay tracks (stage 3): pictures and videos above the main track, lower tracks first, each with keyframed
+    position, size and opacity. Returns (idx, cur_v)."""
+    ovs = sorted(enumerate(doc.get('overlays') or []), key=lambda kv: (int(kv[1].get('track', 1)), kv[0]))
+    for k, (_, o) in enumerate(ovs):
+        S, D = float(o['start']), float(o['duration'])
+        if S >= total - 0.01:
+            continue
+        D = min(D, total - S)
+        path = source(sources, o['asset'])
+        if o.get('kind') == 'video':
+            args += ['-ss', f"{float(o.get('in', 0)):.3f}", '-t', f'{D:.3f}', '-i', str(path)]
+        else:
+            args += ['-loop', '1', '-framerate', str(fps), '-t', f'{D:.3f}', '-i', str(path)]
+        keys = o.get('keys') or {}
+        chain = [f'fps={fps}', 'format=rgba', f'setpts=PTS-STARTPTS+{S:.4f}/TB']
+        # Opacity first, at the source size: a per-frame size change ahead of geq crashes ffmpeg 6.1 (heap corruption).
+        if keys.get('opacity'):
+            chain.append(f"geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='alpha(X,Y)*({key_expr(o, 'opacity', 'T')})'")
+        elif float(o.get('opacity', 1)) < 1:
+            chain.append(f"colorchannelmixer=aa={float(o['opacity']):.3f}")
+        chain.append(f"scale=w='max(2,trunc({W}*{key_expr(o, 'scale', 't')}/2)*2)':h=-2:eval={'frame' if keys.get('scale') else 'init'}")
+        graph.append(f'[{idx}:v]' + ','.join(chain) + f'[ov{k}]')
+        x, y = key_expr(o, 'x', 't'), key_expr(o, 'y', 't')
+        graph.append(f"{cur_v}[ov{k}]overlay=x='{W}*{x}':y='{H}*{y}':eval=frame:eof_action=pass:enable='between(t,{S:.3f},{S + D:.3f})'[vo{k}]")
+        cur_v = f'[vo{k}]'
+        idx += 1
+    return idx, cur_v
+
+
 # ─── Video ──────────────────────────────────────────────────────────────────
 
 def clip_len(c):
@@ -166,7 +313,7 @@ def drawtext(layer, W, H, start, end, workdir, n, value=None):
 def render_video(spec, sources, out, workdir):
     doc = spec['doc']
     W, H, fps = doc['canvas']['w'], doc['canvas']['h'], doc['canvas'].get('fps', 30)
-    clips = doc['clips']
+    clips = expand_ramps(doc['clips'])
     if not clips:
         raise RuntimeError('the timeline has no clips')
     args, graph, idx = [], [], 0
@@ -192,6 +339,7 @@ def render_video(spec, sources, out, workdir):
         vf += {90: ['transpose=1'], 180: ['transpose=1', 'transpose=1'], 270: ['transpose=2']}.get(rot, [])
         vf.append(f'scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H}')
         vf += ffmpeg_adjust(merged_adjust(doc, c))
+        vf += look_filters(doc, c, workdir)
         if (c.get('opacity', 1)) < 1:
             o = c['opacity']
             vf.append(f'colorchannelmixer=rr={o}:gg={o}:bb={o}')
@@ -226,6 +374,7 @@ def render_video(spec, sources, out, workdir):
             graph.append(f'{cur_a}[a{i}]acrossfade=d={d:.3f}{na}')
             total += lengths[i] - d
         cur_v, cur_a = nv, na
+    idx, cur_v = overlay_graph(doc, sources, args, graph, idx, cur_v, total, W, H, fps)
     # Text, captions and a waveform visualizer on top.
     overlays, n = [], 0
     for item in doc.get('text', []):

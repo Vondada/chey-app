@@ -7,6 +7,20 @@ import 'package:flutter_scene/scene.dart' hide Material;
 import 'package:vector_math/vector_math.dart' as vm;
 import '../che_ui/che_theme.dart';
 
+/// Starts [name] (or `idle` when the model has no such clip) looping on a loaded GLB [model]. A model without clips,
+/// or one the animation player cannot bind, stays in its bind pose: this returns null and never throws.
+AnimationClip? cheStartLoopClip(Node model, String name) {
+  try {
+    final animation = model.findAnimationByName(name) ?? model.findAnimationByName('idle');
+    if (animation == null) return null;
+    return model.createAnimationClip(animation)
+      ..loop = true
+      ..play();
+  } catch (_) {
+    return null;
+  }
+}
+
 /// Primary native 3D renderer for CHE's Office, Brain and War Room.
 ///
 /// This path uses Flutter Scene on Flutter GPU/Impeller. The legacy Three.js
@@ -174,6 +188,7 @@ class _CheNativeSceneWorldState extends State<CheNativeSceneWorld> {
   final Map<String, Node> _entityNodes = {};
   final Map<String, vm.Vector3> _basePositions = {};
   final List<PhysicallyBasedMaterial> _brainLinkMaterials = [];
+  final List<AnimationClip> _clips = [];
 
   bool _ready = false;
   String? _error;
@@ -258,6 +273,7 @@ class _CheNativeSceneWorldState extends State<CheNativeSceneWorld> {
     _entityNodes.clear();
     _basePositions.clear();
     _brainLinkMaterials.clear();
+    _clips.clear();
 
     final realistic = widget.quality == CheSceneQuality.realistic;
     final balanced = widget.quality == CheSceneQuality.balanced;
@@ -636,6 +652,9 @@ class _CheNativeSceneWorldState extends State<CheNativeSceneWorld> {
         model.scale = vm.Vector3.all(entity.modelScale);
         root.add(model);
         loadedModel = true;
+        // The crew GLBs carry real clips (idle, walk, sit, talk, ...): idle by default, talk while speaking.
+        final clip = cheStartLoopClip(model, entity.speaking ? 'talk' : 'idle');
+        if (clip != null) _clips.add(clip);
       } catch (_) {
         loadedModel = false;
       }
@@ -894,10 +913,12 @@ class _CheNativeSceneWorldState extends State<CheNativeSceneWorld> {
 
   void _tick(double deltaSeconds) {
     final media = MediaQuery.maybeOf(context);
-    if (media?.disableAnimations == true ||
-        media?.accessibleNavigation == true) {
-      return;
+    final still = media?.disableAnimations == true || media?.accessibleNavigation == true;
+    // Reduce Motion holds each character's clip where it is; it plays again when motion is allowed.
+    for (final clip in _clips) {
+      clip.playing = !still;
     }
+    if (still) return;
 
     _elapsed += deltaSeconds;
     for (var i = 0; i < _brainLinkMaterials.length; i++) {

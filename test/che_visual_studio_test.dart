@@ -47,6 +47,17 @@ Map<String, dynamic> videoView() => {
       'suggestions': [],
     };
 
+/// Stage 3: the same project with a picture on overlay track 1 (keyframed) and a logo on track 2.
+Map<String, dynamic> overlayView() {
+  final v = videoView();
+  (v['project'] as Map)['id'] = 'v3';
+  (v['doc'] as Map)['overlays'] = [
+    {'id': 'o1', 'asset': 'img3', 'kind': 'image', 'name': 'Sunset', 'track': 1, 'start': 1, 'duration': 4, 'x': 0.2, 'y': 0.3, 'scale': 0.5, 'opacity': 1, 'keys': {'opacity': [{'t': 0, 'v': 0}, {'t': 1, 'v': 1}], 'x': [], 'y': [], 'scale': []}},
+    {'id': 'o2', 'asset': 'logo', 'kind': 'image', 'name': 'Logo', 'track': 2, 'start': 0, 'duration': 10, 'x': 0.83, 'y': 0.04, 'scale': 0.13, 'opacity': 1, 'keys': {}},
+  ];
+  return v;
+}
+
 class FakeCheServer {
   final posts = <Map<String, dynamic>>[];
   late final http.Client client = MockClient((req) async {
@@ -56,11 +67,12 @@ class FakeCheServer {
       if (body['action'] == 'waveform') return http.Response(jsonEncode({'peaks': [0.1, 0.5, 0.9, 0.4]}), 200);
       if (body['action'] == 'compare') return http.Response(jsonEncode({'a': imageView()['doc']}), 200);
       if (body['action'] == 'create') return http.Response(jsonEncode(imageView()), 200);
-      final view = body['project_id'] == 'v1' ? videoView() : imageView();
+      final view = body['project_id'] == 'v1' ? videoView() : body['project_id'] == 'v3' ? overlayView() : imageView();
       return http.Response(jsonEncode({...view, 'said': 'Done.'}), 200);
     }
     if (req.url.path == '/api/media') return http.Response(jsonEncode({'items': []}), 200);
     if (req.url.queryParameters['project_id'] == 'v1') return http.Response(jsonEncode(videoView()), 200);
+    if (req.url.queryParameters['project_id'] == 'v3') return http.Response(jsonEncode(overlayView()), 200);
     if (req.url.queryParameters['project_id'] == 'p1') return http.Response(jsonEncode(imageView()), 200);
     if (req.url.path.startsWith('/api/media/')) return http.Response('', 404);
     return http.Response(jsonEncode({
@@ -175,6 +187,39 @@ void main() {
     await tapVisible(tester, find.text('Auto captions'));
     expect(server.posts.last['text'], 'add captions');
     // Stop any timers before the test ends.
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('video editor: overlay tracks speak their keyframes; touch controls send the words CHE understands for the selection', (tester) async {
+    tester.view.physicalSize = const Size(390 * 3, 844 * 3);
+    tester.view.devicePixelRatio = 3;
+    addTearDown(tester.view.reset);
+    final server = FakeCheServer();
+    await tester.pumpWidget(app(CheVideoEditor(client: server.visual, projectId: 'v3')));
+    await tester.pumpAndSettle();
+    expect(find.bySemanticsLabel(RegExp(r'^Picture overlay Sunset on track 1, 1\.0 to 5\.0 seconds, 2 keyframes')), findsOneWidget);
+    expect(find.bySemanticsLabel(RegExp(r'^Picture overlay Logo on track 2, 0\.0 to 10\.0 seconds, no keyframes')), findsOneWidget);
+    await tester.tap(find.bySemanticsLabel(RegExp(r'^Picture overlay Sunset')));
+    await tester.pumpAndSettle();
+    expect(find.bySemanticsLabel(RegExp(r'^Picture overlay Sunset.*, selected$')), findsOneWidget);
+    await tapVisible(tester, find.text('Fade in'));
+    expect(server.posts.last, {'action': 'words', 'project_id': 'v3', 'text': 'fade it in over one second', 'selection': 'o1', 'playhead': 0.0});
+    await tapVisible(tester, find.text('Slide in from left'));
+    expect(server.posts.last['text'], 'slide it in from the left');
+    final before = server.posts.length;
+    await tapVisible(tester, find.text('Remove overlay'));
+    expect(find.text('Remove Sunset?'), findsOneWidget, reason: 'removing asks first');
+    await tapVisible(tester, find.text('Cancel'));
+    expect(server.posts.length, before, reason: 'cancel sends nothing');
+    await tapVisible(tester, find.text('Remove overlay'));
+    await tapVisible(tester, find.text('Remove'));
+    expect(server.posts.last, {'action': 'op', 'project_id': 'v3', 'op': {'op': 'delete_overlay', 'id': 'o1'}, 'confirmed': true});
+    await tapVisible(tester, find.text('Effects'));
+    await tapVisible(tester, find.text('Teal and orange LUT'));
+    expect(server.posts.last['text'], 'give it a teal and orange look');
+    await tapVisible(tester, find.text('Ramp up at the end'));
+    expect(server.posts.last['text'], 'ramp the speed up at the end');
+    expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox());
   });
 

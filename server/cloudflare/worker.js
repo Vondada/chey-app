@@ -42,7 +42,7 @@ import { capabilityPromptLine, inferTurnCapabilities, runtimeCapabilityRegistry 
 import { identityQuestionIntent, speakIdentity } from './che_maturity.js';
 import { testBudgetReport } from './gpu_test_budget.js';
 import { modalCubeProbe, modalCubeResult } from './modal_cube_probe.js';
-import { MODAL_IMAGE_KEY, deleteMedia, finishModalImage, generateImage, modalImageCheckTimes, pendingModalImages, reconcileModalImages, generateVideo, listMedia, readBlob, saveOwnerFile, upscaleImage, verifyMediaFile } from './media.js';
+import { MODAL_IMAGE_KEY, deleteMedia, finishModalImage, generateImage, modalImageCheckTimes, pendingModalImages, reconcileModalImages, generateVideo, listMedia, mediaPlayLink, mediaPlayLinkValid, readBlob, saveOwnerFile, upscaleImage, verifyMediaFile } from './media.js';
 import { pictureStatusIntent, pictureStatusReply } from './picture_status.js';
 import { mediaVerifyProbe } from './media_verify_probe.js';
 import { parseProbeChatBody } from './probe_reply.js';
@@ -95,7 +95,7 @@ import { evaluateSample, applyRightsAction, applySpokenRightsWrite, defensibilit
 import { ACTIVITIES, JURISDICTIONS, SOURCES, LEGAL_INDEX, activitiesIn, placeIn, checkUpdates, defenseArguments, findAlternatives, jurisdiction as legalPlace, legalAnswer, legalDifferences, legalIntent, loadLegal, recordDecision, recordsFor, releaseLegalCheck, saveLegal, speakDifferences, subscribe as legalSubscribe, verifyRecord } from './legal_intelligence.js';
 import { analyzeContract } from './legal_contracts.js';
 import { DOMAINS, SOURCE_TIERS, addExpertSource, addProfessionalNote, addToCase, bringList, domainCoverage, expertIntent, expertPromptContext, labelInteractions, loadCases, openCase, professionalBrief, readLabs, redFlags, runExam, saveCases, speakCoverage, upgradePlan } from './expert_intelligence.js';
-import { renderTokenRoute, visualApi, songPromo, projectFromTemplateName, loadVisual, saveVisual, YES_WORDS as VISUAL_YES, NO_WORDS as VISUAL_NO } from './visual_api.js';
+import { renderTokenRoute, visualApi, songPromo, projectFromTemplateName, projectFromMedia, loadVisual, saveVisual, YES_WORDS as VISUAL_YES, NO_WORDS as VISUAL_NO } from './visual_api.js';
 import { visualIntent, wordsToOps } from './visual_studio.js';
 import { addBeat, addLedger, addWorkspace, addWorkspaceSong, advanceAgreement, applySpokenBusiness, approveQuote, artistReport, beatListing, businessDashboard, deliveryPackage, draftQuote, musicBusinessIntent, recordBeatSale, recordFeedback, resolveSpokenBusiness, setService, workspaceById, workspaceView } from './music_business.js';
 import { matrixIntent, readMatrix, runMatrix, speakMatrix } from './backtest_matrix.js';
@@ -316,7 +316,7 @@ import { creationProbeRoute } from './creation_probe.js';
 import { paidWakes, poolRoute, poolSay, reapPaid } from './compute_pool.js';
 import { projectAudit, projectLibraryRoute } from './project_library.js';
 import { officeCast } from './film_cast.js';
-import { directorTurn } from './scene_director.js';
+import { directorTurn, sceneLatest } from './scene_director.js';
 import { FILM_ACTIVE_STATES, filmPlan, filmTick, filmTokenRoute, refreshValidation as refreshFilmValidation, remakeShot, setFilmState, startFilm } from './film_pipeline.js';
 import { performanceBanner, performanceIntent, performanceReport, recordTiming, routeKey as perfRouteKey, speakPerformance } from './perf_watch.js';
 import { engineView, exportWorkflows, feedbackOnLast, importWorkflows, library as workflowLibrary, loadEngine, matchLearned, noteVersion, promoteCandidate, dismissCandidate, rankWorkflows, recordRun as recordWorkflowRun, isDisabled as workflowDisabled, restoreVersion, saveEngine, setDisabled as setWorkflowDisabled, setPreferred as setWorkflowPreferred, speakEfficiency, speakLibrary, testCandidate, workflowForRun, workflowIntent } from './workflow_engine.js';
@@ -5812,6 +5812,40 @@ export class CheState extends DurableObject {
     } catch (_) { /* nothing was held */ }
   }
 
+  async serveMedia(request, mediaId, action) {
+    const item = (await listMedia(this.ctx.storage)).find((entry) => entry.id === mediaId);
+    if (!item) return json({ detail: 'Piece not found.' }, 404);
+    if (item.url) return Response.redirect(item.url, 302);
+    const bytes = await readBlob(this.keyEnv || this.env, this.ctx.storage, item);
+    if (!bytes) return json({ detail: 'Media data missing.' }, 404);
+    const fallbackType = action === '/video' ? 'video/mp4' : 'image/jpeg';
+    const mime = item.mime_type || fallbackType;
+    const mediaHeaders = { 'Content-Type': mime, 'Cache-Control': 'private, no-store' };
+    if (action === '/video') {
+      mediaHeaders['Accept-Ranges'] = 'bytes';
+      const requestedRange = request.headers.get('range');
+      if (requestedRange) {
+        const match = /^bytes=(\d+)-(\d*)$/.exec(requestedRange.trim());
+        const start = match ? Number(match[1]) : NaN;
+        const end = match && match[2] ? Number(match[2]) : bytes.byteLength - 1;
+        if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) ||
+            start >= bytes.byteLength || start < 0 || end < start) {
+          return new Response(null, { status: 416, headers: {
+            ...mediaHeaders, 'Content-Range': 'bytes */' + bytes.byteLength,
+          } });
+        }
+        const last = Math.min(end, bytes.byteLength - 1);
+        return new Response(bytes.slice(start, last + 1), { status: 206, headers: {
+          ...mediaHeaders,
+          'Content-Range': 'bytes ' + start + '-' + last + '/' + bytes.byteLength,
+          'Content-Length': String(last - start + 1),
+        } });
+      }
+    }
+    return new Response(bytes, { headers: mediaHeaders });
+
+  }
+
   async answerCommandSpeech(request, body, data, said, { ownerDevice = false } = {}) {
     if (said.kind === 'run') {
       if (!ownerDevice) return ndjsonReply('Only the CHE owner can run commands, sir.', { source: 'che_command', ok: false, model_calls: 0 });
@@ -7027,6 +7061,13 @@ export class CheState extends DurableObject {
         return json({ device_token: raw, access: consumed.invite.access, tenant_id: consumed.invite.tenant_id }, 201);
       }
 
+      // A signed play link opens one saved video without the device token (media.js mediaPlayLink).
+      const played = request.method === 'GET' && /^\/api\/media\/([A-Za-z0-9-]{8,64})\/video$/.exec(path);
+      const linkParams = played ? new URL(request.url).searchParams : null;
+      if (played && linkParams.has('sig')) {
+        return (await mediaPlayLinkValid(this.ctx.storage, played[1], linkParams.get('exp'), linkParams.get('sig')))
+          ? this.serveMedia(request, played[1], '/video') : json({ detail: 'This play link has expired. Open the video again.' }, 401);
+      }
       const authorization = request.headers.get('Authorization') || '';
       const match = /^Bearer ([A-Za-z0-9_-]{40,160})$/.exec(authorization);
       const workflowStep = WORKFLOW_STEP_REQUESTS.has(request) && path === '/api/chat';
@@ -7662,6 +7703,7 @@ export class CheState extends DurableObject {
         if (!ownerDevice) return json({ detail: 'Only the CHE owner can read his brain.' }, 403);
         return json(await brainTruthView(this.ctx.storage));
       }
+      if (path === '/api/scene/latest' && request.method === 'GET') return ownerDevice ? json(await sceneLatest(this.ctx.storage)) : json({ detail: 'Only the CHE owner can open the scene preview.' }, 403);
       // Create Studio scenes (scene_store.js, M2b): owner only, optimistic versions, refused rather than overwritten.
       if (path === '/api/scenes' || /^\/api\/scenes\/scene_[a-f0-9]{12}$/.test(path)) {
         if (!ownerDevice) return json({ detail: 'Only the CHE owner can use the Create Studio.' }, 403);
@@ -8158,40 +8200,13 @@ export class CheState extends DurableObject {
         const { status, ...rest } = result;
         return json(rest, status);
       }
-      const mediaMatch = /^\/api\/media\/([A-Za-z0-9-]{8,64})(\/image|\/video|\/upscale)?$/.exec(path);
+      const mediaMatch = /^\/api\/media\/([A-Za-z0-9-]{8,64})(\/image|\/video|\/upscale|\/link)?$/.exec(path);
       if (mediaMatch) {
         const [, mediaId, action] = mediaMatch;
-        if ((action === '/image' || action === '/video') && request.method === 'GET') {
-          const item = (await listMedia(this.ctx.storage)).find((entry) => entry.id === mediaId);
-          if (!item) return json({ detail: 'Piece not found.' }, 404);
-          if (item.url) return Response.redirect(item.url, 302);
-          const bytes = await readBlob(this.keyEnv || this.env, this.ctx.storage, item);
-          if (!bytes) return json({ detail: 'Media data missing.' }, 404);
-          const fallbackType = action === '/video' ? 'video/mp4' : 'image/jpeg';
-          const mime = item.mime_type || fallbackType;
-          const mediaHeaders = { 'Content-Type': mime, 'Cache-Control': 'private, no-store' };
-          if (action === '/video') {
-            mediaHeaders['Accept-Ranges'] = 'bytes';
-            const requestedRange = request.headers.get('range');
-            if (requestedRange) {
-              const match = /^bytes=(\d+)-(\d*)$/.exec(requestedRange.trim());
-              const start = match ? Number(match[1]) : NaN;
-              const end = match && match[2] ? Number(match[2]) : bytes.byteLength - 1;
-              if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) ||
-                  start >= bytes.byteLength || start < 0 || end < start) {
-                return new Response(null, { status: 416, headers: {
-                  ...mediaHeaders, 'Content-Range': 'bytes */' + bytes.byteLength,
-                } });
-              }
-              const last = Math.min(end, bytes.byteLength - 1);
-              return new Response(bytes.slice(start, last + 1), { status: 206, headers: {
-                ...mediaHeaders,
-                'Content-Range': 'bytes ' + start + '-' + last + '/' + bytes.byteLength,
-                'Content-Length': String(last - start + 1),
-              } });
-            }
-          }
-          return new Response(bytes, { headers: mediaHeaders });
+        if ((action === '/image' || action === '/video') && request.method === 'GET') return this.serveMedia(request, mediaId, action);
+        if (action === '/link' && request.method === 'POST') {
+          const item = (await listMedia(this.ctx.storage)).find((entry) => entry.id === mediaId && entry.kind === 'video');
+          return item ? json(await mediaPlayLink(this.ctx.storage, mediaId, new URL(request.url).origin)) : json({ detail: 'Video not found.' }, 404);
         }
         if (action === '/upscale' && request.method === 'POST') {
           const { status, ...rest } = await upscaleImage(this.env, this.ctx.storage, mediaId);
@@ -10737,7 +10752,7 @@ export class CheState extends DurableObject {
           if (secAsk) return this.securityChat(data, secAsk, tokenHash);
           // Film Studio: make, plan, status, remake, pause/resume/stop and the free render farm (film_studio.filmIntent).
           // Scene Director: a crew scene by voice, and its edits while it is recent (scene_director.js).
-          const scene = ownerDevice && !body.attachment && !body.workflow_step ? await directorTurn({ storage: this.ctx.storage, env: this.env }, rawMessage) : null;
+          const scene = ownerDevice && !body.attachment && !body.workflow_step ? await directorTurn({ storage: this.ctx.storage, env: this.env }, rawMessage, body.scene_selection) : null;
           if (scene) return ndjsonReply(scene.text, { model_calls: 0, ...scene.meta });
           const filmAsk = ownerDevice && !body.attachment && !body.workflow_step ? filmIntent(rawMessage) : null;
           if (filmAsk) return this.filmChat(request, filmAsk, data);
@@ -12929,8 +12944,8 @@ export class CheState extends DurableObject {
           if (visualAsk?.kind === 'song_promo' || visualAsk?.kind === 'visualizer' || visualAsk?.kind === 'beat_preview') {
             const r = await songPromo(vctx, { title: visualAsk.title || visualAsk.beat || null, platform: visualAsk.platform || null, kind: visualAsk.kind === 'visualizer' ? 'visualizer' : visualAsk.kind === 'beat_preview' ? 'beat' : 'promo' });
             reply = { text: r.said, ok: r.ok, extra: r.project ? { visual_project_id: r.project.id, open: 'visual_editor' } : {} };
-          } else if (visualAsk?.kind === 'use_template') {
-            const r = await projectFromTemplateName(vctx, { name: visualAsk.name, tweak: visualAsk.tweak });
+          } else if (visualAsk?.kind === 'use_template' || visualAsk?.kind === 'open_media') {
+            const r = visualAsk.kind === 'open_media' ? await projectFromMedia(vctx, visualAsk) : await projectFromTemplateName(vctx, { name: visualAsk.name, tweak: visualAsk.tweak });
             reply = { text: r.said, ok: r.ok, extra: r.project ? { visual_project_id: r.project.id, open: 'visual_editor' } : {} };
           } else if (editingState?.pending && VISUAL_YES.test(message.trim())) {
             // The removal CHE asked about in the editor; only now is it applied.

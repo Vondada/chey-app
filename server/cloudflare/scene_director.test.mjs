@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import test from 'node:test';
-import { SEATS, applyEdits, directorCreateIntent, directorEditIntent, directorTurn, loadProjects, sceneFromWords } from './scene_director.js';
+import { SEATS, applyEdits, directorCreateIntent, directorEditIntent, directorTurn, loadProjects, sceneFromWords, sceneLatest } from './scene_director.js';
 const round2 = (x) => Math.round(x * 100) / 100;
 import { listMedia } from './media.js';
 import { replyFromNdjson } from './brain_memory.js';
@@ -81,8 +81,11 @@ test('the owner\'s words become a real scene: Nova walks in from the door, sits 
   assert.deepEqual([spec.width, spec.height, spec.fps], [540, 960, 24]);
 });
 
-test('honest limits: Orion has no model, dancing is not an animation the crew has, and questions are not orders', () => {
-  assert.match(sceneFromWords('make Orion walk in and sit down').error, /Orion has no 3D model yet/);
+test('Orion and Vale act with their own models; dancing is not an animation the crew has, and questions are not orders', () => {
+  const orion = sceneFromWords('make Orion walk in and sit down');
+  assert.equal(orion.error, undefined);
+  assert.equal(orion.spec.actors[0].model, 'assets/characters/crew/orion.glb');
+  assert.equal(sceneFromWords('make Vale walk in and wave').spec.actors[0].model, 'assets/characters/crew/vale.glb');
   assert.match(sceneFromWords('make Nova walk in and dance').error, /dance \(the crew have no dance animation yet\)/);
   assert.equal(directorCreateIntent('What does Nova do when she walks in?'), false);
   assert.equal(directorCreateIntent('Assign Nova the task to sit with Atlas and review the build'), false);
@@ -218,5 +221,66 @@ test('through /api/chat: the owner\'s words start the scene on the real Worker r
     assert.equal(done.source, 'che_scene_director', replyFromNdjson(raw));
     assert.equal(done.model_calls, 0);
     assert.equal(gh.dispatches.length, 1);
+    // The app's live preview reads the scene it draws, owner only.
+    const get = (path, t = '') => mod.default.fetch(new Request(`https://che.example${path}`, { headers: t ? { Authorization: `Bearer ${t}` } : {} }), env);
+    assert.equal((await get('/api/scene/latest')).status, 401);
+    const latest = await (await get('/api/scene/latest', token)).json();
+    assert.equal(latest.ok, true, JSON.stringify(latest));
+    assert.deepEqual([latest.version, latest.spec.actors[0].id, latest.renders[0].status], [1, 'nova', 'queued']);
+    // A touch edit from the preview carries its selection through /api/chat and lands on the touched actor.
+    const edit = await (await send('/api/chat', { message: 'move her left', history: [], scene_selection: { project_id: latest.project_id, actor: 'nova' } }, token)).text();
+    assert.match(replyFromNdjson(edit), /Nova moves left/);
+    assert.deepEqual((await (await get('/api/scene/latest', token)).json()).spec.actors[0].offset, [-0.5, 0]);
   } finally { globalThis.fetch = before; }
+});
+
+test('touch edits from the live preview: move and resize, bounded, versioned like every other edit, and the 3D is redrawn', () => {
+  const { spec } = sceneFromWords(OWNER_MAKE);
+  assert.equal(directorEditIntent('move her left'), true);
+  assert.equal(directorEditIntent('make her bigger'), true);
+  const left = applyEdits(spec, 'move her left');
+  assert.deepEqual([left.spec.actors[0].offset, left.three_d, left.said[0]], [[-0.5, 0], true, 'Nova moves left']);
+  let s = spec;
+  for (let i = 0; i < 6; i += 1) s = applyEdits(s, 'move her right').spec;
+  assert.deepEqual(s.actors[0].offset, [1.5, 0], 'never further than 1.5 m');
+  assert.match(applyEdits(s, 'move her right').said[0], /already as far as the room allows/);
+  const big = applyEdits(spec, 'make her bigger');
+  assert.equal(big.spec.actors[0].scale, 1.15);
+  assert.match(big.said[0], /Nova is bigger \(115% of her usual height\)/);
+  assert.equal(applyEdits(big.spec, 'make her smaller').spec.actors[0].scale, 1);
+  assert.equal(directorEditIntent('move the meeting to Friday'), false, 'ordinary words are not scene edits');
+  // Atlas, Knox: the controls say "him" (Codex, #954).
+  const atlas = sceneFromWords('make Atlas walk into my office and sit down').spec;
+  for (const words of ['move him left', 'make him bigger', 'make him smaller', 'make his outfit black']) assert.equal(directorEditIntent(words), true, words);
+  assert.deepEqual(applyEdits(atlas, 'move him left').spec.actors[0].offset, [-0.5, 0]);
+  assert.equal(applyEdits(atlas, 'make him bigger').spec.actors[0].scale, 1.15);
+  // The exact words the app's touch controls send (lib/create/che_scene_preview_model.dart SceneEditWords).
+  for (const [words, check] of [['make her outfit gold', (s) => s.actors[0].cloth === '#c9a227'], ['move her closer', (s) => s.actors[0].offset[1] === -0.5], ['move her back', (s) => s.actors[0].offset[1] === 0.5], ['relight the office warm', (s) => s.set.light === 'warm'], ['relight the office for night', (s) => s.set.light === 'night']]) {
+    assert.equal(directorEditIntent(words), true, words);
+    assert.ok(check(applyEdits(spec, words).spec), words);
+  }
+});
+
+test('a selection from the preview sends the edit to that project and actor, even after the six-hour window', async () => {
+  const storage = memory(); const gh = github();
+  await directorTurn({ storage, env: ENV, fetcher: gh.fetch, now: NOW }, OWNER_MAKE);
+  const { project_id } = await sceneLatest(storage);
+  const later = { storage, env: ENV, fetcher: gh.fetch, now: NOW + 8 * 3600_000 };
+  assert.equal(await directorTurn(later, 'make her outfit red'), null, 'without a selection, an old scene is not edited');
+  const got = await directorTurn(later, 'make her outfit red', { project_id, actor: 'nova' });
+  assert.match(got.text, /^Done in the project \(version 2\): Nova's outfit is now red/);
+  assert.equal((await sceneLatest(storage)).spec.actors[0].cloth, '#c0392b');
+  assert.equal(await directorTurn({ ...later, now: NOW + 20 * 3600_000 }, 'make her outfit red', { project_id: 'scp_bad', actor: 'nova' }), null, 'a malformed id is ignored');
+  // Scene-wide controls send the displayed project with no actor selected (Codex, #954): they still land on it.
+  const old = { ...later, now: NOW + 40 * 3600_000 };
+  assert.equal(await directorTurn(old, 'relight the office for sunset'), null, 'without the project, a scene this old is not edited');
+  const lit = await directorTurn(old, 'relight the office for sunset', { project_id });
+  assert.match(lit.text, /the office is relit for sunset/);
+  assert.equal((await sceneLatest(storage)).spec.set.light, 'sunset');
+  const undone = await directorTurn({ ...old, now: NOW + 60 * 3600_000 }, 'undo', { project_id });
+  assert.match(undone.text, /^Undone: back to version 2/);
+  const status = await directorTurn({ ...old, now: NOW + 80 * 3600_000 }, 'is my scene ready?', { project_id });
+  assert.equal(status.meta.project_id, project_id, 'the status is of the displayed project');
+  assert.match(status.text, /GitHub never started this render/, 'the fake GitHub never ran it, and after 15 minutes that is said');
+  assert.deepEqual(await sceneLatest(memory()), { ok: false, detail: 'There is no scene yet. Say something like "make Nova walk into my office, sit beside me, and start talking".' });
 });

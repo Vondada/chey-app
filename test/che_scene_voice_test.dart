@@ -20,6 +20,13 @@ void main() {
     }
   });
 
+  test('"show my scene" opens the live preview of the Scene Director\'s latest scene', () {
+    for (final said in ['show my scene', 'che, show me the scene', 'preview my scene', 'open the scene preview', 'show the 3d scene', 'open the scene director']) {
+      expect(sceneVoiceRoute(said), SceneVoiceRoute.scenePreview, reason: said);
+    }
+    expect(sceneVoiceRoute('open my last scene'), SceneVoiceRoute.lastProject, reason: 'the saved Create Studio scene keeps its own words');
+  });
+
   test('other requests, and a project mentioned in passing, are not Create Studio routes', () {
     for (final said in ['create a cube', 'show me my renders', 'what is my last project worth', 'open the creative studio', 'open the creation room tomorrow']) {
       expect(sceneVoiceRoute(said), isNull, reason: said);
