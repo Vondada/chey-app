@@ -113,7 +113,9 @@ jobs:
         run: python3 -m unittest discover -s tools -p 'test_che_edit_render.py' -v
       - name: Scene Director finish (real ffmpeg; retimed, voiced, scored MP4)
         timeout-minutes: 4
-        run: python3 -m unittest discover -s tools -p 'test_che_scene_finish.py' -v
+        run: |
+          python3 -m unittest discover -s tools -p 'test_che_scene_finish.py' -v
+          python3 -m unittest discover -s tools -p 'test_che_scene_layout.py' -v
       - name: Crew models (rig, clips, viseme and blink face shapes, Orion and Vale)
         timeout-minutes: 2
         run: python3 -m unittest discover -s tools -p 'test_crew_glbs.py' -v

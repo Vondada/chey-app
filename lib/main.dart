@@ -110,6 +110,7 @@ import 'create/che_creative_studio.dart';
 import 'create/che_project_manager.dart';
 import 'create/che_creation_engine_page.dart';
 import 'create/che_scene_client.dart';
+import 'create/che_scene_preview_page.dart';
 import 'create/che_scene_studio_page.dart';
 import 'create/che_scene_voice.dart';
 import 'create/che_gpu_browser.dart';
@@ -732,6 +733,18 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
     await Navigator.of(context).push(MaterialPageRoute<void>(
       builder: (_) => CheSceneStudioPage(client: client, sceneId: scenes.first.id),
     ));
+  }
+
+  /// Voice: "show my scene" opens the Scene Director's latest scene live in 3D, to scrub, select by touch and edit.
+  void _openScenePreview() {
+    HapticFeedback.selectionClick();
+    unawaited(Navigator.of(context).push(MaterialPageRoute<void>(
+      builder: (_) => CheScenePreviewPage(
+        baseUrl: cheAgentBaseUrl,
+        headers: () => _authHeaders,
+        onSpeak: (text) => unawaited(speakText(text, record: false, readOnDemand: true)),
+      ),
+    )));
   }
 
   /// Voice: "create a character" opens the character editor in the Creation Room, with a new person.
